@@ -1,6 +1,6 @@
 /**
  * Second Brain — Cloudflare Worker
- * https://github.com/YOUR_USERNAME/YOUR_REPO
+ * https://github.com/rahilp/second-brain-cloudflare
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
