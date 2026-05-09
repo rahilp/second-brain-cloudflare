@@ -183,6 +183,8 @@ javascript:(function(){
    - Body (JSON): `content` = Ask for Input result, `source` = `phone`
 3. Show Notification → "Saved ✓"
 
+[Download Shortcut Template](https://www.icloud.com/shortcuts/f415ad8658084c17b5a2916b327e4ff2)
+
 ### iOS Shortcut — voice capture
 
 1. New Shortcut → Dictate Text (stop: after pause)
@@ -190,6 +192,8 @@ javascript:(function(){
 3. Show Notification → "Saved ✓"
 
 Name it something Siri-friendly like "Brain dump" for hands-free triggering.
+
+[Download Shortcut Template](https://www.icloud.com/shortcuts/d82917d9bc904f619fdb7f8f57f8797b)
 
 ### Share Sheet (save from Safari or any app)
 
