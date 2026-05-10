@@ -22,6 +22,11 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
 };
 
+// ─── Thresholds ───────────────────────────────────────────────────────────────
+
+const DUPLICATE_BLOCK_THRESHOLD = 0.95;   // Exact/near-exact — block silently
+const DUPLICATE_FLAG_THRESHOLD = 0.85;   // Near-duplicate — store but flag
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isAuthorized(request: Request, env: Env): boolean {
@@ -40,9 +45,47 @@ async function embed(text: string, env: Env): Promise<number[]> {
   return result.data[0] as number[];
 }
 
+// ─── Duplicate detection ──────────────────────────────────────────────────────
+//
+// Returns:
+//   { status: "unique" }                              — safe to store
+//   { status: "blocked", matchId, score }             — near-exact, skip
+//   { status: "flagged", matchId, score }             — near-duplicate, store but tag
+
+type DuplicateResult =
+  | { status: "unique" }
+  | { status: "blocked"; matchId: string; score: number }
+  | { status: "flagged"; matchId: string; score: number };
+
+async function checkDuplicate(
+  content: string,
+  env: Env
+): Promise<DuplicateResult> {
+  // Embed only the first 500 chars for speed — enough to fingerprint the content
+  const values = await embed(content.slice(0, 500), env);
+  const results = await env.VECTORIZE.query(values, {
+    topK: 1,
+    returnMetadata: "all",
+  });
+
+  if (!results.matches.length) return { status: "unique" };
+
+  const top = results.matches[0];
+  const score = top.score;
+  const matchId = (top.metadata as any)?.parentId ?? top.id;
+
+  if (score >= DUPLICATE_BLOCK_THRESHOLD) {
+    return { status: "blocked", matchId, score };
+  }
+
+  if (score >= DUPLICATE_FLAG_THRESHOLD) {
+    return { status: "flagged", matchId, score };
+  }
+
+  return { status: "unique" };
+}
+
 // ─── Chunking ─────────────────────────────────────────────────────────────────
-// Splits long text into overlapping segments so each gets a clean embedding.
-// Short content (under ~400 tokens / 1600 chars) is returned as a single chunk.
 
 function chunkText(text: string, maxChars = 1600, overlapChars = 200): string[] {
   if (text.length <= maxChars) return [text];
@@ -54,7 +97,6 @@ function chunkText(text: string, maxChars = 1600, overlapChars = 200): string[] 
     let end = start + maxChars;
 
     if (end < text.length) {
-      // Prefer breaking at sentence or newline boundary
       const lastPeriod = text.lastIndexOf(".", end);
       const lastNewline = text.lastIndexOf("\n", end);
       const breakPoint = Math.max(lastPeriod, lastNewline);
@@ -80,14 +122,12 @@ async function storeEntry(
 ): Promise<void> {
   const chunks = chunkText(content);
 
-  // If single chunk, use the entry ID directly (backwards compatible)
-  // If multiple chunks, use `{id}-chunk-{i}` so recall can deduplicate
   const vectors = await Promise.all(
     chunks.map(async (chunk, i) => ({
       id: chunks.length === 1 ? id : `${id}-chunk-${i}`,
       values: await embed(chunk, env),
       metadata: {
-        content: chunk.slice(0, 512), // Vectorize metadata limit
+        content: chunk.slice(0, 512),
         parentId: id,
         chunkIndex: i,
         totalChunks: chunks.length,
@@ -116,20 +156,47 @@ function buildMcpServer(env: Env): McpServer {
       source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
     },
     async ({ content, tags, source }) => {
-      const id = crypto.randomUUID();
-      const now = Date.now();
       const c = content.trim();
       const t = tags ?? [];
       const s = source ?? "claude";
 
+      // Duplicate check before anything else
+      const dup = await checkDuplicate(c, env);
+
+      if (dup.status === "blocked") {
+        return {
+          content: [{
+            type: "text",
+            text: `Duplicate detected (${(dup.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${dup.matchId}`,
+          }],
+        };
+      }
+
+      const id = crypto.randomUUID();
+      const now = Date.now();
+
+      // If flagged, add duplicate-candidate tag so it can be reviewed later
+      const finalTags = dup.status === "flagged"
+        ? [...t, "duplicate-candidate"]
+        : t;
+
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`
-      ).bind(id, c, JSON.stringify(t), s, now).run();
+      ).bind(id, c, JSON.stringify(finalTags), s, now).run();
 
       try {
-        await storeEntry(env, id, c, t, s, now);
+        await storeEntry(env, id, c, finalTags, s, now);
       } catch (e) {
         console.error("Vectorize insert failed (non-fatal):", e);
+      }
+
+      if (dup.status === "flagged") {
+        return {
+          content: [{
+            type: "text",
+            text: `Stored with ID: ${id} — note: similar entry exists (${(dup.score * 100).toFixed(0)}% match, ID: ${dup.matchId}). Tagged as duplicate-candidate.`,
+          }],
+        };
       }
 
       return { content: [{ type: "text", text: `Stored. ID: ${id}` }] };
@@ -148,7 +215,7 @@ function buildMcpServer(env: Env): McpServer {
     async ({ query, topK, tag }) => {
       const values = await embed(query, env);
       const results = await env.VECTORIZE.query(values, {
-        topK: topK * 3, // Fetch extra to account for chunk deduplication
+        topK: topK * 3,
         filter: tag ? { tags: { $eq: tag } } : undefined,
         returnMetadata: "all",
       });
@@ -176,8 +243,10 @@ function buildMcpServer(env: Env): McpServer {
           : "";
         const src = meta?.source ? ` · ${meta.source}` : "";
         const score = (m.score * 100).toFixed(0);
-        const chunks = meta?.totalChunks > 1 ? ` (chunk ${meta.chunkIndex + 1}/${meta.totalChunks})` : "";
-        return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${chunks}\n${meta?.content ?? ""}`;
+        const chunkLabel = meta?.totalChunks > 1
+          ? ` (chunk ${meta.chunkIndex + 1}/${meta.totalChunks})`
+          : "";
+        return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${chunkLabel}\n${meta?.content ?? ""}`;
       }).join("\n\n");
 
       return { content: [{ type: "text", text }] };
@@ -223,7 +292,6 @@ function buildMcpServer(env: Env): McpServer {
     async ({ id }) => {
       await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(id).run();
 
-      // Delete all chunks for this entry
       try {
         const chunkIds = Array.from({ length: 20 }, (_, i) => `${id}-chunk-${i}`);
         await env.VECTORIZE.deleteByIds([id, ...chunkIds]);
@@ -257,21 +325,49 @@ export default {
       try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
       if (!body.content?.trim()) return json({ error: "content is required" }, 400);
 
-      const id = crypto.randomUUID();
-      const now = Date.now();
       const c = body.content.trim();
       const t = body.tags ?? [];
       const s = body.source ?? "api";
 
+      // Duplicate check — runs synchronously so the response reflects the result
+      const dup = await checkDuplicate(c, env);
+
+      if (dup.status === "blocked") {
+        return json({
+          ok: false,
+          duplicate: true,
+          matchId: dup.matchId,
+          score: parseFloat((dup.score * 100).toFixed(1)),
+          message: "Near-exact duplicate detected — not stored",
+        });
+      }
+
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      const finalTags = dup.status === "flagged"
+        ? [...t, "duplicate-candidate"]
+        : t;
+
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`
-      ).bind(id, c, JSON.stringify(t), s, now).run();
+      ).bind(id, c, JSON.stringify(finalTags), s, now).run();
 
       // Embed and chunk in background — capture response is instant
       ctx.waitUntil(
-        storeEntry(env, id, c, t, s, now)
+        storeEntry(env, id, c, finalTags, s, now)
           .catch((e) => console.error("Async embed failed:", e))
       );
+
+      if (dup.status === "flagged") {
+        return json({
+          ok: true,
+          id,
+          warning: "similar",
+          matchId: dup.matchId,
+          score: parseFloat((dup.score * 100).toFixed(1)),
+          message: "Stored but similar entry exists — tagged as duplicate-candidate",
+        });
+      }
 
       return json({ ok: true, id });
     }
@@ -293,7 +389,6 @@ export default {
       });
       const server = buildMcpServer(env);
       await server.connect(transport);
-
       return transport.handleRequest(request);
     }
 
