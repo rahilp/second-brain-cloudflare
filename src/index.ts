@@ -344,7 +344,7 @@ function buildMcpServer(env: Env): McpServer {
         const date = new Date(row.created_at as number).toLocaleDateString();
         const tags: string[] = JSON.parse(row.tags ?? "[]");
         const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
-        return `${i + 1}. [${date} · ${row.source}${tagStr}] ${(row.id as string).slice(0, 8)}\n${row.content}`;
+        return `${i + 1}. [${date} · ${row.source}${tagStr}]\nID: ${row.id as string}\n${row.content}`;
       }).join("\n\n");
 
       return { content: [{ type: "text", text }] };
