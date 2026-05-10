@@ -44,14 +44,15 @@ Most AI tools forget everything between conversations. **Second Brain** fixes th
 
 It's a lightweight Cloudflare Worker that gives any MCP-compatible AI client (Claude Desktop, Claude Code, claude.ai, etc.) a persistent memory store — with **semantic search** powered by vector embeddings. You can capture notes from your browser, phone, or scripts, then have your AI automatically recall relevant context at the start of every session.
 
-**Four MCP tools. One second brain. Unlimited context.**
+**Five MCP tools. One second brain. Unlimited context.**
 
-| Tool | What it does |
-|---|---|
-| `remember` | Save anything important — ideas, tasks, decisions, project context |
-| `recall` | Find what matters using meaning, not just keywords |
-| `list_recent` | Browse your latest memories chronologically |
-| `forget` | Remove what you no longer need |
+| Tool | Parameters | Description |
+|---|---|---|
+| `remember` | `content` (string), `tags?` (string[]), `source?` (string) | Store a note. Runs duplicate check first — blocked if near-exact match exists, flagged if similar. |
+| `append` | `id` (string), `addition` (string) | Append new information to an existing entry. Preserves original, adds update with timestamp. Use when something has changed rather than storing a duplicate. |
+| `recall` | `query` (string), `topK?` (1–20, default 5), `tag?` (string) | Semantic vector search with chunk deduplication, optionally filtered by tag |
+| `list_recent` | `n?` (1–50, default 10), `tag?` (string) | Chronological listing, optionally filtered by tag |
+| `forget` | `id` (string) | Delete an entry and all its chunks and update chunks from both D1 and Vectorize |
 
 ---
 
@@ -101,7 +102,7 @@ flowchart TB
 
 Every note is embedded as a 384-dimensional vector using `bge-small-en-v1.5` on Workers AI. Semantic search queries the Vectorize index using cosine similarity — so "users drop off at the payment step" matches "onboarding problems" even though no keywords overlap.
 
-Long notes are automatically split into overlapping chunks before embedding so each segment gets a clean vector. Near-duplicate content is detected and blocked or flagged before storing.
+Long notes are automatically split into overlapping chunks before embedding so each segment gets a clean vector. Near-duplicate content is detected and blocked or flagged before storing. Updates to existing entries are appended with a timestamp rather than stored as duplicates.
 
 ---
 
