@@ -5,7 +5,7 @@
 **A personal memory layer that works across every AI tool you use.**  
 Store, search, and recall anything with semantic understanding — deployed on Cloudflare's free tier in minutes.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
@@ -31,6 +31,8 @@ Store, search, and recall anything with semantic understanding — deployed on C
 - [API Reference](#api-reference)
 - [MCP Tools](#mcp-tools)
 - [How Semantic Search Works](#how-semantic-search-works)
+- [Chunking](#chunking)
+- [Duplicate Detection](#duplicate-detection)
 - [Stack](#stack)
 - [Local Development](#local-development)
 
@@ -55,37 +57,51 @@ It's a lightweight Cloudflare Worker that gives any MCP-compatible AI client (Cl
 
 ## How it works
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Cloudflare Worker                        │
-│                                                                 │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐  │
-│  │  POST /capture│    │   GET /list  │    │     /mcp         │  │
-│  │  (bookmarklet,│    │  (debug /    │    │  (MCP server for │  │
-│  │  iOS, scripts)│    │   review)    │    │  Claude & others)│  │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────────┘  │
-│         │                   │                   │              │
-│         └───────────────────┴───────────────────┘              │
-│                             │                                   │
-│              ┌──────────────┼──────────────┐                   │
-│              ▼              ▼              ▼                   │
-│         ┌─────────┐   ┌──────────┐  ┌──────────┐              │
-│         │   D1    │   │Vectorize │  │Workers AI│              │
-│         │ SQLite  │   │  Index   │  │Embeddings│              │
-│         │  Store  │   │(cosine)  │  │(bge-small│              │
-│         └─────────┘   └──────────┘  └──────────┘              │
-└─────────────────────────────────────────────────────────────────┘
-         ▲                                    ▲
-         │                                    │
-  ┌──────┴──────┐                    ┌────────┴────────┐
-  │  Any HTTP   │                    │   MCP Clients   │
-  │   client    │                    │ Claude Desktop  │
-  │ (browser,   │                    │   Claude Code   │
-  │  iOS, curl) │                    │   claude.ai     │
-  └─────────────┘                    └─────────────────┘
+```mermaid
+flowchart TB
+    subgraph Clients["Capture Sources"]
+        B[Browser Bookmarklet]
+        I[iOS Shortcuts]
+        C[Claude / MCP Clients]
+        S[Scripts / curl]
+    end
+
+    subgraph Worker["Cloudflare Worker"]
+        CAP[POST /capture]
+        LIST[GET /list]
+        MCP[GET+POST /mcp]
+        DUP[Duplicate Detection]
+        CHUNK[Chunking]
+    end
+
+    subgraph Storage["Cloudflare Storage"]
+        D1[(D1 SQLite)]
+        VEC[(Vectorize Index)]
+        AI[Workers AI\nbge-small-en-v1.5]
+    end
+
+    B --> CAP
+    I --> CAP
+    S --> CAP
+    C --> MCP
+
+    CAP --> DUP
+    DUP -->|blocked| CAP
+    DUP -->|flagged| CHUNK
+    DUP -->|unique| CHUNK
+    CHUNK --> D1
+    CHUNK --> AI
+    AI --> VEC
+
+    MCP --> AI
+    MCP --> VEC
+    MCP --> D1
+    LIST --> D1
 ```
 
 Every note is embedded as a 384-dimensional vector using `bge-small-en-v1.5` on Workers AI. Semantic search queries the Vectorize index using cosine similarity — so "users drop off at the payment step" matches "onboarding problems" even though no keywords overlap.
+
+Long notes are automatically split into overlapping chunks before embedding so each segment gets a clean vector. Near-duplicate content is detected and blocked or flagged before storing.
 
 ---
 
@@ -95,7 +111,7 @@ The fastest path to a running second brain is the one-click deploy:
 
 1. **Click Deploy** → Cloudflare forks the repo, provisions D1 + Vectorize, and deploys the Worker automatically.
 
-   [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
+   [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME)
 
 2. **Run the schema** in Cloudflare Dashboard → D1 → `second-brain-db` → Console:
 
@@ -149,8 +165,8 @@ If you prefer to deploy manually from a clone:
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/rahilp/second-brain-cloudflare.git
-cd second-brain-cloudflare
+git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
+cd YOUR_REPO_NAME
 npm install
 
 # 2. Authenticate with Cloudflare
@@ -200,18 +216,6 @@ curl -X POST https://<your-worker-url>/capture \
 ```bash
 curl "https://<your-worker-url>/list?n=5" \
   -H "Authorization: Bearer YOUR_TOKEN"
-```
-
-```json
-[
-  {
-    "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-    "content": "Decided to use Cloudflare Workers for the API...",
-    "tags": "[\"architecture\",\"decision\"]",
-    "source": "notes",
-    "created_at": 1715299200000
-  }
-]
 ```
 
 ### Semantic recall via Claude (MCP)
@@ -320,16 +324,7 @@ MANDATORY RULES — no exceptions:
 
 5. NEVER use Claude's built-in memory system. If you would normally save a memory, call remember instead. Always.
 
-6. Auto-detect the current topic or project and include it as a tag (e.g. if discussing a website, tag it "website"; if discussing a specific company or product, use that name as a tag). Always combine specific tags with generic ones.
-
-Tags to use:
-- personal — life, preferences, habits
-- work — projects, decisions, strategy
-- idea — concepts, plans, brainstorms
-- task — things to do or follow up on
-- context — background info about ongoing situations
-- claude-response — summaries of important responses Claude gave
-- [auto-detected project/topic tag]
+6. Auto-detect the current topic or project and include it as a tag. Always combine specific tags with generic ones (personal, work, idea, task, context).
 
 Always set source to "claude-code" when storing.
 
@@ -391,7 +386,7 @@ The full source with comments is in [`bookmarklet.js`](bookmarklet.js).
    - Body (JSON): `content` = Ask for Input result, `source` = `phone`
 3. **Show Notification** → "Saved ✓"
 
-[⬇ Download Shortcut Template](https://www.icloud.com/shortcuts/f415ad8658084c17b5a2916b327e4ff2)
+[Download Shortcut](https://www.icloud.com/shortcuts/f415ad8658084c17b5a2916b327e4ff2) — after installing, open the shortcut and update `YOUR_WORKER_URL` and `YOUR_TOKEN` with your values.
 
 #### Voice capture (hands-free brain dump)
 
@@ -401,7 +396,7 @@ The full source with comments is in [`bookmarklet.js`](bookmarklet.js).
 
 Name it something Siri-friendly like **"Brain dump"** to trigger hands-free: *"Hey Siri, Brain dump."*
 
-[⬇ Download Shortcut Template](https://www.icloud.com/shortcuts/d82917d9bc904f619fdb7f8f57f8797b)
+[Download Shortcut](https://www.icloud.com/shortcuts/d82917d9bc904f619fdb7f8f57f8797b) — after installing, open the shortcut and update `YOUR_WORKER_URL` and `YOUR_TOKEN` with your values.
 
 ### Share Sheet
 
@@ -422,7 +417,7 @@ All endpoints require an `Authorization: Bearer YOUR_TOKEN` header (except CORS 
 
 ### `POST /capture`
 
-Store an entry. Embedding happens in the background so the response is instant.
+Store an entry. Duplicate detection runs synchronously. Embedding happens in the background so the response is instant after the duplicate check.
 
 **Request body:**
 
@@ -434,15 +429,37 @@ Store an entry. Embedding happens in the background so the response is instant.
 }
 ```
 
-**Response:**
+**Responses:**
 
 ```json
 { "ok": true, "id": "uuid-v4" }
 ```
 
+```json
+{
+  "ok": true,
+  "id": "uuid-v4",
+  "warning": "similar",
+  "matchId": "existing-uuid",
+  "score": 88.5,
+  "message": "Stored but similar entry exists — tagged as duplicate-candidate"
+}
+```
+
+```json
+{
+  "ok": false,
+  "duplicate": true,
+  "matchId": "existing-uuid",
+  "score": 97.2,
+  "message": "Near-exact duplicate detected — not stored"
+}
+```
+
 | Status | Meaning |
 |---|---|
-| `200` | Entry stored successfully |
+| `200 ok:true` | Entry stored successfully |
+| `200 ok:false duplicate:true` | Blocked — near-exact duplicate |
 | `400` | Missing/invalid `content` or malformed JSON |
 | `401` | Missing or invalid auth token |
 
@@ -456,8 +473,6 @@ List recent entries in reverse chronological order.
 |---|---|---|---|
 | `n` | `20` | `100` | Number of entries to return |
 
-**Response:** JSON array of entry objects.
-
 ---
 
 ### `GET+POST /mcp`
@@ -470,10 +485,10 @@ MCP server endpoint using the Streamable HTTP transport. Connect any MCP-compati
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `remember` | `content` (string), `tags?` (string[]), `source?` (string) | Store a note with optional tags and source label |
-| `recall` | `query` (string), `topK?` (1–20, default 5), `tag?` (string) | Semantic vector search, optionally filtered by tag |
+| `remember` | `content` (string), `tags?` (string[]), `source?` (string) | Store a note. Runs duplicate check first — blocked if near-exact match exists, flagged if similar. |
+| `recall` | `query` (string), `topK?` (1–20, default 5), `tag?` (string) | Semantic vector search with chunk deduplication, optionally filtered by tag |
 | `list_recent` | `n?` (1–50, default 10), `tag?` (string) | Chronological listing, optionally filtered by tag |
-| `forget` | `id` (string) | Delete an entry by ID from both D1 and Vectorize |
+| `forget` | `id` (string) | Delete an entry and all its chunks from both D1 and Vectorize |
 
 ---
 
@@ -484,6 +499,55 @@ Every entry is embedded using **`bge-small-en-v1.5`** via Workers AI, converting
 **Example:** Store *"users drop off at the payment step"* and later recall it with *"onboarding problems."* The keyword "payment" never appears in the query — but the meaning matches.
 
 This is what separates Second Brain from a simple keyword search or a tag system.
+
+---
+
+## Chunking
+
+Long notes are automatically split into overlapping segments before embedding. This solves two problems:
+
+1. The embedding model (`bge-small-en-v1.5`) has a ~512 token limit. Content beyond that is truncated — chunking ensures the full note is searchable.
+2. A single vector for a long, multi-topic note produces diluted embeddings. Chunking gives each section its own vector so specific sections surface precisely.
+
+**How it works:**
+- Notes under 1,600 characters are stored as a single vector (no change in behavior)
+- Longer notes are split at sentence or newline boundaries with 200-character overlap between chunks
+- Each chunk is stored as a separate Vectorize vector pointing back to the parent entry ID
+- `recall` fetches extra results and deduplicates by parent ID, returning only the best-matching chunk per entry
+- `forget` deletes the parent entry and all its chunks
+
+---
+
+## Duplicate Detection
+
+Before storing, every entry is checked against existing vectors for similarity. Three outcomes:
+
+| Similarity score | Outcome | Response |
+|---|---|---|
+| >= 95% | Blocked | Returns existing entry ID, nothing stored |
+| 85–95% | Flagged | Stored with `duplicate-candidate` tag, match info included in response |
+| < 85% | Unique | Stored normally |
+
+This prevents the brain from accumulating near-identical entries from clicking the bookmarklet twice on the same article, or Claude storing the same context multiple times across sessions.
+
+The duplicate check requires one embed call before inserting, adding ~300ms to each capture. This runs synchronously so the response always reflects what actually happened.
+
+To review flagged entries:
+
+```bash
+# recall by tag
+curl -X POST https://<your-worker-url>/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{
+    "jsonrpc": "2.0", "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "list_recent",
+      "arguments": {"n": 20, "tag": "duplicate-candidate"}
+    }
+  }'
+```
 
 ---
 
