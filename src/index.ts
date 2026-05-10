@@ -24,8 +24,8 @@ const CORS_HEADERS = {
 
 // ─── Thresholds ───────────────────────────────────────────────────────────────
 
-const DUPLICATE_BLOCK_THRESHOLD = 0.95;   // Exact/near-exact — block silently
-const DUPLICATE_FLAG_THRESHOLD = 0.85;   // Near-duplicate — store but flag
+const DUPLICATE_BLOCK_THRESHOLD = 0.95;
+const DUPLICATE_FLAG_THRESHOLD = 0.85;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,27 +46,15 @@ async function embed(text: string, env: Env): Promise<number[]> {
 }
 
 // ─── Duplicate detection ──────────────────────────────────────────────────────
-//
-// Returns:
-//   { status: "unique" }                              — safe to store
-//   { status: "blocked", matchId, score }             — near-exact, skip
-//   { status: "flagged", matchId, score }             — near-duplicate, store but tag
 
 type DuplicateResult =
   | { status: "unique" }
   | { status: "blocked"; matchId: string; score: number }
   | { status: "flagged"; matchId: string; score: number };
 
-async function checkDuplicate(
-  content: string,
-  env: Env
-): Promise<DuplicateResult> {
-  // Embed only the first 500 chars for speed — enough to fingerprint the content
+async function checkDuplicate(content: string, env: Env): Promise<DuplicateResult> {
   const values = await embed(content.slice(0, 500), env);
-  const results = await env.VECTORIZE.query(values, {
-    topK: 1,
-    returnMetadata: "all",
-  });
+  const results = await env.VECTORIZE.query(values, { topK: 1, returnMetadata: "all" });
 
   if (!results.matches.length) return { status: "unique" };
 
@@ -74,14 +62,8 @@ async function checkDuplicate(
   const score = top.score;
   const matchId = (top.metadata as any)?.parentId ?? top.id;
 
-  if (score >= DUPLICATE_BLOCK_THRESHOLD) {
-    return { status: "blocked", matchId, score };
-  }
-
-  if (score >= DUPLICATE_FLAG_THRESHOLD) {
-    return { status: "flagged", matchId, score };
-  }
-
+  if (score >= DUPLICATE_BLOCK_THRESHOLD) return { status: "blocked", matchId, score };
+  if (score >= DUPLICATE_FLAG_THRESHOLD) return { status: "flagged", matchId, score };
   return { status: "unique" };
 }
 
@@ -95,14 +77,12 @@ function chunkText(text: string, maxChars = 1600, overlapChars = 200): string[] 
 
   while (start < text.length) {
     let end = start + maxChars;
-
     if (end < text.length) {
       const lastPeriod = text.lastIndexOf(".", end);
       const lastNewline = text.lastIndexOf("\n", end);
       const breakPoint = Math.max(lastPeriod, lastNewline);
       if (breakPoint > start + maxChars / 2) end = breakPoint + 1;
     }
-
     chunks.push(text.slice(start, Math.min(end, text.length)).trim());
     start = end - overlapChars;
   }
@@ -110,7 +90,7 @@ function chunkText(text: string, maxChars = 1600, overlapChars = 200): string[] 
   return chunks.filter((c) => c.length > 0);
 }
 
-// ─── Store entry with chunked embeddings ──────────────────────────────────────
+// ─── Store entry (full embed + chunk) ────────────────────────────────────────
 
 async function storeEntry(
   env: Env,
@@ -141,6 +121,55 @@ async function storeEntry(
   await env.VECTORIZE.insert(vectors);
 }
 
+// ─── Append to existing entry ─────────────────────────────────────────────────
+// Updates D1 with the full appended content, then adds only the new addition
+// as a new Vectorize chunk pointing to the same parent ID.
+
+async function appendToEntry(
+  env: Env,
+  id: string,
+  existingContent: string,
+  addition: string,
+  tags: string[],
+  source: string
+): Promise<void> {
+  const timestamp = new Date().toLocaleDateString();
+  const separator = `\n\n[Update ${timestamp}]: `;
+  const newContent = existingContent + separator + addition;
+
+  // Update full content in D1
+  await env.DB.prepare(
+    `UPDATE entries SET content = ? WHERE id = ?`
+  ).bind(newContent, id).run();
+
+  // Count existing chunks so we don't collide on IDs
+  // Vectorize doesn't have a list-by-prefix API so we track via D1
+  // We store chunk count in a simple way: try IDs until we find a gap
+  let chunkIndex = 0;
+  // Find next available chunk index by checking if base ID exists
+  // For single-chunk entries the base ID is used directly, so start at 1
+  // For multi-chunk entries, chunks are {id}-chunk-0, {id}-chunk-1, etc.
+  // We add the new addition chunk at the next available index
+  // Safe approach: use timestamp-based suffix to guarantee uniqueness
+  const newChunkId = `${id}-update-${Date.now()}`;
+
+  const values = await embed(addition, env);
+  await env.VECTORIZE.insert([{
+    id: newChunkId,
+    values,
+    metadata: {
+      content: addition.slice(0, 512),
+      parentId: id,
+      chunkIndex: chunkIndex,
+      totalChunks: 1,
+      isUpdate: true,
+      tags,
+      source,
+      created_at: Date.now(),
+    },
+  }]);
+}
+
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
 function buildMcpServer(env: Env): McpServer {
@@ -160,7 +189,6 @@ function buildMcpServer(env: Env): McpServer {
       const t = tags ?? [];
       const s = source ?? "claude";
 
-      // Duplicate check before anything else
       const dup = await checkDuplicate(c, env);
 
       if (dup.status === "blocked") {
@@ -174,11 +202,7 @@ function buildMcpServer(env: Env): McpServer {
 
       const id = crypto.randomUUID();
       const now = Date.now();
-
-      // If flagged, add duplicate-candidate tag so it can be reviewed later
-      const finalTags = dup.status === "flagged"
-        ? [...t, "duplicate-candidate"]
-        : t;
+      const finalTags = dup.status === "flagged" ? [...t, "duplicate-candidate"] : t;
 
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`
@@ -203,6 +227,55 @@ function buildMcpServer(env: Env): McpServer {
     }
   );
 
+  // ── append ───────────────────────────────────────────────────────────────
+  server.tool(
+    "append",
+    "Append new information to an existing entry in your second brain. Use this when something has changed or you have an update to a stored note — preserves the original and adds the update with a timestamp.",
+    {
+      id: z.string().describe("Entry ID to append to — from recall or list_recent"),
+      addition: z.string().describe("The new information to add to the existing entry"),
+    },
+    async ({ id, addition }) => {
+      // Look up the existing entry
+      const row = await env.DB.prepare(
+        `SELECT id, content, tags, source FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+
+      if (!row) {
+        return {
+          content: [{ type: "text", text: `No entry found with ID: ${id}` }],
+        };
+      }
+
+      const existingContent = row.content as string;
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      const source = row.source as string;
+      const a = addition.trim();
+
+      if (!a) {
+        return {
+          content: [{ type: "text", text: "Addition cannot be empty." }],
+        };
+      }
+
+      try {
+        await appendToEntry(env, id, existingContent, a, tags, source);
+      } catch (e) {
+        console.error("Append failed:", e);
+        return {
+          content: [{ type: "text", text: `Append failed: ${(e as Error).message}` }],
+        };
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: `Appended to entry ${id}. The original content is preserved and your update has been added with today's date.`,
+        }],
+      };
+    }
+  );
+
   // ── recall ───────────────────────────────────────────────────────────────
   server.tool(
     "recall",
@@ -224,7 +297,6 @@ function buildMcpServer(env: Env): McpServer {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
       }
 
-      // Deduplicate by parentId — only return the best chunk per entry
       const seen = new Set<string>();
       const deduped = results.matches.filter((m) => {
         const parentId = (m.metadata as any)?.parentId ?? m.id;
@@ -235,18 +307,13 @@ function buildMcpServer(env: Env): McpServer {
 
       const text = deduped.map((m, i) => {
         const meta = m.metadata as Record<string, any>;
-        const date = meta?.created_at
-          ? new Date(meta.created_at as number).toLocaleDateString()
-          : "?";
-        const tagList = Array.isArray(meta?.tags) && meta.tags.length
-          ? ` [${(meta.tags as string[]).join(", ")}]`
-          : "";
+        const date = meta?.created_at ? new Date(meta.created_at as number).toLocaleDateString() : "?";
+        const tagList = Array.isArray(meta?.tags) && meta.tags.length ? ` [${(meta.tags as string[]).join(", ")}]` : "";
         const src = meta?.source ? ` · ${meta.source}` : "";
         const score = (m.score * 100).toFixed(0);
-        const chunkLabel = meta?.totalChunks > 1
-          ? ` (chunk ${meta.chunkIndex + 1}/${meta.totalChunks})`
-          : "";
-        return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${chunkLabel}\n${meta?.content ?? ""}`;
+        const chunkLabel = meta?.totalChunks > 1 ? ` (chunk ${meta.chunkIndex + 1}/${meta.totalChunks})` : "";
+        const updateLabel = meta?.isUpdate ? " [updated]" : "";
+        return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${chunkLabel}${updateLabel}\n${meta?.content ?? ""}`;
       }).join("\n\n");
 
       return { content: [{ type: "text", text }] };
@@ -295,6 +362,9 @@ function buildMcpServer(env: Env): McpServer {
       try {
         const chunkIds = Array.from({ length: 20 }, (_, i) => `${id}-chunk-${i}`);
         await env.VECTORIZE.deleteByIds([id, ...chunkIds]);
+        // Also attempt to delete any update chunks
+        const updateIds = Array.from({ length: 50 }, (_, i) => `${id}-update-${i}`);
+        await env.VECTORIZE.deleteByIds(updateIds);
       } catch (e) {
         console.error("Vectorize delete failed (non-fatal):", e);
       }
@@ -312,12 +382,11 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
-    // POST /capture — intake from bookmarklet, iOS Shortcuts, scripts
+    // POST /capture
     if (url.pathname === "/capture" && request.method === "POST") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
 
@@ -329,7 +398,6 @@ export default {
       const t = body.tags ?? [];
       const s = body.source ?? "api";
 
-      // Duplicate check — runs synchronously so the response reflects the result
       const dup = await checkDuplicate(c, env);
 
       if (dup.status === "blocked") {
@@ -344,15 +412,12 @@ export default {
 
       const id = crypto.randomUUID();
       const now = Date.now();
-      const finalTags = dup.status === "flagged"
-        ? [...t, "duplicate-candidate"]
-        : t;
+      const finalTags = dup.status === "flagged" ? [...t, "duplicate-candidate"] : t;
 
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`
       ).bind(id, c, JSON.stringify(finalTags), s, now).run();
 
-      // Embed and chunk in background — capture response is instant
       ctx.waitUntil(
         storeEntry(env, id, c, finalTags, s, now)
           .catch((e) => console.error("Async embed failed:", e))
@@ -372,7 +437,7 @@ export default {
       return json({ ok: true, id });
     }
 
-    // GET /list — debug / review endpoint
+    // GET /list
     if (url.pathname === "/list" && request.method === "GET") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
       const n = Math.min(parseInt(url.searchParams.get("n") ?? "20", 10), 100);
@@ -382,7 +447,7 @@ export default {
       return json(results);
     }
 
-    // /mcp — MCP server for Claude Desktop, Claude Code, claude.ai, ChatGPT
+    // /mcp
     if (url.pathname === "/mcp") {
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
