@@ -3,6 +3,7 @@
 # Second Brain — MCP Server on Cloudflare Workers
 
 **One memory layer, every AI tool. Store anything once and recall it across Claude, ChatGPT, Cursor, and any MCP-compatible client — self-hosted on Cloudflare's free tier in minutes.**  
+
 Store, search, and recall anything with semantic understanding — deployed on Cloudflare's free tier in minutes.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahlip/second-brain-cloudflare)
