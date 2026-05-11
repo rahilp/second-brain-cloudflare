@@ -5,7 +5,7 @@
 **A personal memory layer that works across every AI tool you use.**  
 Store, search, and recall anything with semantic understanding — deployed on Cloudflare's free tier in minutes.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahlip/second-brain-cloudflare)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
@@ -112,7 +112,7 @@ The fastest path to a running second brain is the one-click deploy:
 
 1. **Click Deploy** → Cloudflare forks the repo, provisions D1 + Vectorize, and deploys the Worker automatically.
 
-   [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME)
+   [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
 
 2. **Run the schema** in Cloudflare Dashboard → D1 → `second-brain-db` → Console:
 
