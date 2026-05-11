@@ -2,7 +2,7 @@
 
 # Second Brain — MCP Server on Cloudflare Workers
 
-**A personal memory layer that works across every AI tool you use.**  
+**One memory layer, every AI tool. Store anything once and recall it across Claude, ChatGPT, Cursor, and any MCP-compatible client — self-hosted on Cloudflare's free tier in minutes.**  
 Store, search, and recall anything with semantic understanding — deployed on Cloudflare's free tier in minutes.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahlip/second-brain-cloudflare)
@@ -39,11 +39,11 @@ Store, search, and recall anything with semantic understanding — deployed on C
 
 ## What is this?
 
-Most AI tools forget everything between conversations. **Second Brain** fixes that.
+Every AI tool you use has the same problem: it forgets everything between sessions. Your projects, decisions, preferences — gone the moment you close the chat. Second Brain fixes that with a single self-hosted memory layer that works across all your AI tools. Store something in Claude Desktop, recall it in Cursor, reference it in claude.ai on your phone. One brain, everywhere.
 
 It's a lightweight Cloudflare Worker that gives any MCP-compatible AI client (Claude Desktop, Claude Code, claude.ai, etc.) a persistent memory store — with **semantic search** powered by vector embeddings. You can capture notes from your browser, phone, or scripts, then have your AI automatically recall relevant context at the start of every session.
 
-**Five MCP tools. One second brain. Unlimited context.**
+**Five tools. One memory layer. Every AI client.**
 
 | Tool | Parameters | Description |
 |---|---|---|
