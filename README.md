@@ -29,7 +29,6 @@ Store, search, and recall anything with semantic understanding — deployed on C
   - [iOS Shortcuts](#ios-shortcuts)
   - [Share Sheet](#share-sheet)
 - [API Reference](#api-reference)
-- [MCP Tools](#mcp-tools)
 - [How Semantic Search Works](#how-semantic-search-works)
 - [Chunking](#chunking)
 - [Duplicate Detection](#duplicate-detection)
@@ -492,17 +491,6 @@ List recent entries in reverse chronological order.
 ### `GET+POST /mcp`
 
 MCP server endpoint using the Streamable HTTP transport. Connect any MCP-compatible client here.
-
----
-
-## MCP Tools
-
-| Tool | Parameters | Description |
-|---|---|---|
-| `remember` | `content` (string), `tags?` (string[]), `source?` (string) | Store a note. Runs duplicate check first — blocked if near-exact match exists, flagged if similar. |
-| `recall` | `query` (string), `topK?` (1–20, default 5), `tag?` (string) | Semantic vector search with chunk deduplication, optionally filtered by tag |
-| `list_recent` | `n?` (1–50, default 10), `tag?` (string) | Chronological listing, optionally filtered by tag |
-| `forget` | `id` (string) | Delete an entry and all its chunks from both D1 and Vectorize |
 
 ---
 
