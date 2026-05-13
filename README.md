@@ -2,11 +2,9 @@
 
 # Second Brain — MCP Server on Cloudflare Workers
 
-**One memory layer, every AI tool. Store anything once and recall it across Claude, ChatGPT, Cursor, and any MCP-compatible client — self-hosted on Cloudflare's free tier in minutes.**  
+**One memory layer, every AI tool. Store anything once and recall it across Claude, ChatGPT, Cursor, and any MCP-compatible client — self-hosted on Cloudflare's free tier in minutes.**
 
-Store, search, and recall anything with semantic understanding — deployed on Cloudflare's free tier in minutes.
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahlip/second-brain-cloudflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
@@ -17,6 +15,7 @@ Store, search, and recall anything with semantic understanding — deployed on C
 ## Table of Contents
 
 - [What is this?](#what-is-this)
+- [Dashboard](#dashboard)
 - [How it works](#how-it-works)
 - [Quickstart](#quickstart)
 - [Manual Setup](#manual-setup)
@@ -52,7 +51,21 @@ It's a lightweight Cloudflare Worker that gives any MCP-compatible AI client (Cl
 | `append` | `id` (string), `addition` (string) | Append new information to an existing entry. Preserves original, adds update with timestamp. Use when something has changed rather than storing a duplicate. |
 | `recall` | `query` (string), `topK?` (1–20, default 5), `tag?` (string) | Semantic vector search with chunk deduplication, optionally filtered by tag |
 | `list_recent` | `n?` (1–50, default 10), `tag?` (string) | Chronological listing, optionally filtered by tag |
-| `forget` | `id` (string) | Delete an entry and all its chunks and update chunks from both D1 and Vectorize |
+| `forget` | `id` (string) | Delete an entry and all its chunks from both D1 and Vectorize |
+
+---
+
+## Dashboard
+
+A built-in web UI ships with every deploy — no extra setup required. Access it at your Worker URL: `https://<your-worker-url>/`
+
+Three views:
+
+- **Recall** — semantic search across all your memories. Ask anything naturally: "What am I working on?", "What did I decide recently?", "Show my tasks." Results ranked by meaning, not keywords.
+- **Recent** — all memories organized by date. Filter by tag. Append or forget any entry inline.
+- **Remember** — create new memories directly from the UI. Use #tags anywhere in your message to organize.
+
+<img src="device-mockup_1.5x_postspark_2026-05-12_22-15-01.png" alt="Second Brain — MCP Server on Cloudflare Workers" width="100%" />
 
 ---
 
@@ -61,6 +74,7 @@ It's a lightweight Cloudflare Worker that gives any MCP-compatible AI client (Cl
 ```mermaid
 flowchart TB
     subgraph Clients["Capture Sources"]
+        UI[Web Dashboard]
         B[Browser Bookmarklet]
         I[iOS Shortcuts]
         C[Claude / MCP Clients]
@@ -81,6 +95,7 @@ flowchart TB
         AI[Workers AI\nbge-small-en-v1.5]
     end
 
+    UI --> CAP
     B --> CAP
     I --> CAP
     S --> CAP
@@ -145,7 +160,9 @@ The fastest path to a running second brain is the one-click deploy:
    # → {"ok":true,"id":"..."}
    ```
 
-5. **Connect to Claude** → see [Connect to AI Clients](#connect-to-ai-clients).
+5. **Open your dashboard** at `https://<your-worker-url>/`
+
+6. **Connect to Claude** → see [Connect to AI Clients](#connect-to-ai-clients).
 
 > Your Worker URL is in Cloudflare Dashboard → Workers & Pages → `second-brain`.  
 > It looks like: `https://second-brain.<your-subdomain>.workers.dev`
@@ -166,8 +183,8 @@ If you prefer to deploy manually from a clone:
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
-cd YOUR_REPO_NAME
+git clone https://github.com/rahilp/second-brain-cloudflare.git
+cd second-brain-cloudflare
 npm install
 
 # 2. Authenticate with Cloudflare
@@ -534,23 +551,6 @@ Before storing, every entry is checked against existing vectors for similarity. 
 This prevents the brain from accumulating near-identical entries from clicking the bookmarklet twice on the same article, or Claude storing the same context multiple times across sessions.
 
 The duplicate check requires one embed call before inserting, adding ~300ms to each capture. This runs synchronously so the response always reflects what actually happened.
-
-To review flagged entries:
-
-```bash
-# recall by tag
-curl -X POST https://<your-worker-url>/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{
-    "jsonrpc": "2.0", "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "list_recent",
-      "arguments": {"n": 20, "tag": "duplicate-candidate"}
-    }
-  }'
-```
 
 ---
 
