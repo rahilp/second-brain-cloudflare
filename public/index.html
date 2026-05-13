@@ -1214,6 +1214,31 @@
       font-size: 32px;
       margin-bottom: 4px;
     }
+
+    @keyframes explode-out {
+      0% {
+        transform: scale(1);
+        opacity: 1;
+        filter: brightness(1) blur(0);
+      }
+
+      20% {
+        transform: scale(1.05) translateY(-2px);
+        opacity: 1;
+        filter: brightness(1.5) blur(1px);
+      }
+
+      100% {
+        transform: scale(0.6) translateY(20px);
+        opacity: 0;
+        filter: brightness(2.5) blur(8px);
+      }
+    }
+
+    .explode-out {
+      animation: explode-out 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
+      pointer-events: none;
+    }
   </style>
 </head>
 
@@ -1591,7 +1616,8 @@
       <div class="card-tags">${entry.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
         ${entry.id
-          ? `<button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>`
+          ? `<button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
+             <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>`
           : `<button class="card-action-btn" onclick="openAppendFromContent('${escAttr(entry.content)}')"><i class="ti ti-writing"></i> Append</button>`
         }
       </div>
@@ -1746,18 +1772,25 @@
     async function confirmForget() {
       if (!pendingForgetId) return;
       const idToForget = pendingForgetId;
-      closeConfirm();
-      if (pendingForgetCard) {
-        pendingForgetCard.style.transition = 'opacity 0.3s, transform 0.3s';
-        pendingForgetCard.style.opacity = '0';
-        pendingForgetCard.style.transform = 'scale(0.97)';
-        setTimeout(() => pendingForgetCard?.remove(), 300);
-      }
+      const cardElement = pendingForgetCard;
+      const btn = document.querySelector('#confirm-dialog .btn-delete');
+      if (btn) { btn.disabled = true; btn.textContent = 'Forgetting...'; }
+
       try {
         await apiMcp('forget', { id: idToForget });
+        closeConfirm();
+        if (cardElement) {
+          cardElement.style.transition = 'none';
+          cardElement.classList.add('explode-out');
+          setTimeout(() => cardElement?.remove(), 400);
+        }
         allEntries = allEntries.filter(e => e.id !== idToForget);
         updateStatus();
-      } catch { }
+      } catch (e) {
+        alert('Could not forget: ' + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Forget'; }
+      }
     }
 
     function openMenu() { document.getElementById('menu-sheet').classList.add('open'); }
