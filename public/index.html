@@ -1,0 +1,1668 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Second Brain">
+  <meta name="theme-color" content="#F5F4EF">
+  <title>Second Brain</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&family=DM+Sans:wght@300;400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+  <link rel="manifest" href="/manifest.json">
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #F5F4EF;
+      --bg-card: #FFFFFF;
+      --bg-tag: #F0EDE4;
+      --bg-confirm: #EDEAE0;
+      --bg-tag-confirmed: #D3D1C7;
+      --text-primary: #2C2C2A;
+      --text-secondary: #888780;
+      --text-tertiary: #B4B2A9;
+      --text-tag: #5F5E5A;
+      --text-tag-confirmed: #444441;
+      --border: rgba(0, 0, 0, 0.07);
+      --border-card: rgba(0, 0, 0, 0.08);
+      --border-input: rgba(0, 0, 0, 0.10);
+      --font-serif: 'Lora', Georgia, serif;
+      --font-sans: 'DM Sans', sans-serif;
+      --radius-card: 12px;
+      --radius-pill: 22px;
+      --radius-tag: 20px;
+      --radius-bubble: 16px;
+    }
+
+    html,
+    body {
+      height: 100%;
+      background: var(--bg);
+      font-family: var(--font-sans);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100svh;
+      width: 100%;
+      max-width: 430px;
+      margin: 0 auto;
+      background: var(--bg);
+      position: relative;
+    }
+
+    #sidebar {
+      display: none;
+    }
+
+    #main-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+
+    #auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+    }
+
+    .auth-card {
+      width: 100%;
+      max-width: 400px;
+      padding: 40px 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #auth-overlay .brain-logo {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: #E8E4D9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    #auth-overlay h1 {
+      font-family: var(--font-serif);
+      font-size: 26px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    #auth-overlay p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 36px;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    #auth-overlay .field-group {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    #auth-overlay input {
+      width: 100%;
+      padding: 14px 16px;
+      background: var(--bg-card);
+      border: 0.5px solid var(--border-input);
+      border-radius: 12px;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      color: var(--text-primary);
+      outline: none;
+    }
+
+    #auth-overlay input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    #auth-overlay input:focus {
+      border-color: rgba(0, 0, 0, 0.2);
+    }
+
+    #auth-connect {
+      width: 100%;
+      padding: 14px;
+      background: var(--text-primary);
+      color: var(--bg);
+      border: none;
+      border-radius: 12px;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    #auth-connect:active {
+      opacity: 0.8;
+    }
+
+    #auth-error {
+      font-size: 13px;
+      color: #c0392b;
+      text-align: center;
+      margin-top: 8px;
+      min-height: 18px;
+    }
+
+
+    #topbar {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px 10px;
+      border-bottom: 0.5px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
+      position: relative;
+      z-index: 10;
+    }
+
+    .brain-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #E8E4D9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-right: 10px;
+    }
+
+    .topbar-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .topbar-name {
+      font-family: var(--font-serif);
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .topbar-status {
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.2;
+    }
+
+    .topbar-menu {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 20px;
+      padding: 4px;
+      display: flex;
+      align-items: center;
+    }
+
+
+    #screens {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .screen {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      position: absolute;
+      inset: 0;
+    }
+
+    .screen.active {
+      display: flex;
+    }
+
+
+    #navbar {
+      display: flex;
+      border-top: 0.5px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
+      padding: 10px 0 18px;
+    }
+
+
+
+    .nav-tab {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 0;
+      color: var(--text-tertiary);
+      transition: color 0.15s;
+    }
+
+    .nav-tab.active {
+      color: var(--text-primary);
+    }
+
+    .nav-tab i {
+      font-size: 20px;
+    }
+
+    .nav-tab span {
+      font-size: 10px;
+      font-family: var(--font-sans);
+    }
+
+
+    .memory-card {
+      background: var(--bg-card);
+      border: 0.5px solid var(--border-card);
+      border-radius: var(--radius-card);
+      padding: 10px 13px;
+      transition: opacity 0.3s, transform 0.3s;
+    }
+
+    .match-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 5px;
+    }
+
+    .match-pct {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+    }
+
+    .match-bar-bg {
+      flex: 1;
+      height: 2px;
+      background: #E8E6E0;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .match-bar-fill {
+      height: 100%;
+      background: var(--text-secondary);
+      border-radius: 2px;
+    }
+
+    .card-content {
+      font-size: 13px;
+      color: var(--text-primary);
+      line-height: 1.45;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .card-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .tag-chip {
+      background: var(--bg-tag);
+      color: var(--text-tag);
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: var(--radius-tag);
+      white-space: nowrap;
+      font-family: var(--font-sans);
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .card-action-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-family: var(--font-sans);
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 0;
+      transition: color 0.15s;
+    }
+
+    .card-action-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .card-action-btn i {
+      font-size: 13px;
+    }
+
+
+    .bubble-row {
+      display: flex;
+      margin-bottom: 4px;
+    }
+
+    .bubble-row.user {
+      justify-content: flex-end;
+    }
+
+    .bubble-row.brain {
+      justify-content: flex-start;
+    }
+
+    .bubble {
+      max-width: 84%;
+      padding: 10px 14px;
+      border-radius: var(--radius-bubble);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .bubble.user {
+      background: var(--text-primary);
+      color: var(--bg);
+      border-bottom-right-radius: 4px;
+    }
+
+    .bubble.user .hashtag {
+      color: #B4B2A9;
+    }
+
+    .bubble.brain {
+      background: var(--bg-card);
+      color: var(--text-primary);
+      border: 0.5px solid var(--border-card);
+      border-bottom-left-radius: 4px;
+    }
+
+    .bubble-time {
+      font-size: 11px;
+      color: var(--text-secondary);
+      padding: 0 4px;
+      margin-bottom: 8px;
+      text-align: right;
+    }
+
+    .confirm-block {
+      background: var(--bg-confirm);
+      border-radius: 10px;
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 4px;
+    }
+
+    .confirm-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text-tag);
+    }
+
+    .confirm-line i {
+      font-size: 15px;
+      color: var(--text-secondary);
+    }
+
+    .confirm-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .confirm-tag {
+      background: var(--bg-tag-confirmed);
+      color: var(--text-tag-confirmed);
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: var(--radius-tag);
+      font-family: var(--font-sans);
+    }
+
+
+    .input-bar {
+      padding: 10px 14px 14px;
+      flex-shrink: 0;
+      background: var(--bg);
+    }
+
+    .input-inner {
+      display: flex;
+      align-items: center;
+      background: var(--bg-card);
+      border: 0.5px solid var(--border-input);
+      border-radius: var(--radius-pill);
+      padding: 8px 8px 8px 14px;
+      gap: 8px;
+    }
+
+    .input-field {
+      flex: 1;
+      background: none;
+      border: none;
+      outline: none;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      color: var(--text-primary);
+      resize: none;
+      line-height: 1.4;
+      max-height: 80px;
+      overflow-y: auto;
+    }
+
+    .input-field::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .send-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--text-primary);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    .send-btn:hover {
+      opacity: 0.85;
+    }
+
+    .send-btn:active {
+      transform: scale(0.92);
+    }
+
+    .send-btn i {
+      font-size: 16px;
+      color: var(--bg);
+    }
+
+    .send-btn:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .input-hint {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      padding: 0 4px 6px;
+    }
+
+    .input-hint .hint-tags {
+      color: var(--text-secondary);
+    }
+
+
+    #recall-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 14px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .brain-cards-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-width: 85%;
+      margin-bottom: 4px;
+    }
+
+    .suggestions-row {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 8px 14px 4px;
+      flex-shrink: 0;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .suggestions-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .suggestion-pill {
+      background: var(--bg-card);
+      border: 0.5px solid var(--border-input);
+      color: var(--text-tag);
+      font-size: 12px;
+      padding: 5px 12px;
+      border-radius: var(--radius-tag);
+      white-space: nowrap;
+      cursor: pointer;
+      font-family: var(--font-sans);
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+
+    .suggestion-pill:hover {
+      background: var(--bg-tag);
+    }
+
+
+    #recent-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px 8px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .date-group {
+      margin-bottom: 16px;
+    }
+
+    .date-label {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+      padding: 0 2px;
+    }
+
+    .recent-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .filter-bar {
+      padding: 10px 14px 14px;
+      flex-shrink: 0;
+      background: var(--bg);
+    }
+
+    .filter-inner {
+      display: flex;
+      align-items: center;
+      background: var(--bg-card);
+      border: 0.5px solid var(--border-input);
+      border-radius: var(--radius-pill);
+      padding: 8px 8px 8px 14px;
+      gap: 8px;
+    }
+
+    .filter-field {
+      flex: 1;
+      background: none;
+      border: none;
+      outline: none;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+
+    .filter-field::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .refresh-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--bg-tag);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .refresh-btn i {
+      font-size: 16px;
+      color: var(--text-secondary);
+    }
+
+    .refresh-btn.spinning i {
+      animation: spin 0.6s linear;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+
+    #remember-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 14px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+
+    .loading-dots {
+      display: flex;
+      gap: 4px;
+      padding: 12px 16px;
+      background: var(--bg-card);
+      border: 0.5px solid var(--border-card);
+      border-radius: 16px;
+      border-bottom-left-radius: 4px;
+      width: fit-content;
+    }
+
+    .loading-dots span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-tertiary);
+      animation: bounce 1.2s infinite;
+    }
+
+    .loading-dots span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .loading-dots span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes bounce {
+
+      0%,
+      60%,
+      100% {
+        transform: translateY(0);
+      }
+
+      30% {
+        transform: translateY(-5px);
+      }
+    }
+
+
+    #confirm-dialog,
+    #append-sheet,
+    #menu-sheet {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(0, 0, 0, 0.3);
+      align-items: flex-end;
+      justify-content: center;
+    }
+
+    #confirm-dialog.open,
+    #append-sheet.open,
+    #menu-sheet.open {
+      display: flex;
+    }
+
+    @keyframes slideUp {
+      from {
+        transform: translateY(40px);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .confirm-sheet,
+    .append-inner,
+    .menu-inner {
+      background: var(--bg);
+      border-radius: 20px 20px 0 0;
+      width: 100%;
+      max-width: 430px;
+      animation: slideUp 0.2s ease;
+    }
+
+    .confirm-sheet {
+      padding: 24px 24px 36px;
+    }
+
+    .append-inner {
+      padding: 20px 20px 36px;
+    }
+
+    .menu-inner {
+      padding: 20px 20px 36px;
+    }
+
+    .confirm-sheet h3,
+    .append-inner h3,
+    .menu-inner h3 {
+      font-family: var(--font-serif);
+      font-size: 17px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .confirm-sheet p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 20px;
+    }
+
+    .confirm-actions,
+    .append-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn-cancel,
+    .btn-append-cancel {
+      flex: 1;
+      padding: 13px;
+      background: var(--bg-tag);
+      border: none;
+      border-radius: 12px;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+
+    .btn-delete {
+      flex: 1;
+      padding: 13px;
+      background: #c0392b;
+      border: none;
+      border-radius: 12px;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      color: white;
+      cursor: pointer;
+    }
+
+    .btn-append-save {
+      flex: 1;
+      padding: 13px;
+      background: var(--text-primary);
+      border: none;
+      border-radius: 12px;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      color: var(--bg);
+      cursor: pointer;
+    }
+
+    .btn-append-save:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .append-context {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 14px;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .append-input-wrap {
+      background: var(--bg-card);
+      border: 0.5px solid var(--border-input);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+
+    .append-input-wrap textarea {
+      width: 100%;
+      background: none;
+      border: none;
+      outline: none;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      color: var(--text-primary);
+      resize: none;
+      line-height: 1.45;
+      min-height: 60px;
+    }
+
+    .append-input-wrap textarea::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .menu-inner h3 {
+      margin-bottom: 16px;
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 0;
+      border-top: 0.5px solid var(--border);
+      cursor: pointer;
+      color: var(--text-primary);
+      font-size: 15px;
+      background: none;
+      border-left: none;
+      border-right: none;
+      border-bottom: none;
+      width: 100%;
+      font-family: var(--font-sans);
+      text-align: left;
+      transition: color 0.15s;
+    }
+
+    .menu-item:hover {
+      color: var(--text-secondary);
+    }
+
+    .menu-item i {
+      font-size: 20px;
+      color: var(--text-secondary);
+    }
+
+    .menu-item.danger {
+      color: #c0392b;
+    }
+
+    .menu-item.danger i {
+      color: #c0392b;
+    }
+
+    #sidebar {
+      width: 240px;
+      flex-shrink: 0;
+      flex-direction: column;
+      background: var(--bg);
+      border-right: 0.5px solid var(--border);
+      padding: 16px 10px 20px;
+    }
+
+    .sb-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px 24px;
+    }
+
+    .sb-brand-name {
+      font-family: var(--font-serif);
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .sb-brand-status {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 1px;
+    }
+
+    .sb-nav {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .sb-tab {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-family: var(--font-sans);
+      width: 100%;
+      text-align: left;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .sb-tab i {
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .sb-tab:hover,
+    .sb-tab.active {
+      background: var(--bg-tag);
+      color: var(--text-primary);
+    }
+
+    .sb-tab.active {
+      font-weight: 500;
+    }
+
+    .sb-footer {
+      padding-top: 12px;
+      border-top: 0.5px solid var(--border);
+    }
+
+    .sb-footer-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-family: var(--font-sans);
+      width: 100%;
+      text-align: left;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .sb-footer-btn:hover {
+      background: var(--bg-tag);
+      color: var(--text-primary);
+    }
+
+    .sb-footer-btn i {
+      font-size: 18px;
+    }
+
+    @media (min-width: 768px) {
+
+      html,
+      body {
+        height: 100%;
+        overflow: auto;
+      }
+
+      body {
+        background: #ECEAE4;
+      }
+
+      #auth-overlay {
+        position: fixed;
+        inset: 0;
+        max-width: none;
+        background: rgba(236, 234, 228, 0.92);
+        backdrop-filter: blur(6px);
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+
+      .auth-card {
+        background: var(--bg);
+        border-radius: 20px;
+        padding: 40px 36px;
+        width: 420px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      #app {
+        flex-direction: row;
+        height: 100vh;
+        max-width: 1280px;
+        width: 100%;
+        border-radius: 0;
+        overflow: hidden;
+        box-shadow: none;
+      }
+
+      #sidebar {
+        display: flex;
+      }
+
+      #topbar {
+        display: none;
+      }
+
+      #navbar {
+        display: none;
+      }
+
+      #confirm-dialog,
+      #append-sheet,
+      #menu-sheet {
+        align-items: center;
+        justify-content: center;
+      }
+
+      .confirm-sheet,
+      .append-inner,
+      .menu-inner {
+        border-radius: 16px;
+        max-width: 400px;
+      }
+    }
+
+
+    ::-webkit-scrollbar {
+      width: 0;
+    }
+
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+      gap: 8px;
+      color: var(--text-tertiary);
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .empty-state i {
+      font-size: 32px;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+
+<body>
+
+
+  <div id="auth-overlay">
+    <div class="auth-card">
+      <div class="brain-logo">
+        <img src="/icon-transparent.svg" width="36" height="36" alt="Second Brain">
+      </div>
+      <h1>Second Brain</h1>
+      <p>Connect to your personal memory layer. Enter your Worker URL and Bearer token to get started.</p>
+      <div class="field-group">
+        <input type="url" id="auth-url" placeholder="https://second-brain.yourname.workers.dev" autocomplete="off"
+          autocapitalize="none">
+        <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="off">
+      </div>
+      <button id="auth-connect" onclick="connect()">Connect</button>
+      <div id="auth-error"></div>
+    </div>
+  </div>
+
+
+  <div id="app" style="display:none">
+
+    <div id="sidebar">
+      <div class="sb-logo">
+        <div class="brain-avatar">
+          <img src="/icon-transparent.svg" width="20" height="20" alt="Second Brain">
+        </div>
+        <div>
+          <div class="sb-brand-name">Second Brain</div>
+          <div class="sb-brand-status" id="sb-status">always remembers</div>
+        </div>
+      </div>
+      <nav class="sb-nav">
+        <button class="sb-tab active" id="sb-tab-recall" onclick="switchTab('recall')">
+          <i class="ti ti-search"></i><span>Recall</span>
+        </button>
+        <button class="sb-tab" id="sb-tab-recent" onclick="switchTab('recent')">
+          <i class="ti ti-clock"></i><span>Recent</span>
+        </button>
+        <button class="sb-tab" id="sb-tab-remember" onclick="switchTab('remember')">
+          <i class="ti ti-plus"></i><span>Remember</span>
+        </button>
+      </nav>
+      <div class="sb-footer">
+        <button class="sb-footer-btn" onclick="openMenu()">
+          <i class="ti ti-settings"></i><span>Settings</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="main-panel">
+      <div id="topbar">
+        <div class="brain-avatar">
+          <img src="/icon-transparent.svg" width="20" height="20" alt="Second Brain">
+        </div>
+        <div class="topbar-info">
+          <div class="topbar-name">Second Brain</div>
+          <div class="topbar-status" id="topbar-status">always remembers</div>
+        </div>
+        <button class="topbar-menu" onclick="openMenu()"><i class="ti ti-dots"></i></button>
+      </div>
+
+      <div id="screens">
+
+        <div class="screen active" id="screen-recall">
+          <div id="recall-messages">
+            <div class="brain-cards-wrapper" id="recall-welcome">
+              <div class="bubble brain">Ask me anything about what you've stored. I'll find it.</div>
+            </div>
+          </div>
+          <div class="suggestions-row">
+            <button class="suggestion-pill" onclick="sendSuggestion('What am I working on?')">What am I working
+              on?</button>
+            <button class="suggestion-pill" onclick="sendSuggestion('What did I decide recently?')">What did I decide
+              recently?</button>
+            <button class="suggestion-pill" onclick="sendSuggestion('Show my tasks')">Show my tasks</button>
+            <button class="suggestion-pill" onclick="sendSuggestion('What are my goals?')">What are my goals?</button>
+            <button class="suggestion-pill" onclick="sendSuggestion('What ideas do I have?')">What ideas do I
+              have?</button>
+          </div>
+          <div class="input-bar">
+            <div class="input-inner">
+              <textarea class="input-field" id="recall-input" placeholder="Ask your brain..." rows="1"
+                onkeydown="handleRecallKey(event)" oninput="autoResize(this)"></textarea>
+              <button class="send-btn" onclick="sendRecall()"><i class="ti ti-arrow-up"></i></button>
+            </div>
+          </div>
+        </div>
+
+
+        <div class="screen" id="screen-recent">
+          <div id="recent-list">
+            <div class="empty-state"><i class="ti ti-clock"></i><span>Loading memories...</span></div>
+          </div>
+          <div class="filter-bar">
+            <div class="filter-inner">
+              <input type="text" class="filter-field" id="filter-input" placeholder="Filter by tag..."
+                oninput="filterRecent(this.value)">
+              <button class="refresh-btn" id="refresh-btn" onclick="loadRecent()"><i class="ti ti-refresh"></i></button>
+            </div>
+          </div>
+        </div>
+
+
+        <div class="screen" id="screen-remember">
+          <div id="remember-messages">
+            <div class="bubble-row brain">
+              <div class="bubble brain">What do you want to remember? Use <span
+                  style="color:var(--text-secondary)">#tags</span> to organize.</div>
+            </div>
+          </div>
+          <div class="input-bar">
+            <div class="input-hint">Tip: add <span class="hint-tags">#tags</span> anywhere in your message</div>
+            <div class="input-inner">
+              <textarea class="input-field" id="remember-input" placeholder="Tell your brain something..." rows="1"
+                onkeydown="handleRememberKey(event)" oninput="autoResize(this)"></textarea>
+              <button class="send-btn" onclick="sendRemember()"><i class="ti ti-arrow-up"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="navbar">
+        <button class="nav-tab active" id="tab-recall" onclick="switchTab('recall')">
+          <i class="ti ti-search"></i><span>Recall</span>
+        </button>
+        <button class="nav-tab" id="tab-recent" onclick="switchTab('recent')">
+          <i class="ti ti-clock"></i><span>Recent</span>
+        </button>
+        <button class="nav-tab" id="tab-remember" onclick="switchTab('remember')">
+          <i class="ti ti-plus"></i><span>Remember</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="confirm-dialog">
+    <div class="confirm-sheet">
+      <h3>Forget this memory?</h3>
+      <p>This can't be undone. The memory will be removed from your brain.</p>
+      <div class="confirm-actions">
+        <button class="btn-cancel" onclick="closeConfirm()">Cancel</button>
+        <button class="btn-delete" onclick="confirmForget()">Forget</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="append-sheet">
+    <div class="append-inner">
+      <h3>Add an update</h3>
+      <div class="append-context" id="append-context-preview"></div>
+      <div class="append-input-wrap">
+        <textarea id="append-textarea" placeholder="What's changed or new?" rows="3"></textarea>
+      </div>
+      <div class="append-actions">
+        <button class="btn-append-cancel" onclick="closeAppend()">Cancel</button>
+        <button class="btn-append-save" id="append-save-btn" onclick="saveAppend()">Update</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="menu-sheet">
+    <div class="menu-inner">
+      <h3>Second Brain</h3>
+      <button class="menu-item" onclick="closeMenu(); switchTab('recent')">
+        <i class="ti ti-clock"></i> View all memories
+      </button>
+      <button class="menu-item danger" onclick="logout()">
+        <i class="ti ti-logout"></i> Disconnect
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let WORKER_URL = '', AUTH_TOKEN = '', allEntries = [];
+    let pendingForgetId = null, pendingAppendId = null, pendingForgetCard = null;
+    let currentTab = 'recall';
+
+    function init() {
+      const url = localStorage.getItem('sb_url');
+      const tok = localStorage.getItem('sb_token');
+      if (url && tok) { WORKER_URL = url; AUTH_TOKEN = tok; showApp(); }
+    }
+
+    async function connect() {
+      const url = document.getElementById('auth-url').value.trim().replace(/\/$/, '');
+      const tok = document.getElementById('auth-token').value.trim();
+      const err = document.getElementById('auth-error');
+      const btn = document.getElementById('auth-connect');
+      if (!url || !tok) { err.textContent = 'Please fill in both fields.'; return; }
+      btn.textContent = 'Connecting...'; btn.disabled = true; err.textContent = '';
+      try {
+        const res = await fetch(`${url}/list?n=1`, { headers: { 'Authorization': `Bearer ${tok}` } });
+        if (res.status === 401) throw new Error('Invalid token');
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        localStorage.setItem('sb_url', url); localStorage.setItem('sb_token', tok);
+        WORKER_URL = url; AUTH_TOKEN = tok; showApp();
+      } catch (e) {
+        err.textContent = e.message || 'Could not connect.';
+        btn.textContent = 'Connect'; btn.disabled = false;
+      }
+    }
+
+    function showApp() {
+      document.getElementById('auth-overlay').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+      loadRecent(); updateStatus();
+    }
+
+    function logout() {
+      closeMenu();
+      localStorage.removeItem('sb_url'); localStorage.removeItem('sb_token');
+      WORKER_URL = ''; AUTH_TOKEN = '';
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('auth-overlay').style.display = 'flex';
+      document.getElementById('auth-url').value = '';
+      document.getElementById('auth-token').value = '';
+      document.getElementById('auth-error').textContent = '';
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('.nav-tab, .sb-tab').forEach(t => t.classList.remove('active'));
+      document.getElementById('screen-' + tab).classList.add('active');
+      document.getElementById('tab-' + tab).classList.add('active');
+      const sbTab = document.getElementById('sb-tab-' + tab);
+      if (sbTab) sbTab.classList.add('active');
+      if (tab === 'recent') loadRecent();
+    }
+
+    async function updateStatus() {
+      try {
+        const res = await fetch(`${WORKER_URL}/list?n=1000`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
+        const data = await res.json();
+        const count = Array.isArray(data) ? data.length : 0;
+        const text = count === 0 ? 'always remembers' : `${count} memor${count === 1 ? 'y' : 'ies'} stored`;
+        document.getElementById('topbar-status').textContent = text;
+        const sb = document.getElementById('sb-status');
+        if (sb) sb.textContent = text;
+      } catch { }
+    }
+
+    async function apiMcp(toolName, args) {
+      const res = await fetch(`${WORKER_URL}/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: toolName, arguments: args } })
+      });
+      const text = await res.text();
+      const match = text.match(/data: ({.+})/s);
+      if (!match) throw new Error('Invalid response');
+      const json = JSON.parse(match[1]);
+      if (json.error) throw new Error(json.error.message || 'MCP error');
+      return json.result?.content?.[0]?.text ?? '';
+    }
+
+    async function apiCapture(content, tags, source) {
+      const res = await fetch(`${WORKER_URL}/capture`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
+        body: JSON.stringify({ content, tags, source: source || 'web-ui' })
+      });
+      return res.json();
+    }
+
+    async function apiList(n = 50) {
+      const res = await fetch(`${WORKER_URL}/list?n=${n}`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
+      return res.json();
+    }
+
+    function sendSuggestion(text) {
+      document.getElementById('recall-input').value = text; sendRecall();
+    }
+    function handleRecallKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendRecall(); } }
+
+    async function sendRecall() {
+      const input = document.getElementById('recall-input');
+      const query = input.value.trim();
+      if (!query) return;
+      const msgs = document.getElementById('recall-messages');
+      const welcome = document.getElementById('recall-welcome');
+      if (welcome) welcome.remove();
+      appendUserBubble(msgs, query);
+      input.value = ''; autoResize(input);
+      const loadingEl = appendLoading(msgs);
+      msgs.scrollTop = msgs.scrollHeight;
+      try {
+        const result = await apiMcp('recall', { query, topK: 5 });
+        loadingEl.remove();
+        if (!result || result.includes('Nothing found')) {
+          appendBrainBubble(msgs, "I couldn't find anything matching that. Try different words or check Recent.");
+        } else {
+          const entries = parseRecallResult(result);
+          appendBrainBubble(msgs, `Found ${entries.length} memor${entries.length === 1 ? 'y' : 'ies'}. Here's what I have:`);
+          const cardsWrapper = document.createElement('div');
+          cardsWrapper.className = 'brain-cards-wrapper';
+          entries.forEach(e => cardsWrapper.appendChild(makeRecallCard(e)));
+          msgs.appendChild(cardsWrapper);
+        }
+      } catch {
+        loadingEl.remove();
+        appendBrainBubble(msgs, 'Something went wrong. Check your connection and try again.');
+      }
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function parseRecallResult(text) {
+      const entries = [];
+      text.split(/\n\n(?=\d+\.)/).filter(b => b.trim()).forEach(block => {
+        const h = block.match(/^\d+\.\s+\[(.+?)\]\s+\((\d+)%[^)]*\)(?:\s+\([^)]*\))?(?:\s+\[[^\]]*\])?/);
+        if (h) {
+          const meta = h[1], score = parseInt(h[2]);
+          const content = block.replace(/^\d+\.\s+\[.+?\]\s+\([^)]+\)(?:\s+\([^)]*\))?(?:\s+\[[^\]]*\])?\n?/, '').trim();
+          const parts = meta.split(' · ');
+          const tagsStr = parts.slice(2).join(' · ');
+          const tags = tagsStr ? tagsStr.replace(/^\[|\]$/g, '').split(', ').filter(Boolean) : [];
+          entries.push({ score, content, date: parts[0] || '', source: parts[1] || '', tags });
+        }
+      });
+      return entries;
+    }
+
+    function makeRecallCard(entry) {
+      const card = document.createElement('div');
+      card.className = 'memory-card';
+      card.innerHTML = `
+    <div class="match-line">
+      <span class="match-pct">${entry.score}%</span>
+      <div class="match-bar-bg"><div class="match-bar-fill" style="width:${entry.score}%"></div></div>
+    </div>
+    <div class="card-content">${escHtml(entry.content)}</div>
+    <div class="card-footer">
+      <div class="card-tags">${entry.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
+      <div class="card-actions">
+        <button class="card-action-btn" onclick="openAppendFromContent('${escAttr(entry.content)}')"><i class="ti ti-writing"></i> Append</button>
+      </div>
+    </div>`;
+      return card;
+    }
+
+    async function loadRecent() {
+      const list = document.getElementById('recent-list');
+      const btn = document.getElementById('refresh-btn');
+      btn.classList.add('spinning');
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>Loading...</span></div>`;
+      try {
+        allEntries = await apiList(50);
+        renderRecent(allEntries); updateStatus();
+      } catch {
+        list.innerHTML = `<div class="empty-state"><i class="ti ti-wifi-off"></i><span>Could not load memories.</span></div>`;
+      }
+      btn.classList.remove('spinning');
+    }
+
+    function filterRecent(val) {
+      const tag = val.replace(/^#/, '').toLowerCase().trim();
+      if (!tag) { renderRecent(allEntries); return; }
+      renderRecent(allEntries.filter(e => {
+        try { return JSON.parse(e.tags || '[]').some(t => t.toLowerCase().includes(tag)); } catch { return false; }
+      }));
+    }
+
+    function renderRecent(entries) {
+      const list = document.getElementById('recent-list');
+      if (!entries.length) {
+        list.innerHTML = `<div class="empty-state"><i class="ti ti-brain"></i><span>No memories yet.<br>Use Remember to add some.</span></div>`;
+        return;
+      }
+      const groups = {}, now = new Date();
+      const today = toDateStr(now), yesterday = toDateStr(new Date(now - 86400000));
+      entries.forEach(entry => {
+        const d = new Date(entry.created_at), ds = toDateStr(d);
+        const label = ds === today ? 'Today' : ds === yesterday ? 'Yesterday' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        if (!groups[label]) groups[label] = [];
+        groups[label].push(entry);
+      });
+      list.innerHTML = '';
+      Object.entries(groups).forEach(([label, group]) => {
+        const g = document.createElement('div');
+        g.className = 'date-group';
+        g.innerHTML = `<div class="date-label">${label}</div>`;
+        const cards = document.createElement('div');
+        cards.className = 'recent-cards';
+        group.forEach(e => cards.appendChild(makeRecentCard(e)));
+        g.appendChild(cards); list.appendChild(g);
+      });
+    }
+
+    function toDateStr(d) { return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; }
+
+    function makeRecentCard(entry) {
+      let tags = [];
+      try { tags = JSON.parse(entry.tags || '[]'); } catch { }
+      const card = document.createElement('div');
+      card.className = 'memory-card';
+      card.dataset.id = entry.id;
+      card.innerHTML = `
+    <div class="card-content">${escHtml(entry.content)}</div>
+    <div class="card-footer">
+      <div class="card-tags">${tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
+      <div class="card-actions">
+        <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
+        <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>
+      </div>
+    </div>`;
+      return card;
+    }
+
+    function handleRememberKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendRemember(); } }
+
+    async function sendRemember() {
+      const input = document.getElementById('remember-input');
+      const raw = input.value.trim();
+      if (!raw) return;
+      const msgs = document.getElementById('remember-messages');
+      const tags = [], tagRe = /#([a-zA-Z0-9_-]+)/g;
+      let m;
+      while ((m = tagRe.exec(raw)) !== null) tags.push(m[1]);
+      const content = raw.replace(/#[a-zA-Z0-9_-]+/g, '').trim();
+      const userRow = document.createElement('div');
+      userRow.className = 'bubble-row user';
+      userRow.innerHTML = `<div class="bubble user">${raw.replace(/#([a-zA-Z0-9_-]+)/g, '<span class="hashtag">#$1</span>')}</div>`;
+      msgs.appendChild(userRow);
+      input.value = ''; autoResize(input);
+      msgs.scrollTop = msgs.scrollHeight;
+      const loadingEl = appendLoading(msgs);
+      msgs.scrollTop = msgs.scrollHeight;
+      try {
+        const result = await apiCapture(content || raw, tags, 'web-ui');
+        loadingEl.remove();
+        if (result.duplicate) {
+          appendBrainBubble(msgs, "I already have something very similar stored. Skipped to avoid duplicates.");
+        } else {
+          appendBrainBubble(msgs, "Stored. I'll remember that.");
+          if (tags.length) {
+            const confirmEl = document.createElement('div');
+            confirmEl.className = 'confirm-block';
+            confirmEl.innerHTML = `<div class="confirm-line"><i class="ti ti-circle-check"></i> Tagged as:</div><div class="confirm-tags">${tags.map(t => `<span class="confirm-tag">${escHtml(t)}</span>`).join('')}</div>`;
+            msgs.appendChild(confirmEl);
+          }
+          updateStatus();
+        }
+      } catch {
+        loadingEl.remove();
+        appendBrainBubble(msgs, 'Something went wrong. Try again.');
+      }
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function openAppend(id, preview) {
+      pendingAppendId = id;
+      document.getElementById('append-context-preview').textContent = preview + '...';
+      document.getElementById('append-textarea').value = '';
+      document.getElementById('append-sheet').classList.add('open');
+      setTimeout(() => document.getElementById('append-textarea').focus(), 100);
+    }
+    function openAppendFromContent() { switchTab('remember'); document.getElementById('remember-input').focus(); }
+    function closeAppend() { document.getElementById('append-sheet').classList.remove('open'); pendingAppendId = null; }
+    async function saveAppend() {
+      const addition = document.getElementById('append-textarea').value.trim();
+      if (!addition || !pendingAppendId) return;
+      const btn = document.getElementById('append-save-btn');
+      btn.disabled = true; btn.textContent = 'Saving...';
+      try {
+        await apiMcp('append', { id: pendingAppendId, addition });
+        closeAppend(); loadRecent(); updateStatus();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Update';
+        alert('Append failed: ' + e.message);
+      }
+    }
+
+    function openConfirm(id, btn) {
+      pendingForgetId = id;
+      pendingForgetCard = btn.closest('.memory-card');
+      document.getElementById('confirm-dialog').classList.add('open');
+    }
+    function closeConfirm() {
+      document.getElementById('confirm-dialog').classList.remove('open');
+      pendingForgetId = null; pendingForgetCard = null;
+    }
+    async function confirmForget() {
+      if (!pendingForgetId) return;
+      closeConfirm();
+      if (pendingForgetCard) {
+        pendingForgetCard.style.transition = 'opacity 0.3s, transform 0.3s';
+        pendingForgetCard.style.opacity = '0';
+        pendingForgetCard.style.transform = 'scale(0.97)';
+        setTimeout(() => pendingForgetCard?.remove(), 300);
+      }
+      try {
+        await apiMcp('forget', { id: pendingForgetId });
+        allEntries = allEntries.filter(e => e.id !== pendingForgetId);
+        updateStatus();
+      } catch { }
+    }
+
+    function openMenu() { document.getElementById('menu-sheet').classList.add('open'); }
+    function closeMenu() { document.getElementById('menu-sheet').classList.remove('open'); }
+
+    document.getElementById('confirm-dialog').addEventListener('click', e => { if (e.target === document.getElementById('confirm-dialog')) closeConfirm(); });
+    document.getElementById('append-sheet').addEventListener('click', e => { if (e.target === document.getElementById('append-sheet')) closeAppend(); });
+    document.getElementById('menu-sheet').addEventListener('click', e => { if (e.target === document.getElementById('menu-sheet')) closeMenu(); });
+
+    function appendBrainBubble(container, text) {
+      const row = document.createElement('div');
+      row.className = 'bubble-row brain';
+      row.innerHTML = `<div class="bubble brain">${escHtml(text)}</div>`;
+      container.appendChild(row);
+    }
+    function appendUserBubble(container, text) {
+      const row = document.createElement('div');
+      row.className = 'bubble-row user';
+      const time = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      row.innerHTML = `<div><div class="bubble user">${escHtml(text)}</div><div class="bubble-time">${time}</div></div>`;
+      container.appendChild(row);
+    }
+    function appendLoading(container) {
+      const row = document.createElement('div');
+      row.className = 'bubble-row brain';
+      row.innerHTML = `<div class="loading-dots"><span></span><span></span><span></span></div>`;
+      container.appendChild(row);
+      return row;
+    }
+    function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 80) + 'px'; }
+    function escHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+    function escAttr(s) { return String(s).replace(/'/g, "\\'").replace(/\n/g, ' ').slice(0, 100); }
+
+    init();
+  </script>
+</body>
+
+</html>

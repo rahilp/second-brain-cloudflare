@@ -19,3 +19,6 @@ index_name = "second-brain-vectors"
 
 [ai]
 binding = "AI"
+
+[assets]
+directory = "./public"
