@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Second Brain">
   <meta name="theme-color" content="#F5F4EF">
@@ -1137,13 +1137,13 @@
         <img src="/icon-transparent.svg" width="36" height="36" alt="Second Brain">
       </div>
       <h1>Second Brain</h1>
-      <p>Connect to your personal memory layer. Enter your Worker URL and Bearer token to get started.</p>
-      <div class="field-group">
-        <input type="url" id="auth-url" placeholder="https://second-brain.yourname.workers.dev" autocomplete="off"
-          autocapitalize="none">
-        <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="off">
-      </div>
-      <button id="auth-connect" onclick="connect()">Connect</button>
+      <p>Enter your Bearer token to connect to your personal memory layer.</p>
+      <form class="field-group" onsubmit="connect(); return false;">
+        <input type="text" name="username" value="user" autocomplete="username" style="display:none">
+        <input type="url" id="auth-url" autocomplete="off" autocapitalize="none">
+        <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="current-password">
+        <button id="auth-connect" type="submit">Connect</button>
+      </form>
       <div id="auth-error"></div>
     </div>
   </div>
@@ -1311,9 +1311,13 @@
     let currentTab = 'recall';
 
     function init() {
-      const url = localStorage.getItem('sb_url');
+      // Auto-populate URL from the current page origin (UI is hosted on the same Worker)
+      const origin = window.location.origin;
+      document.getElementById('auth-url').value = origin;
+
+      const url = localStorage.getItem('sb_url') || origin;
       const tok = localStorage.getItem('sb_token');
-      if (url && tok) { WORKER_URL = url; AUTH_TOKEN = tok; showApp(); }
+      if (tok) { WORKER_URL = url; AUTH_TOKEN = tok; showApp(); }
     }
 
     async function connect() {
