@@ -744,7 +744,8 @@
 
     #confirm-dialog,
     #append-sheet,
-    #menu-sheet {
+    #menu-sheet,
+    #view-sheet {
       display: none;
       position: fixed;
       inset: 0;
@@ -756,7 +757,8 @@
 
     #confirm-dialog.open,
     #append-sheet.open,
-    #menu-sheet.open {
+    #menu-sheet.open,
+    #view-sheet.open {
       display: flex;
     }
 
@@ -774,7 +776,8 @@
 
     .confirm-sheet,
     .append-inner,
-    .menu-inner {
+    .menu-inner,
+    .view-inner {
       background: var(--bg);
       border-radius: 20px 20px 0 0;
       width: 100%;
@@ -794,9 +797,17 @@
       padding: 20px 20px 36px;
     }
 
+    .view-inner {
+      padding: 20px 20px 36px;
+      display: flex;
+      flex-direction: column;
+      max-height: 90vh;
+    }
+
     .confirm-sheet h3,
     .append-inner h3,
-    .menu-inner h3 {
+    .menu-inner h3,
+    .view-header h3 {
       font-family: var(--font-serif);
       font-size: 17px;
       font-weight: 500;
@@ -807,6 +818,82 @@
       font-size: 14px;
       color: var(--text-secondary);
       margin-bottom: 20px;
+    }
+
+    .view-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-shrink: 0;
+    }
+
+    .btn-close-icon {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+    }
+
+    .view-content {
+      font-size: 15px;
+      color: var(--text-primary);
+      line-height: 1.5;
+      overflow-y: auto;
+      margin-bottom: 16px;
+      white-space: pre-wrap;
+    }
+
+    .view-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 20px;
+      flex-shrink: 0;
+    }
+
+    .view-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: auto;
+      flex-shrink: 0;
+    }
+
+    .btn-view-append {
+      flex: 1;
+      padding: 13px;
+      background: var(--bg-tag);
+      border: none;
+      border-radius: 12px;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      color: var(--text-primary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-view-forget {
+      flex: 1;
+      padding: 13px;
+      background: #fdeaea;
+      border: none;
+      border-radius: 12px;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      color: #c0392b;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
     }
 
     .confirm-actions,
@@ -1069,7 +1156,7 @@
       #app {
         flex-direction: row;
         height: 100vh;
-        max-width: 1280px;
+        max-width: 100%;
         width: 100%;
         border-radius: 0;
         overflow: hidden;
@@ -1090,14 +1177,16 @@
 
       #confirm-dialog,
       #append-sheet,
-      #menu-sheet {
+      #menu-sheet,
+      #view-sheet {
         align-items: center;
         justify-content: center;
       }
 
       .confirm-sheet,
       .append-inner,
-      .menu-inner {
+      .menu-inner,
+      .view-inner {
         border-radius: 16px;
         max-width: 400px;
       }
@@ -1211,6 +1300,10 @@
           </div>
           <div class="input-bar">
             <div class="input-inner">
+              <button id="recall-clear-btn" class="refresh-btn" onclick="clearRecall()" style="display:none;"
+                title="Clear Chat">
+                <i class="ti ti-trash"></i>
+              </button>
               <textarea class="input-field" id="recall-input" placeholder="Ask your brain..." rows="1"
                 onkeydown="handleRecallKey(event)" oninput="autoResize(this)"></textarea>
               <button class="send-btn" onclick="sendRecall()"><i class="ti ti-arrow-up"></i></button>
@@ -1243,6 +1336,10 @@
           <div class="input-bar">
             <div class="input-hint">Tip: add <span class="hint-tags">#tags</span> anywhere in your message</div>
             <div class="input-inner">
+              <button id="remember-clear-btn" class="refresh-btn" onclick="clearRemember()" style="display:none;"
+                title="Clear Chat">
+                <i class="ti ti-trash"></i>
+              </button>
               <textarea class="input-field" id="remember-input" placeholder="Tell your brain something..." rows="1"
                 onkeydown="handleRememberKey(event)" oninput="autoResize(this)"></textarea>
               <button class="send-btn" onclick="sendRemember()"><i class="ti ti-arrow-up"></i></button>
@@ -1288,6 +1385,21 @@
       <div class="append-actions">
         <button class="btn-append-cancel" onclick="closeAppend()">Cancel</button>
         <button class="btn-append-save" id="append-save-btn" onclick="saveAppend()">Update</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-sheet">
+    <div class="view-inner">
+      <div class="view-header">
+        <h3>Memory</h3>
+        <button class="btn-close-icon" onclick="closeView()"><i class="ti ti-x"></i></button>
+      </div>
+      <div class="view-content" id="view-content-text"></div>
+      <div class="view-tags" id="view-tags-container"></div>
+      <div class="view-actions">
+        <button class="btn-view-append" id="view-btn-append"><i class="ti ti-writing"></i> Append</button>
+        <button class="btn-view-forget" id="view-btn-forget"><i class="ti ti-trash"></i> Forget</button>
       </div>
     </div>
   </div>
@@ -1435,6 +1547,7 @@
           cardsWrapper.className = 'brain-cards-wrapper';
           entries.forEach(e => cardsWrapper.appendChild(makeRecallCard(e)));
           msgs.appendChild(cardsWrapper);
+          document.getElementById('recall-clear-btn').style.display = 'flex';
         }
       } catch {
         loadingEl.remove();
@@ -1449,11 +1562,17 @@
         const h = block.match(/^\d+\.\s+\[(.+?)\]\s+\((\d+)%[^)]*\)(?:\s+\([^)]*\))?(?:\s+\[[^\]]*\])?/);
         if (h) {
           const meta = h[1], score = parseInt(h[2]);
-          const content = block.replace(/^\d+\.\s+\[.+?\]\s+\([^)]+\)(?:\s+\([^)]*\))?(?:\s+\[[^\]]*\])?\n?/, '').trim();
+          let content = block.replace(/^\d+\.\s+\[.+?\]\s+\([^)]+\)(?:\s+\([^)]*\))?(?:\s+\[[^\]]*\])?\n?/, '').trim();
+          let id = '';
+          const idMatch = content.match(/^ID:\s+([^\n]+)\n?/);
+          if (idMatch) {
+            id = idMatch[1].trim();
+            content = content.substring(idMatch[0].length).trim();
+          }
           const parts = meta.split(' · ');
           const tagsStr = parts.slice(2).join(' · ');
           const tags = tagsStr ? tagsStr.replace(/^\[|\]$/g, '').split(', ').filter(Boolean) : [];
-          entries.push({ score, content, date: parts[0] || '', source: parts[1] || '', tags });
+          entries.push({ score, id, content, date: parts[0] || '', source: parts[1] || '', tags });
         }
       });
       return entries;
@@ -1467,13 +1586,17 @@
       <span class="match-pct">${entry.score}%</span>
       <div class="match-bar-bg"><div class="match-bar-fill" style="width:${entry.score}%"></div></div>
     </div>
-    <div class="card-content">${escHtml(entry.content)}</div>
+    <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
     <div class="card-footer">
       <div class="card-tags">${entry.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
-        <button class="card-action-btn" onclick="openAppendFromContent('${escAttr(entry.content)}')"><i class="ti ti-writing"></i> Append</button>
+        ${entry.id
+          ? `<button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>`
+          : `<button class="card-action-btn" onclick="openAppendFromContent('${escAttr(entry.content)}')"><i class="ti ti-writing"></i> Append</button>`
+        }
       </div>
     </div>`;
+      card.querySelector('.card-content').onclick = () => openView(entry, card);
       return card;
     }
 
@@ -1534,7 +1657,7 @@
       card.className = 'memory-card';
       card.dataset.id = entry.id;
       card.innerHTML = `
-    <div class="card-content">${escHtml(entry.content)}</div>
+    <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
     <div class="card-footer">
       <div class="card-tags">${tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
@@ -1542,6 +1665,7 @@
         <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>
       </div>
     </div>`;
+      card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card);
       return card;
     }
 
@@ -1579,6 +1703,7 @@
           }
           updateStatus();
         }
+        document.getElementById('remember-clear-btn').style.display = 'flex';
       } catch {
         loadingEl.remove();
         appendBrainBubble(msgs, 'Something went wrong. Try again.');
@@ -1609,9 +1734,9 @@
       }
     }
 
-    function openConfirm(id, btn) {
+    function openConfirm(id, btnOrCard) {
       pendingForgetId = id;
-      pendingForgetCard = btn.closest('.memory-card');
+      pendingForgetCard = btnOrCard ? (btnOrCard.classList?.contains('memory-card') ? btnOrCard : btnOrCard.closest('.memory-card')) : null;
       document.getElementById('confirm-dialog').classList.add('open');
     }
     function closeConfirm() {
@@ -1620,6 +1745,7 @@
     }
     async function confirmForget() {
       if (!pendingForgetId) return;
+      const idToForget = pendingForgetId;
       closeConfirm();
       if (pendingForgetCard) {
         pendingForgetCard.style.transition = 'opacity 0.3s, transform 0.3s';
@@ -1628,8 +1754,8 @@
         setTimeout(() => pendingForgetCard?.remove(), 300);
       }
       try {
-        await apiMcp('forget', { id: pendingForgetId });
-        allEntries = allEntries.filter(e => e.id !== pendingForgetId);
+        await apiMcp('forget', { id: idToForget });
+        allEntries = allEntries.filter(e => e.id !== idToForget);
         updateStatus();
       } catch { }
     }
@@ -1637,9 +1763,34 @@
     function openMenu() { document.getElementById('menu-sheet').classList.add('open'); }
     function closeMenu() { document.getElementById('menu-sheet').classList.remove('open'); }
 
+    function openView(entry, cardElement) {
+      document.getElementById('view-content-text').textContent = entry.content;
+      const tagsContainer = document.getElementById('view-tags-container');
+      tagsContainer.innerHTML = '';
+      if (entry.tags && entry.tags.length > 0) {
+        tagsContainer.innerHTML = entry.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('');
+      }
+      const appendBtn = document.getElementById('view-btn-append');
+      if (entry.id) {
+        appendBtn.onclick = () => { closeView(); openAppend(entry.id, entry.content.slice(0, 80)); };
+      } else {
+        appendBtn.onclick = () => { closeView(); openAppendFromContent(entry.content); };
+      }
+      const forgetBtn = document.getElementById('view-btn-forget');
+      if (entry.id) {
+        forgetBtn.onclick = () => { closeView(); openConfirm(entry.id, cardElement || null); };
+        forgetBtn.style.display = 'flex';
+      } else {
+        forgetBtn.style.display = 'none';
+      }
+      document.getElementById('view-sheet').classList.add('open');
+    }
+    function closeView() { document.getElementById('view-sheet').classList.remove('open'); }
+
     document.getElementById('confirm-dialog').addEventListener('click', e => { if (e.target === document.getElementById('confirm-dialog')) closeConfirm(); });
     document.getElementById('append-sheet').addEventListener('click', e => { if (e.target === document.getElementById('append-sheet')) closeAppend(); });
     document.getElementById('menu-sheet').addEventListener('click', e => { if (e.target === document.getElementById('menu-sheet')) closeMenu(); });
+    document.getElementById('view-sheet').addEventListener('click', e => { if (e.target === document.getElementById('view-sheet')) closeView(); });
 
     function appendBrainBubble(container, text) {
       const row = document.createElement('div');
@@ -1662,6 +1813,16 @@
       return row;
     }
     function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 80) + 'px'; }
+    function clearRemember() {
+      const msgs = document.getElementById('remember-messages');
+      msgs.innerHTML = `<div class="bubble-row brain"><div class="bubble brain">What do you want to remember? Use <span style="color:var(--text-secondary)">#tags</span> to organize.</div></div>`;
+      document.getElementById('remember-clear-btn').style.display = 'none';
+    }
+    function clearRecall() {
+      const msgs = document.getElementById('recall-messages');
+      msgs.innerHTML = `<div class="brain-cards-wrapper" id="recall-welcome"><div class="bubble brain">Ask me anything about what you've stored. I'll find it.</div></div>`;
+      document.getElementById('recall-clear-btn').style.display = 'none';
+    }
     function escHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
     function escAttr(s) { return String(s).replace(/'/g, "\\'").replace(/\n/g, ' ').slice(0, 100); }
 
