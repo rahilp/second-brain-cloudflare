@@ -14,6 +14,8 @@ database_id = ""
 [[vectorize]]
 binding = "VECTORIZE"
 index_name = "second-brain-vectors"
+dimensions = 384
+metric = "cosine"
 # Created automatically by Deploy to Cloudflare button
 # Or manually: wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine
 
