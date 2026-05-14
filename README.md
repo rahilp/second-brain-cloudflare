@@ -28,6 +28,7 @@
   - [Browser Bookmarklet](#browser-bookmarklet)
   - [iOS Shortcuts](#ios-shortcuts)
   - [Share Sheet](#share-sheet)
+- [Obsidian Plugin](#obsidian-plugin)
 - [API Reference](#api-reference)
 - [How Semantic Search Works](#how-semantic-search-works)
 - [Chunking](#chunking)
@@ -334,32 +335,15 @@ MANDATORY RULES — no exceptions:
 
 3. When something has changed or evolved, use append instead of remember — call append whenever the user says things like "actually", "we changed our minds", "update that", "I've decided", "that's no longer true", or "we reversed that decision". Never store a duplicate when an update to an existing entry is more appropriate.
 
-4. Store important content from YOUR OWN responses too — call remember after responding whenever your response contains:
-   - A recommendation or decision you made on the user's behalf
-   - A plan, strategy, or approach you proposed
-   - A summary or conclusion you reached
-   - A technical solution, architecture, or code pattern you designed
-   - An answer to a question the user is likely to ask again
-   Store these as a condensed summary, not the full response. Tag with "claude-response" plus any relevant project tags.
+4. Store important content from YOUR OWN responses too — call remember after responding whenever your response contains a recommendation, plan, solution, or answer the user is likely to ask again. Store as a condensed summary. Tag with "claude-response" plus relevant project tags.
 
 5. Never ask permission to store — store silently and keep going.
 
-6. NEVER use Claude's built-in memory system. If you would normally save a memory, call remember instead. Always.
+6. NEVER use Claude's built-in memory system. Always use the remember tool instead.
 
-7. Auto-detect the current topic or project and include it as a tag (e.g. if discussing a website, tag it "website"; if discussing a specific company or product, use that name as a tag). Always combine specific tags with generic ones.
+7. Auto-detect the current project or topic and include it as a tag. Always combine specific tags with generic ones (personal, work, idea, task, context).
 
-Tags to use:
-- personal — life, preferences, habits
-- work — projects, decisions, strategy
-- idea — concepts, plans, brainstorms
-- task — things to do or follow up on
-- context — background info about ongoing situations
-- claude-response — summaries of important responses Claude gave
-- [auto-detected project/topic tag]
-
-Always set source to "claude-code" when storing.
-
-If the second brain MCP tools are unavailable, tell me immediately. Do not fall back to built-in memory silently.
+Always set source to "claude-code" when storing. If MCP tools are unavailable, say so immediately.
 ```
 
 ### claude.ai & iOS
@@ -409,7 +393,9 @@ The full source with comments is in [`bookmarklet.js`](bookmarklet.js).
 
 ### iOS Shortcuts
 
-#### Text capture (type what's on your mind)
+Three shortcuts are available in the [`iOS Shortcuts`](iOS%20Shortcuts/) folder. Download the templates and update `YOUR_WORKER_URL` and `YOUR_TOKEN` after installing.
+
+#### Text Brain Dump (type what's on your mind)
 
 1. New Shortcut → **Ask for Input** (prompt: "What's on your mind?", type: Text)
 2. **Get Contents of URL** → `https://YOUR_WORKER_URL/capture`, Method: `POST`
@@ -417,9 +403,7 @@ The full source with comments is in [`bookmarklet.js`](bookmarklet.js).
    - Body (JSON): `content` = Ask for Input result, `source` = `phone`
 3. **Show Notification** → "Saved ✓"
 
-[Download Shortcut](https://www.icloud.com/shortcuts/f415ad8658084c17b5a2916b327e4ff2) — after installing, open the shortcut and update `YOUR_WORKER_URL` and `YOUR_TOKEN` with your values.
-
-#### Voice capture (hands-free brain dump)
+#### Brain Dump (hands-free voice capture)
 
 1. New Shortcut → **Dictate Text** (stop: after pause)
 2. **Get Contents of URL** → same config as above, `source` = `voice`
@@ -427,11 +411,9 @@ The full source with comments is in [`bookmarklet.js`](bookmarklet.js).
 
 Name it something Siri-friendly like **"Brain dump"** to trigger hands-free: *"Hey Siri, Brain dump."*
 
-[Download Shortcut](https://www.icloud.com/shortcuts/d82917d9bc904f619fdb7f8f57f8797b) — after installing, open the shortcut and update `YOUR_WORKER_URL` and `YOUR_TOKEN` with your values.
-
 ### Share Sheet
 
-Save any link directly from Safari or any app:
+Save any link directly from Safari or any app using the **Save to Brain** shortcut in the [`iOS Shortcuts`](iOS%20Shortcuts/) folder.
 
 1. New Shortcut → enable **Show in Share Sheet** (accepts: URLs, Articles, Text)
 2. **Get Name** of Shortcut Input
@@ -439,6 +421,41 @@ Save any link directly from Safari or any app:
 4. **Text** action combining name + URL
 5. **Get Contents of URL** → same POST config, `source` = `browser`, `tags` = `["reading"]`
 6. **Show Notification** → "Saved ✓"
+
+
+---
+
+## Obsidian Plugin
+
+Sync your Obsidian notes directly to your Second Brain with the official plugin.
+
+**[second-brain-obsidian-plugin](https://github.com/rahilp/second-brain-obsidian-plugin)** — available on GitHub and in the Obsidian Community Plugin directory.
+
+### Install from Obsidian Community Plugins (recommended)
+
+1. Open Obsidian → Settings → Community Plugins → Browse
+2. Search for **Second Brain Sync**
+3. Click Install → Enable
+
+### Install via BRAT (for early access before review)
+
+1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from Community Plugins
+2. Open BRAT settings → Add Beta Plugin
+3. Enter: `https://github.com/rahilp/second-brain-obsidian-plugin`
+
+### Manual install
+
+1. Download `main.js` and `manifest.json` from the [latest release](https://github.com/rahilp/second-brain-obsidian-plugin/releases)
+2. Copy both files to `.obsidian/plugins/second-brain-sync/` in your vault
+3. Enable in Obsidian → Settings → Community Plugins
+
+### Features
+
+- Sync tagged notes or all notes — configurable in settings
+- Auto-sync on save
+- Built-in chunking for long notes
+- Search your second brain from an Obsidian sidebar panel
+- Status bar showing last sync time
 
 ---
 
