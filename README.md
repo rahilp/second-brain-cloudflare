@@ -48,11 +48,12 @@ curl -X POST https://<your-worker-url>/capture \
 ## Documentation
 
 - [Setup Guide](../../wiki/Setup-Guide) — deploy, schema, auth token, manual setup
+- [How It Works](../../wiki/How-It-Works) — semantic search, chunking, duplicate detection
 - [Connect to AI Clients](../../wiki/Connect-to-AI-Clients) — Claude Desktop, Claude Code, claude.ai, iOS, Claude instructions
 - [Capture from Anywhere](../../wiki/Capture-from-Anywhere) — browser bookmarklet, iOS Shortcuts, share sheet
+- [Web UI](../../wiki/Web-UI) — Dashboard UI and mobile interface
 - [Obsidian Plugin](../../wiki/Obsidian-Plugin) — install, configure, sync modes
 - [API Reference](../../wiki/API-Reference) — /capture, /list, /mcp endpoints
-- [How It Works](../../wiki/How-It-Works) — semantic search, chunking, duplicate detection
 
 ---
 
