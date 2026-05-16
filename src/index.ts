@@ -491,14 +491,19 @@ export default {
       return json(results);
     }
 
-    // /mcp
-    if (url.pathname === "/mcp") {
+     // /mcp
+     if (url.pathname === "/mcp") {
+      const server = buildMcpServer(env);
+      
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
       });
-      const server = buildMcpServer(env);
-      await server.connect(transport);
-      return transport.handleRequest(request);
+      
+      // Connect server to transport (don't await - returns immediately)
+      server.connect(transport);
+      
+      // Handle the request - must await as it's async
+      return await transport.handleRequest(request);
     }
 
     return new Response("Not found", { status: 404 });
