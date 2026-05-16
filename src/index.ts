@@ -4,7 +4,7 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { createMcpHandler } from "agents/mcp";
 import { z } from "zod";
 
 export interface Env {
@@ -118,10 +118,10 @@ function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
     .map(match => {
       const createdAt = (match.metadata as any)?.created_at ?? now;
       const ageMs = now - createdAt;
-      
+
       const recencyMultiplier = Math.exp(-ageMs / HALF_LIFE_MS);
       const finalScore = match.score * recencyMultiplier;
-      
+
       return {
         ...match,
         score: finalScore,
@@ -491,19 +491,13 @@ export default {
       return json(results);
     }
 
-     // /mcp
-     if (url.pathname === "/mcp") {
+    // /mcp
+    if (url.pathname === "/mcp") {
+      // Create a new server instance per request (required for security)
       const server = buildMcpServer(env);
-      
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-      });
-      
-      // Connect server to transport (don't await - returns immediately)
-      server.connect(transport);
-      
-      // Handle the request - must await as it's async
-      return await transport.handleRequest(request);
+
+      // Use Cloudflare's recommended handler
+      return createMcpHandler(server)(request, env, ctx);
     }
 
     return new Response("Not found", { status: 404 });
