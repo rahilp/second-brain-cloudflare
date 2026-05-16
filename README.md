@@ -21,7 +21,7 @@ Every AI conversation starts from zero. Second Brain fixes that — give Claude,
 |---|---|
 | `remember` | Store anything — ideas, decisions, project context |
 | `append` | Add updates to existing entries without creating duplicates |
-| `recall` | Semantic search — finds things by meaning, not keywords |
+| `recall` | Semantic search with recency bias — finds things by meaning, prioritizes fresh info |
 | `list_recent` | Browse recent memories chronologically |
 | `forget` | Delete an entry and all its chunks |
 
