@@ -90,6 +90,34 @@ function chunkText(text: string, maxChars = 1600, overlapChars = 200): string[] 
   return chunks.filter((c) => c.length > 0);
 }
 
+// ─── Time-decay reranking ─────────────────────────────────────────────────────
+
+interface VectorizeMatch {
+  id: string;
+  score: number;
+  metadata?: Record<string, unknown>;
+}
+
+function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
+  const now = Date.now();
+  const HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+  return matches
+    .map(match => {
+      const createdAt = (match.metadata as any)?.created_at ?? now;
+      const ageMs = now - createdAt;
+      
+      const recencyMultiplier = Math.exp(-ageMs / HALF_LIFE_MS);
+      const finalScore = match.score * recencyMultiplier;
+      
+      return {
+        ...match,
+        score: finalScore,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+}
+
 // ─── Store entry (full embed + chunk) ────────────────────────────────────────
 
 async function storeEntry(
@@ -297,8 +325,10 @@ function buildMcpServer(env: Env): McpServer {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
       }
 
+      const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[]);
+
       const seen = new Set<string>();
-      const deduped = results.matches.filter((m) => {
+      const deduped = reranked.filter((m) => {
         const parentId = (m.metadata as any)?.parentId ?? m.id;
         if (seen.has(parentId)) return false;
         seen.add(parentId);
