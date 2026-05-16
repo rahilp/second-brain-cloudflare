@@ -3,8 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
-# AUTH_TOKEN must be set as a secret after deployment:
-# wrangler secret put AUTH_TOKEN
+# AUTH_TOKEN is prompted during Deploy to Cloudflare flow
+# Schema auto-creates on first Worker request
 
 [[d1_databases]]
 binding = "DB"

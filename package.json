@@ -19,5 +19,12 @@
     "@cloudflare/workers-types": "^4.20241022.0",
     "typescript": "^5.5.0",
     "wrangler": "^3.80.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "AUTH_TOKEN": {
+        "description": "Choose a memorable token (like 'coffee-lover-2026') OR generate a secure random token. **Quick: open your terminal and run** `openssl rand -base64 32` then paste the result here. (Alternative: use [this online generator](https://www.browserling.com/tools/random-string)). **Save your token - you'll need it multiple times for AI client connections!**"
+      }
+    }
   }
 }

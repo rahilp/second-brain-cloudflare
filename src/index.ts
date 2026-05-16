@@ -45,6 +45,18 @@ async function embed(text: string, env: Env): Promise<number[]> {
   return result.data[0] as number[];
 }
 
+// ─── Database initialization ──────────────────────────────────────────────────
+
+async function initializeDatabase(env: Env): Promise<void> {
+  try {
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source)`);
+  } catch (e) {
+    console.error("Database initialization error (non-fatal):", e);
+  }
+}
+
 // ─── Duplicate detection ──────────────────────────────────────────────────────
 
 type DuplicateResult =
@@ -411,6 +423,8 @@ function buildMcpServer(env: Env): McpServer {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    ctx.waitUntil(initializeDatabase(env));
 
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
