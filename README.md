@@ -3,7 +3,7 @@
 # Second Brain — MCP Server on Cloudflare Workers
 
 **A personal memory layer that works across every AI tool you use.**  
-Self-hosted on Cloudflare's free tier. One-click deploy.
+Self-hosted on Cloudflare's free tier. Truly one-click deploy — no manual setup required.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
 
@@ -29,15 +29,15 @@ Every AI conversation starts from zero. Second Brain fixes that — give Claude,
 
 ## Quickstart
 
-1. Click Deploy — Cloudflare provisions D1, Vectorize, and the Worker automatically
-2. Run the schema in D1 console and set your auth token — [full setup guide →](../../wiki/Setup-Guide)
-3. Open your dashboard at `https://<your-worker-url>/`
-4. Connect to Claude — [instructions →](../../wiki/Connect-to-AI-Clients)
+1. **Click Deploy** — Cloudflare provisions D1, Vectorize, and the Worker automatically
+2. **Choose your token** — During deploy, enter a memorable token (like `coffee-lover-2026`) or generate a secure one with `openssl rand -base64 32`. Save it!
+3. **That's it!** — Schema auto-creates on first request. Your Worker is ready at `https://<your-worker-url>/`
+4. **Connect to Claude** — [instructions →](../../wiki/Connect-to-AI-Clients)
 
 ```bash
-# Test it's working
+# Test it's working (use your token from step 2)
 curl -X POST https://<your-worker-url>/capture \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Authorization: Bearer coffee-lover-2026" \
   -H "Content-Type: application/json" \
   -d '{"content": "second brain is working", "source": "test"}'
 # → {"ok":true,"id":"..."}
@@ -47,7 +47,7 @@ curl -X POST https://<your-worker-url>/capture \
 
 ## Documentation
 
-- [Setup Guide](../../wiki/Setup-Guide) — deploy, schema, auth token, manual setup
+- [Setup Guide](../../wiki/Setup-Guide) — one-click deploy, token setup, connecting AI clients
 - [How It Works](../../wiki/How-It-Works) — semantic search, chunking, duplicate detection
 - [Connect to AI Clients](../../wiki/Connect-to-AI-Clients) — Claude Desktop, Claude Code, claude.ai, iOS, Claude instructions
 - [Capture from Anywhere](../../wiki/Capture-from-Anywhere) — browser bookmarklet, iOS Shortcuts, share sheet
