@@ -5,6 +5,11 @@
 **A personal memory layer that works across every AI tool you use.**  
 Self-hosted on Cloudflare's free tier. Truly one-click deploy — no manual setup required.
 
+> **🔑 Before you deploy:** You'll be asked to set an `AUTH_TOKEN` during deployment.  
+> **Quick option:** Use a memorable phrase like `coffee-lover-2026`  
+> **Secure option:** Run `openssl rand -base64 32` in your terminal and paste the result  
+> **Save it!** You'll need this token to connect AI clients.
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
