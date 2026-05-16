@@ -481,6 +481,43 @@ export default {
       return json({ ok: true, id });
     }
 
+    // POST /append
+    if (url.pathname === "/append" && request.method === "POST") {
+      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+
+      let body: { id?: string; addition?: string };
+      try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
+      if (!body.id?.trim()) return json({ error: "id is required" }, 400);
+      if (!body.addition?.trim()) return json({ error: "addition is required" }, 400);
+
+      const id = body.id.trim();
+      const addition = body.addition.trim();
+
+      const row = await env.DB.prepare(
+        `SELECT id, content, tags, source FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+
+      if (!row) {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      }
+
+      const existingContent = row.content as string;
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      const source = row.source as string;
+
+      try {
+        await appendToEntry(env, id, existingContent, addition, tags, source);
+      } catch (e) {
+        return json({ ok: false, error: `Append failed: ${(e as Error).message}` }, 500);
+      }
+
+      return json({
+        ok: true,
+        id,
+        message: "Update appended successfully with timestamp",
+      });
+    }
+
     // GET /list
     if (url.pathname === "/list" && request.method === "GET") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
