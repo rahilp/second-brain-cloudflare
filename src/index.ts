@@ -41,6 +41,7 @@ function json(data: unknown, status = 200): Response {
 }
 
 async function embed(text: string, env: Env): Promise<number[]> {
+  // Workers AI requires `as any` here — the SDK types don't cover all models
   const result = (await env.AI.run("@cf/baai/bge-small-en-v1.5" as any, { text: [text] })) as any;
   return result.data[0] as number[];
 }
@@ -49,7 +50,7 @@ async function embed(text: string, env: Env): Promise<number[]> {
 
 async function initializeDatabase(env: Env): Promise<void> {
   try {
-    await env.DB.exec(`CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL)`);
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL, vector_ids TEXT NOT NULL DEFAULT '[]')`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC)`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source)`);
   } catch (e) {
@@ -131,6 +132,7 @@ function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
 }
 
 // ─── Store entry (full embed + chunk) ────────────────────────────────────────
+// Returns the list of vector IDs inserted so forget() can clean up exactly.
 
 async function storeEntry(
   env: Env,
@@ -139,7 +141,7 @@ async function storeEntry(
   tags: string[],
   source: string,
   now: number
-): Promise<void> {
+): Promise<string[]> {
   const chunks = chunkText(content);
 
   const vectors = await Promise.all(
@@ -159,11 +161,21 @@ async function storeEntry(
   );
 
   await env.VECTORIZE.insert(vectors);
+
+  const vectorIds = vectors.map(v => v.id);
+
+  // Persist exact vector IDs so forget() can clean up without guessing
+  await env.DB.prepare(
+    `UPDATE entries SET vector_ids = ? WHERE id = ?`
+  ).bind(JSON.stringify(vectorIds), id).run();
+
+  return vectorIds;
 }
 
 // ─── Append to existing entry ─────────────────────────────────────────────────
 // Updates D1 with the full appended content, then adds only the new addition
 // as a new Vectorize chunk pointing to the same parent ID.
+// Tracks the new chunk ID in vector_ids so forget() can clean it up exactly.
 
 async function appendToEntry(
   env: Env,
@@ -182,15 +194,7 @@ async function appendToEntry(
     `UPDATE entries SET content = ? WHERE id = ?`
   ).bind(newContent, id).run();
 
-  // Count existing chunks so we don't collide on IDs
-  // Vectorize doesn't have a list-by-prefix API so we track via D1
-  // We store chunk count in a simple way: try IDs until we find a gap
-  let chunkIndex = 0;
-  // Find next available chunk index by checking if base ID exists
-  // For single-chunk entries the base ID is used directly, so start at 1
-  // For multi-chunk entries, chunks are {id}-chunk-0, {id}-chunk-1, etc.
-  // We add the new addition chunk at the next available index
-  // Safe approach: use timestamp-based suffix to guarantee uniqueness
+  // Timestamp-based suffix guarantees uniqueness across concurrent appends
   const newChunkId = `${id}-update-${Date.now()}`;
 
   const values = await embed(addition, env);
@@ -200,14 +204,22 @@ async function appendToEntry(
     metadata: {
       content: addition.slice(0, 512),
       parentId: id,
-      chunkIndex: chunkIndex,
-      totalChunks: 1,
       isUpdate: true,
       tags,
       source,
       created_at: Date.now(),
     },
   }]);
+
+  // Append the new chunk ID to the tracked vector_ids list in D1
+  const row = await env.DB.prepare(
+    `SELECT vector_ids FROM entries WHERE id = ?`
+  ).bind(id).first() as Record<string, any> | null;
+
+  const existing: string[] = JSON.parse(row?.vector_ids ?? "[]");
+  await env.DB.prepare(
+    `UPDATE entries SET vector_ids = ? WHERE id = ?`
+  ).bind(JSON.stringify([...existing, newChunkId]), id).run();
 }
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
@@ -245,8 +257,8 @@ function buildMcpServer(env: Env): McpServer {
       const finalTags = dup.status === "flagged" ? [...t, "duplicate-candidate"] : t;
 
       await env.DB.prepare(
-        `INSERT INTO entries (id, content, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`
-      ).bind(id, c, JSON.stringify(finalTags), s, now).run();
+        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(id, c, JSON.stringify(finalTags), s, now, "[]").run();
 
       try {
         await storeEntry(env, id, c, finalTags, s, now);
@@ -276,7 +288,6 @@ function buildMcpServer(env: Env): McpServer {
       addition: z.string().describe("The new information to add to the existing entry"),
     },
     async ({ id, addition }) => {
-      // Look up the existing entry
       const row = await env.DB.prepare(
         `SELECT id, content, tags, source FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
@@ -419,19 +430,25 @@ function buildMcpServer(env: Env): McpServer {
     "Permanently delete an entry from your second brain by ID. Only call when the user explicitly asks to delete something. Confirm the entry ID using recall or list_recent first. This action cannot be undone.",
     { id: z.string().describe("Entry ID from recall or list_recent") },
     async ({ id }) => {
+      // Fetch tracked vector IDs before deleting the D1 row
+      const row = await env.DB.prepare(
+        `SELECT vector_ids FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+
+      const vectorIds: string[] = JSON.parse(row?.vector_ids ?? "[]");
+
       await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(id).run();
 
       try {
-        const chunkIds = Array.from({ length: 20 }, (_, i) => `${id}-chunk-${i}`);
-        await env.VECTORIZE.deleteByIds([id, ...chunkIds]);
-        // Also attempt to delete any update chunks
-        const updateIds = Array.from({ length: 50 }, (_, i) => `${id}-update-${i}`);
-        await env.VECTORIZE.deleteByIds(updateIds);
+        if (vectorIds.length) {
+          // Delete exact IDs — no guessing, no leaks
+          await env.VECTORIZE.deleteByIds(vectorIds);
+        }
       } catch (e) {
         console.error("Vectorize delete failed (non-fatal):", e);
       }
 
-      return { content: [{ type: "text", text: `Deleted entry ${id}` }] };
+      return { content: [{ type: "text", text: `Deleted entry ${id} and ${vectorIds.length} vector(s)` }] };
     }
   );
 
@@ -479,8 +496,8 @@ export default {
       const finalTags = dup.status === "flagged" ? [...t, "duplicate-candidate"] : t;
 
       await env.DB.prepare(
-        `INSERT INTO entries (id, content, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`
-      ).bind(id, c, JSON.stringify(finalTags), s, now).run();
+        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(id, c, JSON.stringify(finalTags), s, now, "[]").run();
 
       ctx.waitUntil(
         storeEntry(env, id, c, finalTags, s, now)
@@ -557,7 +574,7 @@ export default {
       return createMcpHandler(server)(request, env, ctx);
     }
 
-    // POST /chat  
+    // POST /chat
     if (url.pathname === "/chat" && request.method === "POST") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
 
@@ -567,9 +584,9 @@ export default {
 
       const systemPrompt = `You are a personal memory assistant. Answer the user's question using ONLY the memories provided. Even if the match scores are low, extract any relevant facts and answer directly. Never say you don't have enough information if the answer exists anywhere in the memories. Be concise.`;
 
-
       const userMessage = `Question: ${body.query}\n\nRelevant memories:\n${body.memories}`;
 
+      // Workers AI requires `as any` here — the SDK types don't cover all models
       const stream = await env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct" as any, {
         messages: [
           { role: "system", content: systemPrompt },
