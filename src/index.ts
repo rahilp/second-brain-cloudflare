@@ -67,12 +67,12 @@ type DuplicateResult =
 
 function getDuplicateCheckSample(content: string): string {
   if (content.length <= 1500) return content;
-  
+
   const start = content.slice(0, 500);
   const midIndex = Math.floor(content.length / 2);
   const middle = content.slice(midIndex - 250, midIndex + 250);
   const end = content.slice(-500);
-  
+
   return `${start}\n...\n${middle}\n...\n${end}`;
 }
 
@@ -223,7 +223,7 @@ async function appendToEntry(
   const newChunkId = `${id}-update-${Date.now()}`;
 
   const values = await embed(addition, env);
-  
+
   const metadata: Record<string, any> = {
     content: addition.slice(0, 512),
     parentId: id,
@@ -370,15 +370,22 @@ function buildMcpServer(env: Env): McpServer {
     },
     async ({ query, topK, tag }) => {
       const values = await embed(query, env);
-      
-      const filter: Record<string, any> = {};
+
+      // If tag filter, resolve matching IDs from D1 first (D1 is source of truth for tags)
+      let tagFilterIds: Set<string> | null = null;
       if (tag) {
-        filter[`tag_${tag}`] = { $eq: true };
+        const { results: tagRows } = await env.DB.prepare(
+          `SELECT id FROM entries WHERE tags LIKE ?`
+        ).bind(`%"${tag}"%`).all();
+        tagFilterIds = new Set((tagRows as any[]).map(r => r.id as string));
+        if (tagFilterIds.size === 0) {
+          return { content: [{ type: "text", text: "Nothing found matching that query." }] };
+        }
       }
 
+      // Query Vectorize without filter — tag filtering happens in-memory below
       const results = await env.VECTORIZE.query(values, {
         topK: topK * 3,
-        filter: tag ? filter : undefined,
         returnMetadata: "all",
       });
 
@@ -392,9 +399,15 @@ function buildMcpServer(env: Env): McpServer {
       const deduped = reranked.filter((m) => {
         const parentId = (m.metadata as any)?.parentId ?? m.id;
         if (seen.has(parentId)) return false;
+        // Apply tag filter against D1-resolved IDs
+        if (tagFilterIds && !tagFilterIds.has(parentId)) return false;
         seen.add(parentId);
         return true;
       }).slice(0, topK);
+
+      if (!deduped.length) {
+        return { content: [{ type: "text", text: "Nothing found matching that query." }] };
+      }
 
       // Fetch full content from D1 for all matched parent IDs
       const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
