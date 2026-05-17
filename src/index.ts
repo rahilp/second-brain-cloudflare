@@ -162,10 +162,8 @@ async function storeEntry(
   const chunks = chunkText(content);
 
   const vectors = await Promise.all(
-    chunks.map(async (chunk, i) => ({
-      id: chunks.length === 1 ? id : `${id}-chunk-${i}`,
-      values: await embed(chunk, env),
-      metadata: {
+    chunks.map(async (chunk, i) => {
+      const metadata: Record<string, any> = {
         content: chunk.slice(0, 512),
         parentId: id,
         chunkIndex: i,
@@ -173,8 +171,18 @@ async function storeEntry(
         tags,
         source,
         created_at: now,
-      },
-    }))
+      };
+
+      tags.forEach(t => {
+        metadata[`tag_${t}`] = true;
+      });
+
+      return {
+        id: chunks.length === 1 ? id : `${id}-chunk-${i}`,
+        values: await embed(chunk, env),
+        metadata,
+      };
+    })
   );
 
   await env.VECTORIZE.insert(vectors);
@@ -215,17 +223,24 @@ async function appendToEntry(
   const newChunkId = `${id}-update-${Date.now()}`;
 
   const values = await embed(addition, env);
+  
+  const metadata: Record<string, any> = {
+    content: addition.slice(0, 512),
+    parentId: id,
+    isUpdate: true,
+    tags,
+    source,
+    created_at: Date.now(),
+  };
+
+  tags.forEach(t => {
+    metadata[`tag_${t}`] = true;
+  });
+
   await env.VECTORIZE.insert([{
     id: newChunkId,
     values,
-    metadata: {
-      content: addition.slice(0, 512),
-      parentId: id,
-      isUpdate: true,
-      tags,
-      source,
-      created_at: Date.now(),
-    },
+    metadata,
   }]);
 
   // Append the new chunk ID to the tracked vector_ids list in D1
@@ -355,9 +370,15 @@ function buildMcpServer(env: Env): McpServer {
     },
     async ({ query, topK, tag }) => {
       const values = await embed(query, env);
+      
+      const filter: Record<string, any> = {};
+      if (tag) {
+        filter[`tag_${tag}`] = { $eq: true };
+      }
+
       const results = await env.VECTORIZE.query(values, {
         topK: topK * 3,
-        filter: tag ? { tags: { $eq: tag } } : undefined,
+        filter: tag ? filter : undefined,
         returnMetadata: "all",
       });
 
