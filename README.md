@@ -1,4 +1,4 @@
-<img src="repo_banner.png" alt="Second Brain — MCP Server on Cloudflare Workers" width="100%" />
+<img src="assets/repo_banner.png" alt="Second Brain — MCP Server on Cloudflare Workers" width="100%" />
 
 # Second Brain — MCP Server on Cloudflare Workers
 
@@ -73,8 +73,8 @@ All free tier at personal scale.
 ## Integrations
 
 - **Obsidian** — [second-brain-obsidian-plugin](https://github.com/rahilp/second-brain-obsidian-plugin) · available in [Obsidian Community Plugins](https://community.obsidian.md/plugins/second-brain-sync)
-- **iOS** — Brain Dump, Text Brain Dump, and Save to Brain shortcuts in [`ios Shortcuts/`](ios%20Shortcuts/)
-- **Browser** — bookmarklet in [`bookmarklet.js`](bookmarklet.js)
+- **iOS** — Brain Dump, Text Brain Dump, and Save to Brain shortcuts in [`integrations/ios-shortcuts/`](integrations/ios-shortcuts/)
+- **Browser** — bookmarklet in [`integrations/bookmarklet.js`](integrations/bookmarklet.js)
 
 ---
 

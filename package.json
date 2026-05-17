@@ -6,8 +6,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create second-brain-db",
-    "db:migrate": "wrangler d1 execute second-brain-db --file=schema.sql",
-    "db:migrate:remote": "wrangler d1 execute second-brain-db --remote --file=schema.sql",
+    "db:migrate": "wrangler d1 execute second-brain-db --file=db/schema.sql",
+    "db:migrate:remote": "wrangler d1 execute second-brain-db --remote --file=db/schema.sql",
     "vectors:create": "wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine"
   },
   "dependencies": {
