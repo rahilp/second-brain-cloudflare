@@ -111,22 +111,27 @@ interface VectorizeMatch {
   metadata?: Record<string, unknown>;
 }
 
+function getHalfLifeMs(tags: string[]): number {
+  if (tags.includes("task")) return 7 * 24 * 60 * 60 * 1000;  // 7 days
+  if (tags.includes("context")) return 180 * 24 * 60 * 60 * 1000; // 6 months
+  if (tags.includes("work")) return 90 * 24 * 60 * 60 * 1000; // 3 months
+  return 30 * 24 * 60 * 60 * 1000; // 30 days default
+}
+
 function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
   const now = Date.now();
-  const HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
   return matches
     .map(match => {
-      const createdAt = (match.metadata as any)?.created_at ?? now;
+      const meta = match.metadata as any;
+      const createdAt = meta?.created_at ?? now;
+      const tags: string[] = Array.isArray(meta?.tags) ? meta.tags : [];
       const ageMs = now - createdAt;
 
-      const recencyMultiplier = Math.exp(-ageMs / HALF_LIFE_MS);
-      const finalScore = match.score * recencyMultiplier;
+      const halfLifeMs = getHalfLifeMs(tags);
+      const recencyMultiplier = Math.exp(-ageMs / halfLifeMs);
 
-      return {
-        ...match,
-        score: finalScore,
-      };
+      return { ...match, score: match.score * recencyMultiplier };
     })
     .sort((a, b) => b.score - a.score);
 }
