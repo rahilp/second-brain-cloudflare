@@ -550,7 +550,7 @@ export default {
 
       const userMessage = `Question: ${body.query}\n\nRelevant memories:\n${body.memories}`;
 
-      const stream = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast" as any, {
+      const stream = await env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct" as any, {
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage }
