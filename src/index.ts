@@ -65,8 +65,20 @@ type DuplicateResult =
   | { status: "blocked"; matchId: string; score: number }
   | { status: "flagged"; matchId: string; score: number };
 
+function getDuplicateCheckSample(content: string): string {
+  if (content.length <= 1500) return content;
+  
+  const start = content.slice(0, 500);
+  const midIndex = Math.floor(content.length / 2);
+  const middle = content.slice(midIndex - 250, midIndex + 250);
+  const end = content.slice(-500);
+  
+  return `${start}\n...\n${middle}\n...\n${end}`;
+}
+
 async function checkDuplicate(content: string, env: Env): Promise<DuplicateResult> {
-  const values = await embed(content.slice(0, 500), env);
+  const sample = getDuplicateCheckSample(content);
+  const values = await embed(sample, env);
   const results = await env.VECTORIZE.query(values, { topK: 1, returnMetadata: "all" });
 
   if (!results.matches.length) return { status: "unique" };
