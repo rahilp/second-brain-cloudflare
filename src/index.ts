@@ -347,15 +347,35 @@ function buildMcpServer(env: Env): McpServer {
         return true;
       }).slice(0, topK);
 
+      // Fetch full content from D1 for all matched parent IDs
+      const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
+      const placeholders = parentIds.map(() => "?").join(", ");
+      const { results: d1Rows } = await env.DB.prepare(
+        `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders})`
+      ).bind(...parentIds).all() as { results: Record<string, any>[] };
+
+      const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
+
       const text = deduped.map((m, i) => {
         const meta = m.metadata as Record<string, any>;
+        const parentId = (meta?.parentId ?? m.id) as string;
+        const row = d1Map.get(parentId);
+        const score = (m.score * 100).toFixed(0);
+        const updateLabel = meta?.isUpdate ? " [updated]" : "";
+
+        if (row) {
+          const date = new Date(row.created_at as number).toLocaleDateString();
+          const tags: string[] = JSON.parse(row.tags ?? "[]");
+          const tagList = tags.length ? ` [${tags.join(", ")}]` : "";
+          const src = row.source ? ` · ${row.source}` : "";
+          return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}\n${row.content}`;
+        }
+
+        // Fallback to metadata if D1 row not found (shouldn't happen)
         const date = meta?.created_at ? new Date(meta.created_at as number).toLocaleDateString() : "?";
         const tagList = Array.isArray(meta?.tags) && meta.tags.length ? ` [${(meta.tags as string[]).join(", ")}]` : "";
         const src = meta?.source ? ` · ${meta.source}` : "";
-        const score = (m.score * 100).toFixed(0);
-        const chunkLabel = meta?.totalChunks > 1 ? ` (chunk ${meta.chunkIndex + 1}/${meta.totalChunks})` : "";
-        const updateLabel = meta?.isUpdate ? " [updated]" : "";
-        return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${chunkLabel}${updateLabel}\n${meta?.content ?? ""}`;
+        return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}\n${meta?.content ?? ""}`;
       }).join("\n\n");
 
       return { content: [{ type: "text", text }] };
