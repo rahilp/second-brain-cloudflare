@@ -218,7 +218,7 @@ function buildMcpServer(env: Env): McpServer {
   // ── remember ────────────────────────────────────────────────────────────
   server.tool(
     "remember",
-    "Store an idea, task, or note in your second brain. IMPORTANT: (1) Call this automatically — never ask the user for permission to store. (2) Call this whenever the user mentions goals, decisions, tasks, preferences, opinions, project context, or anything personal. (3) Before storing, check if a related entry likely exists — if so, use append instead to update it rather than creating a duplicate. (4) Write content as a clear, self-contained summary — not a transcript fragment. It should make sense when read back weeks later with no conversation context.",
+    "Store an idea, task, or note in your second brain. Call this automatically whenever the user mentions goals, decisions, tasks, preferences, or project context. Write content as a clear self-contained summary.",
     {
       content: z.string().describe("The idea, task, or note to store"),
       tags: z.array(z.string()).optional().describe("Optional tags for filtering"),
@@ -270,7 +270,7 @@ function buildMcpServer(env: Env): McpServer {
   // ── append ───────────────────────────────────────────────────────────────
   server.tool(
     "append",
-    "Append new information to an existing entry in your second brain. Use this when something has changed, progressed, or been updated — preserves the original and adds the update with a timestamp. IMPORTANT: (1) Always prefer this over remember when the topic already exists — check recall first if unsure whether an entry exists. (2) To get the entry ID, use recall or list_recent first. (3) Never create a new remember entry for something that is clearly an update to an existing topic.",
+    "Append new information to an existing entry in your second brain. Use when something has changed or been updated — preserves the original and adds the update with a timestamp. Get the entry ID from recall or list_recent first.",
     {
       id: z.string().describe("Entry ID to append to — from recall or list_recent"),
       addition: z.string().describe("The new information to add to the existing entry"),
@@ -319,7 +319,7 @@ function buildMcpServer(env: Env): McpServer {
   // ── recall ───────────────────────────────────────────────────────────────
   server.tool(
     "recall",
-    "Semantically search your second brain for relevant notes. IMPORTANT: (1) Call this automatically at the start of every conversation before responding to the user. (2) Call this again every 3-4 user messages using the current topic as the query — if relevant context is found, surface it naturally in your response without announcing that you are checking memory.",
+    "Recall: semantically search your second brain for relevant notes and context. Call recall automatically at the start of every conversation and every 3-4 messages.",
     {
       query: z.string().describe("Natural language search query"),
       topK: z.number().int().min(1).max(20).default(5).describe("Number of results"),
@@ -365,7 +365,7 @@ function buildMcpServer(env: Env): McpServer {
   // ── list_recent ──────────────────────────────────────────────────────────
   server.tool(
     "list_recent",
-    "List the most recent entries from your second brain in reverse chronological order. Use this when: (1) You need to find an entry ID to use with append or forget and recall didn't return it. (2) The user asks what has been stored recently or wants to review their memory. Do not use this as a substitute for recall — if you are looking for something specific, use recall instead.",
+    "list_recent: List the most recent entries by date from your second brain. Use when you need to browse recent entries or find an entry ID. Not the same as recall — returns entries by time, not by meaning.",
     {
       n: z.number().int().min(1).max(50).default(10),
       tag: z.string().optional(),
@@ -396,7 +396,7 @@ function buildMcpServer(env: Env): McpServer {
   // ── forget ───────────────────────────────────────────────────────────────
   server.tool(
     "forget",
-    "Permanently delete an entry from your second brain by ID. This action cannot be undone. IMPORTANT: (1) Never call this automatically — only call this when the user explicitly asks to delete or forget something. (2) Always confirm the entry ID using recall or list_recent before deleting — never guess or assume an ID. (3) If the user wants to update or correct an entry, use append instead. Deletion is only appropriate when the information is fully obsolete or wrong.",
+    "Permanently delete an entry from your second brain by ID. Only call when the user explicitly asks to delete something. Confirm the entry ID using recall or list_recent first. This action cannot be undone.",
     { id: z.string().describe("Entry ID from recall or list_recent") },
     async ({ id }) => {
       await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(id).run();
