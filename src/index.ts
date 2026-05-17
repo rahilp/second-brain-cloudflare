@@ -537,6 +537,32 @@ export default {
       return createMcpHandler(server)(request, env, ctx);
     }
 
+    // POST /chat  
+    if (url.pathname === "/chat" && request.method === "POST") {
+      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+
+      let body: { query?: string; memories?: string };
+      try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
+      if (!body.query?.trim()) return json({ error: "query is required" }, 400);
+
+      const systemPrompt = `You are a personal memory assistant. Answer the user's question using ONLY the memories provided. Even if the match scores are low, extract any relevant facts and answer directly. Never say you don't have enough information if the answer exists anywhere in the memories. Be concise.`;
+
+
+      const userMessage = `Question: ${body.query}\n\nRelevant memories:\n${body.memories}`;
+
+      const stream = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast" as any, {
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage }
+        ],
+        stream: true,
+      });
+
+      return new Response(stream as ReadableStream, {
+        headers: { "Content-Type": "text/event-stream", ...CORS_HEADERS },
+      });
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };

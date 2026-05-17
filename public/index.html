@@ -1567,11 +1567,53 @@
           appendBrainBubble(msgs, "I couldn't find anything matching that. Try different words or check Recent.");
         } else {
           const entries = parseRecallResult(result);
-          appendBrainBubble(msgs, `Found ${entries.length} memor${entries.length === 1 ? 'y' : 'ies'}. Here's what I have:`);
-          const cardsWrapper = document.createElement('div');
-          cardsWrapper.className = 'brain-cards-wrapper';
-          entries.forEach(e => cardsWrapper.appendChild(makeRecallCard(e)));
-          msgs.appendChild(cardsWrapper);
+          const answerBubble = document.createElement('div');
+          answerBubble.className = 'bubble-row brain';
+          const answerEl = document.createElement('div');
+          answerEl.className = 'bubble brain';
+          answerBubble.appendChild(answerEl);
+          msgs.appendChild(answerBubble);
+
+
+          const res = await fetch(`${WORKER_URL}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
+            body: JSON.stringify({ query, memories: result })
+          });
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let fullText = '';
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const chunk = decoder.decode(value);
+              chunk.split('\n').forEach(line => {
+                if (line.startsWith('data: ')) {
+                  const raw = line.slice(6).trim();
+                  if (raw === '[DONE]') return;
+                  try {
+                    const d = JSON.parse(raw);
+                    if (d.response) { fullText += d.response; answerEl.textContent = fullText; }
+                  } catch { }
+                }
+              });
+              msgs.scrollTop = msgs.scrollHeight;
+            }
+          } finally {
+            reader.releaseLock();
+          }
+
+          // 2. Sources toggle
+          const sourcesToggle = document.createElement('div');
+          sourcesToggle.className = 'sources-toggle';
+          sourcesToggle.innerHTML = `<button onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'flex' : 'none'">
+            <i class="ti ti-files"></i> ${entries.length} source${entries.length === 1 ? '' : 's'}
+          </button>
+          <div class="brain-cards-wrapper" style="display:none"></div>`;
+          entries.forEach(e => sourcesToggle.querySelector('.brain-cards-wrapper').appendChild(makeRecallCard(e)));
+          msgs.appendChild(sourcesToggle);
           document.getElementById('recall-clear-btn').style.display = 'flex';
         }
       } catch {
