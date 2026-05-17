@@ -218,7 +218,7 @@ function buildMcpServer(env: Env): McpServer {
   // ── remember ────────────────────────────────────────────────────────────
   server.tool(
     "remember",
-    "Store an idea, task, or note in your second brain. Call this automatically whenever the user mentions goals, decisions, tasks, preferences, or project context. Write content as a clear self-contained summary.",
+    "Store an idea, task, or note in your second brain. Call this automatically whenever the user shares context, goals, decisions, or preferences.",
     {
       content: z.string().describe("The idea, task, or note to store"),
       tags: z.array(z.string()).optional().describe("Optional tags for filtering"),
