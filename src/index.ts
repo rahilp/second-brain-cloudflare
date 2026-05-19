@@ -606,6 +606,15 @@ export default {
       });
     }
 
+    // GET /tags
+    if (url.pathname === "/tags" && request.method === "GET") {
+      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const { results } = await env.DB.prepare(
+        `SELECT DISTINCT value FROM entries, json_each(entries.tags) ORDER BY value`
+      ).all();
+      return json((results as any[]).map(r => r.value as string));
+    }
+
     // GET /list
     if (url.pathname === "/list" && request.method === "GET") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
