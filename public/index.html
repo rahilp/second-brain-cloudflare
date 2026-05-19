@@ -661,6 +661,12 @@
       color: var(--text-tertiary);
     }
 
+    select.filter-field {
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
     .refresh-btn {
       width: 32px;
       height: 32px;
@@ -1313,6 +1319,14 @@
               <div class="bubble brain">Ask me anything about what you've stored. I'll find it.</div>
             </div>
           </div>
+          <div class="filter-bar" style="padding-bottom:0;">
+            <div class="filter-inner">
+              <i class="ti ti-tag" style="color:var(--text-tertiary);font-size:13px;flex-shrink:0;"></i>
+              <select class="filter-field" id="tag-filter-recall" onchange="onTagChange(this.value)">
+                <option value="">All tags</option>
+              </select>
+            </div>
+          </div>
           <div class="suggestions-row">
             <button class="suggestion-pill" onclick="sendSuggestion('What am I working on?')">What am I working
               on?</button>
@@ -1343,8 +1357,10 @@
           </div>
           <div class="filter-bar">
             <div class="filter-inner">
-              <input type="text" class="filter-field" id="filter-input" placeholder="Filter by tag..."
-                oninput="filterRecent(this.value)">
+              <i class="ti ti-tag" style="color:var(--text-tertiary);font-size:13px;flex-shrink:0;"></i>
+              <select class="filter-field" id="tag-filter-recent" onchange="onTagChange(this.value)">
+                <option value="">All tags</option>
+              </select>
               <button class="refresh-btn" id="refresh-btn" onclick="loadRecent()"><i class="ti ti-refresh"></i></button>
             </div>
           </div>
@@ -1445,7 +1461,7 @@
   <script>
     let WORKER_URL = '', AUTH_TOKEN = '', allEntries = [];
     let pendingForgetId = null, pendingAppendId = null, pendingForgetCard = null;
-    let currentTab = 'recall';
+    let currentTab = 'recall', selectedTag = '';
 
     function init() {
       // Auto-populate URL from the current page origin (UI is hosted on the same Worker)
@@ -1479,7 +1495,34 @@
     function showApp() {
       document.getElementById('auth-overlay').style.display = 'none';
       document.getElementById('app').style.display = 'flex';
-      loadRecent(); updateStatus();
+      loadRecent(); loadTags(); updateStatus();
+    }
+
+    async function loadTags() {
+      try {
+        const res = await fetch(`${WORKER_URL}/tags`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
+        const tags = await res.json();
+        ['tag-filter-recent', 'tag-filter-recall'].forEach(id => {
+          const sel = document.getElementById(id);
+          if (!sel) return;
+          sel.innerHTML = '<option value="">All tags</option>';
+          tags.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t; opt.textContent = t;
+            if (t === selectedTag) opt.selected = true;
+            sel.appendChild(opt);
+          });
+        });
+      } catch { }
+    }
+
+    function onTagChange(tag) {
+      selectedTag = tag;
+      ['tag-filter-recent', 'tag-filter-recall'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = tag;
+      });
+      if (currentTab === 'recent') filterRecent(tag);
     }
 
     function logout() {
@@ -1561,7 +1604,7 @@
       const loadingEl = appendLoading(msgs);
       msgs.scrollTop = msgs.scrollHeight;
       try {
-        const result = await apiMcp('recall', { query, topK: 5 });
+        const result = await apiMcp('recall', { query, topK: 5, ...(selectedTag ? { tag: selectedTag } : {}) });
         loadingEl.remove();
         if (!result || result.includes('Nothing found')) {
           appendBrainBubble(msgs, "I couldn't find anything matching that. Try different words or check Recent.");
@@ -1675,7 +1718,7 @@
       list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>Loading...</span></div>`;
       try {
         allEntries = await apiList(50);
-        renderRecent(allEntries); updateStatus();
+        renderRecent(allEntries); updateStatus(); loadTags();
       } catch {
         list.innerHTML = `<div class="empty-state"><i class="ti ti-wifi-off"></i><span>Could not load memories.</span></div>`;
       }
@@ -1683,10 +1726,10 @@
     }
 
     function filterRecent(val) {
-      const tag = val.replace(/^#/, '').toLowerCase().trim();
+      const tag = (val || '').replace(/^#/, '').toLowerCase().trim();
       if (!tag) { renderRecent(allEntries); return; }
       renderRecent(allEntries.filter(e => {
-        try { return JSON.parse(e.tags || '[]').some(t => t.toLowerCase().includes(tag)); } catch { return false; }
+        try { return JSON.parse(e.tags || '[]').some(t => t.toLowerCase() === tag); } catch { return false; }
       }));
     }
 
