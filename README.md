@@ -6,7 +6,7 @@
 **A personal memory layer that works across every AI tool you use.**  
 Self-hosted on Cloudflare's free tier. Truly one-click deploy — no manual setup required.
 
-![Second Brain demo — same memory recalled across Claude, ChatGPT, and Claude Code](assets/second_brain_demo.gif)
+![Second Brain demo — same memory recalled across Claude, ChatGPT, and Claude Code](assets/second_brain_demo_optimized.gif)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
 
