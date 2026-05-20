@@ -65,7 +65,7 @@ type DuplicateResult =
   | { status: "blocked"; matchId: string; score: number }
   | { status: "flagged"; matchId: string; score: number };
 
-function getDuplicateCheckSample(content: string): string {
+export function getDuplicateCheckSample(content: string): string {
   if (content.length <= 1500) return content;
 
   const start = content.slice(0, 500);
@@ -94,7 +94,7 @@ async function checkDuplicate(content: string, env: Env): Promise<DuplicateResul
 
 // ─── Chunking ─────────────────────────────────────────────────────────────────
 
-function chunkText(text: string, maxChars = 1600, overlapChars = 200): string[] {
+export function chunkText(text: string, maxChars = 1600, overlapChars = 200): string[] {
   if (text.length <= maxChars) return [text];
 
   const chunks: string[] = [];
@@ -123,14 +123,14 @@ interface VectorizeMatch {
   metadata?: Record<string, unknown>;
 }
 
-function getHalfLifeMs(tags: string[]): number {
+export function getHalfLifeMs(tags: string[]): number {
   if (tags.includes("task")) return 7 * 24 * 60 * 60 * 1000;  // 7 days
   if (tags.includes("context")) return 180 * 24 * 60 * 60 * 1000; // 6 months
   if (tags.includes("work")) return 90 * 24 * 60 * 60 * 1000; // 3 months
   return 30 * 24 * 60 * 60 * 1000; // 30 days default
 }
 
-function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
+export function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
   const now = Date.now();
 
   return matches
@@ -149,7 +149,7 @@ function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
 }
 
 // ─── Temporal phrase parsing ──────────────────────────────────────────────────
-function parseTimePhrase(query: string, now: number): { after?: number; before?: number; cleanQuery: string } {
+export function parseTimePhrase(query: string, now: number): { after?: number; before?: number; cleanQuery: string } {
   const MS_DAY = 86400000;
   const MS_WEEK = 7 * MS_DAY;
   const d = new Date(now);

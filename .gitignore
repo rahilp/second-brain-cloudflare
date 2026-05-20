@@ -1,6 +1,4 @@
-<<<<<<< HEAD
-.DS_Storeassets/*.gif
 .DS_Store
-=======
-.DS_Store
->>>>>>> origin/main
+assets/*.gif
+node_modules/
+coverage/

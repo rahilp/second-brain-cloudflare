@@ -8,7 +8,11 @@
     "db:create": "wrangler d1 create second-brain-db",
     "db:migrate": "wrangler d1 execute second-brain-db --file=db/schema.sql",
     "db:migrate:remote": "wrangler d1 execute second-brain-db --remote --file=db/schema.sql",
-    "vectors:create": "wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine"
+    "vectors:create": "wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -17,7 +21,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241022.0",
+    "@types/node": "^25.9.1",
+    "@vitest/coverage-v8": "^2.1.9",
     "typescript": "^5.5.0",
+    "vitest": "^2.1.9",
     "wrangler": "^3.80.0"
   },
   "cloudflare": {

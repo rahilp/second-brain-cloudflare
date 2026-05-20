@@ -6,8 +6,10 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
-    "types": ["@cloudflare/workers-types"]
+    "allowJs": true,
+    "skipLibCheck": true,
+    "types": ["@cloudflare/workers-types", "node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.setup.ts"],
   "exclude": ["node_modules"]
 }

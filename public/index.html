@@ -1467,6 +1467,7 @@
     </div>
   </div>
 
+  <script src="/utils.js"></script>
   <script>
     let WORKER_URL = '', AUTH_TOKEN = '', allEntries = [];
     let pendingForgetId = null, pendingAppendId = null, pendingForgetCard = null;
@@ -1708,28 +1709,6 @@
       msgs.scrollTop = msgs.scrollHeight;
     }
 
-    function parseRecallResult(text) {
-      const entries = [];
-      text.split(/\n\n(?=\d+\.)/).filter(b => b.trim()).forEach(block => {
-        const h = block.match(/^\d+\.\s+\[(.+?)\]\s+\((\d+)%[^)]*\)(?:\s+\([^)]*\))?(?:\s+\[[^\]]*\])?/);
-        if (h) {
-          const meta = h[1], score = parseInt(h[2]);
-          let content = block.replace(/^\d+\.\s+\[.+?\]\s+\([^)]+\)(?:\s+\([^)]*\))?(?:\s+\[[^\]]*\])?\n?/, '').trim();
-          let id = '';
-          const idMatch = content.match(/^ID:\s+([^\n]+)\n?/);
-          if (idMatch) {
-            id = idMatch[1].trim();
-            content = content.substring(idMatch[0].length).trim();
-          }
-          const parts = meta.split(' · ');
-          const tagsStr = parts.slice(2).join(' · ');
-          const tags = tagsStr ? tagsStr.replace(/^\[|\]$/g, '').split(', ').filter(Boolean) : [];
-          entries.push({ score, id, content, date: parts[0] || '', source: parts[1] || '', tags });
-        }
-      });
-      return entries;
-    }
-
     function makeRecallCard(entry) {
       const card = document.createElement('div');
       card.className = 'memory-card';
@@ -1814,8 +1793,6 @@
         g.appendChild(cards); list.appendChild(g);
       });
     }
-
-    function toDateStr(d) { return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; }
 
     function makeRecentCard(entry) {
       let tags = [];
@@ -1997,9 +1974,6 @@
       msgs.innerHTML = `<div class="brain-cards-wrapper" id="recall-welcome"><div class="bubble brain">Ask me anything about what you've stored. I'll find it.</div></div>`;
       document.getElementById('recall-clear-btn').style.display = 'none';
     }
-    function escHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-    function escAttr(s) { return String(s).replace(/'/g, "\\'").replace(/\n/g, ' ').slice(0, 100); }
-
     init();
   </script>
 </body>
