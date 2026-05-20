@@ -1336,6 +1336,8 @@
             <button class="suggestion-pill" onclick="sendSuggestion('What are my goals?')">What are my goals?</button>
             <button class="suggestion-pill" onclick="sendSuggestion('What ideas do I have?')">What ideas do I
               have?</button>
+            <button class="suggestion-pill" onclick="sendSuggestion('What happened last week?')">Last week</button>
+            <button class="suggestion-pill" onclick="sendSuggestion('What did I decide this month?')">This month</button>
           </div>
           <div class="input-bar">
             <div class="input-inner">
@@ -1360,6 +1362,13 @@
               <i class="ti ti-tag" style="color:var(--text-tertiary);font-size:13px;flex-shrink:0;"></i>
               <select class="filter-field" id="tag-filter-recent" onchange="onTagChange(this.value)">
                 <option value="">All tags</option>
+              </select>
+              <select class="filter-field" id="time-filter-recent" onchange="onTimeRangeChange(this.value)" style="min-width:0;">
+                <option value="">All time</option>
+                <option value="today">Today</option>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="month">This month</option>
               </select>
               <button class="refresh-btn" id="refresh-btn" onclick="loadRecent()"><i class="ti ti-refresh"></i></button>
             </div>
@@ -1461,7 +1470,7 @@
   <script>
     let WORKER_URL = '', AUTH_TOKEN = '', allEntries = [];
     let pendingForgetId = null, pendingAppendId = null, pendingForgetCard = null;
-    let currentTab = 'recall', selectedTag = '';
+    let currentTab = 'recall', selectedTag = '', selectedTimeRange = '';
 
     function init() {
       // Auto-populate URL from the current page origin (UI is hosted on the same Worker)
@@ -1522,7 +1531,40 @@
         const el = document.getElementById(id);
         if (el) el.value = tag;
       });
-      if (currentTab === 'recent') filterRecent(tag);
+      if (currentTab === 'recent') applyRecentFilters();
+    }
+
+    function onTimeRangeChange(val) {
+      selectedTimeRange = val;
+      applyRecentFilters();
+    }
+
+    function applyRecentFilters() {
+      let entries = allEntries;
+      if (selectedTag) {
+        const tag = selectedTag.replace(/^#/, '').toLowerCase().trim();
+        entries = entries.filter(e => {
+          try { return JSON.parse(e.tags || '[]').some(t => t.toLowerCase() === tag); } catch { return false; }
+        });
+      }
+      if (selectedTimeRange) {
+        const now = Date.now(), MS_DAY = 86400000;
+        let cutoff;
+        if (selectedTimeRange === 'today') {
+          const d = new Date(); cutoff = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        } else if (selectedTimeRange === 'month') {
+          const d = new Date(); cutoff = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+        } else {
+          cutoff = now - parseInt(selectedTimeRange) * MS_DAY;
+        }
+        entries = entries.filter(e => e.created_at >= cutoff);
+      }
+      renderRecent(entries);
+    }
+
+    function filterRecent(val) {
+      selectedTag = val;
+      applyRecentFilters();
     }
 
     function logout() {
@@ -1741,9 +1783,23 @@
       }
       const groups = {}, now = new Date();
       const today = toDateStr(now), yesterday = toDateStr(new Date(now - 86400000));
+      const sevenDaysAgo = now.getTime() - 7 * 86400000;
       entries.forEach(entry => {
         const d = new Date(entry.created_at), ds = toDateStr(d);
-        const label = ds === today ? 'Today' : ds === yesterday ? 'Yesterday' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        let label;
+        if (ds === today) {
+          label = 'Today';
+        } else if (ds === yesterday) {
+          label = 'Yesterday';
+        } else if (entry.created_at >= sevenDaysAgo) {
+          label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        } else {
+          // Group by week: find the Monday of that week
+          const dow = d.getDay();
+          const diff = dow === 0 ? -6 : 1 - dow;
+          const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+          label = 'Week of ' + weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
         if (!groups[label]) groups[label] = [];
         groups[label].push(entry);
       });

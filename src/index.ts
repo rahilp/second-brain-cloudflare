@@ -148,6 +148,54 @@ function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
     .sort((a, b) => b.score - a.score);
 }
 
+// ─── Temporal phrase parsing ──────────────────────────────────────────────────
+function parseTimePhrase(query: string, now: number): { after?: number; before?: number; cleanQuery: string } {
+  const MS_DAY = 86400000;
+  const MS_WEEK = 7 * MS_DAY;
+  const d = new Date(now);
+  const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const startOfWeek = (date: Date) => {
+    const dow = date.getDay();
+    const diff = dow === 0 ? -6 : 1 - dow;
+    return startOfDay(new Date(date.getFullYear(), date.getMonth(), date.getDate() + diff));
+  };
+
+  type TimeResult = { after?: number; before?: number };
+  const patterns: Array<[RegExp, (m: RegExpMatchArray) => TimeResult]> = [
+    [/\blast\s+(\d+)\s+days?\b/i, m => ({ after: now - parseInt(m[1]) * MS_DAY })],
+    [/\blast\s+(\d+)\s+weeks?\b/i, m => ({ after: now - parseInt(m[1]) * MS_WEEK })],
+    [/\blast\s+week\b/i, () => ({ after: now - MS_WEEK })],
+    [/\bthis\s+week\b/i, () => ({ after: startOfWeek(d) })],
+    [/\blast\s+month\b/i, () => ({
+      after: new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime(),
+      before: new Date(d.getFullYear(), d.getMonth(), 1).getTime(),
+    })],
+    [/\bthis\s+month\b/i, () => ({ after: new Date(d.getFullYear(), d.getMonth(), 1).getTime() })],
+    [/\byesterday\b/i, () => {
+      const s = startOfDay(d) - MS_DAY;
+      return { after: s, before: s + MS_DAY };
+    }],
+    [/\btoday\b/i, () => ({ after: startOfDay(d) })],
+    [/\baround\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})\b/i, m => {
+      const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+      const month = MONTHS[m[1].toLowerCase().slice(0, 3)];
+      const center = new Date(d.getFullYear(), month, parseInt(m[2])).getTime();
+      return { after: center - 3 * MS_DAY, before: center + 3 * MS_DAY };
+    }],
+  ];
+
+  for (const [pattern, handler] of patterns) {
+    const match = query.match(pattern);
+    if (match) {
+      const { after, before } = handler(match);
+      const cleanQuery = query.replace(pattern, '').replace(/\s+/g, ' ').trim() || query;
+      return { after, before, cleanQuery };
+    }
+  }
+
+  return { cleanQuery: query };
+}
+
 // ─── Store entry (full embed + chunk) ────────────────────────────────────────
 // Returns the list of vector IDs inserted so forget() can clean up exactly.
 
@@ -367,9 +415,20 @@ function buildMcpServer(env: Env): McpServer {
       query: z.string().describe("Natural language search query"),
       topK: z.number().int().min(1).max(20).default(5).describe("Number of results"),
       tag: z.string().optional().describe("Filter by a specific tag"),
+      after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
+      before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
     },
-    async ({ query, topK, tag }) => {
-      const values = await embed(query, env);
+    async ({ query, topK, tag, after, before }) => {
+      const now = Date.now();
+      let embedQuery = query;
+      if (after === undefined && before === undefined) {
+        const parsed = parseTimePhrase(query, now);
+        after = parsed.after;
+        before = parsed.before;
+        embedQuery = parsed.cleanQuery;
+      }
+
+      const values = await embed(embedQuery, env);
 
       // If tag filter, resolve matching IDs from D1 first (D1 is source of truth for tags)
       let tagFilterIds: Set<string> | null = null;
@@ -409,12 +468,14 @@ function buildMcpServer(env: Env): McpServer {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
       }
 
-      // Fetch full content from D1 for all matched parent IDs
+      // Fetch full content from D1 for all matched parent IDs, applying time filter if set
       const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
       const placeholders = parentIds.map(() => "?").join(", ");
-      const { results: d1Rows } = await env.DB.prepare(
-        `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders})`
-      ).bind(...parentIds).all() as { results: Record<string, any>[] };
+      const d1Bindings: (string | number)[] = [...parentIds];
+      let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders})`;
+      if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
+      if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
+      const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
 
       const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
 
@@ -451,11 +512,17 @@ function buildMcpServer(env: Env): McpServer {
     {
       n: z.number().int().min(1).max(50).default(10),
       tag: z.string().optional(),
+      after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
+      before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
     },
-    async ({ n, tag }) => {
-      let q = `SELECT id, content, tags, source, created_at FROM entries`;
+    async ({ n, tag, after, before }) => {
+      const conds: string[] = [];
       const p: (string | number)[] = [];
-      if (tag) { q += ` WHERE tags LIKE ?`; p.push(`%"${tag}"%`); }
+      if (tag) { conds.push(`tags LIKE ?`); p.push(`%"${tag}"%`); }
+      if (after !== undefined) { conds.push(`created_at >= ?`); p.push(after); }
+      if (before !== undefined) { conds.push(`created_at <= ?`); p.push(before); }
+      let q = `SELECT id, content, tags, source, created_at FROM entries`;
+      if (conds.length) q += ` WHERE ` + conds.join(` AND `);
       q += ` ORDER BY created_at DESC LIMIT ?`; p.push(n);
 
       const { results } = await env.DB.prepare(q).bind(...p).all();
