@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - run: npm install
+      - run: npm ci --legacy-peer-deps
       - run: npm run typecheck
       - run: npm run test:coverage
       - name: Post coverage comment on PR
