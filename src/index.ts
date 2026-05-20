@@ -624,16 +624,6 @@ export default {
       return json((results as any[]).map(r => r.value as string));
     }
 
-    // GET /list
-    if (url.pathname === "/list" && request.method === "GET") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
-      const n = Math.min(parseInt(url.searchParams.get("n") ?? "20", 10), 100);
-      const { results } = await env.DB.prepare(
-        `SELECT id, content, tags, source, created_at FROM entries ORDER BY created_at DESC LIMIT ?`
-      ).bind(n).all();
-      return json(results);
-    }
-
     // /mcp
     if (url.pathname === "/mcp") {
       // Create a new server instance per request (required for security)
