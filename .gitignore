@@ -2,3 +2,4 @@
 assets/*.gif
 node_modules/
 coverage/
+.wrangler/
