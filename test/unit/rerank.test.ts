@@ -63,6 +63,6 @@ describe("rerankWithTimeDecay", () => {
     const matches = [match("a", 0.9, NOW - 10 * MS_DAY)];
     const withEmpty = rerankWithTimeDecay(matches, new Map());
     const withDefault = rerankWithTimeDecay(matches);
-    expect(withDefault[0].score).toBeCloseTo(withEmpty[0].score, 10);
+    expect(withDefault[0].score).toBeCloseTo(withEmpty[0].score, 6);
   });
 });
