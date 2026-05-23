@@ -355,7 +355,7 @@ async function appendToEntry(
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
-function buildMcpServer(env: Env): McpServer {
+function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
 
   // ── remember ────────────────────────────────────────────────────────────
@@ -399,9 +399,11 @@ function buildMcpServer(env: Env): McpServer {
         console.error("Vectorize insert failed (non-fatal):", e);
       }
 
-      scoreImportance(c, env)
-        .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
-        .catch(e => console.error("Importance scoring failed (non-fatal):", e));
+      ctx.waitUntil(
+        scoreImportance(c, env)
+          .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
+          .catch(e => console.error("Importance scoring failed (non-fatal):", e))
+      );
 
       if (dup.status === "flagged") {
         return {
@@ -544,12 +546,14 @@ function buildMcpServer(env: Env): McpServer {
 
       const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
 
-      // Increment recall_count for entries actually shown (fire-and-forget)
-      Promise.all(
-        [...d1Map.keys()].map(id =>
-          env.DB.prepare(`UPDATE entries SET recall_count = recall_count + 1 WHERE id = ?`).bind(id).run()
-        )
-      ).catch(e => console.error("recall_count update failed (non-fatal):", e));
+      // Increment recall_count for entries actually shown
+      ctx.waitUntil(
+        Promise.all(
+          [...d1Map.keys()].map(id =>
+            env.DB.prepare(`UPDATE entries SET recall_count = recall_count + 1 WHERE id = ?`).bind(id).run()
+          )
+        ).catch(e => console.error("recall_count update failed (non-fatal):", e))
+      );
 
       const text = deduped.map((m, i) => {
         const meta = m.metadata as Record<string, any>;
@@ -774,7 +778,7 @@ export default {
     // /mcp
     if (url.pathname === "/mcp") {
       // Create a new server instance per request (required for security)
-      const server = buildMcpServer(env);
+      const server = buildMcpServer(env, ctx);
 
       // Use Cloudflare's recommended handler
       return createMcpHandler(server)(request, env, ctx);
