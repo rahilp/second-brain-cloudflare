@@ -10,7 +10,7 @@ Second Brain fixes that. One shared memory, available in every AI tool you use.
 
 And unlike the built-in memory inside any single app, this one is yours. It lives in your own account. No platform controls it, and no platform can take it away.
 
-[![Second Brain Demo](https://img.youtube.com/vi/oMoQomwwvE8/maxesdefault.jpg)](https://youtu.be/oMoQomwwvE8)
+[![Second Brain Demo](https://img.youtube.com/vi/oMoQomwwvE8/hqdefault.jpg)](https://youtu.be/oMoQomwwvE8)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
 
