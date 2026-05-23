@@ -30,6 +30,19 @@ Connect Second Brain to whichever AI tools you use. Then tell it things once. It
 
 -----
 
+## Save from anywhere
+
+Memory is only useful if it actually gets filled. Second Brain connects to the tools and moments where context naturally lives.
+
+- **Obsidian** -- notes sync automatically via the [community plugin](https://github.com/rahilp/second-brain-obsidian-plugin)
+- **iOS** -- Brain Dump, Text Brain Dump, and Save to Brain shortcuts in one tap
+- **Browser** -- bookmarklet saves any page or selection instantly
+- **Any AI client** -- use `remember` mid-conversation, right when something matters
+
+You can also remove the integrations section at the bottom since this replaces it.
+
+---
+
 ## Setup
 
 > **Before you deploy:** You’ll be asked to set an `AUTH_TOKEN`. This is the password your AI clients use to connect.
