@@ -63,6 +63,51 @@ describe("POST /capture", () => {
     expect(db.entries).toHaveLength(0);
   });
 
+  it("extracts hashtags from content and stores clean content with tags", async () => {
+    const { ctx, drain } = makeCtx();
+    const res = await worker.fetch(req("POST", "/capture", { body: { content: "went for a run #health #fitness" } }), env, ctx);
+    await drain();
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(db.entries).toHaveLength(1);
+    expect(db.entries[0].content).toBe("went for a run");
+    const tags = JSON.parse(db.entries[0].tags);
+    expect(tags).toContain("health");
+    expect(tags).toContain("fitness");
+  });
+
+  it("merges hashtag tags with explicit tags and deduplicates case-insensitively", async () => {
+    const { ctx, drain } = makeCtx();
+    const res = await worker.fetch(req("POST", "/capture", { body: { content: "note #health", tags: ["Health", "fitness"] } }), env, ctx);
+    await drain();
+    expect(res.status).toBe(200);
+    const tags: string[] = JSON.parse(db.entries[0].tags);
+    const healthCount = tags.filter(t => t === "health").length;
+    expect(healthCount).toBe(1);
+    expect(tags).toContain("fitness");
+  });
+
+  it("behaves identically when no hashtags are present (regression)", async () => {
+    const { ctx, drain } = makeCtx();
+    const res = await worker.fetch(req("POST", "/capture", { body: { content: "plain note", tags: ["work"] } }), env, ctx);
+    await drain();
+    expect(res.status).toBe(200);
+    expect(db.entries[0].content).toBe("plain note");
+    const tags = JSON.parse(db.entries[0].tags);
+    expect(tags).toEqual(["work"]);
+  });
+
+  it("falls back to original content when input is only hashtags", async () => {
+    const { ctx, drain } = makeCtx();
+    const res = await worker.fetch(req("POST", "/capture", { body: { content: "#task" } }), env, ctx);
+    await drain();
+    expect(res.status).toBe(200);
+    expect(db.entries[0].content).toBe("#task");
+    const tags = JSON.parse(db.entries[0].tags);
+    expect(tags).toContain("task");
+  });
+
   it("stores flagged duplicate (score 0.85–0.94) with duplicate-candidate tag", async () => {
     const vectorize = makeVectorizeMock({
       query: vi.fn().mockResolvedValue({

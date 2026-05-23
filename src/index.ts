@@ -196,6 +196,14 @@ export function parseTimePhrase(query: string, now: number): { after?: number; b
   return { cleanQuery: query };
 }
 
+// ─── Hashtag extraction ───────────────────────────────────────────────────────
+
+export function extractHashtags(content: string): { cleanContent: string; hashtags: string[] } {
+  const hashtags = (content.match(/#\w+/g) ?? []).map(t => t.slice(1).toLowerCase());
+  const cleanContent = content.replace(/#\w+/g, '').replace(/\s+/g, ' ').trim();
+  return { cleanContent, hashtags };
+}
+
 // ─── Store entry (full embed + chunk) ────────────────────────────────────────
 // Returns the list of vector IDs inserted so forget() can clean up exactly.
 
@@ -317,8 +325,10 @@ function buildMcpServer(env: Env): McpServer {
       source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
     },
     async ({ content, tags, source }) => {
-      const c = content.trim();
-      const t = tags ?? [];
+      const raw = content.trim();
+      const { cleanContent, hashtags } = extractHashtags(raw);
+      const c = cleanContent || raw;
+      const t = [...new Set([...(tags ?? []).map(tag => tag.toLowerCase()), ...hashtags])];
       const s = source ?? "claude";
 
       const dup = await checkDuplicate(c, env);
@@ -593,8 +603,10 @@ export default {
       try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
       if (!body.content?.trim()) return json({ error: "content is required" }, 400);
 
-      const c = body.content.trim();
-      const t = body.tags ?? [];
+      const raw = body.content.trim();
+      const { cleanContent, hashtags } = extractHashtags(raw);
+      const c = cleanContent || raw;
+      const t = [...new Set([...(body.tags ?? []).map(tag => tag.toLowerCase()), ...hashtags])];
       const s = body.source ?? "api";
 
       const dup = await checkDuplicate(c, env);
