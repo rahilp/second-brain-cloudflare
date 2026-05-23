@@ -14,7 +14,7 @@ describe("rerankWithTimeDecay", () => {
       match("old", 0.9, NOW - 60 * MS_DAY),
       match("new", 0.9, NOW - 1 * MS_DAY),
     ];
-    const result = rerankWithTimeDecay(matches);
+    const result = rerankWithTimeDecay(matches, new Map());
     expect(result[0].id).toBe("new");
   });
 
@@ -24,7 +24,7 @@ describe("rerankWithTimeDecay", () => {
       match("b", 0.9, NOW - 30 * MS_DAY),
       match("c", 0.7, NOW - 30 * MS_DAY),
     ];
-    const result = rerankWithTimeDecay(matches);
+    const result = rerankWithTimeDecay(matches, new Map());
     for (let i = 0; i < result.length - 1; i++) {
       expect(result[i].score).toBeGreaterThanOrEqual(result[i + 1].score);
     }
@@ -32,7 +32,7 @@ describe("rerankWithTimeDecay", () => {
 
   it("produces no NaN scores", () => {
     const matches = [match("x", 0.5, 0), match("y", 0.5, NOW)];
-    rerankWithTimeDecay(matches).forEach(m => {
+    rerankWithTimeDecay(matches, new Map()).forEach(m => {
       expect(Number.isNaN(m.score)).toBe(false);
     });
   });
@@ -40,8 +40,29 @@ describe("rerankWithTimeDecay", () => {
   it("task tag decays faster than context tag at same age", () => {
     const taskMatch = match("task-entry", 1.0, NOW - 30 * MS_DAY, ["task"]);
     const contextMatch = match("ctx-entry", 1.0, NOW - 30 * MS_DAY, ["context"]);
-    const [t] = rerankWithTimeDecay([taskMatch]);
-    const [c] = rerankWithTimeDecay([contextMatch]);
+    const [t] = rerankWithTimeDecay([taskMatch], new Map());
+    const [c] = rerankWithTimeDecay([contextMatch], new Map());
     expect(c.score).toBeGreaterThan(t.score);
+  });
+
+  it("entry with higher recall_count ranks above equal-scored entry with zero recalls", () => {
+    const fresh = match("fresh", 0.9, NOW - 1 * MS_DAY);
+    const recalled = match("recalled", 0.9, NOW - 1 * MS_DAY);
+    const counts = new Map([["recalled", 10]]);
+    const result = rerankWithTimeDecay([fresh, recalled], counts);
+    expect(result[0].id).toBe("recalled");
+  });
+
+  it("entry with recall_count=0 still produces a positive score (baseline multiplier = 1.0)", () => {
+    const m = match("entry", 0.8, NOW - 5 * MS_DAY);
+    const [result] = rerankWithTimeDecay([m], new Map());
+    expect(result.score).toBeGreaterThan(0);
+  });
+
+  it("omitting recallCounts parameter behaves identically to passing an empty Map", () => {
+    const matches = [match("a", 0.9, NOW - 10 * MS_DAY)];
+    const withEmpty = rerankWithTimeDecay(matches, new Map());
+    const withDefault = rerankWithTimeDecay(matches);
+    expect(withDefault[0].score).toBeCloseTo(withEmpty[0].score, 10);
   });
 });

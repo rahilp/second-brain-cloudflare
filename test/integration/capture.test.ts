@@ -22,6 +22,16 @@ describe("POST /capture", () => {
     env = makeTestEnv(db);
   });
 
+  it("stores importance_score after async AI scoring completes", async () => {
+    const { ctx, drain } = makeCtx();
+    const res = await worker.fetch(req("POST", "/capture", { body: { content: "Decided to switch to TypeScript for all new projects" } }), env, ctx);
+    expect(res.status).toBe(200);
+    await drain();
+    expect(db.entries).toHaveLength(1);
+    expect(db.entries[0].importance_score).toBeGreaterThanOrEqual(1);
+    expect(db.entries[0].importance_score).toBeLessThanOrEqual(5);
+  });
+
   it("returns 400 when content is missing", async () => {
     const { ctx } = makeCtx();
     const res = await worker.fetch(req("POST", "/capture", { body: {} }), env, ctx);

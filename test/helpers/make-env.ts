@@ -21,7 +21,7 @@ export function makeAIMock(): Ai {
         return { data: [new Array(384).fill(0.1)] };
       return new ReadableStream({
         start(c) {
-          c.enqueue(new TextEncoder().encode('data: {"response":"ok"}\n\n'));
+          c.enqueue(new TextEncoder().encode('data: {"response":"3"}\n\n'));
           c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
           c.close();
         },

@@ -56,6 +56,12 @@ async function initializeDatabase(env: Env): Promise<void> {
   } catch (e) {
     console.error("Database initialization error (non-fatal):", e);
   }
+  for (const alter of [
+    `ALTER TABLE entries ADD COLUMN recall_count INTEGER DEFAULT 0`,
+    `ALTER TABLE entries ADD COLUMN importance_score INTEGER DEFAULT 0`,
+  ]) {
+    try { await env.DB.exec(alter); } catch { /* column already exists — no-op */ }
+  }
 }
 
 // ─── Duplicate detection ──────────────────────────────────────────────────────
@@ -130,7 +136,10 @@ export function getHalfLifeMs(tags: string[]): number {
   return 30 * 24 * 60 * 60 * 1000; // 30 days default
 }
 
-export function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[] {
+export function rerankWithTimeDecay(
+  matches: VectorizeMatch[],
+  recallCounts: Map<string, number> = new Map()
+): VectorizeMatch[] {
   const now = Date.now();
 
   return matches
@@ -139,11 +148,15 @@ export function rerankWithTimeDecay(matches: VectorizeMatch[]): VectorizeMatch[]
       const createdAt = meta?.created_at ?? now;
       const tags: string[] = Array.isArray(meta?.tags) ? meta.tags : [];
       const ageMs = now - createdAt;
+      const parentId = (meta?.parentId ?? match.id) as string;
+      const rc = recallCounts.get(parentId) ?? 0;
 
       const halfLifeMs = getHalfLifeMs(tags);
       const recencyMultiplier = Math.exp(-ageMs / halfLifeMs);
+      // log(1+0)=0 would zero out unrecalled entries; (1 + log1p(rc)) gives baseline 1.0
+      const frequencyMultiplier = 1 + Math.log1p(rc);
 
-      return { ...match, score: match.score * recencyMultiplier };
+      return { ...match, score: match.score * recencyMultiplier * frequencyMultiplier };
     })
     .sort((a, b) => b.score - a.score);
 }
@@ -194,6 +207,36 @@ export function parseTimePhrase(query: string, now: number): { after?: number; b
   }
 
   return { cleanQuery: query };
+}
+
+// ─── AI importance scoring ────────────────────────────────────────────────────
+
+async function scoreImportance(content: string, env: Env): Promise<number> {
+  try {
+    const stream = await env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct" as any, {
+      messages: [{ role: "user", content:
+        `Rate the long-term importance of this memory 1-5. Reply with only a single digit.\n1=trivial 3=useful context 5=critical decision or goal\n\nMemory: ${content.slice(0, 500)}`
+      }],
+      stream: true,
+    });
+    const reader = (stream as ReadableStream).getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      decoder.decode(value).split('\n').forEach(line => {
+        if (line.startsWith('data: ') && !line.includes('[DONE]')) {
+          try { const d = JSON.parse(line.slice(6)); if (d.response) text += d.response; } catch {}
+        }
+      });
+    }
+    reader.releaseLock();
+    const score = parseInt(text.trim(), 10);
+    return score >= 1 && score <= 5 ? score : 3;
+  } catch {
+    return 0;
+  }
 }
 
 // ─── Hashtag extraction ───────────────────────────────────────────────────────
@@ -356,6 +399,10 @@ function buildMcpServer(env: Env): McpServer {
         console.error("Vectorize insert failed (non-fatal):", e);
       }
 
+      scoreImportance(c, env)
+        .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
+        .catch(e => console.error("Importance scoring failed (non-fatal):", e));
+
       if (dup.status === "flagged") {
         return {
           content: [{
@@ -462,7 +509,15 @@ function buildMcpServer(env: Env): McpServer {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
       }
 
-      const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[]);
+      // Fetch recall_count for all candidates to use in scoring
+      const candidateIds = [...new Set(results.matches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
+      const rcPlaceholders = candidateIds.map(() => "?").join(", ");
+      const { results: rcRows } = await env.DB.prepare(
+        `SELECT id, recall_count FROM entries WHERE id IN (${rcPlaceholders})`
+      ).bind(...candidateIds).all() as { results: { id: string; recall_count: number }[] };
+      const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
+
+      const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts);
 
       const seen = new Set<string>();
       const deduped = reranked.filter((m) => {
@@ -488,6 +543,13 @@ function buildMcpServer(env: Env): McpServer {
       const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
 
       const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
+
+      // Increment recall_count for entries actually shown (fire-and-forget)
+      Promise.all(
+        [...d1Map.keys()].map(id =>
+          env.DB.prepare(`UPDATE entries SET recall_count = recall_count + 1 WHERE id = ?`).bind(id).run()
+        )
+      ).catch(e => console.error("recall_count update failed (non-fatal):", e));
 
       const text = deduped.map((m, i) => {
         const meta = m.metadata as Record<string, any>;
@@ -632,6 +694,11 @@ export default {
       ctx.waitUntil(
         storeEntry(env, id, c, finalTags, s, now)
           .catch((e) => console.error("Async embed failed:", e))
+      );
+      ctx.waitUntil(
+        scoreImportance(c, env)
+          .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
+          .catch(e => console.error("Importance scoring failed (non-fatal):", e))
       );
 
       if (dup.status === "flagged") {

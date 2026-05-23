@@ -9,7 +9,7 @@ export class D1Mock {
       async run() {
         if (s.startsWith("INSERT INTO entries")) {
           const [id, content, tags, source, created_at, vector_ids] = args;
-          db.entries.push({ id, content, tags, source, created_at, vector_ids });
+          db.entries.push({ id, content, tags, source, created_at, vector_ids, recall_count: 0, importance_score: 0 });
           return { meta: { changes: 1 } };
         }
         if (s.startsWith("UPDATE entries SET vector_ids")) {
@@ -22,6 +22,18 @@ export class D1Mock {
           const [content, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
           if (row) row.content = content;
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET recall_count")) {
+          const [id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) row.recall_count = (row.recall_count ?? 0) + 1;
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET importance_score")) {
+          const [score, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) row.importance_score = score;
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("DELETE FROM entries WHERE id")) {
@@ -43,6 +55,12 @@ export class D1Mock {
         return null;
       },
       async all() {
+        if (s.includes("recall_count FROM entries")) {
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0 }));
+          return { results };
+        }
         if (s.includes("json_each(entries.tags)")) {
           const tags = new Set<string>();
           db.entries.forEach((e: any) => {
