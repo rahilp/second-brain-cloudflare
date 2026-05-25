@@ -430,6 +430,54 @@ async function appendToEntry(
   ).bind(JSON.stringify([...existing, newChunkId]), id).run();
 }
 
+// ─── Synthesize insight from retrieved memories ───────────────────────────────
+
+export async function synthesizeInsight(
+  query: string,
+  rows: { id: string; content: string }[],
+  env: Env
+): Promise<string> {
+  if (!rows.length) return "";
+
+  const memoriesList = rows
+    .map((r, i) => `[${i + 1}] ID: ${r.id}\n${r.content}`)
+    .join("\n\n");
+
+  const prompt = `You are a second brain assistant. Given the user's query and their relevant stored memories, synthesize what they most need to know. Be specific and concise.
+
+Query: "${query}"
+
+Relevant memories:
+${memoriesList}
+
+Provide a brief insight (2-4 sentences) focused on what's most relevant to this query.`;
+
+  let insight = "";
+  try {
+    const stream = await (env.AI as any).run(LLM_MODEL as any, {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 300,
+      stream: true,
+    });
+    const reader = (stream as ReadableStream).getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      decoder.decode(value).split("\n").forEach(line => {
+        if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+          try { const d = JSON.parse(line.slice(6)); if (d.response) insight += d.response; } catch { }
+        }
+      });
+    }
+    reader.releaseLock();
+  } catch (e) {
+    console.error("synthesizeInsight LLM call failed (non-fatal):", e);
+  }
+
+  return insight.trim();
+}
+
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
 function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
@@ -677,7 +725,9 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}\n${meta?.content ?? ""}`;
       }).join("\n\n");
 
-      return { content: [{ type: "text", text }] };
+      const insight = await synthesizeInsight(embedQuery, d1Rows as { id: string; content: string }[], env);
+      const finalText = insight ? `**Insight:** ${insight}\n\n---\n\n${text}` : text;
+      return { content: [{ type: "text", text: finalText }] };
     }
   );
 
