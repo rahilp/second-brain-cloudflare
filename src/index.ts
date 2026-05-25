@@ -14,6 +14,8 @@ export interface Env {
   AUTH_TOKEN: string;
 }
 
+const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
 const CORS_HEADERS = {
@@ -96,6 +98,80 @@ async function checkDuplicate(content: string, env: Env): Promise<DuplicateResul
   if (score >= DUPLICATE_BLOCK_THRESHOLD) return { status: "blocked", matchId, score };
   if (score >= DUPLICATE_FLAG_THRESHOLD) return { status: "flagged", matchId, score };
   return { status: "unique" };
+}
+
+// ─── Contradiction Detection ──────────────────────────────────────────────────
+
+interface ContradictionResult {
+  detected: boolean;
+  conflicting_id?: string;
+  reason?: string;
+}
+
+export async function checkContradiction(content: string, env: Env): Promise<ContradictionResult> {
+  const values = await embed(content, env);
+  const results = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
+
+  const candidates = results.matches.filter(m => m.score >= 0.45);
+  if (!candidates.length) return { detected: false };
+
+  const parentIds = [...new Set(
+    candidates.map(m => (m.metadata as any)?.parentId ?? m.id)
+  )] as string[];
+
+  const placeholders = parentIds.map(() => "?").join(", ");
+  const { results: rows } = await env.DB.prepare(
+    `SELECT id, content FROM entries WHERE id IN (${placeholders})`
+  ).bind(...parentIds).all() as { results: { id: string; content: string }[] };
+
+  if (!rows.length) return { detected: false };
+
+  const existingList = rows
+    .map((r, i) => `[${i + 1}] ID: ${r.id}\n${r.content}`)
+    .join("\n\n");
+
+  const prompt = `You are checking if a new memory contradicts existing memories.
+
+New memory: "${content}"
+
+Existing memories:
+${existingList}
+
+A contradiction means the new memory states something that DIRECTLY CONFLICTS with an existing memory — a different current location, reversed preference, changed decision, or updated fact. Partial overlaps, additions, or elaborations are NOT contradictions.
+
+Respond with JSON only. No text outside the JSON object.
+{"contradicts": false} OR {"contradicts": true, "conflicting_id": "<exact_id>", "reason": "<10 words max>"}`;
+
+  try {
+    const stream = await (env.AI as any).run(LLM_MODEL as any, {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 80,
+      stream: true,
+    });
+    const reader = (stream as ReadableStream).getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      decoder.decode(value).split("\n").forEach(line => {
+        if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+          try { const d = JSON.parse(line.slice(6)); if (d.response) text += d.response; } catch { }
+        }
+      });
+    }
+    reader.releaseLock();
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return { detected: false };
+    const parsed = JSON.parse(match[0]);
+    if (parsed.contradicts && parsed.conflicting_id) {
+      const validId = parentIds.find(id => id === parsed.conflicting_id);
+      if (validId) return { detected: true, conflicting_id: validId, reason: parsed.reason };
+    }
+    return { detected: false };
+  } catch {
+    return { detected: false };
+  }
 }
 
 // ─── Chunking ─────────────────────────────────────────────────────────────────
@@ -213,9 +289,10 @@ export function parseTimePhrase(query: string, now: number): { after?: number; b
 
 async function scoreImportance(content: string, env: Env): Promise<number> {
   try {
-    const stream = await env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct" as any, {
-      messages: [{ role: "user", content:
-        `Rate the long-term importance of this memory 1-5. Reply with only a single digit.\n1=trivial 3=useful context 5=critical decision or goal\n\nMemory: ${content.slice(0, 500)}`
+    const stream = await env.AI.run(LLM_MODEL as any, {
+      messages: [{
+        role: "user", content:
+          `Rate the long-term importance of this memory 1-5. Reply with only a single digit.\n1=trivial 3=useful context 5=critical decision or goal\n\nMemory: ${content.slice(0, 500)}`
       }],
       stream: true,
     });
@@ -227,7 +304,7 @@ async function scoreImportance(content: string, env: Env): Promise<number> {
       if (done) break;
       decoder.decode(value).split('\n').forEach(line => {
         if (line.startsWith('data: ') && !line.includes('[DONE]')) {
-          try { const d = JSON.parse(line.slice(6)); if (d.response) text += d.response; } catch {}
+          try { const d = JSON.parse(line.slice(6)); if (d.response) text += d.response; } catch { }
         }
       });
     }
@@ -385,9 +462,12 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         };
       }
 
+      const contradiction = await checkContradiction(c, env);
+
       const id = crypto.randomUUID();
       const now = Date.now();
-      const finalTags = dup.status === "flagged" ? [...t, "duplicate-candidate"] : t;
+      const baseTags = contradiction.detected ? [...t, "contradiction-resolved"] : t;
+      const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
 
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
@@ -404,6 +484,26 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
           .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
           .catch(e => console.error("Importance scoring failed (non-fatal):", e))
       );
+
+      if (contradiction.detected && contradiction.conflicting_id) {
+        const conflictId = contradiction.conflicting_id;
+        try {
+          const conflictRow = await env.DB.prepare(
+            `SELECT vector_ids FROM entries WHERE id = ?`
+          ).bind(conflictId).first() as Record<string, any> | null;
+          const conflictVectorIds: string[] = JSON.parse(conflictRow?.vector_ids ?? "[]");
+          await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(conflictId).run();
+          if (conflictVectorIds.length) await env.VECTORIZE.deleteByIds(conflictVectorIds);
+        } catch (e) {
+          console.error("Contradiction resolution cleanup failed (non-fatal):", e);
+        }
+        return {
+          content: [{
+            type: "text",
+            text: `Stored. ID: ${id} — resolved contradiction with entry ${contradiction.conflicting_id}${contradiction.reason ? `: ${contradiction.reason}` : ""}.`,
+          }],
+        };
+      }
 
       if (dup.status === "flagged") {
         return {
@@ -687,23 +787,48 @@ export default {
         });
       }
 
+      const contradiction = await checkContradiction(c, env);
+
       const id = crypto.randomUUID();
       const now = Date.now();
-      const finalTags = dup.status === "flagged" ? [...t, "duplicate-candidate"] : t;
+      const baseTags = contradiction.detected ? [...t, "contradiction-resolved"] : t;
+      const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
 
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
       ).bind(id, c, JSON.stringify(finalTags), s, now, "[]").run();
 
-      ctx.waitUntil(
-        storeEntry(env, id, c, finalTags, s, now)
-          .catch((e) => console.error("Async embed failed:", e))
-      );
+      try {
+        await storeEntry(env, id, c, finalTags, s, now);
+      } catch (e) {
+        console.error("Vectorize insert failed (non-fatal):", e);
+      }
+
       ctx.waitUntil(
         scoreImportance(c, env)
           .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
           .catch(e => console.error("Importance scoring failed (non-fatal):", e))
       );
+
+      if (contradiction.detected && contradiction.conflicting_id) {
+        const conflictId = contradiction.conflicting_id;
+        try {
+          const conflictRow = await env.DB.prepare(
+            `SELECT vector_ids FROM entries WHERE id = ?`
+          ).bind(conflictId).first() as Record<string, any> | null;
+          const conflictVectorIds: string[] = JSON.parse(conflictRow?.vector_ids ?? "[]");
+          await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(conflictId).run();
+          if (conflictVectorIds.length) await env.VECTORIZE.deleteByIds(conflictVectorIds);
+        } catch (e) {
+          console.error("Contradiction resolution cleanup failed (non-fatal):", e);
+        }
+        return json({
+          ok: true,
+          id,
+          resolved_conflict: conflictId,
+          reason: contradiction.reason,
+        });
+      }
 
       if (dup.status === "flagged") {
         return json({
@@ -797,7 +922,7 @@ export default {
       const userMessage = `Question: ${body.query}\n\nRelevant memories:\n${body.memories}`;
 
       // Workers AI requires `as any` here — the SDK types don't cover all models
-      const stream = await env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct" as any, {
+      const stream = await env.AI.run(LLM_MODEL as any, {
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage }
