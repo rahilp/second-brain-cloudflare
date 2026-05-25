@@ -61,6 +61,12 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0 }));
           return { results };
         }
+        if (s.includes("SELECT id, content FROM entries WHERE id IN")) {
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id, content: e.content }));
+          return { results };
+        }
         if (s.includes("json_each(entries.tags)")) {
           const tags = new Set<string>();
           db.entries.forEach((e: any) => {
@@ -83,7 +89,7 @@ export class D1Mock {
     };
   }
 
-  async exec(_sql: string) {}
+  async exec(_sql: string) { }
   async batch(stmts: any[]) { return Promise.all(stmts.map((s: any) => s.run())); }
   reset() { this.entries = []; }
 }
