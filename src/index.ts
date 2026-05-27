@@ -485,6 +485,75 @@ Provide a brief insight (2-4 sentences) focused on what's most relevant to this 
   return insight.trim();
 }
 
+// ─── Shared write path ────────────────────────────────────────────────────────
+
+export type CaptureResult =
+  | { status: "blocked"; matchId: string; score: number }
+  | { status: "stored"; id: string }
+  | { status: "flagged"; id: string; matchId: string; score: number }
+  | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string };
+
+export async function captureEntry(
+  rawContent: string,
+  tags: string[],
+  source: string,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<CaptureResult> {
+  const raw = rawContent.trim();
+  const { cleanContent, hashtags } = extractHashtags(raw);
+  const c = cleanContent || raw;
+  const t = [...new Set([...tags.map(tag => tag.toLowerCase()), ...hashtags])];
+
+  const { duplicate: dup, contradiction } = await checkDuplicateAndContradiction(c, env);
+
+  if (dup.status === "blocked") {
+    return { status: "blocked", matchId: dup.matchId, score: dup.score };
+  }
+
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const baseTags = contradiction.detected ? [...t, "contradiction-resolved"] : t;
+  const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
+
+  await env.DB.prepare(
+    `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(id, c, JSON.stringify(finalTags), source, now, "[]").run();
+
+  try {
+    await storeEntry(env, id, c, finalTags, source, now);
+  } catch (e) {
+    console.error("Vectorize insert failed (non-fatal):", e);
+  }
+
+  ctx.waitUntil(
+    scoreImportance(c, env)
+      .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
+      .catch(e => console.error("Importance scoring failed (non-fatal):", e))
+  );
+
+  if (contradiction.detected && contradiction.conflicting_id) {
+    const conflictId = contradiction.conflicting_id;
+    try {
+      const conflictRow = await env.DB.prepare(
+        `SELECT vector_ids FROM entries WHERE id = ?`
+      ).bind(conflictId).first() as Record<string, any> | null;
+      const conflictVectorIds: string[] = JSON.parse(conflictRow?.vector_ids ?? "[]");
+      await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(conflictId).run();
+      if (conflictVectorIds.length) await env.VECTORIZE.deleteByIds(conflictVectorIds);
+    } catch (e) {
+      console.error("Contradiction resolution cleanup failed (non-fatal):", e);
+    }
+    return { status: "contradiction", id, resolvedConflict: conflictId, reason: contradiction.reason };
+  }
+
+  if (dup.status === "flagged") {
+    return { status: "flagged", id, matchId: dup.matchId, score: dup.score };
+  }
+
+  return { status: "stored", id };
+}
+
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
 function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
@@ -500,74 +569,17 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
     },
     async ({ content, tags, source }) => {
-      const raw = content.trim();
-      const { cleanContent, hashtags } = extractHashtags(raw);
-      const c = cleanContent || raw;
-      const t = [...new Set([...(tags ?? []).map(tag => tag.toLowerCase()), ...hashtags])];
-      const s = source ?? "claude";
-
-      const { duplicate: dup, contradiction } = await checkDuplicateAndContradiction(c, env);
-
-      if (dup.status === "blocked") {
-        return {
-          content: [{
-            type: "text",
-            text: `Duplicate detected (${(dup.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${dup.matchId}`,
-          }],
-        };
+      const result = await captureEntry(content, tags ?? [], source ?? "claude", env, ctx);
+      if (result.status === "blocked") {
+        return { content: [{ type: "text", text: `Duplicate detected (${(result.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${result.matchId}` }] };
       }
-
-      const id = crypto.randomUUID();
-      const now = Date.now();
-      const baseTags = contradiction.detected ? [...t, "contradiction-resolved"] : t;
-      const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
-
-      await env.DB.prepare(
-        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind(id, c, JSON.stringify(finalTags), s, now, "[]").run();
-
-      try {
-        await storeEntry(env, id, c, finalTags, s, now);
-      } catch (e) {
-        console.error("Vectorize insert failed (non-fatal):", e);
+      if (result.status === "contradiction") {
+        return { content: [{ type: "text", text: `Stored. ID: ${result.id} — resolved contradiction with entry ${result.resolvedConflict}${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
-
-      ctx.waitUntil(
-        scoreImportance(c, env)
-          .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
-          .catch(e => console.error("Importance scoring failed (non-fatal):", e))
-      );
-
-      if (contradiction.detected && contradiction.conflicting_id) {
-        const conflictId = contradiction.conflicting_id;
-        try {
-          const conflictRow = await env.DB.prepare(
-            `SELECT vector_ids FROM entries WHERE id = ?`
-          ).bind(conflictId).first() as Record<string, any> | null;
-          const conflictVectorIds: string[] = JSON.parse(conflictRow?.vector_ids ?? "[]");
-          await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(conflictId).run();
-          if (conflictVectorIds.length) await env.VECTORIZE.deleteByIds(conflictVectorIds);
-        } catch (e) {
-          console.error("Contradiction resolution cleanup failed (non-fatal):", e);
-        }
-        return {
-          content: [{
-            type: "text",
-            text: `Stored. ID: ${id} — resolved contradiction with entry ${contradiction.conflicting_id}${contradiction.reason ? `: ${contradiction.reason}` : ""}.`,
-          }],
-        };
+      if (result.status === "flagged") {
+        return { content: [{ type: "text", text: `Stored with ID: ${result.id} — note: similar entry exists (${(result.score * 100).toFixed(0)}% match, ID: ${result.matchId}). Tagged as duplicate-candidate.` }] };
       }
-
-      if (dup.status === "flagged") {
-        return {
-          content: [{
-            type: "text",
-            text: `Stored with ID: ${id} — note: similar entry exists (${(dup.score * 100).toFixed(0)}% match, ID: ${dup.matchId}). Tagged as duplicate-candidate.`,
-          }],
-        };
-      }
-
-      return { content: [{ type: "text", text: `Stored. ID: ${id}` }] };
+      return { content: [{ type: "text", text: `Stored. ID: ${result.id}` }] };
     }
   );
 
@@ -830,77 +842,31 @@ export default {
       try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
       if (!body.content?.trim()) return json({ error: "content is required" }, 400);
 
-      const raw = body.content.trim();
-      const { cleanContent, hashtags } = extractHashtags(raw);
-      const c = cleanContent || raw;
-      const t = [...new Set([...(body.tags ?? []).map(tag => tag.toLowerCase()), ...hashtags])];
-      const s = body.source ?? "api";
+      const result = await captureEntry(body.content, body.tags ?? [], body.source ?? "api", env, ctx);
 
-      const { duplicate: dup, contradiction } = await checkDuplicateAndContradiction(c, env);
-
-      if (dup.status === "blocked") {
+      if (result.status === "blocked") {
         return json({
           ok: false,
           duplicate: true,
-          matchId: dup.matchId,
-          score: parseFloat((dup.score * 100).toFixed(1)),
+          matchId: result.matchId,
+          score: parseFloat((result.score * 100).toFixed(1)),
           message: "Near-exact duplicate detected — not stored",
         });
       }
-
-      const id = crypto.randomUUID();
-      const now = Date.now();
-      const baseTags = contradiction.detected ? [...t, "contradiction-resolved"] : t;
-      const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
-
-      await env.DB.prepare(
-        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind(id, c, JSON.stringify(finalTags), s, now, "[]").run();
-
-      try {
-        await storeEntry(env, id, c, finalTags, s, now);
-      } catch (e) {
-        console.error("Vectorize insert failed (non-fatal):", e);
+      if (result.status === "contradiction") {
+        return json({ ok: true, id: result.id, resolved_conflict: result.resolvedConflict, reason: result.reason });
       }
-
-      ctx.waitUntil(
-        scoreImportance(c, env)
-          .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
-          .catch(e => console.error("Importance scoring failed (non-fatal):", e))
-      );
-
-      if (contradiction.detected && contradiction.conflicting_id) {
-        const conflictId = contradiction.conflicting_id;
-        try {
-          const conflictRow = await env.DB.prepare(
-            `SELECT vector_ids FROM entries WHERE id = ?`
-          ).bind(conflictId).first() as Record<string, any> | null;
-          const conflictVectorIds: string[] = JSON.parse(conflictRow?.vector_ids ?? "[]");
-          await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(conflictId).run();
-          if (conflictVectorIds.length) await env.VECTORIZE.deleteByIds(conflictVectorIds);
-        } catch (e) {
-          console.error("Contradiction resolution cleanup failed (non-fatal):", e);
-        }
+      if (result.status === "flagged") {
         return json({
           ok: true,
-          id,
-          resolved_conflict: conflictId,
-          reason: contradiction.reason,
-        });
-      }
-
-      if (dup.status === "flagged") {
-        return json({
-          ok: true,
-          id,
+          id: result.id,
           warning: "similar",
-          matchId: dup.matchId,
-          score: parseFloat((dup.score * 100).toFixed(1)),
+          matchId: result.matchId,
+          score: parseFloat((result.score * 100).toFixed(1)),
           message: "Stored but similar entry exists — tagged as duplicate-candidate",
         });
       }
-
-      return json({ ok: true, id });
+      return json({ ok: true, id: result.id });
     }
 
     // POST /append
