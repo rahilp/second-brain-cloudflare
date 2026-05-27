@@ -748,7 +748,9 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}\n${meta?.content ?? ""}`;
       }).join("\n\n");
 
-      const insight = await synthesizeInsight(embedQuery, d1Rows as { id: string; content: string }[], env);
+      const insight = d1Rows.length > 1
+        ? await synthesizeInsight(embedQuery, d1Rows as { id: string; content: string }[], env)
+        : "";
       const finalText = insight ? `**Insight:** ${insight}\n\n---\n\n${text}` : text;
       return { content: [{ type: "text", text: finalText }] };
     }
