@@ -631,6 +631,58 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
     }
   );
 
+  // ── update ───────────────────────────────────────────────────────────────
+  server.tool(
+    "update",
+    "Replace the full content of an existing memory. Use when information has changed entirely — a preference reversed, a decision overturned, or content is outdated. Use append instead if you're adding new information rather than replacing. Get the entry ID from recall or list_recent first.",
+    {
+      id: z.string().describe("Entry ID to update — from recall or list_recent"),
+      content: z.string().describe("The new content to replace the existing entry with"),
+    },
+    async ({ id, content }) => {
+      const newContent = content.trim();
+      if (!newContent) {
+        return { content: [{ type: "text", text: "Content cannot be empty." }] };
+      }
+
+      // Read current row upfront — need tags, source, AND old vector_ids before any mutation
+      const row = await env.DB.prepare(
+        `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+
+      if (!row) {
+        return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      }
+
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      const source = row.source as string;
+      const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+
+      // Step 1: Update D1 content
+      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, id).run();
+
+      // Step 2: Re-embed new content → inserts new vectors + updates vector_ids in D1
+      let newVectorCount = 0;
+      try {
+        const newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
+        newVectorCount = newVectorIds.length;
+      } catch (e) {
+        console.error("Vectorize re-embed failed (non-fatal):", e);
+      }
+
+      // Step 3: Delete old vectors — after new ones are safely in place
+      try {
+        if (oldVectorIds.length) await env.VECTORIZE.deleteByIds(oldVectorIds);
+      } catch (e) {
+        console.error("Old vector cleanup failed (non-fatal):", e);
+      }
+
+      return {
+        content: [{ type: "text", text: `Updated entry ${id}. Re-embedded as ${newVectorCount} vector(s).` }],
+      };
+    }
+  );
+
   // ── recall ───────────────────────────────────────────────────────────────
   server.tool(
     "recall",
@@ -904,6 +956,47 @@ export default {
         id,
         message: "Update appended successfully with timestamp",
       });
+    }
+
+    // POST /update
+    if (url.pathname === "/update" && request.method === "POST") {
+      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+
+      let body: { id?: string; content?: string };
+      try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
+      if (!body.id?.trim()) return json({ error: "id is required" }, 400);
+      if (!body.content?.trim()) return json({ error: "content is required" }, 400);
+
+      const id = body.id.trim();
+      const newContent = body.content.trim();
+
+      const row = await env.DB.prepare(
+        `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+
+      if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      const source = row.source as string;
+      const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+
+      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, id).run();
+
+      let newVectorCount = 0;
+      try {
+        const newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
+        newVectorCount = newVectorIds.length;
+      } catch (e) {
+        console.error("Vectorize re-embed failed (non-fatal):", e);
+      }
+
+      try {
+        if (oldVectorIds.length) await env.VECTORIZE.deleteByIds(oldVectorIds);
+      } catch (e) {
+        console.error("Old vector cleanup failed (non-fatal):", e);
+      }
+
+      return json({ ok: true, id, vectors: newVectorCount });
     }
 
     // GET /count
