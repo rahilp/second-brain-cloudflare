@@ -1903,7 +1903,7 @@
           setTimeout(() => cardElement?.remove(), 400);
         }
         allEntries = allEntries.filter(e => e.id !== idToForget);
-        updateStatus();
+        updateStatus(); loadTags();
       } catch (e) {
         alert('Could not forget: ' + e.message);
       } finally {
