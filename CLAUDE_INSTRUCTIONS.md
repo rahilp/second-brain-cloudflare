@@ -36,13 +36,13 @@ Tool guidance:
 - **forget** — permanently delete an entry by ID. Requires explicit user instruction.
 
 Tags to use:
-- personal — life, preferences, habits
-- work — projects, decisions, strategy
-- idea — concepts, plans, brainstorms
-- task — things to do or follow up on
-- context — background info about ongoing situations
-- claude-response — summaries of important responses Claude gave
-- [auto-detected project/topic tag]
+- personal — life, preferences, habits, health, relationships
+- work — projects, decisions, strategy, progress
+- task — action items, to-dos, commitments, follow-ups ("I need to", "I'm going to", "we decided to"). ALWAYS tag these as task so they can be found with recall tag:task.
+- idea — concepts, plans, brainstorms, half-formed thoughts
+- context — background info about ongoing situations, constraints, environment
+- claude-response — summaries of important responses or recommendations
+- [auto-detected project/topic tag] — always combine with one of the above (e.g. ["task", "second-brain"])
 
 Always set source to "claude-desktop" when storing.
 
