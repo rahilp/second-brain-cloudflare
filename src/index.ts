@@ -48,6 +48,10 @@ const INSIGHT_MAX_TOKENS = 300;
 
 const VECTORIZE_TOP_K_MULTIPLIER = 3;
 
+// ─── Runtime state ────────────────────────────────────────────────────────────
+
+let dbReady = false;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isAuthorized(request: Request, env: Env): boolean {
@@ -824,7 +828,11 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    ctx.waitUntil(initializeDatabase(env));
+    if (!dbReady) {
+      ctx.waitUntil(
+        initializeDatabase(env).then(() => { dbReady = true; })
+      );
+    }
 
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
