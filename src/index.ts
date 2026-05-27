@@ -54,6 +54,23 @@ let dbReady = false;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+async function readStreamText(stream: ReadableStream): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    decoder.decode(value).split("\n").forEach(line => {
+      if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+        try { const d = JSON.parse(line.slice(6)); if (d.response) text += d.response; } catch { }
+      }
+    });
+  }
+  reader.releaseLock();
+  return text;
+}
+
 function isAuthorized(request: Request, env: Env): boolean {
   return request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`;
 }
@@ -171,19 +188,7 @@ Respond with JSON only. No text outside the JSON object.
       max_tokens: CONTRADICTION_MAX_TOKENS,
       stream: true,
     });
-    const reader = (stream as ReadableStream).getReader();
-    const decoder = new TextDecoder();
-    let text = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      decoder.decode(value).split("\n").forEach(line => {
-        if (line.startsWith("data: ") && !line.includes("[DONE]")) {
-          try { const d = JSON.parse(line.slice(6)); if (d.response) text += d.response; } catch { }
-        }
-      });
-    }
-    reader.releaseLock();
+    const text = await readStreamText(stream as ReadableStream);
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { detected: false };
     const parsed = JSON.parse(match[0]);
@@ -319,19 +324,7 @@ async function scoreImportance(content: string, env: Env): Promise<number> {
       }],
       stream: true,
     });
-    const reader = (stream as ReadableStream).getReader();
-    const decoder = new TextDecoder();
-    let text = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      decoder.decode(value).split('\n').forEach(line => {
-        if (line.startsWith('data: ') && !line.includes('[DONE]')) {
-          try { const d = JSON.parse(line.slice(6)); if (d.response) text += d.response; } catch { }
-        }
-      });
-    }
-    reader.releaseLock();
+    const text = await readStreamText(stream as ReadableStream);
     const score = parseInt(text.trim(), 10);
     return score >= 1 && score <= 5 ? score : 3;
   } catch {
@@ -482,18 +475,7 @@ Provide a brief insight (2-4 sentences) focused on what's most relevant to this 
       max_tokens: INSIGHT_MAX_TOKENS,
       stream: true,
     });
-    const reader = (stream as ReadableStream).getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      decoder.decode(value).split("\n").forEach(line => {
-        if (line.startsWith("data: ") && !line.includes("[DONE]")) {
-          try { const d = JSON.parse(line.slice(6)); if (d.response) insight += d.response; } catch { }
-        }
-      });
-    }
-    reader.releaseLock();
+    insight = await readStreamText(stream as ReadableStream);
   } catch (e) {
     console.error("synthesizeInsight LLM call failed (non-fatal):", e);
   }
