@@ -124,22 +124,6 @@ export function getDuplicateCheckSample(content: string): string {
   return `${start}\n...\n${middle}\n...\n${end}`;
 }
 
-async function checkDuplicate(content: string, env: Env): Promise<DuplicateResult> {
-  const sample = getDuplicateCheckSample(content);
-  const values = await embed(sample, env);
-  const results = await env.VECTORIZE.query(values, { topK: 1, returnMetadata: "all" });
-
-  if (!results.matches.length) return { status: "unique" };
-
-  const top = results.matches[0];
-  const score = top.score;
-  const matchId = (top.metadata as any)?.parentId ?? top.id;
-
-  if (score >= DUPLICATE_BLOCK_THRESHOLD) return { status: "blocked", matchId, score };
-  if (score >= DUPLICATE_FLAG_THRESHOLD) return { status: "flagged", matchId, score };
-  return { status: "unique" };
-}
-
 // ─── Contradiction Detection ──────────────────────────────────────────────────
 
 interface ContradictionResult {
@@ -148,29 +132,45 @@ interface ContradictionResult {
   reason?: string;
 }
 
-export async function checkContradiction(content: string, env: Env): Promise<ContradictionResult> {
-  const values = await embed(content, env);
-  const results = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
+// Merges duplicate detection and contradiction detection into a single embed +
+// Vectorize query, saving 1 AI call and 1 Vectorize round trip on every write.
+export async function checkDuplicateAndContradiction(content: string, env: Env): Promise<{
+  duplicate: DuplicateResult;
+  contradiction: ContradictionResult;
+}> {
+  const sample = getDuplicateCheckSample(content);
+  const values = await embed(sample, env);
+  const { matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
 
-  const candidates = results.matches.filter(m => m.score >= CANDIDATE_SCORE_THRESHOLD);
-  if (!candidates.length) return { detected: false };
+  // ── Duplicate: derived from top match ───────────────────────────────────────
+  let duplicate: DuplicateResult = { status: "unique" };
+  if (matches.length) {
+    const top = matches[0];
+    const matchId = (top.metadata as any)?.parentId ?? top.id;
+    if (top.score >= DUPLICATE_BLOCK_THRESHOLD) duplicate = { status: "blocked", matchId, score: top.score };
+    else if (top.score >= DUPLICATE_FLAG_THRESHOLD) duplicate = { status: "flagged", matchId, score: top.score };
+  }
 
-  const parentIds = [...new Set(
-    candidates.map(m => (m.metadata as any)?.parentId ?? m.id)
-  )] as string[];
+  // ── Contradiction: skip entirely if we're blocking anyway ───────────────────
+  let contradiction: ContradictionResult = { detected: false };
+  if (duplicate.status !== "blocked") {
+    const candidates = matches.filter(m => m.score >= CANDIDATE_SCORE_THRESHOLD);
+    if (candidates.length) {
+      const parentIds = [...new Set(
+        candidates.map(m => (m.metadata as any)?.parentId ?? m.id)
+      )] as string[];
 
-  const placeholders = parentIds.map(() => "?").join(", ");
-  const { results: rows } = await env.DB.prepare(
-    `SELECT id, content FROM entries WHERE id IN (${placeholders})`
-  ).bind(...parentIds).all() as { results: { id: string; content: string }[] };
+      const placeholders = parentIds.map(() => "?").join(", ");
+      const { results: rows } = await env.DB.prepare(
+        `SELECT id, content FROM entries WHERE id IN (${placeholders})`
+      ).bind(...parentIds).all() as { results: { id: string; content: string }[] };
 
-  if (!rows.length) return { detected: false };
+      if (rows.length) {
+        const existingList = rows
+          .map((r, i) => `[${i + 1}] ID: ${r.id}\n${r.content}`)
+          .join("\n\n");
 
-  const existingList = rows
-    .map((r, i) => `[${i + 1}] ID: ${r.id}\n${r.content}`)
-    .join("\n\n");
-
-  const prompt = `You are checking if a new memory contradicts existing memories.
+        const prompt = `You are checking if a new memory contradicts existing memories.
 
 New memory: "${content}"
 
@@ -182,24 +182,29 @@ A contradiction means the new memory states something that DIRECTLY CONFLICTS wi
 Respond with JSON only. No text outside the JSON object.
 {"contradicts": false} OR {"contradicts": true, "conflicting_id": "<exact_id>", "reason": "<10 words max>"}`;
 
-  try {
-    const stream = await (env.AI as any).run(LLM_MODEL as any, {
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: CONTRADICTION_MAX_TOKENS,
-      stream: true,
-    });
-    const text = await readStreamText(stream as ReadableStream);
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return { detected: false };
-    const parsed = JSON.parse(match[0]);
-    if (parsed.contradicts && parsed.conflicting_id) {
-      const validId = parentIds.find(id => id === parsed.conflicting_id);
-      if (validId) return { detected: true, conflicting_id: validId, reason: parsed.reason };
+        try {
+          const stream = await (env.AI as any).run(LLM_MODEL as any, {
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: CONTRADICTION_MAX_TOKENS,
+            stream: true,
+          });
+          const text = await readStreamText(stream as ReadableStream);
+          const match = text.match(/\{[\s\S]*\}/);
+          if (match) {
+            const parsed = JSON.parse(match[0]);
+            if (parsed.contradicts && parsed.conflicting_id) {
+              const validId = parentIds.find(id => id === parsed.conflicting_id);
+              if (validId) contradiction = { detected: true, conflicting_id: validId, reason: parsed.reason };
+            }
+          }
+        } catch {
+          // non-fatal — contradiction stays { detected: false }
+        }
+      }
     }
-    return { detected: false };
-  } catch {
-    return { detected: false };
   }
+
+  return { duplicate, contradiction };
 }
 
 // ─── Chunking ─────────────────────────────────────────────────────────────────
@@ -501,7 +506,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       const t = [...new Set([...(tags ?? []).map(tag => tag.toLowerCase()), ...hashtags])];
       const s = source ?? "claude";
 
-      const dup = await checkDuplicate(c, env);
+      const { duplicate: dup, contradiction } = await checkDuplicateAndContradiction(c, env);
 
       if (dup.status === "blocked") {
         return {
@@ -511,8 +516,6 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
           }],
         };
       }
-
-      const contradiction = await checkContradiction(c, env);
 
       const id = crypto.randomUUID();
       const now = Date.now();
@@ -833,7 +836,7 @@ export default {
       const t = [...new Set([...(body.tags ?? []).map(tag => tag.toLowerCase()), ...hashtags])];
       const s = body.source ?? "api";
 
-      const dup = await checkDuplicate(c, env);
+      const { duplicate: dup, contradiction } = await checkDuplicateAndContradiction(c, env);
 
       if (dup.status === "blocked") {
         return json({
@@ -844,8 +847,6 @@ export default {
           message: "Near-exact duplicate detected — not stored",
         });
       }
-
-      const contradiction = await checkContradiction(c, env);
 
       const id = crypto.randomUUID();
       const now = Date.now();

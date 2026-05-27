@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { checkContradiction } from "../../src/index";
+import { checkDuplicateAndContradiction } from "../../src/index";
 import { makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import type { Env } from "../../src/index";
 
@@ -36,21 +36,22 @@ function match(id: string, score: number) {
   return { id, score, metadata: { parentId: id } };
 }
 
-describe("checkContradiction()", () => {
-  it("returns not detected when all matches are below threshold", async () => {
+describe("checkDuplicateAndContradiction()", () => {
+  it("returns unique + no contradiction when all matches are below threshold", async () => {
     const env = makeEnv("", [match("a", 0.3)], [entry("a", "I enjoy hiking")]);
-    const result = await checkContradiction("I live in Paris", env);
-    expect(result.detected).toBe(false);
+    const { duplicate, contradiction } = await checkDuplicateAndContradiction("I live in Paris", env);
+    expect(duplicate.status).toBe("unique");
+    expect(contradiction.detected).toBe(false);
   });
 
-  it("returns not detected when LLM says no contradiction", async () => {
+  it("returns no contradiction when LLM says no contradiction", async () => {
     const env = makeEnv(
       '{"contradicts": false}',
       [match("a", 0.7)],
       [entry("a", "I enjoy hiking")]
     );
-    const result = await checkContradiction("I live in NYC", env);
-    expect(result.detected).toBe(false);
+    const { contradiction } = await checkDuplicateAndContradiction("I live in NYC", env);
+    expect(contradiction.detected).toBe(false);
   });
 
   it("detects a contradiction and returns conflicting_id and reason", async () => {
@@ -59,10 +60,10 @@ describe("checkContradiction()", () => {
       [match("abc123", 0.72)],
       [entry("abc123", "I live in NYC")]
     );
-    const result = await checkContradiction("I moved to LA last year", env);
-    expect(result.detected).toBe(true);
-    expect(result.conflicting_id).toBe("abc123");
-    expect(result.reason).toBe("different city");
+    const { contradiction } = await checkDuplicateAndContradiction("I moved to LA last year", env);
+    expect(contradiction.detected).toBe(true);
+    expect(contradiction.conflicting_id).toBe("abc123");
+    expect(contradiction.reason).toBe("different city");
   });
 
   it("ignores a hallucinated ID not in the candidate results", async () => {
@@ -71,21 +72,21 @@ describe("checkContradiction()", () => {
       [match("real-id", 0.72)],
       [entry("real-id", "I live in NYC")]
     );
-    const result = await checkContradiction("I moved to LA", env);
-    expect(result.detected).toBe(false);
+    const { contradiction } = await checkDuplicateAndContradiction("I moved to LA", env);
+    expect(contradiction.detected).toBe(false);
   });
 
-  it("returns not detected when LLM returns malformed JSON", async () => {
+  it("returns no contradiction when LLM returns malformed JSON", async () => {
     const env = makeEnv(
       "Sorry, I cannot help with that.",
       [match("a", 0.7)],
       [entry("a", "I live in NYC")]
     );
-    const result = await checkContradiction("I moved to LA", env);
-    expect(result.detected).toBe(false);
+    const { contradiction } = await checkDuplicateAndContradiction("I moved to LA", env);
+    expect(contradiction.detected).toBe(false);
   });
 
-  it("returns not detected when AI throws", async () => {
+  it("returns no contradiction when AI throws", async () => {
     const db = makeTestDb();
     db.entries = [entry("a", "I live in NYC")];
     const env: Env = {
@@ -101,7 +102,24 @@ describe("checkContradiction()", () => {
       } as unknown as Ai,
       AUTH_TOKEN: "test-token",
     };
-    const result = await checkContradiction("I moved to LA", env);
-    expect(result.detected).toBe(false);
+    const { contradiction } = await checkDuplicateAndContradiction("I moved to LA", env);
+    expect(contradiction.detected).toBe(false);
+  });
+
+  it("returns blocked duplicate and skips contradiction check", async () => {
+    const queryFn = vi.fn().mockResolvedValue({ matches: [match("a", 0.96)] });
+    const env = makeEnv("", [match("a", 0.96)], [entry("a", "Original content")]);
+    (env.VECTORIZE as any).query = queryFn;
+    const { duplicate, contradiction } = await checkDuplicateAndContradiction("Original content", env);
+    expect(duplicate.status).toBe("blocked");
+    expect(contradiction.detected).toBe(false);
+    // AI should only have been called once (for embed), not for contradiction LLM check
+    expect((env.AI.run as any).mock.calls.length).toBe(1);
+  });
+
+  it("returns flagged duplicate status", async () => {
+    const env = makeEnv('{"contradicts": false}', [match("a", 0.88)], [entry("a", "Similar content")]);
+    const { duplicate } = await checkDuplicateAndContradiction("Similar content", env);
+    expect(duplicate.status).toBe("flagged");
   });
 });
