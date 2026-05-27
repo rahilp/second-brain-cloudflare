@@ -25,13 +25,15 @@ MANDATORY RULES — no exceptions:
 
 6. Auto-detect the current topic or project and include it as a tag (e.g. if discussing a website, tag it "website"; if discussing a specific company or product, use that name as a tag). Always combine specific tags with generic ones.
 
-7. Before making ANY recommendation, suggestion, or action item, first recall from memory to check if you have already made that recommendation or if the user has already completed it. If it has already been recommended, acknowledge that and either confirm it's still the right move or suggest an alternative. Never repeat a recommendation without first checking. This applies to: promotion tasks, outreach targets, content to create, platforms to post on, people to contact, and any other repeatable action.
+7. Before making ANY recommendation, suggestion, or action item, first recall from memory to check if you have already made that recommendation or if the user has already completed it. Frame the query with intent: 'User is about to X — have I recommended this before or has it been done?' If it has already been recommended, acknowledge that and either confirm it's still the right move or suggest an alternative. Never repeat a recommendation without first checking. This applies to: promotion tasks, outreach targets, content to create, platforms to post on, people to contact, and any other repeatable action.
+
+8. ALWAYS pass context when calling recall — never use bare keywords. Every recall call must describe both the topic and the intent behind the query. Good: 'User wants to fix a bug in the capture flow — what have we tried before?' Bad: 'capture bug'. This applies to every recall call, not just the opening one.
 
 Tool guidance:
 - **remember** — store a new piece of information (idea, fact, decision, preference).
 - **append** — add new information to an existing entry without replacing the original. Use when something has changed or new details have emerged. Gets the entry ID from recall or list_recent first.
 - **update** — fully replace the content of an existing entry. Use when information is outdated and should be overwritten entirely (e.g. a preference reversed, a plan scrapped, a location changed). Gets the entry ID from recall or list_recent first. Old vectors are cleaned up automatically.
-- **recall** — semantically search stored memories. Call at the start of every conversation.
+- **recall** — semantically search stored memories. Always use an intent-framed natural language query (see rules 1 and 8). Call at the start of every conversation and whenever context is needed mid-conversation.
 - **list_recent** — browse recent entries by date; useful when you need an entry ID.
 - **forget** — permanently delete an entry by ID. Requires explicit user instruction.
 
