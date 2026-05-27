@@ -956,6 +956,20 @@ export default {
       return json((results as any[]).map(r => r.value as string));
     }
 
+    // GET /stats
+    if (url.pathname === "/stats" && request.method === "GET") {
+      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const [summary, tagRows] = await Promise.all([
+        env.DB.prepare(`SELECT COUNT(*) as count, AVG(importance_score) as avg_importance FROM entries`).first() as Promise<Record<string, any> | null>,
+        env.DB.prepare(`SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags) GROUP BY value ORDER BY n DESC LIMIT 5`).all(),
+      ]);
+      return json({
+        count: (summary?.count as number) ?? 0,
+        avg_importance: summary?.avg_importance != null ? Math.round((summary.avg_importance as number) * 10) / 10 : null,
+        top_tags: (tagRows.results as any[]).map(r => r.value as string),
+      });
+    }
+
     // GET /list
     if (url.pathname === "/list" && request.method === "GET") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);

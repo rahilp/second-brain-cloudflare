@@ -1026,6 +1026,64 @@
       color: #c0392b;
     }
 
+    .stats-panel {
+      border-top: 0.5px solid var(--border);
+      padding: 16px 0 8px;
+      margin-bottom: 4px;
+    }
+
+    .stats-kpi-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .stats-kpi-card {
+      background: var(--bg-secondary, rgba(128,128,128,0.06));
+      border: 0.5px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .stats-kpi-value {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+    }
+
+    .stats-kpi-label {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 500;
+    }
+
+    .stats-top-tags {
+      margin-top: 2px;
+    }
+
+    .stats-top-tags-label {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 500;
+      margin-bottom: 7px;
+    }
+
+    .stats-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
     #sidebar {
       width: 240px;
       flex-shrink: 0;
@@ -1458,8 +1516,30 @@
   <div id="menu-sheet">
     <div class="menu-inner">
       <h3>Second Brain</h3>
+      <div class="stats-panel" id="stats-panel">
+        <div class="stats-kpi-row">
+          <div class="stats-kpi-card">
+            <div class="stats-kpi-value" id="stats-count">—</div>
+            <div class="stats-kpi-label">Memories</div>
+          </div>
+          <div class="stats-kpi-card">
+            <div class="stats-kpi-value" id="stats-importance">—</div>
+            <div class="stats-kpi-label">Avg Importance</div>
+          </div>
+        </div>
+        <div class="stats-top-tags">
+          <div class="stats-top-tags-label">Most used tags</div>
+          <div class="stats-tags" id="stats-tags"></div>
+        </div>
+      </div>
       <button class="menu-item" onclick="closeMenu(); switchTab('recent')">
         <i class="ti ti-clock"></i> View all memories
+      </button>
+      <button class="menu-item" onclick="exportMemories('json')">
+        <i class="ti ti-download"></i> Export as JSON
+      </button>
+      <button class="menu-item" onclick="exportMemories('markdown')">
+        <i class="ti ti-markdown"></i> Export as Markdown
       </button>
       <button class="menu-item danger" onclick="logout()">
         <i class="ti ti-logout"></i> Disconnect
@@ -1472,6 +1552,7 @@
     let WORKER_URL = '', AUTH_TOKEN = '', allEntries = [];
     let pendingForgetId = null, pendingAppendId = null, pendingForgetCard = null;
     let currentTab = 'recall', selectedTag = '', selectedTimeRange = '';
+    let currentCount = 0;
 
     function init() {
       // Auto-populate URL from the current page origin (UI is hosted on the same Worker)
@@ -1594,8 +1675,8 @@
       try {
         const res = await fetch(`${WORKER_URL}/count`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
         const data = await res.json();
-        const count = data.count ?? 0;
-        const text = count === 0 ? 'always remembers' : `${count} memor${count === 1 ? 'y' : 'ies'} stored`;
+        currentCount = data.count ?? 0;
+        const text = currentCount === 0 ? 'always remembers' : `${currentCount} memor${currentCount === 1 ? 'y' : 'ies'} stored`;
         document.getElementById('topbar-status').textContent = text;
         const sb = document.getElementById('sb-status');
         if (sb) sb.textContent = text;
@@ -1911,8 +1992,70 @@
       }
     }
 
-    function openMenu() { document.getElementById('menu-sheet').classList.add('open'); }
+    function openMenu() {
+      document.getElementById('menu-sheet').classList.add('open');
+      loadMenuStats();
+    }
     function closeMenu() { document.getElementById('menu-sheet').classList.remove('open'); }
+
+    async function loadMenuStats() {
+      try {
+        const res = await fetch(`${WORKER_URL}/stats`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
+        const data = await res.json();
+        document.getElementById('stats-count').textContent = (data.count ?? 0).toLocaleString();
+        document.getElementById('stats-importance').textContent =
+          data.avg_importance != null ? data.avg_importance.toFixed(1) + ' / 10' : '—';
+        const tagsEl = document.getElementById('stats-tags');
+        tagsEl.innerHTML = data.top_tags?.length
+          ? data.top_tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')
+          : '<span style="font-size:13px;color:var(--text-tertiary)">No tags yet</span>';
+      } catch { }
+    }
+
+    async function exportMemories(format) {
+      closeMenu();
+      try {
+        const res = await fetch(`${WORKER_URL}/list?n=9999`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        const entries = await res.json();
+
+        let content, filename, mime;
+        const ts = new Date().toISOString().slice(0, 10);
+
+        if (format === 'json') {
+          content = JSON.stringify(entries, null, 2);
+          filename = `second-brain-export-${ts}.json`;
+          mime = 'application/json';
+        } else {
+          const lines = [`# Second Brain Export`, `Exported: ${ts}`, ''];
+          entries.forEach((e, i) => {
+            let tags = [];
+            try { tags = JSON.parse(e.tags || '[]'); } catch { }
+            const date = new Date(e.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            lines.push(`## Memory ${i + 1}`);
+            lines.push(`**Date:** ${date}`);
+            if (tags.length) lines.push(`**Tags:** ${tags.join(', ')}`);
+            if (e.source) lines.push(`**Source:** ${e.source}`);
+            lines.push('');
+            lines.push(e.content);
+            lines.push('');
+            lines.push('---');
+            lines.push('');
+          });
+          content = lines.join('\n');
+          filename = `second-brain-export-${ts}.md`;
+          mime = 'text/markdown';
+        }
+
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename; a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert('Export failed: ' + e.message);
+      }
+    }
 
     function openView(entry, cardElement) {
       document.getElementById('view-content-text').textContent = entry.content;

@@ -55,6 +55,17 @@ export class D1Mock {
           const row = db.entries.find((e: any) => e.id === args[0]);
           return row ? { vector_ids: row.vector_ids } : null;
         }
+        if (s.includes("COUNT(*) as count") && s.includes("AVG(importance_score)")) {
+          const count = db.entries.length;
+          const scored = db.entries.filter((e: any) => typeof e.importance_score === "number");
+          const avg_importance = scored.length > 0
+            ? scored.reduce((sum: number, e: any) => sum + e.importance_score, 0) / scored.length
+            : null;
+          return { count, avg_importance };
+        }
+        if (s.includes("COUNT(*) as count")) {
+          return { count: db.entries.length };
+        }
         if (s.includes("WHERE id") && !s.includes("json_each")) {
           return db.entries.find((e: any) => e.id === args[0]) ?? null;
         }
@@ -73,7 +84,17 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content }));
           return { results };
         }
+        if (s.includes("json_each(entries.tags)") && s.includes("GROUP BY value")) {
+          // Top tags by frequency — for /stats
+          const freq = new Map<string, number>();
+          db.entries.forEach((e: any) => {
+            (JSON.parse(e.tags ?? "[]") as string[]).forEach(t => freq.set(t, (freq.get(t) ?? 0) + 1));
+          });
+          const sorted = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+          return { results: sorted.map(([value, n]) => ({ value, n })) };
+        }
         if (s.includes("json_each(entries.tags)")) {
+          // Distinct sorted tags — for /tags
           const tags = new Set<string>();
           db.entries.forEach((e: any) => {
             (JSON.parse(e.tags ?? "[]") as string[]).forEach(t => tags.add(t));
