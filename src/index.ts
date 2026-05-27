@@ -42,6 +42,7 @@ const CHUNK_OVERLAP_CHARS = 200;
 // ─── Token limits ─────────────────────────────────────────────────────────────
 
 const CONTRADICTION_MAX_TOKENS = 80;
+const SMART_MERGE_MAX_TOKENS = 250;
 const INSIGHT_MAX_TOKENS = 300;
 
 // ─── Vectorize constants ──────────────────────────────────────────────────────
@@ -132,11 +133,23 @@ interface ContradictionResult {
   reason?: string;
 }
 
-// Merges duplicate detection and contradiction detection into a single embed +
-// Vectorize query, saving 1 AI call and 1 Vectorize round trip on every write.
+// ─── Smart Merge ──────────────────────────────────────────────────────────────
+// Only applies to the flagged band (0.85–0.95). The combined prompt handles
+// both contradiction detection and merge/replace decisions in a single LLM call,
+// keeping total LLM calls the same as before.
+
+export type MergeAction =
+  | { action: "keep_both" }
+  | { action: "replace"; target_id: string }
+  | { action: "merge"; target_id: string; merged_content: string };
+
+// Merges duplicate detection, contradiction detection, and smart merge into a
+// single embed + Vectorize query. For flagged entries (0.85–0.95) the combined
+// prompt replaces the contradiction-only prompt — same number of LLM calls.
 export async function checkDuplicateAndContradiction(content: string, env: Env): Promise<{
   duplicate: DuplicateResult;
   contradiction: ContradictionResult;
+  mergeAction: MergeAction | null;
 }> {
   const sample = getDuplicateCheckSample(content);
   const values = await embed(sample, env);
@@ -151,8 +164,10 @@ export async function checkDuplicateAndContradiction(content: string, env: Env):
     else if (top.score >= DUPLICATE_FLAG_THRESHOLD) duplicate = { status: "flagged", matchId, score: top.score };
   }
 
-  // ── Contradiction: skip entirely if we're blocking anyway ───────────────────
+  // ── Skip all LLM work if blocked ─────────────────────────────────────────────
   let contradiction: ContradictionResult = { detected: false };
+  let mergeAction: MergeAction | null = null;
+
   if (duplicate.status !== "blocked") {
     const candidates = matches.filter(m => m.score >= CANDIDATE_SCORE_THRESHOLD);
     if (candidates.length) {
@@ -170,7 +185,62 @@ export async function checkDuplicateAndContradiction(content: string, env: Env):
           .map((r, i) => `[${i + 1}] ID: ${r.id}\n${r.content}`)
           .join("\n\n");
 
-        const prompt = `You are checking if a new memory contradicts existing memories.
+        if (duplicate.status === "flagged") {
+          // ── Combined prompt: contradiction + merge decision (flagged band only) ──
+          // Replaces the contradiction-only prompt — same 1 LLM call, richer result.
+          const prompt = `You are deciding what to do with a new memory that is very similar to existing memories.
+
+New memory: "${content}"
+
+Similar existing memories:
+${existingList}
+
+Choose exactly one action. Prioritise in this order:
+1. "contradiction" — new memory DIRECTLY CONFLICTS with an existing one (opposite location, reversed decision, changed fact). Include conflicting_id and reason.
+2. "replace" — new memory clearly supersedes an existing one (updated version of the same fact, original is now stale). Include target_id.
+3. "merge" — both memories are complementary and better as one combined entry. Include target_id and merged_content (max 400 chars).
+4. "keep_both" — memories are different enough to coexist, or you are uncertain. This is the safe default.
+
+Respond with JSON only. No text outside the JSON.
+{"action":"keep_both"} OR {"action":"contradiction","conflicting_id":"<id>","reason":"<10 words max>"} OR {"action":"replace","target_id":"<id>"} OR {"action":"merge","target_id":"<id>","merged_content":"<text>"}`;
+
+          try {
+            const stream = await (env.AI as any).run(LLM_MODEL as any, {
+              messages: [{ role: "user", content: prompt }],
+              max_tokens: SMART_MERGE_MAX_TOKENS,
+              stream: true,
+            });
+            const text = await readStreamText(stream as ReadableStream);
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              const action = parsed.action as string;
+
+              if (action === "contradiction" && parsed.conflicting_id) {
+                const validId = parentIds.find(id => id === parsed.conflicting_id);
+                if (validId) contradiction = { detected: true, conflicting_id: validId, reason: parsed.reason };
+                // mergeAction stays null — contradiction path handles cleanup
+              } else if (action === "replace" && parsed.target_id) {
+                const validId = parentIds.find(id => id === parsed.target_id);
+                mergeAction = validId ? { action: "replace", target_id: validId } : { action: "keep_both" };
+              } else if (action === "merge" && parsed.target_id && parsed.merged_content?.trim()) {
+                const validId = parentIds.find(id => id === parsed.target_id);
+                mergeAction = validId
+                  ? { action: "merge", target_id: validId, merged_content: parsed.merged_content.trim() }
+                  : { action: "keep_both" };
+              } else {
+                mergeAction = { action: "keep_both" };
+              }
+            } else {
+              mergeAction = { action: "keep_both" };
+            }
+          } catch {
+            // non-fatal — default to keep_both (current behaviour)
+            mergeAction = { action: "keep_both" };
+          }
+        } else {
+          // ── Contradiction only (0.45–0.85 range — unchanged) ─────────────────
+          const prompt = `You are checking if a new memory contradicts existing memories.
 
 New memory: "${content}"
 
@@ -182,29 +252,30 @@ A contradiction means the new memory states something that DIRECTLY CONFLICTS wi
 Respond with JSON only. No text outside the JSON object.
 {"contradicts": false} OR {"contradicts": true, "conflicting_id": "<exact_id>", "reason": "<10 words max>"}`;
 
-        try {
-          const stream = await (env.AI as any).run(LLM_MODEL as any, {
-            messages: [{ role: "user", content: prompt }],
-            max_tokens: CONTRADICTION_MAX_TOKENS,
-            stream: true,
-          });
-          const text = await readStreamText(stream as ReadableStream);
-          const match = text.match(/\{[\s\S]*\}/);
-          if (match) {
-            const parsed = JSON.parse(match[0]);
-            if (parsed.contradicts && parsed.conflicting_id) {
-              const validId = parentIds.find(id => id === parsed.conflicting_id);
-              if (validId) contradiction = { detected: true, conflicting_id: validId, reason: parsed.reason };
+          try {
+            const stream = await (env.AI as any).run(LLM_MODEL as any, {
+              messages: [{ role: "user", content: prompt }],
+              max_tokens: CONTRADICTION_MAX_TOKENS,
+              stream: true,
+            });
+            const text = await readStreamText(stream as ReadableStream);
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (parsed.contradicts && parsed.conflicting_id) {
+                const validId = parentIds.find(id => id === parsed.conflicting_id);
+                if (validId) contradiction = { detected: true, conflicting_id: validId, reason: parsed.reason };
+              }
             }
+          } catch {
+            // non-fatal — contradiction stays { detected: false }
           }
-        } catch {
-          // non-fatal — contradiction stays { detected: false }
         }
       }
     }
   }
 
-  return { duplicate, contradiction };
+  return { duplicate, contradiction, mergeAction };
 }
 
 // ─── Chunking ─────────────────────────────────────────────────────────────────
@@ -491,7 +562,9 @@ export type CaptureResult =
   | { status: "blocked"; matchId: string; score: number }
   | { status: "stored"; id: string }
   | { status: "flagged"; id: string; matchId: string; score: number }
-  | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string };
+  | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string }
+  | { status: "merged"; id: string }
+  | { status: "replaced"; id: string };
 
 export async function captureEntry(
   rawContent: string,
@@ -505,10 +578,44 @@ export async function captureEntry(
   const c = cleanContent || raw;
   const t = [...new Set([...tags.map(tag => tag.toLowerCase()), ...hashtags])];
 
-  const { duplicate: dup, contradiction } = await checkDuplicateAndContradiction(c, env);
+  const { duplicate: dup, contradiction, mergeAction } = await checkDuplicateAndContradiction(c, env);
 
   if (dup.status === "blocked") {
     return { status: "blocked", matchId: dup.matchId, score: dup.score };
+  }
+
+  // ── Smart merge: replace/merge existing entry — no new entry inserted ────────
+  if (dup.status === "flagged" && mergeAction && mergeAction.action !== "keep_both") {
+    const targetId = mergeAction.target_id;
+    const newContent = mergeAction.action === "merge" ? mergeAction.merged_content : c;
+
+    const targetRow = await env.DB.prepare(
+      `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+    ).bind(targetId).first() as Record<string, any> | null;
+
+    if (targetRow) {
+      const existingTags: string[] = JSON.parse(targetRow.tags ?? "[]");
+      const existingSource = targetRow.source as string;
+      const oldVectorIds: string[] = JSON.parse(targetRow.vector_ids ?? "[]");
+
+      // Step 1: Update D1 content
+      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, targetId).run();
+
+      // Step 2: Re-embed new content — inserts new vectors, updates vector_ids in D1
+      try {
+        await storeEntry(env, targetId, newContent, existingTags, existingSource, Date.now());
+      } catch (e) { console.error("Vectorize re-embed failed (non-fatal):", e); }
+
+      // Step 3: Delete old vectors after new ones are safely in place
+      try {
+        if (oldVectorIds.length) await env.VECTORIZE.deleteByIds(oldVectorIds);
+      } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
+
+      return mergeAction.action === "merge"
+        ? { status: "merged", id: targetId }
+        : { status: "replaced", id: targetId };
+    }
+    // target not found in DB — fall through to normal insert
   }
 
   const id = crypto.randomUUID();
@@ -560,13 +667,15 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
 
   // ── remember ────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "remember",
-    "Store an idea, task, or note in your second brain. Call this automatically whenever the user shares context, goals, decisions, or preferences.",
     {
-      content: z.string().describe("The idea, task, or note to store"),
-      tags: z.array(z.string()).optional().describe("Optional tags for filtering"),
-      source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
+      description: "Store an idea, task, or note in your second brain. Call this automatically whenever the user shares context, goals, decisions, or preferences.",
+      inputSchema: {
+        content: z.string().describe("The idea, task, or note to store"),
+        tags: z.array(z.string()).optional().describe("Optional tags for filtering"),
+        source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
+      },
     },
     async ({ content, tags, source }) => {
       const result = await captureEntry(content, tags ?? [], source ?? "claude", env, ctx);
@@ -576,6 +685,12 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       if (result.status === "contradiction") {
         return { content: [{ type: "text", text: `Stored. ID: ${result.id} — resolved contradiction with entry ${result.resolvedConflict}${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
+      if (result.status === "replaced") {
+        return { content: [{ type: "text", text: `Memory updated — new content replaced outdated entry (ID: ${result.id}).` }] };
+      }
+      if (result.status === "merged") {
+        return { content: [{ type: "text", text: `Memories merged — combined into existing entry (ID: ${result.id}).` }] };
+      }
       if (result.status === "flagged") {
         return { content: [{ type: "text", text: `Stored with ID: ${result.id} — note: similar entry exists (${(result.score * 100).toFixed(0)}% match, ID: ${result.matchId}). Tagged as duplicate-candidate.` }] };
       }
@@ -584,12 +699,14 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   );
 
   // ── append ───────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "append",
-    "Append new information to an existing entry in your second brain. Use when something has changed or been updated — preserves the original and adds the update with a timestamp. Get the entry ID from recall or list_recent first.",
     {
-      id: z.string().describe("Entry ID to append to — from recall or list_recent"),
-      addition: z.string().describe("The new information to add to the existing entry"),
+      description: "Append new information to an existing entry in your second brain. Use when something has changed or been updated — preserves the original and adds the update with a timestamp. Get the entry ID from recall or list_recent first.",
+      inputSchema: {
+        id: z.string().describe("Entry ID to append to — from recall or list_recent"),
+        addition: z.string().describe("The new information to add to the existing entry"),
+      },
     },
     async ({ id, addition }) => {
       const row = await env.DB.prepare(
@@ -632,12 +749,14 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   );
 
   // ── update ───────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "update",
-    "Replace the full content of an existing memory. Use when information has changed entirely — a preference reversed, a decision overturned, or content is outdated. Use append instead if you're adding new information rather than replacing. Get the entry ID from recall or list_recent first.",
     {
-      id: z.string().describe("Entry ID to update — from recall or list_recent"),
-      content: z.string().describe("The new content to replace the existing entry with"),
+      description: "Replace the full content of an existing memory. Use when information has changed entirely — a preference reversed, a decision overturned, or content is outdated. Use append instead if you're adding new information rather than replacing. Get the entry ID from recall or list_recent first.",
+      inputSchema: {
+        id: z.string().describe("Entry ID to update — from recall or list_recent"),
+        content: z.string().describe("The new content to replace the existing entry with"),
+      },
     },
     async ({ id, content }) => {
       const newContent = content.trim();
@@ -684,15 +803,17 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   );
 
   // ── recall ───────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "recall",
-    "Recall: semantically search your second brain for relevant notes and context. Call recall automatically at the start of every conversation and every 3-4 messages.",
     {
-      query: z.string().describe("Natural language search query"),
-      topK: z.number().int().min(1).max(20).default(5).describe("Number of results"),
-      tag: z.string().optional().describe("Filter by a specific tag"),
-      after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
-      before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
+      description: "Recall: semantically search your second brain for relevant notes and context. Call recall automatically at the start of every conversation and every 3-4 messages.",
+      inputSchema: {
+        query: z.string().describe("Natural language search query"),
+        topK: z.number().int().min(1).max(20).default(5).describe("Number of results"),
+        tag: z.string().optional().describe("Filter by a specific tag"),
+        after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
+        before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
+      },
     },
     async ({ query, topK, tag, after, before }) => {
       const now = Date.now();
@@ -803,14 +924,16 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   );
 
   // ── list_recent ──────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "list_recent",
-    "list_recent: List the most recent entries by date from your second brain. Use when you need to browse recent entries or find an entry ID. Not the same as recall — returns entries by time, not by meaning.",
     {
-      n: z.number().int().min(1).max(50).default(10),
-      tag: z.string().optional(),
-      after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
-      before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
+      description: "list_recent: List the most recent entries by date from your second brain. Use when you need to browse recent entries or find an entry ID. Not the same as recall — returns entries by time, not by meaning.",
+      inputSchema: {
+        n: z.number().int().min(1).max(50).default(10),
+        tag: z.string().optional(),
+        after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
+        before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
+      },
     },
     async ({ n, tag, after, before }) => {
       const conds: string[] = [];
@@ -840,10 +963,14 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   );
 
   // ── forget ───────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "forget",
-    "Permanently delete an entry from your second brain by ID. Only call when the user explicitly asks to delete something. Confirm the entry ID using recall or list_recent first. This action cannot be undone.",
-    { id: z.string().describe("Entry ID from recall or list_recent") },
+    {
+      description: "Permanently delete an entry from your second brain by ID. Only call when the user explicitly asks to delete something. Confirm the entry ID using recall or list_recent first. This action cannot be undone.",
+      inputSchema: {
+        id: z.string().describe("Entry ID from recall or list_recent"),
+      },
+    },
     async ({ id }) => {
       // Fetch tracked vector IDs before deleting the D1 row
       const row = await env.DB.prepare(
@@ -907,6 +1034,12 @@ export default {
       }
       if (result.status === "contradiction") {
         return json({ ok: true, id: result.id, resolved_conflict: result.resolvedConflict, reason: result.reason });
+      }
+      if (result.status === "replaced") {
+        return json({ ok: true, id: result.id, action: "replaced", message: "New memory replaced an outdated existing entry" });
+      }
+      if (result.status === "merged") {
+        return json({ ok: true, id: result.id, action: "merged", message: "Memories merged into a single combined entry" });
       }
       if (result.status === "flagged") {
         return json({

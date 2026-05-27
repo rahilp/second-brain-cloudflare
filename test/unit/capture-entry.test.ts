@@ -208,6 +208,157 @@ describe("captureEntry()", () => {
     expect(tags).toContain("contradiction-resolved");
   });
 
+  // ── Smart merge: replace ────────────────────────────────────────────────────
+
+  it("replace: updates existing entry content, does NOT insert a new entry", async () => {
+    db.entries.push({
+      id: "existing", content: "I use VSCode", tags: '["work"]', source: "api",
+      created_at: Date.now(), vector_ids: '["existing"]', recall_count: 0, importance_score: 3,
+    });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "existing", score: 0.88, metadata: { parentId: "existing" } }],
+        }),
+      }),
+      AI: makeContradictionAI('{"action":"replace","target_id":"existing"}'),
+    });
+    const { ctx } = makeCtx();
+    const result = await captureEntry("I switched to Cursor", [], "api", env, ctx);
+    expect(result.status).toBe("replaced");
+    if (result.status !== "replaced") return;
+    expect(result.id).toBe("existing");
+    // No new entry — only the existing one remains
+    expect(db.entries).toHaveLength(1);
+    expect(db.entries[0].content).toBe("I switched to Cursor");
+  });
+
+  it("replace: deletes old vectors after re-embedding", async () => {
+    db.entries.push({
+      id: "existing", content: "I use VSCode", tags: "[]", source: "api",
+      created_at: Date.now(), vector_ids: '["existing","existing-chunk-1"]', recall_count: 0, importance_score: 0,
+    });
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "existing", score: 0.88, metadata: { parentId: "existing" } }],
+        }),
+        deleteByIds: deleteByIdsMock,
+      }),
+      AI: makeContradictionAI('{"action":"replace","target_id":"existing"}'),
+    });
+    const { ctx } = makeCtx();
+    await captureEntry("I switched to Cursor", [], "api", env, ctx);
+    expect(deleteByIdsMock).toHaveBeenCalledWith(["existing", "existing-chunk-1"]);
+  });
+
+  it("replace: falls through to normal insert when target not found in DB", async () => {
+    // Vectorize returns a match but D1 has no corresponding entry
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "ghost-id", score: 0.88, metadata: { parentId: "ghost-id" } }],
+        }),
+      }),
+      AI: makeContradictionAI('{"action":"replace","target_id":"ghost-id"}'),
+    });
+    const { ctx } = makeCtx();
+    const result = await captureEntry("I switched to Cursor", [], "api", env, ctx);
+    // Falls through → stores as a new entry
+    expect(result.status).toBe("flagged");
+    expect(db.entries).toHaveLength(1);
+  });
+
+  // ── Smart merge: merge ──────────────────────────────────────────────────────
+
+  it("merge: updates existing entry with merged_content, does NOT insert a new entry", async () => {
+    db.entries.push({
+      id: "existing", content: "I prefer dark mode", tags: '["personal"]', source: "api",
+      created_at: Date.now(), vector_ids: '["existing"]', recall_count: 0, importance_score: 2,
+    });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "existing", score: 0.88, metadata: { parentId: "existing" } }],
+        }),
+      }),
+      AI: makeContradictionAI('{"action":"merge","target_id":"existing","merged_content":"I prefer dark mode in all apps, especially at night"}'),
+    });
+    const { ctx } = makeCtx();
+    const result = await captureEntry("I like dark mode especially at night", [], "api", env, ctx);
+    expect(result.status).toBe("merged");
+    if (result.status !== "merged") return;
+    expect(result.id).toBe("existing");
+    expect(db.entries).toHaveLength(1);
+    expect(db.entries[0].content).toBe("I prefer dark mode in all apps, especially at night");
+  });
+
+  it("merge: uses merged_content (not new content) for re-embedding", async () => {
+    db.entries.push({
+      id: "existing", content: "I prefer dark mode", tags: "[]", source: "api",
+      created_at: Date.now(), vector_ids: '["existing"]', recall_count: 0, importance_score: 0,
+    });
+    const insertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "existing", score: 0.88, metadata: { parentId: "existing" } }],
+        }),
+        insert: insertMock,
+      }),
+      AI: makeContradictionAI('{"action":"merge","target_id":"existing","merged_content":"Combined merged memory"}'),
+    });
+    const { ctx } = makeCtx();
+    await captureEntry("I like dark mode at night", [], "api", env, ctx);
+    // The inserted vector metadata should contain the merged content
+    const insertedVectors = insertMock.mock.calls[0][0] as any[];
+    expect(insertedVectors[0].metadata.content).toBe("Combined merged memory");
+  });
+
+  it("merge: deletes old vectors after re-embedding", async () => {
+    db.entries.push({
+      id: "existing", content: "I prefer dark mode", tags: "[]", source: "api",
+      created_at: Date.now(), vector_ids: '["existing","existing-chunk-1"]', recall_count: 0, importance_score: 0,
+    });
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "existing", score: 0.88, metadata: { parentId: "existing" } }],
+        }),
+        deleteByIds: deleteByIdsMock,
+      }),
+      AI: makeContradictionAI('{"action":"merge","target_id":"existing","merged_content":"Combined"}'),
+    });
+    const { ctx } = makeCtx();
+    await captureEntry("I like dark mode at night", [], "api", env, ctx);
+    expect(deleteByIdsMock).toHaveBeenCalledWith(["existing", "existing-chunk-1"]);
+  });
+
+  // ── Smart merge: keep_both falls back to flagged (existing behaviour) ────────
+
+  it("keep_both: stores new entry with duplicate-candidate tag (unchanged behaviour)", async () => {
+    db.entries.push({
+      id: "near", content: "I prefer dark mode", tags: "[]", source: "api",
+      created_at: Date.now(), vector_ids: "[]", recall_count: 0, importance_score: 0,
+    });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "near", score: 0.88, metadata: { parentId: "near" } }],
+        }),
+      }),
+      AI: makeContradictionAI('{"action":"keep_both"}'),
+    });
+    const { ctx } = makeCtx();
+    const result = await captureEntry("I like dark themes", [], "api", env, ctx);
+    expect(result.status).toBe("flagged");
+    expect(db.entries).toHaveLength(2);
+    const tags: string[] = JSON.parse(db.entries[1].tags);
+    expect(tags).toContain("duplicate-candidate");
+  });
+
   // ── Importance scoring ──────────────────────────────────────────────────────
 
   it("schedules importance scoring via ctx.waitUntil for stored entries", async () => {
