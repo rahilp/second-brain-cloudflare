@@ -869,8 +869,10 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       }
 
       // Query Vectorize without filter — tag filtering happens in-memory below
+      // Cloudflare Vectorize caps topK at 50 when returnMetadata="all" (error 40025)
+      const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
       const results = await env.VECTORIZE.query(values, {
-        topK: topK * VECTORIZE_TOP_K_MULTIPLIER,
+        topK: vectorizeTopK,
         returnMetadata: "all",
       });
 
