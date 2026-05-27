@@ -432,7 +432,7 @@ async function storeEntry(
   const vectors = await Promise.all(
     chunks.map(async (chunk, i) => {
       const metadata: Record<string, any> = {
-        content: chunk.slice(0, 512),
+        content: chunk,
         parentId: id,
         chunkIndex: i,
         totalChunks: chunks.length,
@@ -466,9 +466,11 @@ async function storeEntry(
 }
 
 // ─── Append to existing entry ─────────────────────────────────────────────────
-// Updates D1 with the full appended content, then adds only the new addition
-// as a new Vectorize chunk pointing to the same parent ID.
-// Tracks the new chunk ID in vector_ids so forget() can clean it up exactly.
+// For short appends (combined content ≤ CHUNK_MAX_CHARS): adds only the new
+// addition as a single new Vectorize vector pointing to the parent ID.
+// For large appends (combined content > CHUNK_MAX_CHARS): falls back to a full
+// re-embed of the combined content using the same safe 3-step pattern as update
+// (insert new → delete old), so Vectorize always holds properly chunked vectors.
 
 async function appendToEntry(
   env: Env,
@@ -478,7 +480,7 @@ async function appendToEntry(
   tags: string[],
   source: string
 ): Promise<void> {
-  // Read existing vector_ids upfront so we can do a single UPDATE at the end
+  // Read existing vector_ids upfront — needed by both paths
   const row = await env.DB.prepare(
     `SELECT vector_ids FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
@@ -489,13 +491,40 @@ async function appendToEntry(
   const separator = `\n\n[Update ${timestamp}]: `;
   const newContent = existingContent + separator + addition;
 
+  if (newContent.length > CHUNK_MAX_CHARS) {
+    // ── Full re-embed path ───────────────────────────────────────────────────
+    // Combined content is too large for a single vector — re-chunk everything.
+    // Same safe ordering as update/merge/replace: insert new → delete old.
+
+    // Step 1: Persist full combined content to D1
+    await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`)
+      .bind(newContent, id).run();
+
+    // Step 2: Re-chunk + re-embed full content (also updates vector_ids in D1)
+    try {
+      await storeEntry(env, id, newContent, tags, source, Date.now());
+    } catch (e) {
+      console.error("Vectorize re-embed failed (non-fatal):", e);
+    }
+
+    // Step 3: Delete old vectors after new ones are safely inserted
+    try {
+      if (existingVectorIds.length) await env.VECTORIZE.deleteByIds(existingVectorIds);
+    } catch (e) {
+      console.error("Old vector cleanup failed (non-fatal):", e);
+    }
+
+    return;
+  }
+
+  // ── Normal append-only path (combined content ≤ CHUNK_MAX_CHARS) ────────────
   // Timestamp-based suffix guarantees uniqueness across concurrent appends
   const newChunkId = `${id}-update-${Date.now()}`;
 
   const values = await embed(addition, env);
 
   const metadata: Record<string, any> = {
-    content: addition.slice(0, 512),
+    content: addition,
     parentId: id,
     isUpdate: true,
     tags,
