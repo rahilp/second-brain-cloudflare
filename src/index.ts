@@ -950,6 +950,13 @@ export default {
       });
     }
 
+    // GET /count
+    if (url.pathname === "/count" && request.method === "GET") {
+      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const row = await env.DB.prepare(`SELECT COUNT(*) as count FROM entries`).first() as Record<string, any> | null;
+      return json({ count: (row?.count as number) ?? 0 });
+    }
+
     // GET /tags
     if (url.pathname === "/tags" && request.method === "GET") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);

@@ -1592,9 +1592,9 @@
 
     async function updateStatus() {
       try {
-        const res = await fetch(`${WORKER_URL}/list?n=1000`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
+        const res = await fetch(`${WORKER_URL}/count`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
         const data = await res.json();
-        const count = Array.isArray(data) ? data.length : 0;
+        const count = data.count ?? 0;
         const text = count === 0 ? 'always remembers' : `${count} memor${count === 1 ? 'y' : 'ies'} stored`;
         document.getElementById('topbar-status').textContent = text;
         const sb = document.getElementById('sb-status');
