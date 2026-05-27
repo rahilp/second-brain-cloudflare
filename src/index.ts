@@ -28,6 +28,25 @@ const CORS_HEADERS = {
 
 const DUPLICATE_BLOCK_THRESHOLD = 0.95;
 const DUPLICATE_FLAG_THRESHOLD = 0.85;
+const CANDIDATE_SCORE_THRESHOLD = 0.45;
+
+// ─── Model constants ──────────────────────────────────────────────────────────
+
+const EMBEDDING_MODEL = "@cf/baai/bge-small-en-v1.5";
+
+// ─── Chunking constants ───────────────────────────────────────────────────────
+
+const CHUNK_MAX_CHARS = 1600;
+const CHUNK_OVERLAP_CHARS = 200;
+
+// ─── Token limits ─────────────────────────────────────────────────────────────
+
+const CONTRADICTION_MAX_TOKENS = 80;
+const INSIGHT_MAX_TOKENS = 300;
+
+// ─── Vectorize constants ──────────────────────────────────────────────────────
+
+const VECTORIZE_TOP_K_MULTIPLIER = 3;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -44,7 +63,7 @@ function json(data: unknown, status = 200): Response {
 
 async function embed(text: string, env: Env): Promise<number[]> {
   // Workers AI requires `as any` here — the SDK types don't cover all models
-  const result = (await env.AI.run("@cf/baai/bge-small-en-v1.5" as any, { text: [text] })) as any;
+  const result = (await env.AI.run(EMBEDDING_MODEL as any, { text: [text] })) as any;
   return result.data[0] as number[];
 }
 
@@ -112,7 +131,7 @@ export async function checkContradiction(content: string, env: Env): Promise<Con
   const values = await embed(content, env);
   const results = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
 
-  const candidates = results.matches.filter(m => m.score >= 0.45);
+  const candidates = results.matches.filter(m => m.score >= CANDIDATE_SCORE_THRESHOLD);
   if (!candidates.length) return { detected: false };
 
   const parentIds = [...new Set(
@@ -145,7 +164,7 @@ Respond with JSON only. No text outside the JSON object.
   try {
     const stream = await (env.AI as any).run(LLM_MODEL as any, {
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 80,
+      max_tokens: CONTRADICTION_MAX_TOKENS,
       stream: true,
     });
     const reader = (stream as ReadableStream).getReader();
@@ -176,7 +195,7 @@ Respond with JSON only. No text outside the JSON object.
 
 // ─── Chunking ─────────────────────────────────────────────────────────────────
 
-export function chunkText(text: string, maxChars = 1600, overlapChars = 200): string[] {
+export function chunkText(text: string, maxChars = CHUNK_MAX_CHARS, overlapChars = CHUNK_OVERLAP_CHARS): string[] {
   if (text.length <= maxChars) return [text];
 
   const chunks: string[] = [];
@@ -456,7 +475,7 @@ Provide a brief insight (2-4 sentences) focused on what's most relevant to this 
   try {
     const stream = await (env.AI as any).run(LLM_MODEL as any, {
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 300,
+      max_tokens: INSIGHT_MAX_TOKENS,
       stream: true,
     });
     const reader = (stream as ReadableStream).getReader();
@@ -651,7 +670,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
 
       // Query Vectorize without filter — tag filtering happens in-memory below
       const results = await env.VECTORIZE.query(values, {
-        topK: topK * 3,
+        topK: topK * VECTORIZE_TOP_K_MULTIPLIER,
         returnMetadata: "all",
       });
 
