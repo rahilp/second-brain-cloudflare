@@ -402,14 +402,16 @@ async function appendToEntry(
   tags: string[],
   source: string
 ): Promise<void> {
+  // Read existing vector_ids upfront so we can do a single UPDATE at the end
+  const row = await env.DB.prepare(
+    `SELECT vector_ids FROM entries WHERE id = ?`
+  ).bind(id).first() as Record<string, any> | null;
+
+  const existingVectorIds: string[] = JSON.parse(row?.vector_ids ?? "[]");
+
   const timestamp = new Date().toLocaleDateString();
   const separator = `\n\n[Update ${timestamp}]: `;
   const newContent = existingContent + separator + addition;
-
-  // Update full content in D1
-  await env.DB.prepare(
-    `UPDATE entries SET content = ? WHERE id = ?`
-  ).bind(newContent, id).run();
 
   // Timestamp-based suffix guarantees uniqueness across concurrent appends
   const newChunkId = `${id}-update-${Date.now()}`;
@@ -435,15 +437,10 @@ async function appendToEntry(
     metadata,
   }]);
 
-  // Append the new chunk ID to the tracked vector_ids list in D1
-  const row = await env.DB.prepare(
-    `SELECT vector_ids FROM entries WHERE id = ?`
-  ).bind(id).first() as Record<string, any> | null;
-
-  const existing: string[] = JSON.parse(row?.vector_ids ?? "[]");
+  // Single UPDATE for both content and vector_ids — saves one D1 round trip
   await env.DB.prepare(
-    `UPDATE entries SET vector_ids = ? WHERE id = ?`
-  ).bind(JSON.stringify([...existing, newChunkId]), id).run();
+    `UPDATE entries SET content = ?, vector_ids = ? WHERE id = ?`
+  ).bind(newContent, JSON.stringify([...existingVectorIds, newChunkId]), id).run();
 }
 
 // ─── Synthesize insight from retrieved memories ───────────────────────────────

@@ -12,6 +12,12 @@ export class D1Mock {
           db.entries.push({ id, content, tags, source, created_at, vector_ids, recall_count: 0, importance_score: 0 });
           return { meta: { changes: 1 } };
         }
+        if (s.startsWith("UPDATE entries SET content = ?, vector_ids")) {
+          const [content, vector_ids, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.content = content; row.vector_ids = vector_ids; }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
         if (s.startsWith("UPDATE entries SET vector_ids")) {
           const [vector_ids, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
