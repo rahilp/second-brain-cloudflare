@@ -937,7 +937,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         const meta = m.metadata as Record<string, any>;
         const parentId = (meta?.parentId ?? m.id) as string;
         const row = d1Map.get(parentId);
-        const score = (m.score * 100).toFixed(0);
+        const score = (Math.min(1, m.score) * 100).toFixed(0);
         const updateLabel = meta?.isUpdate ? " [updated]" : "";
 
         if (row) {
