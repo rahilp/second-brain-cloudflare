@@ -659,11 +659,10 @@ export async function captureEntry(
     `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
   ).bind(id, c, JSON.stringify(finalTags), source, now, "[]").run();
 
-  try {
-    await storeEntry(env, id, c, finalTags, source, now);
-  } catch (e) {
-    console.error("Vectorize insert failed (non-fatal):", e);
-  }
+  ctx.waitUntil(
+    storeEntry(env, id, c, finalTags, source, now)
+      .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
+  );
 
   ctx.waitUntil(
     scoreImportance(c, env)
