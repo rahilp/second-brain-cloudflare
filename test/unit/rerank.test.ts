@@ -65,4 +65,21 @@ describe("rerankWithTimeDecay", () => {
     const withDefault = rerankWithTimeDecay(matches);
     expect(withDefault[0].score).toBeCloseTo(withEmpty[0].score, 6);
   });
+
+  it("frequently-recalled old memory does not outrank a new memory with similar vector score", () => {
+    // Regression: unbounded frequencyMultiplier buried memories stored today behind
+    // context-tagged entries recalled 20+ times.
+    const oldHighRecall = match("old", 0.88, NOW - 11 * MS_DAY, ["context"]);
+    const newFresh = match("new", 0.90, NOW);
+    const counts = new Map([["old", 24]]);
+    const result = rerankWithTimeDecay([oldHighRecall, newFresh], counts);
+    expect(result[0].id).toBe("new");
+  });
+
+  it("combined multiplier never exceeds 1.0 regardless of recall count", () => {
+    const m = match("entry", 1.0, NOW - 14 * MS_DAY, ["context"]);
+    const counts = new Map([["entry", 100]]);
+    const [result] = rerankWithTimeDecay([m], counts);
+    expect(result.score).toBeLessThanOrEqual(1.0);
+  });
 });

@@ -333,13 +333,15 @@ export function rerankWithTimeDecay(
 
       const halfLifeMs = getHalfLifeMs(tags);
       const recencyMultiplier = Math.exp(-ageMs / halfLifeMs);
-      // log(1+0)=0 would zero out unrecalled entries; (1 + log1p(rc)) gives baseline 1.0
+      // Frequency can compensate for recency loss but never push above a fresh entry (cap at 1.0).
+      // Without the cap, high recall counts overwhelm recency and bury newly-stored memories.
       const frequencyMultiplier = 1 + Math.log1p(rc);
+      const combinedMultiplier = Math.min(1.0, recencyMultiplier * frequencyMultiplier);
       const isShortAppend = match.id.includes("-update-") &&
         typeof meta?.content === "string" && meta.content.length < CHUNK_OVERLAP_CHARS;
       const appendPenalty = isShortAppend ? 0.2 : 1.0;
 
-      return { ...match, score: match.score * recencyMultiplier * frequencyMultiplier * appendPenalty };
+      return { ...match, score: match.score * combinedMultiplier * appendPenalty };
     })
     .sort((a, b) => b.score - a.score);
 }
@@ -937,7 +939,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         const meta = m.metadata as Record<string, any>;
         const parentId = (meta?.parentId ?? m.id) as string;
         const row = d1Map.get(parentId);
-        const score = (Math.min(1, m.score) * 100).toFixed(0);
+        const score = (m.score * 100).toFixed(0);
         const updateLabel = meta?.isUpdate ? " [updated]" : "";
 
         if (row) {
