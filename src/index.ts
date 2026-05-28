@@ -335,8 +335,11 @@ export function rerankWithTimeDecay(
       const recencyMultiplier = Math.exp(-ageMs / halfLifeMs);
       // log(1+0)=0 would zero out unrecalled entries; (1 + log1p(rc)) gives baseline 1.0
       const frequencyMultiplier = 1 + Math.log1p(rc);
+      const isShortAppend = match.id.includes("-update-") &&
+        typeof meta?.content === "string" && meta.content.length < CHUNK_OVERLAP_CHARS;
+      const appendPenalty = isShortAppend ? 0.2 : 1.0;
 
-      return { ...match, score: match.score * recencyMultiplier * frequencyMultiplier };
+      return { ...match, score: match.score * recencyMultiplier * frequencyMultiplier * appendPenalty };
     })
     .sort((a, b) => b.score - a.score);
 }
@@ -871,10 +874,17 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       // Query Vectorize without filter — tag filtering happens in-memory below
       // Cloudflare Vectorize caps topK at 50 when returnMetadata="all" (error 40025)
       const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
-      const results = await env.VECTORIZE.query(values, {
+      let results = await env.VECTORIZE.query(values, {
         topK: vectorizeTopK,
         returnMetadata: "all",
       });
+
+      if (results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
+        results = await env.VECTORIZE.query(values, {
+          topK: 50,
+          returnMetadata: "all",
+        });
+      }
 
       if (!results.matches.length) {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
