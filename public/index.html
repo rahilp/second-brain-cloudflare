@@ -750,6 +750,7 @@
 
     #confirm-dialog,
     #append-sheet,
+    #edit-sheet,
     #menu-sheet,
     #view-sheet {
       display: none;
@@ -763,6 +764,7 @@
 
     #confirm-dialog.open,
     #append-sheet.open,
+    #edit-sheet.open,
     #menu-sheet.open,
     #view-sheet.open {
       display: flex;
@@ -782,6 +784,7 @@
 
     .confirm-sheet,
     .append-inner,
+    .edit-inner,
     .menu-inner,
     .view-inner {
       background: var(--bg);
@@ -797,6 +800,23 @@
 
     .append-inner {
       padding: 20px 20px 36px;
+    }
+
+    .edit-inner {
+      padding: 20px 20px 36px;
+    }
+
+    .edit-existing-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    .edit-hint {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
     }
 
     .menu-inner {
@@ -895,6 +915,22 @@
       font-family: var(--font-sans);
       font-size: 15px;
       color: #c0392b;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-view-edit {
+      flex: 1;
+      padding: 13px;
+      background: var(--bg-tag);
+      border: none;
+      border-radius: 12px;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      color: var(--text-primary);
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -1241,6 +1277,7 @@
 
       #confirm-dialog,
       #append-sheet,
+      #edit-sheet,
       #menu-sheet,
       #view-sheet {
         align-items: center;
@@ -1249,6 +1286,7 @@
 
       .confirm-sheet,
       .append-inner,
+      .edit-inner,
       .menu-inner,
       .view-inner {
         border-radius: 16px;
@@ -1497,6 +1535,21 @@
     </div>
   </div>
 
+  <div id="edit-sheet">
+    <div class="edit-inner">
+      <h3>Edit memory</h3>
+      <div class="edit-existing-tags" id="edit-existing-tags"></div>
+      <div class="append-input-wrap">
+        <textarea id="edit-textarea" placeholder="Edit your memory..." rows="5"></textarea>
+      </div>
+      <div class="edit-hint">Use <span style="font-style:italic">#hashtags</span> to add new tags</div>
+      <div class="append-actions">
+        <button class="btn-append-cancel" onclick="closeEdit()">Cancel</button>
+        <button class="btn-append-save" id="edit-save-btn" onclick="saveEdit()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div id="view-sheet">
     <div class="view-inner">
       <div class="view-header">
@@ -1507,6 +1560,7 @@
       <div class="view-tags" id="view-tags-container"></div>
       <div class="view-actions">
         <button class="btn-view-append" id="view-btn-append"><i class="ti ti-writing"></i> Append</button>
+        <button class="btn-view-edit" id="view-btn-edit"><i class="ti ti-pencil"></i> Edit</button>
         <button class="btn-view-forget" id="view-btn-forget"><i class="ti ti-trash"></i> Forget</button>
       </div>
     </div>
@@ -1887,10 +1941,12 @@
       <div class="card-tags">${tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
         <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
+        <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> Edit</button>
         <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>
       </div>
     </div>`;
       card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card);
+      card.querySelector('.edit-btn').onclick = () => openEdit(entry.id, entry.content, tags);
       return card;
     }
 
@@ -1956,6 +2012,42 @@
       } catch (e) {
         btn.disabled = false; btn.textContent = 'Update';
         alert('Append failed: ' + e.message);
+      }
+    }
+
+    let pendingEditId = null;
+
+    function openEdit(id, content, tags) {
+      pendingEditId = id;
+      const tagsEl = document.getElementById('edit-existing-tags');
+      tagsEl.innerHTML = tags && tags.length
+        ? tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('') : '';
+      const ta = document.getElementById('edit-textarea');
+      ta.value = content;
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+      document.getElementById('edit-sheet').classList.add('open');
+      setTimeout(() => ta.focus(), 100);
+    }
+
+    function closeEdit() { document.getElementById('edit-sheet').classList.remove('open'); pendingEditId = null; }
+
+    async function saveEdit() {
+      const newContent = document.getElementById('edit-textarea').value.trim();
+      if (!newContent || !pendingEditId) return;
+      const btn = document.getElementById('edit-save-btn');
+      btn.disabled = true; btn.textContent = 'Saving...';
+      try {
+        const res = await fetch(`${WORKER_URL}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
+          body: JSON.stringify({ id: pendingEditId, content: newContent })
+        });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        closeEdit(); loadRecent();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Save';
+        alert('Edit failed: ' + e.message);
       }
     }
 
@@ -2077,6 +2169,13 @@
       } else {
         forgetBtn.style.display = 'none';
       }
+      const editBtn = document.getElementById('view-btn-edit');
+      if (entry.id) {
+        editBtn.onclick = () => { closeView(); openEdit(entry.id, entry.content, entry.tags || []); };
+        editBtn.style.display = 'flex';
+      } else {
+        editBtn.style.display = 'none';
+      }
       document.getElementById('view-sheet').classList.add('open');
     }
     function closeView() { document.getElementById('view-sheet').classList.remove('open'); }
@@ -2085,6 +2184,7 @@
     document.getElementById('append-sheet').addEventListener('click', e => { if (e.target === document.getElementById('append-sheet')) closeAppend(); });
     document.getElementById('menu-sheet').addEventListener('click', e => { if (e.target === document.getElementById('menu-sheet')) closeMenu(); });
     document.getElementById('view-sheet').addEventListener('click', e => { if (e.target === document.getElementById('view-sheet')) closeView(); });
+    document.getElementById('edit-sheet').addEventListener('click', e => { if (e.target === document.getElementById('edit-sheet')) closeEdit(); });
 
     function appendBrainBubble(container, text) {
       const row = document.createElement('div');

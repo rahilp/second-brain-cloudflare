@@ -111,8 +111,35 @@ describe("POST /update", () => {
       req("POST", "/update", { body: { id: "entry-abc", content: "New content" } }),
       env, ctx
     );
-    expect(db.entries[0].tags).toBe('["work","important"]');
+    const tags = JSON.parse(db.entries[0].tags);
+    expect(tags).toContain("work");
+    expect(tags).toContain("important");
     expect(db.entries[0].source).toBe("claude");
+  });
+
+  // ── Hashtag merge ───────────────────────────────────────────────────────────
+
+  it("merges new #hashtag from content into tags and strips it from stored content", async () => {
+    seedEntry(db, { tags: '["work"]' });
+    await worker.fetch(
+      req("POST", "/update", { body: { id: "entry-abc", content: "Updated content #newtag" } }),
+      env, ctx
+    );
+    expect(db.entries[0].content).toBe("Updated content");
+    const tags = JSON.parse(db.entries[0].tags);
+    expect(tags).toContain("work");
+    expect(tags).toContain("newtag");
+  });
+
+  it("does not duplicate a tag already present when the same #tag appears in content", async () => {
+    seedEntry(db, { tags: '["work"]' });
+    await worker.fetch(
+      req("POST", "/update", { body: { id: "entry-abc", content: "Updated content #work" } }),
+      env, ctx
+    );
+    expect(db.entries[0].content).toBe("Updated content");
+    const tags = JSON.parse(db.entries[0].tags);
+    expect(tags.filter((t: string) => t === "work")).toHaveLength(1);
   });
 
   it("calls Vectorize insert (re-embed) with new content", async () => {

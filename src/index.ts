@@ -1152,14 +1152,18 @@ export default {
       if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
 
       const tags: string[] = JSON.parse(row.tags ?? "[]");
+      const { cleanContent, hashtags: newHashtags } = extractHashtags(newContent);
+      const mergedTags = [...new Set([...tags, ...newHashtags])];
       const source = row.source as string;
       const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+      const finalContent = cleanContent || newContent;
 
-      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, id).run();
+      await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
+        .bind(finalContent, JSON.stringify(mergedTags), id).run();
 
       let newVectorCount = 0;
       try {
-        const newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
+        const newVectorIds = await storeEntry(env, id, finalContent, mergedTags, source, Date.now());
         newVectorCount = newVectorIds.length;
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
