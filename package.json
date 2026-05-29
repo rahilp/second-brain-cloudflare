@@ -22,9 +22,9 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241022.0",
     "@types/node": "^25.9.1",
-    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/coverage-v8": "^4.1.7",
     "typescript": "^5.5.0",
-    "vitest": "^2.1.9",
+    "vitest": "^4.1.7",
     "wrangler": "^4.93.0"
   },
   "cloudflare": {
