@@ -106,3 +106,7 @@ function normalizeEntry(e) {
     id: e.id != null ? e.id : null
   };
 }
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry };
+}
