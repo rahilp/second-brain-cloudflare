@@ -35,6 +35,7 @@ Connect Second Brain to whichever AI tools you use. Then tell it things once. It
 
 Memory is only useful if it actually gets filled. Second Brain connects to the tools and moments where context naturally lives.
 
+- **CLI** -- `brain remember`, `brain recall`, and more from your terminal — `npm install -g second-brain-cf-cli`
 - **Obsidian** -- notes sync automatically via the [community plugin](https://github.com/rahilp/second-brain-obsidian-plugin)
 - **iOS** -- Brain Dump, Text Brain Dump, and Save to Brain shortcuts in one tap
 - **Browser** -- bookmarklet saves any page or selection instantly
@@ -83,6 +84,7 @@ curl -X POST https://<your-worker-url>/capture \
 
 ## Integrations
 
+- **CLI** — `npm install -g second-brain-cf-cli`
 - **Obsidian** — [second-brain-obsidian-plugin](https://github.com/rahilp/second-brain-obsidian-plugin) · available in [Obsidian Community Plugins](https://community.obsidian.md/plugins/second-brain-sync)
 - **iOS** — Brain Dump, Text Brain Dump, and Save to Brain shortcuts in [`integrations/ios-shortcuts/`](integrations/ios-shortcuts/)
 - **Browser** — bookmarklet in [`integrations/bookmarklet.js`](integrations/bookmarklet.js)
