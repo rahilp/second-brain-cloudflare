@@ -24,6 +24,7 @@ Connect Second Brain to whichever AI tools you use. Then tell it things once. It
 |-------------|------------------------------------------------------------|
 |`remember`   |Store anything: ideas, decisions, project context           |
 |`append`     |Add updates to an existing entry without creating duplicates|
+|`update`     |Replace an entry's content entirely                         |
 |`recall`     |Finds memories by meaning, not exact wording                |
 |`list_recent`|Browse recent memories by date                              |
 |`forget`     |Delete an entry                                             |
@@ -38,8 +39,6 @@ Memory is only useful if it actually gets filled. Second Brain connects to the t
 - **iOS** -- Brain Dump, Text Brain Dump, and Save to Brain shortcuts in one tap
 - **Browser** -- bookmarklet saves any page or selection instantly
 - **Any AI client** -- use `remember` mid-conversation, right when something matters
-
-You can also remove the integrations section at the bottom since this replaces it.
 
 ---
 
@@ -78,7 +77,7 @@ curl -X POST https://<your-worker-url>/capture \
 - [Capture from Anywhere](../../wiki/Capture-from-Anywhere) — browser bookmarklet, iOS Shortcuts, share sheet
 - [Web UI](../../wiki/Web-UI) — dashboard and mobile interface
 - [Obsidian Plugin](../../wiki/Obsidian-Plugin) — install, configure, sync modes
-- [API Reference](../../wiki/API-Reference) — /capture, /list, /mcp endpoints
+- [API Reference](../../wiki/API-Reference) — /capture, /append, /update, /list, /count, /tags, /stats, /chat, /mcp endpoints
 
 -----
 
