@@ -206,4 +206,51 @@ describe("POST /append", () => {
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
   });
+
+  it("populates per-tag metadata keys when entry has non-empty tags (short path)", async () => {
+    db.entries.push({
+      id: "tagged-entry",
+      content: "Original",
+      tags: '["work","idea"]',
+      source: "api",
+      created_at: Date.now(),
+      vector_ids: "[]",
+    });
+
+    const res = await worker.fetch(
+      req("POST", "/append", { body: { id: "tagged-entry", addition: "Short update" } }),
+      env, ctx
+    );
+    expect(res.status).toBe(200);
+
+    // Verify Vectorize.insert was called with tag_* metadata fields
+    const insertMock = env.VECTORIZE.insert as ReturnType<typeof import("vitest").vi.fn>;
+    const vectors = insertMock.mock.calls[0][0] as any[];
+    expect(vectors[0].metadata).toMatchObject({ tag_work: true, tag_idea: true });
+  });
+
+  it("returns 500 when appendToEntry throws due to Vectorize failure (short path)", async () => {
+    db.entries.push({
+      id: "fail-entry",
+      content: "Short content",
+      tags: "[]",
+      source: "api",
+      created_at: Date.now(),
+      vector_ids: "[]",
+    });
+
+    const failEnv = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        insert: vi.fn().mockRejectedValue(new Error("Vectorize unavailable")),
+      }),
+    });
+
+    const res = await worker.fetch(
+      req("POST", "/append", { body: { id: "fail-entry", addition: "short addition" } }),
+      failEnv, ctx
+    );
+    expect(res.status).toBe(500);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(false);
+  });
 });

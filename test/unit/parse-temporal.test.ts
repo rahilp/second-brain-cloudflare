@@ -46,4 +46,20 @@ describe("parseTimePhrase", () => {
     expect(r.after).toBeDefined();
     expect(r.before).toBeDefined();
   });
+
+  it("'this week' called on a Sunday walks back 6 days to Monday", () => {
+    // Jan 4, 2026 is a Sunday (Jan 1 = Thursday, +3 = Sunday)
+    const sunday = new Date(2026, 0, 4, 12, 0, 0).getTime();
+    const r = parseTimePhrase("this week", sunday);
+    // Expected Monday = Dec 29, 2025 (midnight local)
+    const expectedMonday = new Date(2025, 11, 29).getTime();
+    expect(r.after).toBe(expectedMonday);
+  });
+
+  it("parses 'around month day' and sets a 6-day window centred on that date", () => {
+    const r = parseTimePhrase("around january 4", NOW);
+    expect(r.after).toBeDefined();
+    expect(r.before).toBeDefined();
+    expect(r.before! - r.after!).toBe(6 * DAY);
+  });
 });

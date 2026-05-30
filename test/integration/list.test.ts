@@ -44,4 +44,24 @@ describe("GET /list", () => {
     const data = await res.json() as any[];
     expect(data).toHaveLength(5);
   });
+
+  it("caps ?n= at 100 even when a larger value is requested", async () => {
+    for (let i = 0; i < 110; i++) {
+      db.entries.push({ id: `e${i}`, content: `Entry ${i}`, tags: "[]", source: "api", created_at: i, vector_ids: "[]" });
+    }
+
+    const res = await worker.fetch(req("GET", "/list?n=200"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any[];
+    expect(data.length).toBeLessThanOrEqual(100);
+  });
+
+  it("returns a valid response when ?n= is non-numeric", async () => {
+    db.entries.push({ id: "x", content: "One", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]" });
+
+    const res = await worker.fetch(req("GET", "/list?n=abc"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+  });
 });
