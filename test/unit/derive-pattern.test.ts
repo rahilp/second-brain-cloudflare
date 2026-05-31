@@ -81,8 +81,8 @@ describe("derivePattern()", () => {
     await derivePattern(makeRows(25), env, ctx);
     // First non-embedding call is the pattern derivation call
     const calls = (env.AI.run as ReturnType<typeof vi.fn>).mock.calls;
-    const llmCall = calls.find(([model]: [string]) => model !== "@cf/baai/bge-small-en-v1.5");
-    const prompt: string = llmCall[1].messages[0].content;
+    const llmCall = calls.find((call: any[]) => call[0] !== "@cf/baai/bge-small-en-v1.5");
+    const prompt: string = llmCall![1].messages[0].content;
     expect(prompt).toContain("[20]");
     expect(prompt).not.toContain("[21]");
   });
@@ -92,8 +92,8 @@ describe("derivePattern()", () => {
     const { ctx } = makeCtx();
     await derivePattern([...makeRows(4), { id: "long", content: long }], env, ctx);
     const calls = (env.AI.run as ReturnType<typeof vi.fn>).mock.calls;
-    const llmCall = calls.find(([model]: [string]) => model !== "@cf/baai/bge-small-en-v1.5");
-    const prompt: string = llmCall[1].messages[0].content;
+    const llmCall = calls.find((call: any[]) => call[0] !== "@cf/baai/bge-small-en-v1.5");
+    const prompt: string = llmCall![1].messages[0].content;
     expect(prompt).toContain("x".repeat(300));
     expect(prompt).not.toContain("x".repeat(301));
   });
@@ -109,8 +109,8 @@ describe("derivePattern()", () => {
     const { ctx } = makeCtx();
     await derivePattern(rows, env, ctx);
     const calls = (env.AI.run as ReturnType<typeof vi.fn>).mock.calls;
-    const llmCall = calls.find(([model]: [string]) => model !== "@cf/baai/bge-small-en-v1.5");
-    const prompt: string = llmCall[1].messages[0].content;
+    const llmCall = calls.find((call: any[]) => call[0] !== "@cf/baai/bge-small-en-v1.5");
+    const prompt: string = llmCall![1].messages[0].content;
     for (const r of rows) expect(prompt).toContain(r.content);
   });
 
@@ -118,9 +118,9 @@ describe("derivePattern()", () => {
     const { ctx } = makeCtx();
     await derivePattern(makeRows(5), env, ctx);
     const calls = (env.AI.run as ReturnType<typeof vi.fn>).mock.calls;
-    const llmCall = calls.find(([model]: [string]) => model !== "@cf/baai/bge-small-en-v1.5");
-    expect(llmCall[1].stream).toBeUndefined();
-    expect(llmCall[1].max_tokens).toBeDefined();
+    const llmCall = calls.find((call: any[]) => call[0] !== "@cf/baai/bge-small-en-v1.5");
+    expect(llmCall![1].stream).toBeUndefined();
+    expect(llmCall![1].max_tokens).toBeDefined();
   });
 
   // ── Response filtering ────────────────────────────────────────────────────────
