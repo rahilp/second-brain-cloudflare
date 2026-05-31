@@ -4,6 +4,9 @@
 [![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-8B5CF6)](https://modelcontextprotocol.io/)
 
+> ## We're Live on Product Hunt Today!
+> <a href="https://www.producthunt.com/products/second-brain-cloudflare?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-second-brain-for-ai" target="_blank" rel="noopener noreferrer"><img alt="Second Brain for AI - Persistent memory for Claude, ChatGPT &amp; Cursor. Free. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1151393&amp;theme=light&amp;t=1780212176757"></a>
+
 You use Claude for some things, ChatGPT for others, Cursor for code. But your context — your projects, decisions, preferences — doesn’t move with you. You re-explain yourself constantly.
 
 Second Brain fixes that. One shared memory, available in every AI tool you use.
