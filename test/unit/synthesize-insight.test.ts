@@ -71,4 +71,11 @@ describe("synthesizeInsight()", () => {
     expect(messages[0].content).toContain("JWT decision");
     expect(messages[0].content).toContain("switched to Postgres");
   });
+
+  it("uses the reasoning model for LLM calls", async () => {
+    const env = makeTestEnv(undefined, { AI: aiMock("insight text") });
+    await synthesizeInsight("query", [{ id: "1", content: "content" }], env);
+    const [model] = (env.AI.run as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(model).toBe("@cf/qwen/qwen3-30b-a3b-fp8");
+  });
 });

@@ -15,6 +15,7 @@ export interface Env {
 }
 
 const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
+const LLM_MODEL_REASONING = "@cf/qwen/qwen3-30b-a3b-fp8";
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ const CHUNK_OVERLAP_CHARS = 200;
 const CONTRADICTION_MAX_TOKENS = 80;
 const SMART_MERGE_MAX_TOKENS = 250;
 const INSIGHT_MAX_TOKENS = 300;
+const PATTERN_MAX_TOKENS = 100;
 
 // ─── Vectorize constants ──────────────────────────────────────────────────────
 
@@ -577,7 +579,7 @@ Provide a brief insight (2-4 sentences) focused on what's most relevant to this 
 
   let insight = "";
   try {
-    const stream = await (env.AI as any).run(LLM_MODEL as any, {
+    const stream = await (env.AI as any).run(LLM_MODEL_REASONING as any, {
       messages: [{ role: "user", content: prompt }],
       max_tokens: INSIGHT_MAX_TOKENS,
       stream: true,
@@ -588,6 +590,47 @@ Provide a brief insight (2-4 sentences) focused on what's most relevant to this 
   }
 
   return insight.trim();
+}
+
+// ─── Async pattern derivation ─────────────────────────────────────────────────
+
+export async function derivePattern(
+  rows: { id: string; content: string }[],
+  env: Env,
+  ctx: ExecutionContext
+): Promise<void> {
+  const sample = rows.slice(0, 20);
+  const memoriesList = sample.map((r, i) => `[${i + 1}] ${r.content}`).join("\n\n");
+
+  const prompt = `You are analyzing stored memories to find genuine recurring themes.
+
+Memories:
+${memoriesList}
+
+Find a pattern that appears across 3 or more of these memories — a real tendency, preference, or recurring theme about this person. Do NOT summarize individual memories. Do NOT describe any single event.
+
+If you find a genuine cross-memory pattern, respond with exactly ONE sentence starting with exactly one of: "You tend to", "There's a recurring", or "Across your memories".
+
+If no genuine pattern exists across 3+ memories, respond with exactly: NONE`;
+
+  try {
+    const stream = await (env.AI as any).run(LLM_MODEL_REASONING as any, {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: PATTERN_MAX_TOKENS,
+      stream: true,
+    });
+    const text = await readStreamText(stream as ReadableStream);
+    const trimmed = text.trim();
+
+    if (!trimmed || trimmed === "NONE") return;
+
+    const validStarters = ["You tend to", "There's a recurring", "Across your memories"];
+    if (!validStarters.some(s => trimmed.startsWith(s))) return;
+
+    await captureEntry(trimmed, ["auto-pattern"], "system", env, ctx);
+  } catch (e) {
+    console.error("derivePattern LLM call failed (non-fatal):", e);
+  }
 }
 
 // ─── Shared write path ────────────────────────────────────────────────────────
@@ -919,7 +962,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
       const placeholders = parentIds.map(() => "?").join(", ");
       const d1Bindings: (string | number)[] = [...parentIds];
-      let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders})`;
+      let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%'`;
       if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
       if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
       const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
@@ -960,6 +1003,14 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       const insight = d1Rows.length > 1
         ? await synthesizeInsight(embedQuery, d1Rows as { id: string; content: string }[], env)
         : "";
+
+      if (d1Rows.length >= 5) {
+        ctx.waitUntil(
+          derivePattern(d1Rows as { id: string; content: string }[], env, ctx)
+            .catch(e => console.error("derivePattern failed (non-fatal):", e))
+        );
+      }
+
       const finalText = insight ? `**Insight:** ${insight}\n\n---\n\n${text}` : text;
       return { content: [{ type: "text", text: finalText }] };
     }
