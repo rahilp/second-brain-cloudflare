@@ -38,7 +38,7 @@ Memory is only useful if it actually gets filled. Second Brain connects to the t
 - **CLI** -- `brain remember`, `brain recall`, and more from your terminal — `npm install -g second-brain-cf-cli`
 - **Obsidian** -- notes sync automatically via the [community plugin](https://github.com/rahilp/second-brain-obsidian-plugin)
 - **iOS** -- Brain Dump, Text Brain Dump, and Save to Brain shortcuts in one tap
-- **Browser** -- bookmarklet saves any page or selection instantly
+- **Browser extension** -- capture any page or highlighted text in one click via the [Chrome extension](https://github.com/rahilp/second-brain-browser-extension)
 - **Any AI client** -- use `remember` mid-conversation, right when something matters
 
 ---
@@ -75,7 +75,7 @@ curl -X POST https://<your-worker-url>/capture \
 - [Setup Guide](../../wiki/Setup-Guide) — deploy, token setup, connecting AI clients
 - [How It Works](../../wiki/How-It-Works) — semantic search, chunking, duplicate detection
 - [Connect to AI Clients](../../wiki/Connect-to-AI-Clients) — Claude Desktop, Claude Code, claude.ai, iOS
-- [Capture from Anywhere](../../wiki/Capture-from-Anywhere) — browser bookmarklet, iOS Shortcuts, share sheet
+- [Capture from Anywhere](../../wiki/Capture-from-Anywhere) — browser extension, bookmarklet, iOS Shortcuts, share sheet
 - [Web UI](../../wiki/Web-UI) — dashboard and mobile interface
 - [Obsidian Plugin](../../wiki/Obsidian-Plugin) — install, configure, sync modes
 - [API Reference](../../wiki/API-Reference) — /capture, /append, /update, /list, /count, /tags, /stats, /chat, /mcp endpoints
@@ -87,7 +87,8 @@ curl -X POST https://<your-worker-url>/capture \
 - **CLI** — `npm install -g second-brain-cf-cli`
 - **Obsidian** — [second-brain-obsidian-plugin](https://github.com/rahilp/second-brain-obsidian-plugin) · available in [Obsidian Community Plugins](https://community.obsidian.md/plugins/second-brain-sync)
 - **iOS** — Brain Dump, Text Brain Dump, and Save to Brain shortcuts in [`integrations/ios-shortcuts/`](integrations/ios-shortcuts/)
-- **Browser** — bookmarklet in [`integrations/bookmarklet.js`](integrations/bookmarklet.js)
+- **Browser extension** — [second-brain-browser-extension](https://github.com/rahilp/second-brain-browser-extension) · capture pages and highlighted text from any tab
+- **Bookmarklet** — lightweight option in [`integrations/bookmarklet.js`](integrations/bookmarklet.js)
 
 -----
 
