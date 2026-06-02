@@ -4,7 +4,7 @@ import { makeTestEnv } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 import type { Env } from "../../src/index";
 
-const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
+const ctx = { waitUntil: (_: Promise<any>) => { } } as any;
 
 const PROTECTED_ROUTES: Array<[string, string, unknown?]> = [
   ["POST", "/capture", { content: "hello" }],
@@ -12,6 +12,7 @@ const PROTECTED_ROUTES: Array<[string, string, unknown?]> = [
   ["GET", "/list", undefined],
   ["GET", "/tags", undefined],
   ["POST", "/chat", { query: "what?" }],
+  ["POST", "/mcp", undefined],
 ];
 
 describe("Auth", () => {

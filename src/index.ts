@@ -74,7 +74,8 @@ async function readStreamText(stream: ReadableStream): Promise<string> {
 }
 
 function isAuthorized(request: Request, env: Env): boolean {
-  return request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`;
+  if (request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`) return true;
+  return new URL(request.url).searchParams.get("token") === env.AUTH_TOKEN;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -1277,10 +1278,8 @@ export default {
 
     // /mcp
     if (url.pathname === "/mcp") {
-      // Create a new server instance per request (required for security)
+      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
       const server = buildMcpServer(env, ctx);
-
-      // Use Cloudflare's recommended handler
       return createMcpHandler(server)(request, env, ctx);
     }
 
