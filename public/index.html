@@ -1,1936 +1,1461 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Second Brain">
-  <meta name="theme-color" content="#F4F1EA">
-  <title>Second Brain</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link
-    href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap"
-    rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
-  <link rel="manifest" href="/manifest.json">
-  <style>
-    /* ============================================================
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Second Brain" />
+    <meta name="theme-color" content="#F4F1EA" />
+    <title>Second Brain</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css" />
+    <link rel="manifest" href="/manifest.json" />
+    <style>
+      /* ============================================================
        Second Brain — Journal edition
        Editorial / serif-forward · warm paper · terracotta accent
        Light + dark via html[data-theme]. Variable names kept
        backward-compatible so inline styles keep resolving.
        ============================================================ */
 
-    *,
-    *::before,
-    *::after {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    :root {
-      /* surfaces */
-      --bg: #F4F1EA;
-      --bg-card: #FCFBF7;
-      --bg-tag: #ECE8DD;
-      --bg-secondary: #FCFBF7;
-      --bg-confirm: rgba(178, 102, 65, 0.10);
-      --bg-tag-confirmed: #B26641;
-      --surface-2: #ECE8DD;
-      --surface-3: #E2DDD0;
-
-      /* ink */
-      --text-primary: #26241F;
-      --text-secondary: #6E6B62;
-      --text-tertiary: #A8A498;
-      --text-tag: #6E6B62;
-      --text-tag-confirmed: #FCFBF7;
-
-      /* lines */
-      --border: rgba(38, 36, 31, 0.09);
-      --border-card: rgba(38, 36, 31, 0.075);
-      --border-input: rgba(38, 36, 31, 0.11);
-      --line-soft: rgba(38, 36, 31, 0.06);
-
-      /* accent — terracotta */
-      --accent: #B26641;
-      --accent-press: #9C522F;
-      --accent-soft: rgba(178, 102, 65, 0.11);
-      --accent-ink: #8A4E2F;
-      --good: #5B8A6B;
-      --danger: #B0503C;
-      --danger-soft: rgba(176, 80, 60, 0.10);
-      --on-accent: #FCFBF7;
-
-      /* type */
-      --font-serif: 'Lora', Georgia, serif;
-      --font-sans: 'DM Sans', system-ui, sans-serif;
-
-      /* radii */
-      --radius-card: 14px;
-      --radius-pill: 999px;
-      --radius-tag: 999px;
-      --radius-bubble: 18px;
-
-      /* elevation */
-      --shadow-card: 0 1px 2px rgba(38, 36, 31, 0.04), 0 4px 14px rgba(38, 36, 31, 0.05);
-      --shadow-float: 0 2px 6px rgba(38, 36, 31, 0.06), 0 14px 34px rgba(38, 36, 31, 0.11);
-      --shadow-sheet: 0 -10px 44px rgba(38, 36, 31, 0.16);
-
-      /* motion */
-      --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
-      --ease-spring: cubic-bezier(0.34, 1.45, 0.5, 1);
-    }
-
-    html[data-theme="dark"] {
-      --bg: #18160F;
-      --bg-card: #221F17;
-      --bg-tag: #2C2820;
-      --bg-secondary: #221F17;
-      --bg-confirm: rgba(211, 138, 94, 0.15);
-      --bg-tag-confirmed: #D38A5E;
-      --surface-2: #2C2820;
-      --surface-3: #38332A;
-
-      --text-primary: #ECE7DC;
-      --text-secondary: #A39C8C;
-      --text-tertiary: #6E685B;
-      --text-tag: #A39C8C;
-      --text-tag-confirmed: #1A1611;
-
-      --border: rgba(255, 255, 255, 0.085);
-      --border-card: rgba(255, 255, 255, 0.075);
-      --border-input: rgba(255, 255, 255, 0.11);
-      --line-soft: rgba(255, 255, 255, 0.055);
-
-      --accent: #D38A5E;
-      --accent-press: #E29A6E;
-      --accent-soft: rgba(211, 138, 94, 0.16);
-      --accent-ink: #E0A079;
-      --good: #7BAE8A;
-      --danger: #D9806B;
-      --danger-soft: rgba(217, 128, 107, 0.14);
-      --on-accent: #1A1611;
-
-      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 6px 18px rgba(0, 0, 0, 0.28);
-      --shadow-float: 0 2px 8px rgba(0, 0, 0, 0.4), 0 16px 36px rgba(0, 0, 0, 0.5);
-      --shadow-sheet: 0 -10px 44px rgba(0, 0, 0, 0.55);
-    }
-
-    html,
-    body {
-      height: 100%;
-      background: var(--bg);
-      font-family: var(--font-sans);
-      color: var(--text-primary);
-      -webkit-font-smoothing: antialiased;
-      text-rendering: optimizeLegibility;
-      overflow: hidden;
-    }
-
-    body {
-      transition: background 0.45s var(--ease);
-    }
-
-    i.ti {
-      line-height: 1;
-    }
-
-    ::selection {
-      background: var(--accent-soft);
-    }
-
-    #app {
-      display: flex;
-      flex-direction: column;
-      height: 100svh;
-      width: 100%;
-      max-width: 440px;
-      margin: 0 auto;
-      background: var(--bg);
-      position: relative;
-    }
-
-    #sidebar {
-      display: none;
-    }
-
-    #main-panel {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      overflow: hidden;
-    }
-
-    /* ============ AUTH ============ */
-    #auth-overlay {
-      position: fixed;
-      inset: 0;
-      background: var(--bg);
-      z-index: 100;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      animation: fade-in 0.5s var(--ease);
-    }
-
-    @keyframes fade-in {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    .auth-card {
-      width: 100%;
-      max-width: 400px;
-      padding: 40px 32px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    #auth-overlay .brain-logo {
-      width: 70px;
-      height: 70px;
-      border-radius: 50%;
-      background: var(--accent-soft);
-      color: var(--accent);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 24px;
-      position: relative;
-    }
-
-    #auth-overlay .brain-logo i {
-      font-size: 33px;
-    }
-
-    #auth-overlay .brain-logo::after {
-      content: '';
-      position: absolute;
-      inset: -7px;
-      border-radius: 50%;
-      border: 1px solid var(--accent-soft);
-    }
-
-    #auth-overlay h1 {
-      font-family: var(--font-serif);
-      font-size: 29px;
-      font-weight: 500;
-      color: var(--text-primary);
-      margin-bottom: 9px;
-      letter-spacing: -0.015em;
-    }
-
-    #auth-overlay p {
-      font-size: 14px;
-      color: var(--text-secondary);
-      margin-bottom: 34px;
-      text-align: center;
-      line-height: 1.6;
-      max-width: 300px;
-    }
-
-    #auth-overlay .field-group {
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      gap: 11px;
-      margin-bottom: 14px;
-    }
-
-    #auth-overlay input {
-      width: 100%;
-      padding: 14px 16px;
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-input);
-      border-radius: 13px;
-      font-family: var(--font-sans);
-      font-size: 15px;
-      color: var(--text-primary);
-      outline: none;
-      transition: border-color 0.18s, box-shadow 0.18s;
-    }
-
-    #auth-overlay input::placeholder {
-      color: var(--text-tertiary);
-    }
-
-    #auth-overlay input:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-soft);
-    }
-
-    #auth-connect {
-      width: 100%;
-      padding: 15px;
-      background: var(--accent);
-      color: var(--on-accent);
-      border: none;
-      border-radius: 13px;
-      font-family: var(--font-sans);
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.18s, transform 0.12s var(--ease);
-    }
-
-    #auth-connect:hover {
-      background: var(--accent-press);
-    }
-
-    #auth-connect:active {
-      transform: scale(0.985);
-    }
-
-    #auth-error {
-      font-size: 13px;
-      color: var(--danger);
-      text-align: center;
-      margin-top: 10px;
-      min-height: 18px;
-    }
-
-    /* ============ TOP BAR ============ */
-    #topbar {
-      display: flex;
-      align-items: center;
-      gap: 11px;
-      padding: 14px 18px 12px;
-      background: var(--bg);
-      flex-shrink: 0;
-      position: relative;
-      z-index: 10;
-    }
-
-    .brain-avatar {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      background: var(--accent-soft);
-      color: var(--accent);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    .brain-avatar i {
-      font-size: 20px;
-    }
-
-    .topbar-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .topbar-name {
-      font-family: var(--font-serif);
-      font-size: 18px;
-      font-weight: 500;
-      color: var(--text-primary);
-      line-height: 1.15;
-      letter-spacing: -0.01em;
-    }
-
-    .topbar-status {
-      font-size: 11.5px;
-      color: var(--text-secondary);
-      line-height: 1.3;
-      margin-top: 1px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .topbar-status::before {
-      content: '';
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: var(--good);
-      flex-shrink: 0;
-    }
-
-    .topbar-menu {
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text-secondary);
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .topbar-menu i {
-      font-size: 22px;
-    }
-
-    .topbar-menu:hover {
-      background: var(--surface-2);
-      color: var(--text-primary);
-    }
-
-    /* ============ SCREENS ============ */
-    #screens {
-      flex: 1;
-      overflow: hidden;
-      position: relative;
-    }
-
-    .screen {
-      display: none;
-      flex-direction: column;
-      height: 100%;
-      position: absolute;
-      inset: 0;
-    }
-
-    .screen.active {
-      display: flex;
-      animation: screen-in 0.34s var(--ease);
-    }
-
-    @keyframes screen-in {
-      from { transform: translateY(8px); }
-      to { transform: none; }
-    }
-
-    #recall-messages,
-    #remember-messages {
-      flex: 1;
-      overflow-y: auto;
-      overflow-x: hidden;
-      padding: 16px 18px 8px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      -webkit-overflow-scrolling: touch;
-      scroll-behavior: smooth;
-    }
-
-    /* ============ BOTTOM NAV ============ */
-    #navbar {
-      display: flex;
-      border-top: 0.5px solid var(--border);
-      background: var(--bg);
-      flex-shrink: 0;
-      padding: 9px 8px calc(16px + env(safe-area-inset-bottom));
-    }
-
-    .nav-tab {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 6px 0;
-      color: var(--text-tertiary);
-      transition: color 0.2s var(--ease);
-    }
-
-    .nav-tab i {
-      font-size: 22px;
-      transition: transform 0.32s var(--ease-spring);
-    }
-
-    .nav-tab span {
-      font-family: var(--font-serif);
-      font-size: 11.5px;
-      letter-spacing: 0.005em;
-    }
-
-    .nav-tab.active {
-      color: var(--accent);
-    }
-
-    .nav-tab.active i {
-      transform: translateY(-1px);
-    }
-
-    .nav-tab:active i {
-      transform: scale(0.84);
-    }
-
-    /* ============ CHAT BUBBLES ============ */
-    .bubble-row {
-      display: flex;
-      animation: bubble-in 0.36s var(--ease) both;
-    }
-
-    .bubble-row.user {
-      justify-content: flex-end;
-    }
-
-    .bubble-row.brain {
-      justify-content: flex-start;
-    }
-
-    @keyframes bubble-in {
-      from { transform: translateY(9px); }
-      to { transform: none; }
-    }
-
-    .bubble {
-      max-width: 84%;
-      padding: 11px 15px;
-      border-radius: var(--radius-bubble);
-      font-size: 14px;
-      line-height: 1.5;
-      word-wrap: break-word;
-    }
-
-    .bubble.user {
-      background: var(--text-primary);
-      color: var(--bg);
-      border-bottom-right-radius: 6px;
-    }
-
-    .bubble.user .hashtag {
-      color: color-mix(in srgb, var(--bg) 68%, var(--accent));
-    }
-
-    .bubble.brain {
-      background: var(--bg-card);
-      color: var(--text-primary);
-      border: 0.5px solid var(--border-card);
-      border-bottom-left-radius: 6px;
-      box-shadow: var(--shadow-card);
-    }
-
-    /* Journal serif voice — AI answers + welcome lines */
-    .bubble.brain.answer,
-    .bubble.brain.voice {
-      font-family: var(--font-serif);
-      font-size: 16.5px;
-      line-height: 1.6;
-      letter-spacing: -0.003em;
-      padding: 14px 17px;
-      max-width: 90%;
-    }
-
-    .bubble.brain.answer strong,
-    .bubble.brain.voice strong {
-      color: var(--accent-ink);
-      font-weight: 600;
-    }
-
-    .bubble.brain.answer em {
-      color: var(--accent-ink);
-    }
-
-    .hashtag {
-      color: var(--accent);
-      font-weight: 500;
-    }
-
-    .bubble-time {
-      font-size: 11px;
-      color: var(--text-tertiary);
-      padding: 0 6px;
-      margin-top: 4px;
-      text-align: right;
-    }
-
-    .bubble-row.user > div {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      max-width: 84%;
-    }
-
-    /* loading dots */
-    .loading-dots {
-      display: flex;
-      gap: 6px;
-      padding: 16px 2px;
-      background: transparent;
-      border: none;
-      border-radius: 0;
-      width: fit-content;
-      box-shadow: none;
-    }
-
-    .loading-dots span {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--text-tertiary);
-      animation: bounce 1.3s infinite ease-in-out;
-    }
-
-    .loading-dots span:nth-child(2) { animation-delay: 0.16s; }
-    .loading-dots span:nth-child(3) { animation-delay: 0.32s; }
-
-    @keyframes bounce {
-      0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
-      40% { transform: scale(1); opacity: 1; }
-    }
-
-    .brain-cards-wrapper {
-      display: flex;
-      flex-direction: column;
-      gap: 9px;
-    }
-
-    #recall-welcome {
-      gap: 10px;
-    }
-
-    /* ============================================================
-       JOURNAL EDITORIAL — Recall reads as prose, Remember as writing
-       ============================================================ */
-    #recall-messages,
-    #remember-messages {
-      gap: 0;
-      padding: 20px 20px 10px;
-    }
-
-    /* opening hero (welcome / remember intro) */
-    .recall-hero {
-      padding: 6px 0 2px;
-      animation: bubble-in 0.4s var(--ease) both;
-    }
-
-    .recall-hero .eyebrow {
-      font-size: 11px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--accent-ink);
-      margin-bottom: 13px;
-    }
-
-    .recall-hero .hero-line {
-      font-family: var(--font-serif);
-      font-size: 23px;
-      line-height: 1.42;
-      letter-spacing: -0.012em;
-      color: var(--text-primary);
-      max-width: 22em;
-    }
-
-    .recall-hero .hero-line .hashtag {
-      color: var(--accent-ink);
-    }
-
-    /* a recall exchange: uppercase question label + large serif answer */
-    .ex-q {
-      display: flex;
-      gap: 8px;
-      align-items: baseline;
-      flex-wrap: wrap;
-      font-size: 11px;
-      letter-spacing: 0.13em;
-      text-transform: uppercase;
-      color: var(--accent-ink);
-      padding: 24px 0 13px;
-      border-top: 0.5px solid var(--line-soft);
-      animation: bubble-in 0.36s var(--ease) both;
-    }
-
-    #recall-messages > .ex-q:first-child {
-      border-top: none;
-      padding-top: 6px;
-    }
-
-    .ex-q .q-dash {
-      opacity: 0.5;
-    }
-
-    .ex-q .q-text {
-      color: var(--text-secondary);
-      letter-spacing: 0.03em;
-      font-weight: 500;
-    }
-
-    .ex-a {
-      font-family: var(--font-serif);
-      font-size: 19px;
-      line-height: 1.58;
-      letter-spacing: -0.004em;
-      color: var(--text-primary);
-      animation: bubble-in 0.36s var(--ease) both;
-    }
-
-    .ex-a strong { color: var(--accent-ink); font-weight: 600; }
-    .ex-a em { color: var(--accent-ink); font-style: italic; }
-
-    .ex-a > *:first-child { margin-top: 0; }
-    .ex-a > *:last-child { margin-bottom: 0; }
-    .ex-a p { margin: 0 0 0.7em; }
-    .ex-a p:last-child { margin-bottom: 0; }
-
-    .ex-a h3, .ex-a h4 {
-      font-family: var(--font-serif);
-      font-weight: 600;
-      color: var(--text-primary);
-      letter-spacing: -0.01em;
-      line-height: 1.3;
-      margin: 1.1em 0 0.45em;
-    }
-    .ex-a h3 { font-size: 0.92em; }
-    .ex-a h4 {
-      font-size: 0.66em;
-      font-weight: 600;
-      font-style: normal;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--accent-ink);
-      font-family: var(--font-sans);
-    }
-
-    .ex-a ul, .ex-a ol {
-      margin: 0.55em 0 0.8em;
-      padding: 0;
-      list-style: none;
-      counter-reset: exli;
-    }
-    .ex-a li {
-      position: relative;
-      padding-left: 1.3em;
-      margin-bottom: 0.42em;
-      line-height: 1.5;
-    }
-    .ex-a li:last-child { margin-bottom: 0; }
-    .ex-a ul > li::before {
-      content: '';
-      position: absolute;
-      left: 0.15em;
-      top: 0.62em;
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: var(--accent);
-    }
-    .ex-a ol > li {
-      counter-increment: exli;
-    }
-    .ex-a ol > li::before {
-      content: counter(exli);
-      position: absolute;
-      left: 0;
-      top: 0.04em;
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 0.82em;
-      color: var(--accent-ink);
-      font-variant-numeric: tabular-nums;
-    }
-    .ex-a code {
-      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-      font-size: 0.82em;
-      background: var(--surface-2);
-      padding: 0.1em 0.4em;
-      border-radius: 5px;
-    }
-
-    /* system note (no result / error) */
-    .recall-sys {
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 18px;
-      line-height: 1.55;
-      color: var(--text-secondary);
-      padding: 24px 0 0;
-      border-top: 0.5px solid var(--line-soft);
-      animation: bubble-in 0.36s var(--ease) both;
-    }
-
-    /* sources, sitting under an answer */
-    .ex-a + .sources-toggle,
-    .sources-toggle {
-      margin-top: 16px;
-    }
-
-    /* ---- Remember: editorial capture notes ---- */
-    .capture-note {
-      position: relative;
-      font-family: var(--font-serif);
-      font-size: 18px;
-      line-height: 1.5;
-      color: var(--text-primary);
-      padding: 22px 0 4px 16px;
-      border-top: 0.5px solid var(--line-soft);
-      animation: bubble-in 0.36s var(--ease) both;
-    }
-
-    .capture-note::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 24px;
-      bottom: 11px;
-      width: 2px;
-      background: var(--accent);
-      border-radius: 2px;
-    }
-
-    .capture-note .hashtag {
-      font-family: var(--font-sans);
-      font-size: 13.5px;
-      vertical-align: 1px;
-    }
-
-    .sys-note {
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 13px;
-      color: var(--text-tertiary);
-      padding: 8px 0 4px 16px;
-      animation: bubble-in 0.36s var(--ease) both;
-    }
-
-    #remember-messages .confirm-block {
-      margin: 8px 0 4px 16px;
-    }
-
-    /* ---- underline "writing" inputs for both composers ---- */
-    #screen-recall .input-inner,
-    #screen-remember .input-inner {
-      background: transparent;
-      border: none;
-      border-bottom: 1.5px solid var(--accent);
-      border-radius: 0;
-      padding: 4px 2px 9px;
-      margin: 0 4px;
-      box-shadow: none;
-      align-items: flex-end;
-      gap: 10px;
-    }
-
-    #screen-recall .input-inner:focus-within,
-    #screen-remember .input-inner:focus-within {
-      box-shadow: none;
-      border-bottom-color: var(--accent-press);
-    }
-
-    #screen-recall .input-field,
-    #screen-remember .input-field {
-      font-family: var(--font-serif);
-      font-size: 16.5px;
-      padding: 6px 0;
-    }
-
-    #screen-recall .input-field::placeholder,
-    #screen-remember .input-field::placeholder {
-      font-style: italic;
-      color: var(--text-tertiary);
-    }
-
-    #screen-recall .send-btn,
-    #screen-remember .send-btn {
-      background: transparent;
-      width: auto;
-      height: auto;
-      padding: 4px;
-    }
-
-    #screen-recall .send-btn:hover,
-    #screen-remember .send-btn:hover {
-      background: transparent;
-      transform: translateY(-1px);
-    }
-
-    #screen-recall .send-btn i,
-    #screen-remember .send-btn i {
-      font-size: 23px;
-      color: var(--accent);
-    }
-
-    #screen-recall .send-btn:disabled,
-    #screen-remember .send-btn:disabled {
-      opacity: 0.4;
-    }
-
-    /* sources toggle */
-    .sources-toggle {
-      display: flex;
-      flex-direction: column;
-      gap: 9px;
-      animation: bubble-in 0.36s var(--ease) both;
-    }
-
-    .sources-toggle > button {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      align-self: flex-start;
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text-secondary);
-      font-family: var(--font-sans);
-      font-size: 12px;
-      padding: 3px 2px;
-      transition: color 0.15s;
-    }
-
-    .sources-toggle > button i {
-      font-size: 15px;
-      color: var(--accent);
-    }
-
-    .sources-toggle > button:hover {
-      color: var(--text-primary);
-    }
-
-    /* ============ MEMORY CARD (recall sources) ============ */
-    .memory-card {
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-card);
-      border-radius: var(--radius-card);
-      padding: 12px 14px;
-      box-shadow: var(--shadow-card);
-      transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease), opacity 0.3s;
-      animation: card-in 0.42s var(--ease) both;
-    }
-
-    @keyframes card-in {
-      from { transform: translateY(8px); }
-      to { transform: none; }
-    }
-
-    .memory-card:hover {
-      box-shadow: var(--shadow-float);
-    }
-
-    .match-line {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      margin-bottom: 9px;
-    }
-
-    .match-pct {
-      font-size: 10.5px;
-      color: var(--accent-ink);
-      font-weight: 600;
-      font-variant-numeric: tabular-nums;
-      flex-shrink: 0;
-    }
-
-    .match-bar-bg {
-      flex: 1;
-      height: 3px;
-      background: var(--surface-2);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-
-    .match-bar-fill {
-      height: 100%;
-      background: var(--accent);
-      border-radius: 2px;
-      transform-origin: left;
-      animation: bar-grow 0.65s var(--ease) both;
-    }
-
-    @keyframes bar-grow {
-      from { transform: scaleX(0); }
-      to { transform: scaleX(1); }
-    }
-
-    .card-content {
-      font-size: 14px;
-      color: var(--text-primary);
-      line-height: 1.55;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-
-    .card-footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-top: 11px;
-    }
-
-    .card-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      min-width: 0;
-    }
-
-    .tag-chip {
-      background: var(--surface-2);
-      color: var(--text-tag);
-      font-size: 11px;
-      padding: 3px 10px;
-      border-radius: var(--radius-tag);
-      white-space: nowrap;
-      font-family: var(--font-sans);
-    }
-
-    .card-tags .tag-chip:first-child {
-      background: var(--accent-soft);
-      color: var(--accent-ink);
-    }
-
-    .card-actions {
-      display: flex;
-      gap: 4px;
-      flex-shrink: 0;
-    }
-
-    .card-action-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text-secondary);
-      font-size: 11px;
-      font-family: var(--font-sans);
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 5px 7px;
-      border-radius: 8px;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .card-action-btn:hover {
-      background: var(--surface-2);
-      color: var(--text-primary);
-    }
-
-    .card-action-btn i {
-      font-size: 14px;
-    }
-
-    /* ============ RECENT — numbered editorial list ============ */
-    #recent-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 14px 18px 8px;
-      counter-reset: memo;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .date-group {
-      margin-bottom: 22px;
-    }
-
-    .date-label {
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-weight: 400;
-      font-size: 15px;
-      color: var(--text-secondary);
-      margin: 0 2px 6px;
-      letter-spacing: 0;
-    }
-
-    #recent-list .recent-cards {
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-    }
-
-    /* recent rows: strip the card chrome, become editorial entries */
-    #recent-list .memory-card {
-      background: transparent;
-      border: none;
-      border-top: 0.5px solid var(--line-soft);
-      border-radius: 0;
-      box-shadow: none;
-      padding: 14px 2px 14px 34px;
-      position: relative;
-      counter-increment: memo;
-    }
-
-    #recent-list .memory-card:first-child {
-      border-top: none;
-    }
-
-    #recent-list .memory-card::before {
-      content: counter(memo, decimal-leading-zero);
-      position: absolute;
-      left: 2px;
-      top: 15px;
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 13px;
-      color: var(--accent-ink);
-      font-variant-numeric: tabular-nums;
-    }
-
-    #recent-list .memory-card:hover {
-      box-shadow: none;
-    }
-
-    #recent-list .card-content {
-      font-size: 14.5px;
-      line-height: 1.5;
-    }
-
-    #recent-list .card-footer {
-      margin-top: 8px;
-    }
-
-    #recent-list .card-action-btn {
-      padding: 4px 6px;
-      font-size: 10.5px;
-      color: var(--text-tertiary);
-    }
-
-    #recent-list .card-action-btn:hover {
-      color: var(--text-primary);
-    }
-
-    /* ============ FILTER BAR ============ */
-    .filter-bar {
-      padding: 8px 18px 10px;
-      flex-shrink: 0;
-      background: var(--bg);
-    }
-
-    .filter-inner {
-      display: flex;
-      align-items: center;
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-input);
-      border-radius: var(--radius-pill);
-      padding: 7px 8px 7px 14px;
-      gap: 8px;
-      box-shadow: var(--shadow-card);
-    }
-
-    .filter-field {
-      flex: 1;
-      background: none;
-      border: none;
-      outline: none;
-      font-family: var(--font-sans);
-      font-size: 13px;
-      color: var(--text-secondary);
-      min-width: 0;
-    }
-
-    .filter-field::placeholder {
-      color: var(--text-tertiary);
-    }
-
-    select.filter-field {
-      cursor: pointer;
-      -webkit-appearance: none;
-      appearance: none;
-    }
-
-    select.filter-field option {
-      color: #26241F;
-      background: #FCFBF7;
-    }
-
-    .refresh-btn {
-      width: 30px;
-      height: 30px;
-      border-radius: 50%;
-      background: var(--surface-2);
-      border: none;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      color: var(--text-secondary);
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .refresh-btn i {
-      font-size: 15px;
-    }
-
-    .refresh-btn:hover {
-      background: var(--surface-3);
-      color: var(--text-primary);
-    }
-
-    .refresh-btn.spinning i {
-      animation: spin 0.7s linear infinite;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    /* ============ SUGGESTIONS ============ */
-    .suggestions-row {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding: 6px 18px 6px;
-      flex-shrink: 0;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-    }
-
-    .suggestions-row::-webkit-scrollbar {
-      display: none;
-    }
-
-    .suggestion-pill {
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-input);
-      color: var(--text-secondary);
-      font-size: 12.5px;
-      padding: 7px 14px;
-      border-radius: var(--radius-pill);
-      white-space: nowrap;
-      cursor: pointer;
-      font-family: var(--font-sans);
-      flex-shrink: 0;
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
-    }
-
-    .suggestion-pill:hover {
-      background: var(--accent-soft);
-      border-color: transparent;
-      color: var(--accent-ink);
-    }
-
-    /* ============ INPUT BAR ============ */
-    .input-bar {
-      padding: 8px 18px calc(12px + env(safe-area-inset-bottom));
-      flex-shrink: 0;
-      background: var(--bg);
-    }
-
-    .input-inner {
-      display: flex;
-      align-items: flex-end;
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-input);
-      border-radius: 24px;
-      padding: 6px 6px 6px 16px;
-      gap: 8px;
-      box-shadow: var(--shadow-card);
-      transition: border-color 0.18s, box-shadow 0.18s;
-    }
-
-    .input-inner:focus-within {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-soft);
-    }
-
-    .input-field {
-      flex: 1;
-      background: none;
-      border: none;
-      outline: none;
-      font-family: var(--font-sans);
-      font-size: 14.5px;
-      color: var(--text-primary);
-      resize: none;
-      line-height: 1.45;
-      padding: 7px 0;
-      max-height: 80px;
-      overflow-y: auto;
-    }
-
-    .input-field::placeholder {
-      color: var(--text-tertiary);
-    }
-
-    .send-btn {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      background: var(--accent);
-      border: none;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      transition: background 0.18s, transform 0.14s var(--ease-spring);
-    }
-
-    .send-btn:hover {
-      background: var(--accent-press);
-    }
-
-    .send-btn:active {
-      transform: scale(0.88);
-    }
-
-    .send-btn i {
-      font-size: 18px;
-      color: var(--on-accent);
-    }
-
-    .send-btn:disabled {
-      opacity: 0.45;
-      cursor: default;
-    }
-
-    .input-hint {
-      font-size: 11.5px;
-      color: var(--text-tertiary);
-      padding: 0 4px 8px;
-    }
-
-    .input-hint .hint-tags {
-      color: var(--accent-ink);
-      font-weight: 500;
-    }
-
-    /* ============ CONFIRM BLOCK (remember) ============ */
-    .confirm-block {
-      background: var(--bg-confirm);
-      border-radius: var(--radius-card);
-      padding: 11px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      align-self: flex-start;
-      max-width: 84%;
-      animation: bubble-in 0.36s var(--ease) both;
-    }
-
-    .confirm-line {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      font-size: 12.5px;
-      color: var(--accent-ink);
-      font-weight: 500;
-    }
-
-    .confirm-line i {
-      font-size: 16px;
-      color: var(--accent);
-    }
-
-    .confirm-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-
-    .confirm-tag {
-      background: var(--bg-tag-confirmed);
-      color: var(--text-tag-confirmed);
-      font-size: 11px;
-      padding: 3px 10px;
-      border-radius: var(--radius-tag);
-      font-family: var(--font-sans);
-    }
-
-    /* ============ EMPTY STATE ============ */
-    .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 56px 32px;
-      gap: 10px;
-      color: var(--text-tertiary);
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 15px;
-      line-height: 1.5;
-      text-align: center;
-      height: 100%;
-    }
-
-    .empty-state i {
-      font-size: 34px;
-      margin-bottom: 4px;
-      font-style: normal;
-      color: var(--text-tertiary);
-    }
-
-    /* ============ BOTTOM SHEETS ============ */
-    #confirm-dialog,
-    #append-sheet,
-    #edit-sheet,
-    #menu-sheet,
-    #view-sheet {
-      display: none;
-      position: fixed;
-      inset: 0;
-      z-index: 50;
-      background: rgba(20, 18, 13, 0.42);
-      align-items: flex-end;
-      justify-content: center;
-      opacity: 0;
-      transition: opacity 0.28s var(--ease);
-      -webkit-backdrop-filter: blur(2px);
-      backdrop-filter: blur(2px);
-    }
-
-    #confirm-dialog.open,
-    #append-sheet.open,
-    #edit-sheet.open,
-    #menu-sheet.open,
-    #view-sheet.open {
-      display: flex;
-      opacity: 1;
-    }
-
-    .confirm-sheet,
-    .append-inner,
-    .edit-inner,
-    .menu-inner,
-    .view-inner {
-      background: var(--bg);
-      border-radius: 24px 24px 0 0;
-      width: 100%;
-      max-width: 440px;
-      box-shadow: var(--shadow-sheet);
-      transform: translateY(100%);
-      transition: transform 0.34s var(--ease);
-    }
-
-    .open .confirm-sheet,
-    .open .append-inner,
-    .open .edit-inner,
-    .open .menu-inner,
-    .open .view-inner {
-      transform: translateY(0);
-    }
-
-    .confirm-sheet { padding: 26px 24px calc(34px + env(safe-area-inset-bottom)); }
-    .append-inner { padding: 24px 22px calc(34px + env(safe-area-inset-bottom)); }
-    .edit-inner { padding: 24px 22px calc(34px + env(safe-area-inset-bottom)); }
-    .menu-inner { padding: 24px 22px calc(34px + env(safe-area-inset-bottom)); }
-
-    .view-inner {
-      padding: 22px 22px calc(34px + env(safe-area-inset-bottom));
-      display: flex;
-      flex-direction: column;
-      max-height: 90vh;
-    }
-
-    .confirm-sheet h3,
-    .append-inner h3,
-    .edit-inner h3,
-    .menu-inner h3,
-    .view-header h3 {
-      font-family: var(--font-serif);
-      font-size: 21px;
-      font-weight: 500;
-      margin-bottom: 9px;
-      letter-spacing: -0.01em;
-      color: var(--text-primary);
-    }
-
-    .confirm-sheet p {
-      font-size: 14px;
-      color: var(--text-secondary);
-      margin-bottom: 22px;
-      line-height: 1.55;
-    }
-
-    .view-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 14px;
-      flex-shrink: 0;
-    }
-
-    .btn-close-icon {
-      background: var(--surface-2);
-      border: none;
-      color: var(--text-secondary);
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s;
-    }
-
-    .btn-close-icon i { font-size: 18px; }
-    .btn-close-icon:hover { background: var(--surface-3); }
-
-    .view-content {
-      font-family: var(--font-serif);
-      font-size: 17px;
-      color: var(--text-primary);
-      line-height: 1.62;
-      overflow-y: auto;
-      margin-bottom: 18px;
-      white-space: pre-wrap;
-    }
-
-    .view-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-bottom: 22px;
-      flex-shrink: 0;
-    }
-
-    .view-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: auto;
-      flex-shrink: 0;
-    }
-
-    .btn-view-append,
-    .btn-view-edit,
-    .btn-view-forget {
-      flex: 1;
-      padding: 13px;
-      border: none;
-      border-radius: 13px;
-      font-family: var(--font-sans);
-      font-size: 13.5px;
-      font-weight: 500;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      background: var(--surface-2);
-      color: var(--text-primary);
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .btn-view-append i,
-    .btn-view-edit i,
-    .btn-view-forget i { font-size: 16px; }
-
-    .btn-view-append:hover,
-    .btn-view-edit:hover { background: var(--surface-3); }
-
-    .btn-view-forget { color: var(--danger); }
-    .btn-view-forget:hover { background: var(--danger); color: #fff; }
-
-    .confirm-actions,
-    .append-actions {
-      display: flex;
-      gap: 10px;
-    }
-
-    .btn-cancel,
-    .btn-append-cancel {
-      flex: 1;
-      padding: 14px;
-      background: var(--surface-2);
-      border: none;
-      border-radius: 13px;
-      font-family: var(--font-sans);
-      font-size: 14.5px;
-      font-weight: 500;
-      color: var(--text-primary);
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-
-    .btn-cancel:hover,
-    .btn-append-cancel:hover { background: var(--surface-3); }
-
-    .btn-delete {
-      flex: 1;
-      padding: 14px;
-      background: var(--danger);
-      border: none;
-      border-radius: 13px;
-      font-family: var(--font-sans);
-      font-size: 14.5px;
-      font-weight: 600;
-      color: #fff;
-      cursor: pointer;
-      transition: opacity 0.15s;
-    }
-
-    .btn-delete:hover { opacity: 0.92; }
-
-    .btn-append-save {
-      flex: 1;
-      padding: 14px;
-      background: var(--accent);
-      border: none;
-      border-radius: 13px;
-      font-family: var(--font-sans);
-      font-size: 14.5px;
-      font-weight: 600;
-      color: var(--on-accent);
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-
-    .btn-append-save:hover { background: var(--accent-press); }
-
-    .btn-append-save:disabled {
-      opacity: 0.55;
-      cursor: default;
-    }
-
-    .append-context {
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 13.5px;
-      color: var(--text-secondary);
-      margin-bottom: 16px;
-      line-height: 1.5;
-      padding: 12px 14px;
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-card);
-      border-radius: 12px;
-      display: -webkit-box;
-      -webkit-line-clamp: 3;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-
-    .append-input-wrap {
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-input);
-      border-radius: 13px;
-      padding: 13px 15px;
-      margin-bottom: 14px;
-      transition: border-color 0.18s, box-shadow 0.18s;
-    }
-
-    .append-input-wrap:focus-within {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-soft);
-    }
-
-    .append-input-wrap textarea {
-      width: 100%;
-      background: none;
-      border: none;
-      outline: none;
-      font-family: var(--font-sans);
-      font-size: 14.5px;
-      color: var(--text-primary);
-      resize: none;
-      line-height: 1.5;
-      min-height: 60px;
-    }
-
-    .append-input-wrap textarea::placeholder {
-      color: var(--text-tertiary);
-    }
-
-    .edit-existing-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-bottom: 14px;
-    }
-
-    .edit-hint {
-      font-size: 12px;
-      color: var(--text-tertiary);
-      margin-bottom: 14px;
-    }
-
-    .edit-hint span { color: var(--accent-ink); }
-
-    /* ============ MENU SHEET ============ */
-    .menu-inner h3 {
-      margin-bottom: 18px;
-    }
-
-    .theme-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 4px 0 16px;
-      margin-bottom: 4px;
-    }
-
-    .theme-row-label {
-      font-size: 14px;
-      color: var(--text-secondary);
-    }
-
-    .theme-toggle {
-      display: flex;
-      gap: 3px;
-      background: var(--surface-2);
-      border-radius: var(--radius-pill);
-      padding: 3px;
-    }
-
-    .theme-toggle button {
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 7px 13px;
-      border-radius: var(--radius-pill);
-      font-family: var(--font-sans);
-      font-size: 12.5px;
-      color: var(--text-secondary);
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      transition: background 0.18s, color 0.18s;
-    }
-
-    .theme-toggle button i { font-size: 16px; }
-
-    .theme-toggle button.active {
-      background: var(--bg-card);
-      color: var(--accent-ink);
-      box-shadow: var(--shadow-card);
-    }
-
-    .menu-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 15px 0;
-      border-top: 0.5px solid var(--border);
-      cursor: pointer;
-      color: var(--text-primary);
-      font-size: 15px;
-      background: none;
-      border-left: none;
-      border-right: none;
-      border-bottom: none;
-      width: 100%;
-      font-family: var(--font-sans);
-      text-align: left;
-      transition: color 0.15s;
-    }
-
-    .menu-item:hover { color: var(--text-secondary); }
-
-    .menu-item i { font-size: 20px; color: var(--text-secondary); }
-
-    .menu-item.danger { color: var(--danger); }
-    .menu-item.danger i { color: var(--danger); }
-
-    .stats-panel {
-      padding: 2px 0 10px;
-      margin-bottom: 4px;
-    }
-
-    .stats-kpi-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 12px;
-    }
-
-    .stats-kpi-card {
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-card);
-      border-radius: var(--radius-card);
-      padding: 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .stats-kpi-value {
-      font-family: var(--font-serif);
-      font-size: 26px;
-      font-weight: 500;
-      color: var(--accent-ink);
-      font-variant-numeric: tabular-nums;
-      line-height: 1.05;
-    }
-
-    .stats-kpi-label {
-      font-size: 11px;
-      color: var(--text-tertiary);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      font-weight: 500;
-    }
-
-    .stats-top-tags {
-      background: var(--bg-card);
-      border: 0.5px solid var(--border-card);
-      border-radius: var(--radius-card);
-      padding: 14px;
-    }
-
-    .stats-top-tags-label {
-      font-size: 11px;
-      color: var(--text-tertiary);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      font-weight: 500;
-      margin-bottom: 9px;
-    }
-
-    .stats-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-
-    /* ============ DESKTOP SIDEBAR ============ */
-    #sidebar {
-      width: 248px;
-      flex-shrink: 0;
-      flex-direction: column;
-      background: var(--bg);
-      border-right: 0.5px solid var(--border);
-      padding: 20px 12px 22px;
-    }
-
-    .sb-logo {
-      display: flex;
-      align-items: center;
-      gap: 11px;
-      padding: 6px 10px 26px;
-    }
-
-    .sb-brand-name {
-      font-family: var(--font-serif);
-      font-size: 16px;
-      font-weight: 500;
-      color: var(--text-primary);
-    }
-
-    .sb-brand-status {
-      font-size: 11.5px;
-      color: var(--text-secondary);
-      margin-top: 1px;
-    }
-
-    .sb-nav {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-    }
-
-    .sb-tab {
-      display: flex;
-      align-items: center;
-      gap: 11px;
-      padding: 10px 11px;
-      border-radius: 10px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text-secondary);
-      font-size: 14.5px;
-      font-family: var(--font-serif);
-      width: 100%;
-      text-align: left;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .sb-tab i { font-size: 19px; flex-shrink: 0; }
-
-    .sb-tab:hover {
-      background: var(--surface-2);
-      color: var(--text-primary);
-    }
-
-    .sb-tab.active {
-      background: var(--accent-soft);
-      color: var(--accent-ink);
-    }
-
-    .sb-footer {
-      padding-top: 12px;
-      border-top: 0.5px solid var(--border);
-    }
-
-    .sb-footer-btn {
-      display: flex;
-      align-items: center;
-      gap: 11px;
-      padding: 10px 11px;
-      border-radius: 10px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text-secondary);
-      font-size: 14.5px;
-      font-family: var(--font-sans);
-      width: 100%;
-      text-align: left;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .sb-footer-btn:hover {
-      background: var(--surface-2);
-      color: var(--text-primary);
-    }
-
-    .sb-footer-btn i { font-size: 19px; }
-
-    /* ============ DESKTOP ============ */
-    @media (min-width: 768px) {
-      html, body {
-        height: 100%;
-        overflow: auto;
-      }
-
-      body { background: var(--surface-3); }
-
-      #auth-overlay {
-        position: fixed;
-        inset: 0;
-        max-width: none;
-        background: color-mix(in srgb, var(--bg) 88%, transparent);
-        backdrop-filter: blur(8px);
-        align-items: center;
-        justify-content: center;
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
         padding: 0;
       }
 
-      .auth-card {
+      :root {
+        /* surfaces */
+        --bg: #f4f1ea;
+        --bg-card: #fcfbf7;
+        --bg-tag: #ece8dd;
+        --bg-secondary: #fcfbf7;
+        --bg-confirm: rgba(178, 102, 65, 0.1);
+        --bg-tag-confirmed: #b26641;
+        --surface-2: #ece8dd;
+        --surface-3: #e2ddd0;
+
+        /* ink */
+        --text-primary: #26241f;
+        --text-secondary: #6e6b62;
+        --text-tertiary: #a8a498;
+        --text-tag: #6e6b62;
+        --text-tag-confirmed: #fcfbf7;
+
+        /* lines */
+        --border: rgba(38, 36, 31, 0.09);
+        --border-card: rgba(38, 36, 31, 0.075);
+        --border-input: rgba(38, 36, 31, 0.11);
+        --line-soft: rgba(38, 36, 31, 0.06);
+
+        /* accent — terracotta */
+        --accent: #b26641;
+        --accent-press: #9c522f;
+        --accent-soft: rgba(178, 102, 65, 0.11);
+        --accent-ink: #8a4e2f;
+        --good: #5b8a6b;
+        --danger: #b0503c;
+        --danger-soft: rgba(176, 80, 60, 0.1);
+        --on-accent: #fcfbf7;
+
+        /* type */
+        --font-serif: 'Lora', Georgia, serif;
+        --font-sans: 'DM Sans', system-ui, sans-serif;
+
+        /* radii */
+        --radius-card: 14px;
+        --radius-pill: 999px;
+        --radius-tag: 999px;
+        --radius-bubble: 18px;
+
+        /* elevation */
+        --shadow-card: 0 1px 2px rgba(38, 36, 31, 0.04), 0 4px 14px rgba(38, 36, 31, 0.05);
+        --shadow-float: 0 2px 6px rgba(38, 36, 31, 0.06), 0 14px 34px rgba(38, 36, 31, 0.11);
+        --shadow-sheet: 0 -10px 44px rgba(38, 36, 31, 0.16);
+
+        /* motion */
+        --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+        --ease-spring: cubic-bezier(0.34, 1.45, 0.5, 1);
+      }
+
+      html[data-theme='dark'] {
+        --bg: #18160f;
+        --bg-card: #221f17;
+        --bg-tag: #2c2820;
+        --bg-secondary: #221f17;
+        --bg-confirm: rgba(211, 138, 94, 0.15);
+        --bg-tag-confirmed: #d38a5e;
+        --surface-2: #2c2820;
+        --surface-3: #38332a;
+
+        --text-primary: #ece7dc;
+        --text-secondary: #a39c8c;
+        --text-tertiary: #6e685b;
+        --text-tag: #a39c8c;
+        --text-tag-confirmed: #1a1611;
+
+        --border: rgba(255, 255, 255, 0.085);
+        --border-card: rgba(255, 255, 255, 0.075);
+        --border-input: rgba(255, 255, 255, 0.11);
+        --line-soft: rgba(255, 255, 255, 0.055);
+
+        --accent: #d38a5e;
+        --accent-press: #e29a6e;
+        --accent-soft: rgba(211, 138, 94, 0.16);
+        --accent-ink: #e0a079;
+        --good: #7bae8a;
+        --danger: #d9806b;
+        --danger-soft: rgba(217, 128, 107, 0.14);
+        --on-accent: #1a1611;
+
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 6px 18px rgba(0, 0, 0, 0.28);
+        --shadow-float: 0 2px 8px rgba(0, 0, 0, 0.4), 0 16px 36px rgba(0, 0, 0, 0.5);
+        --shadow-sheet: 0 -10px 44px rgba(0, 0, 0, 0.55);
+      }
+
+      html,
+      body {
+        height: 100%;
         background: var(--bg);
-        border-radius: 22px;
-        padding: 44px 38px;
-        width: 420px;
-        box-shadow: var(--shadow-float);
+        font-family: var(--font-sans);
+        color: var(--text-primary);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        overflow: hidden;
+      }
+
+      body {
+        transition: background 0.45s var(--ease);
+      }
+
+      i.ti {
+        line-height: 1;
+      }
+
+      ::selection {
+        background: var(--accent-soft);
+      }
+
+      #app {
+        display: flex;
+        flex-direction: column;
+        height: 100svh;
+        width: 100%;
+        max-width: 440px;
+        margin: 0 auto;
+        background: var(--bg);
+        position: relative;
+      }
+
+      #sidebar {
+        display: none;
+      }
+
+      #main-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      /* ============ AUTH ============ */
+      #auth-overlay {
+        position: fixed;
+        inset: 0;
+        background: var(--bg);
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        animation: fade-in 0.5s var(--ease);
+      }
+
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      .auth-card {
+        width: 100%;
+        max-width: 400px;
+        padding: 40px 32px;
         display: flex;
         flex-direction: column;
         align-items: center;
       }
 
-      #app {
-        flex-direction: row;
-        height: 100vh;
-        max-width: 100%;
+      #auth-overlay .brain-logo {
+        width: 70px;
+        height: 70px;
+        border-radius: 50%;
+        background: var(--accent-soft);
+        color: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 24px;
+        position: relative;
+      }
+
+      #auth-overlay .brain-logo i {
+        font-size: 33px;
+      }
+
+      #auth-overlay .brain-logo::after {
+        content: '';
+        position: absolute;
+        inset: -7px;
+        border-radius: 50%;
+        border: 1px solid var(--accent-soft);
+      }
+
+      #auth-overlay h1 {
+        font-family: var(--font-serif);
+        font-size: 29px;
+        font-weight: 500;
+        color: var(--text-primary);
+        margin-bottom: 9px;
+        letter-spacing: -0.015em;
+      }
+
+      #auth-overlay p {
+        font-size: 14px;
+        color: var(--text-secondary);
+        margin-bottom: 34px;
+        text-align: center;
+        line-height: 1.6;
+        max-width: 300px;
+      }
+
+      #auth-overlay .field-group {
         width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 11px;
+        margin-bottom: 14px;
+      }
+
+      #auth-overlay input {
+        width: 100%;
+        padding: 14px 16px;
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-input);
+        border-radius: 13px;
+        font-family: var(--font-sans);
+        font-size: 15px;
+        color: var(--text-primary);
+        outline: none;
+        transition:
+          border-color 0.18s,
+          box-shadow 0.18s;
+      }
+
+      #auth-overlay input::placeholder {
+        color: var(--text-tertiary);
+      }
+
+      #auth-overlay input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      #auth-connect {
+        width: 100%;
+        padding: 15px;
+        background: var(--accent);
+        color: var(--on-accent);
+        border: none;
+        border-radius: 13px;
+        font-family: var(--font-sans);
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          background 0.18s,
+          transform 0.12s var(--ease);
+      }
+
+      #auth-connect:hover {
+        background: var(--accent-press);
+      }
+
+      #auth-connect:active {
+        transform: scale(0.985);
+      }
+
+      #auth-error {
+        font-size: 13px;
+        color: var(--danger);
+        text-align: center;
+        margin-top: 10px;
+        min-height: 18px;
+      }
+
+      /* ============ TOP BAR ============ */
+      #topbar {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 14px 18px 12px;
+        background: var(--bg);
+        flex-shrink: 0;
+        position: relative;
+        z-index: 10;
+      }
+
+      .brain-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: var(--accent-soft);
+        color: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .brain-avatar i {
+        font-size: 20px;
+      }
+
+      .topbar-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .topbar-name {
+        font-family: var(--font-serif);
+        font-size: 18px;
+        font-weight: 500;
+        color: var(--text-primary);
+        line-height: 1.15;
+        letter-spacing: -0.01em;
+      }
+
+      .topbar-status {
+        font-size: 11.5px;
+        color: var(--text-secondary);
+        line-height: 1.3;
+        margin-top: 1px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .topbar-status::before {
+        content: '';
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--good);
+        flex-shrink: 0;
+      }
+
+      .topbar-menu {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--text-secondary);
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+
+      .topbar-menu i {
+        font-size: 22px;
+      }
+
+      .topbar-menu:hover {
+        background: var(--surface-2);
+        color: var(--text-primary);
+      }
+
+      /* ============ SCREENS ============ */
+      #screens {
+        flex: 1;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .screen {
+        display: none;
+        flex-direction: column;
+        height: 100%;
+        position: absolute;
+        inset: 0;
+      }
+
+      .screen.active {
+        display: flex;
+        animation: screen-in 0.34s var(--ease);
+      }
+
+      @keyframes screen-in {
+        from {
+          transform: translateY(8px);
+        }
+        to {
+          transform: none;
+        }
+      }
+
+      #recall-messages,
+      #remember-messages {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 16px 18px 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
+      }
+
+      /* ============ BOTTOM NAV ============ */
+      #navbar {
+        display: flex;
+        border-top: 0.5px solid var(--border);
+        background: var(--bg);
+        flex-shrink: 0;
+        padding: 9px 8px calc(16px + env(safe-area-inset-bottom));
+      }
+
+      .nav-tab {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 6px 0;
+        color: var(--text-tertiary);
+        transition: color 0.2s var(--ease);
+      }
+
+      .nav-tab i {
+        font-size: 22px;
+        transition: transform 0.32s var(--ease-spring);
+      }
+
+      .nav-tab span {
+        font-family: var(--font-serif);
+        font-size: 11.5px;
+        letter-spacing: 0.005em;
+      }
+
+      .nav-tab.active {
+        color: var(--accent);
+      }
+
+      .nav-tab.active i {
+        transform: translateY(-1px);
+      }
+
+      .nav-tab:active i {
+        transform: scale(0.84);
+      }
+
+      /* ============ CHAT BUBBLES ============ */
+      .bubble-row {
+        display: flex;
+        animation: bubble-in 0.36s var(--ease) both;
+      }
+
+      .bubble-row.user {
+        justify-content: flex-end;
+      }
+
+      .bubble-row.brain {
+        justify-content: flex-start;
+      }
+
+      @keyframes bubble-in {
+        from {
+          transform: translateY(9px);
+        }
+        to {
+          transform: none;
+        }
+      }
+
+      .bubble {
+        max-width: 84%;
+        padding: 11px 15px;
+        border-radius: var(--radius-bubble);
+        font-size: 14px;
+        line-height: 1.5;
+        word-wrap: break-word;
+      }
+
+      .bubble.user {
+        background: var(--text-primary);
+        color: var(--bg);
+        border-bottom-right-radius: 6px;
+      }
+
+      .bubble.user .hashtag {
+        color: color-mix(in srgb, var(--bg) 68%, var(--accent));
+      }
+
+      .bubble.brain {
+        background: var(--bg-card);
+        color: var(--text-primary);
+        border: 0.5px solid var(--border-card);
+        border-bottom-left-radius: 6px;
+        box-shadow: var(--shadow-card);
+      }
+
+      /* Journal serif voice — AI answers + welcome lines */
+      .bubble.brain.answer,
+      .bubble.brain.voice {
+        font-family: var(--font-serif);
+        font-size: 16.5px;
+        line-height: 1.6;
+        letter-spacing: -0.003em;
+        padding: 14px 17px;
+        max-width: 90%;
+      }
+
+      .bubble.brain.answer strong,
+      .bubble.brain.voice strong {
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+
+      .bubble.brain.answer em {
+        color: var(--accent-ink);
+      }
+
+      .hashtag {
+        color: var(--accent);
+        font-weight: 500;
+      }
+
+      .bubble-time {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        padding: 0 6px;
+        margin-top: 4px;
+        text-align: right;
+      }
+
+      .bubble-row.user > div {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        max-width: 84%;
+      }
+
+      /* loading dots */
+      .loading-dots {
+        display: flex;
+        gap: 6px;
+        padding: 16px 2px;
+        background: transparent;
+        border: none;
         border-radius: 0;
+        width: fit-content;
+        box-shadow: none;
+      }
+
+      .loading-dots span {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--text-tertiary);
+        animation: bounce 1.3s infinite ease-in-out;
+      }
+
+      .loading-dots span:nth-child(2) {
+        animation-delay: 0.16s;
+      }
+      .loading-dots span:nth-child(3) {
+        animation-delay: 0.32s;
+      }
+
+      @keyframes bounce {
+        0%,
+        80%,
+        100% {
+          transform: scale(0.7);
+          opacity: 0.4;
+        }
+        40% {
+          transform: scale(1);
+          opacity: 1;
+        }
+      }
+
+      .brain-cards-wrapper {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+
+      #recall-welcome {
+        gap: 10px;
+      }
+
+      /* ============================================================
+       JOURNAL EDITORIAL — Recall reads as prose, Remember as writing
+       ============================================================ */
+      #recall-messages,
+      #remember-messages {
+        gap: 0;
+        padding: 20px 20px 10px;
+      }
+
+      /* opening hero (welcome / remember intro) */
+      .recall-hero {
+        padding: 6px 0 2px;
+        animation: bubble-in 0.4s var(--ease) both;
+      }
+
+      .recall-hero .eyebrow {
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent-ink);
+        margin-bottom: 13px;
+      }
+
+      .recall-hero .hero-line {
+        font-family: var(--font-serif);
+        font-size: 23px;
+        line-height: 1.42;
+        letter-spacing: -0.012em;
+        color: var(--text-primary);
+        max-width: 22em;
+      }
+
+      .recall-hero .hero-line .hashtag {
+        color: var(--accent-ink);
+      }
+
+      /* a recall exchange: uppercase question label + large serif answer */
+      .ex-q {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        flex-wrap: wrap;
+        font-size: 11px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--accent-ink);
+        padding: 24px 0 13px;
+        border-top: 0.5px solid var(--line-soft);
+        animation: bubble-in 0.36s var(--ease) both;
+      }
+
+      #recall-messages > .ex-q:first-child {
+        border-top: none;
+        padding-top: 6px;
+      }
+
+      .ex-q .q-dash {
+        opacity: 0.5;
+      }
+
+      .ex-q .q-text {
+        color: var(--text-secondary);
+        letter-spacing: 0.03em;
+        font-weight: 500;
+      }
+
+      .ex-a {
+        font-family: var(--font-serif);
+        font-size: 19px;
+        line-height: 1.58;
+        letter-spacing: -0.004em;
+        color: var(--text-primary);
+        animation: bubble-in 0.36s var(--ease) both;
+      }
+
+      .ex-a strong {
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      .ex-a em {
+        color: var(--accent-ink);
+        font-style: italic;
+      }
+
+      .ex-a > *:first-child {
+        margin-top: 0;
+      }
+      .ex-a > *:last-child {
+        margin-bottom: 0;
+      }
+      .ex-a p {
+        margin: 0 0 0.7em;
+      }
+      .ex-a p:last-child {
+        margin-bottom: 0;
+      }
+
+      .ex-a h3,
+      .ex-a h4 {
+        font-family: var(--font-serif);
+        font-weight: 600;
+        color: var(--text-primary);
+        letter-spacing: -0.01em;
+        line-height: 1.3;
+        margin: 1.1em 0 0.45em;
+      }
+      .ex-a h3 {
+        font-size: 0.92em;
+      }
+      .ex-a h4 {
+        font-size: 0.66em;
+        font-weight: 600;
+        font-style: normal;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent-ink);
+        font-family: var(--font-sans);
+      }
+
+      .ex-a ul,
+      .ex-a ol {
+        margin: 0.55em 0 0.8em;
+        padding: 0;
+        list-style: none;
+        counter-reset: exli;
+      }
+      .ex-a li {
+        position: relative;
+        padding-left: 1.3em;
+        margin-bottom: 0.42em;
+        line-height: 1.5;
+      }
+      .ex-a li:last-child {
+        margin-bottom: 0;
+      }
+      .ex-a ul > li::before {
+        content: '';
+        position: absolute;
+        left: 0.15em;
+        top: 0.62em;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .ex-a ol > li {
+        counter-increment: exli;
+      }
+      .ex-a ol > li::before {
+        content: counter(exli);
+        position: absolute;
+        left: 0;
+        top: 0.04em;
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 0.82em;
+        color: var(--accent-ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .ex-a code {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 0.82em;
+        background: var(--surface-2);
+        padding: 0.1em 0.4em;
+        border-radius: 5px;
+      }
+
+      /* system note (no result / error) */
+      .recall-sys {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 18px;
+        line-height: 1.55;
+        color: var(--text-secondary);
+        padding: 24px 0 0;
+        border-top: 0.5px solid var(--line-soft);
+        animation: bubble-in 0.36s var(--ease) both;
+      }
+
+      /* sources, sitting under an answer */
+      .ex-a + .sources-toggle,
+      .sources-toggle {
+        margin-top: 16px;
+      }
+
+      /* ---- Remember: editorial capture notes ---- */
+      .capture-note {
+        position: relative;
+        font-family: var(--font-serif);
+        font-size: 18px;
+        line-height: 1.5;
+        color: var(--text-primary);
+        padding: 22px 0 4px 16px;
+        border-top: 0.5px solid var(--line-soft);
+        animation: bubble-in 0.36s var(--ease) both;
+      }
+
+      .capture-note::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 24px;
+        bottom: 11px;
+        width: 2px;
+        background: var(--accent);
+        border-radius: 2px;
+      }
+
+      .capture-note .hashtag {
+        font-family: var(--font-sans);
+        font-size: 13.5px;
+        vertical-align: 1px;
+      }
+
+      .sys-note {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 13px;
+        color: var(--text-tertiary);
+        padding: 8px 0 4px 16px;
+        animation: bubble-in 0.36s var(--ease) both;
+      }
+
+      #remember-messages .confirm-block {
+        margin: 8px 0 4px 16px;
+      }
+
+      /* ---- underline "writing" inputs for both composers ---- */
+      #screen-recall .input-inner,
+      #screen-remember .input-inner {
+        background: transparent;
+        border: none;
+        border-bottom: 1.5px solid var(--accent);
+        border-radius: 0;
+        padding: 4px 2px 9px;
+        margin: 0 4px;
+        box-shadow: none;
+        align-items: flex-end;
+        gap: 10px;
+      }
+
+      #screen-recall .input-inner:focus-within,
+      #screen-remember .input-inner:focus-within {
+        box-shadow: none;
+        border-bottom-color: var(--accent-press);
+      }
+
+      #screen-recall .input-field,
+      #screen-remember .input-field {
+        font-family: var(--font-serif);
+        font-size: 16.5px;
+        padding: 6px 0;
+      }
+
+      #screen-recall .input-field::placeholder,
+      #screen-remember .input-field::placeholder {
+        font-style: italic;
+        color: var(--text-tertiary);
+      }
+
+      #screen-recall .send-btn,
+      #screen-remember .send-btn {
+        background: transparent;
+        width: auto;
+        height: auto;
+        padding: 4px;
+      }
+
+      #screen-recall .send-btn:hover,
+      #screen-remember .send-btn:hover {
+        background: transparent;
+        transform: translateY(-1px);
+      }
+
+      #screen-recall .send-btn i,
+      #screen-remember .send-btn i {
+        font-size: 23px;
+        color: var(--accent);
+      }
+
+      #screen-recall .send-btn:disabled,
+      #screen-remember .send-btn:disabled {
+        opacity: 0.4;
+      }
+
+      /* sources toggle */
+      .sources-toggle {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+        animation: bubble-in 0.36s var(--ease) both;
+      }
+
+      .sources-toggle > button {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        align-self: flex-start;
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--text-secondary);
+        font-family: var(--font-sans);
+        font-size: 12px;
+        padding: 3px 2px;
+        transition: color 0.15s;
+      }
+
+      .sources-toggle > button i {
+        font-size: 15px;
+        color: var(--accent);
+      }
+
+      .sources-toggle > button:hover {
+        color: var(--text-primary);
+      }
+
+      /* ============ MEMORY CARD (recall sources) ============ */
+      .memory-card {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-card);
+        border-radius: var(--radius-card);
+        padding: 12px 14px;
+        box-shadow: var(--shadow-card);
+        transition:
+          transform 0.25s var(--ease),
+          box-shadow 0.25s var(--ease),
+          opacity 0.3s;
+        animation: card-in 0.42s var(--ease) both;
+      }
+
+      @keyframes card-in {
+        from {
+          transform: translateY(8px);
+        }
+        to {
+          transform: none;
+        }
+      }
+
+      .memory-card:hover {
+        box-shadow: var(--shadow-float);
+      }
+
+      .match-line {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 9px;
+      }
+
+      .match-pct {
+        font-size: 10.5px;
+        color: var(--accent-ink);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        flex-shrink: 0;
+      }
+
+      .match-bar-bg {
+        flex: 1;
+        height: 3px;
+        background: var(--surface-2);
+        border-radius: 2px;
         overflow: hidden;
       }
 
-      #sidebar { display: flex; }
-      #topbar { display: none; }
-      #navbar { display: none; }
-
-      #main-panel {
-        max-width: 760px;
-        margin: 0 auto;
-        border-left: 0.5px solid var(--border);
-        border-right: 0.5px solid var(--border);
+      .match-bar-fill {
+        height: 100%;
+        background: var(--accent);
+        border-radius: 2px;
+        transform-origin: left;
+        animation: bar-grow 0.65s var(--ease) both;
       }
 
+      @keyframes bar-grow {
+        from {
+          transform: scaleX(0);
+        }
+        to {
+          transform: scaleX(1);
+        }
+      }
+
+      .card-content {
+        font-size: 14px;
+        color: var(--text-primary);
+        line-height: 1.55;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .card-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 11px;
+      }
+
+      .card-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .tag-chip {
+        background: var(--surface-2);
+        color: var(--text-tag);
+        font-size: 11px;
+        padding: 3px 10px;
+        border-radius: var(--radius-tag);
+        white-space: nowrap;
+        font-family: var(--font-sans);
+      }
+
+      .card-tags .tag-chip:first-child {
+        background: var(--accent-soft);
+        color: var(--accent-ink);
+      }
+
+      .card-actions {
+        display: flex;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+
+      .card-action-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-family: var(--font-sans);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px 7px;
+        border-radius: 8px;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+
+      .card-action-btn:hover {
+        background: var(--surface-2);
+        color: var(--text-primary);
+      }
+
+      .card-action-btn i {
+        font-size: 14px;
+      }
+
+      /* ============ RECENT — numbered editorial list ============ */
+      #recent-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 14px 18px 8px;
+        counter-reset: memo;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .date-group {
+        margin-bottom: 22px;
+      }
+
+      .date-label {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 15px;
+        color: var(--text-secondary);
+        margin: 0 2px 6px;
+        letter-spacing: 0;
+      }
+
+      #recent-list .recent-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+
+      /* recent rows: strip the card chrome, become editorial entries */
+      #recent-list .memory-card {
+        background: transparent;
+        border: none;
+        border-top: 0.5px solid var(--line-soft);
+        border-radius: 0;
+        box-shadow: none;
+        padding: 14px 2px 14px 34px;
+        position: relative;
+        counter-increment: memo;
+      }
+
+      #recent-list .memory-card:first-child {
+        border-top: none;
+      }
+
+      #recent-list .memory-card::before {
+        content: counter(memo, decimal-leading-zero);
+        position: absolute;
+        left: 2px;
+        top: 15px;
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 13px;
+        color: var(--accent-ink);
+        font-variant-numeric: tabular-nums;
+      }
+
+      #recent-list .memory-card:hover {
+        box-shadow: none;
+      }
+
+      #recent-list .card-content {
+        font-size: 14.5px;
+        line-height: 1.5;
+      }
+
+      #recent-list .card-footer {
+        margin-top: 8px;
+      }
+
+      #recent-list .card-action-btn {
+        padding: 4px 6px;
+        font-size: 10.5px;
+        color: var(--text-tertiary);
+      }
+
+      #recent-list .card-action-btn:hover {
+        color: var(--text-primary);
+      }
+
+      /* ============ FILTER BAR ============ */
+      .filter-bar {
+        padding: 8px 18px 10px;
+        flex-shrink: 0;
+        background: var(--bg);
+      }
+
+      .filter-inner {
+        display: flex;
+        align-items: center;
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-input);
+        border-radius: var(--radius-pill);
+        padding: 7px 8px 7px 14px;
+        gap: 8px;
+        box-shadow: var(--shadow-card);
+      }
+
+      .filter-field {
+        flex: 1;
+        background: none;
+        border: none;
+        outline: none;
+        font-family: var(--font-sans);
+        font-size: 13px;
+        color: var(--text-secondary);
+        min-width: 0;
+      }
+
+      .filter-field::placeholder {
+        color: var(--text-tertiary);
+      }
+
+      select.filter-field {
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+      }
+
+      select.filter-field option {
+        color: #26241f;
+        background: #fcfbf7;
+      }
+
+      .refresh-btn {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--surface-2);
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        color: var(--text-secondary);
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+
+      .refresh-btn i {
+        font-size: 15px;
+      }
+
+      .refresh-btn:hover {
+        background: var(--surface-3);
+        color: var(--text-primary);
+      }
+
+      .refresh-btn.spinning i {
+        animation: spin 0.7s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* ============ SUGGESTIONS ============ */
+      .suggestions-row {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding: 6px 18px 6px;
+        flex-shrink: 0;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+
+      .suggestions-row::-webkit-scrollbar {
+        display: none;
+      }
+
+      .suggestion-pill {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-input);
+        color: var(--text-secondary);
+        font-size: 12.5px;
+        padding: 7px 14px;
+        border-radius: var(--radius-pill);
+        white-space: nowrap;
+        cursor: pointer;
+        font-family: var(--font-sans);
+        flex-shrink: 0;
+        transition:
+          background 0.15s,
+          color 0.15s,
+          border-color 0.15s;
+      }
+
+      .suggestion-pill:hover {
+        background: var(--accent-soft);
+        border-color: transparent;
+        color: var(--accent-ink);
+      }
+
+      /* ============ INPUT BAR ============ */
+      .input-bar {
+        padding: 8px 18px calc(12px + env(safe-area-inset-bottom));
+        flex-shrink: 0;
+        background: var(--bg);
+      }
+
+      .input-inner {
+        display: flex;
+        align-items: flex-end;
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-input);
+        border-radius: 24px;
+        padding: 6px 6px 6px 16px;
+        gap: 8px;
+        box-shadow: var(--shadow-card);
+        transition:
+          border-color 0.18s,
+          box-shadow 0.18s;
+      }
+
+      .input-inner:focus-within {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      .input-field {
+        flex: 1;
+        background: none;
+        border: none;
+        outline: none;
+        font-family: var(--font-sans);
+        font-size: 14.5px;
+        color: var(--text-primary);
+        resize: none;
+        line-height: 1.45;
+        padding: 7px 0;
+        max-height: 80px;
+        overflow-y: auto;
+      }
+
+      .input-field::placeholder {
+        color: var(--text-tertiary);
+      }
+
+      .send-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: var(--accent);
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition:
+          background 0.18s,
+          transform 0.14s var(--ease-spring);
+      }
+
+      .send-btn:hover {
+        background: var(--accent-press);
+      }
+
+      .send-btn:active {
+        transform: scale(0.88);
+      }
+
+      .send-btn i {
+        font-size: 18px;
+        color: var(--on-accent);
+      }
+
+      .send-btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      .input-hint {
+        font-size: 11.5px;
+        color: var(--text-tertiary);
+        padding: 0 4px 8px;
+      }
+
+      .input-hint .hint-tags {
+        color: var(--accent-ink);
+        font-weight: 500;
+      }
+
+      /* ============ CONFIRM BLOCK (remember) ============ */
+      .confirm-block {
+        background: var(--bg-confirm);
+        border-radius: var(--radius-card);
+        padding: 11px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-self: flex-start;
+        max-width: 84%;
+        animation: bubble-in 0.36s var(--ease) both;
+      }
+
+      .confirm-line {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12.5px;
+        color: var(--accent-ink);
+        font-weight: 500;
+      }
+
+      .confirm-line i {
+        font-size: 16px;
+        color: var(--accent);
+      }
+
+      .confirm-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .confirm-tag {
+        background: var(--bg-tag-confirmed);
+        color: var(--text-tag-confirmed);
+        font-size: 11px;
+        padding: 3px 10px;
+        border-radius: var(--radius-tag);
+        font-family: var(--font-sans);
+      }
+
+      /* ============ EMPTY STATE ============ */
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 56px 32px;
+        gap: 10px;
+        color: var(--text-tertiary);
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 15px;
+        line-height: 1.5;
+        text-align: center;
+        height: 100%;
+      }
+
+      .empty-state i {
+        font-size: 34px;
+        margin-bottom: 4px;
+        font-style: normal;
+        color: var(--text-tertiary);
+      }
+
+      /* ============ BOTTOM SHEETS ============ */
       #confirm-dialog,
       #append-sheet,
       #edit-sheet,
       #menu-sheet,
       #view-sheet {
-        align-items: center;
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        background: rgba(20, 18, 13, 0.42);
+        align-items: flex-end;
         justify-content: center;
+        opacity: 0;
+        transition: opacity 0.28s var(--ease);
+        -webkit-backdrop-filter: blur(2px);
+        backdrop-filter: blur(2px);
+      }
+
+      #confirm-dialog.open,
+      #append-sheet.open,
+      #edit-sheet.open,
+      #menu-sheet.open,
+      #view-sheet.open {
+        display: flex;
+        opacity: 1;
       }
 
       .confirm-sheet,
@@ -1938,9 +1463,13 @@
       .edit-inner,
       .menu-inner,
       .view-inner {
-        border-radius: 18px;
-        max-width: 420px;
-        transform: translateY(16px) scale(0.98);
+        background: var(--bg);
+        border-radius: 24px 24px 0 0;
+        width: 100%;
+        max-width: 440px;
+        box-shadow: var(--shadow-sheet);
+        transform: translateY(100%);
+        transition: transform 0.34s var(--ease);
       }
 
       .open .confirm-sheet,
@@ -1948,986 +1477,1735 @@
       .open .edit-inner,
       .open .menu-inner,
       .open .view-inner {
-        transform: none;
+        transform: translateY(0);
       }
-    }
 
-    ::-webkit-scrollbar { width: 0; }
-
-    /* forget animation */
-    @keyframes explode-out {
-      0% { transform: scale(1); opacity: 1; filter: brightness(1) blur(0); }
-      20% { transform: scale(1.04) translateY(-2px); opacity: 1; filter: brightness(1.4) blur(1px); }
-      100% { transform: scale(0.6) translateY(20px); opacity: 0; filter: brightness(2.2) blur(8px); }
-    }
-
-    .explode-out {
-      animation: explode-out 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
-      pointer-events: none;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        transition-duration: 0.05s !important;
+      .confirm-sheet {
+        padding: 26px 24px calc(34px + env(safe-area-inset-bottom));
       }
-    }
-
-  </style>
-</head>
-
-<body>
-
-
-  <div id="auth-overlay">
-    <div class="auth-card">
-      <div class="brain-logo">
-        <i class="ti ti-brain"></i>
-      </div>
-      <h1>Second Brain</h1>
-      <p>Enter your Bearer token to connect to your personal memory layer.</p>
-      <form class="field-group" onsubmit="connect(); return false;">
-        <input type="text" name="username" value="user" autocomplete="username" style="display:none">
-        <input type="url" id="auth-url" autocomplete="off" autocapitalize="none">
-        <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="current-password">
-        <button id="auth-connect" type="submit">Connect</button>
-      </form>
-      <div id="auth-error"></div>
-    </div>
-  </div>
-
-
-  <div id="app" style="display:none">
-
-    <div id="sidebar">
-      <div class="sb-logo">
-        <div class="brain-avatar">
-          <i class="ti ti-brain"></i>
-        </div>
-        <div>
-          <div class="sb-brand-name">Second Brain</div>
-          <div class="sb-brand-status" id="sb-status">always remembers</div>
-        </div>
-      </div>
-      <nav class="sb-nav">
-        <button class="sb-tab active" id="sb-tab-recall" onclick="switchTab('recall')">
-          <i class="ti ti-search"></i><span>Recall</span>
-        </button>
-        <button class="sb-tab" id="sb-tab-recent" onclick="switchTab('recent')">
-          <i class="ti ti-clock"></i><span>Recent</span>
-        </button>
-        <button class="sb-tab" id="sb-tab-remember" onclick="switchTab('remember')">
-          <i class="ti ti-plus"></i><span>Remember</span>
-        </button>
-      </nav>
-      <div class="sb-footer">
-        <button class="sb-footer-btn" onclick="openMenu()">
-          <i class="ti ti-settings"></i><span>Settings</span>
-        </button>
-      </div>
-    </div>
-
-    <div id="main-panel">
-      <div id="topbar">
-        <div class="brain-avatar">
-          <i class="ti ti-brain"></i>
-        </div>
-        <div class="topbar-info">
-          <div class="topbar-name">Second Brain</div>
-          <div class="topbar-status" id="topbar-status">always remembers</div>
-        </div>
-        <button class="topbar-menu" onclick="openMenu()"><i class="ti ti-dots"></i></button>
-      </div>
-
-      <div id="screens">
-
-        <div class="screen active" id="screen-recall">
-          <div id="recall-messages">
-            <div class="recall-hero" id="recall-welcome">
-              <div class="eyebrow">Recall</div>
-              <div class="hero-line">Ask me anything you've stored away &mdash; I'll find it and answer in your own words.</div>
-            </div>
-          </div>
-          <div class="filter-bar" style="padding-bottom:0;">
-            <div class="filter-inner">
-              <i class="ti ti-tag" style="color:var(--text-tertiary);font-size:13px;flex-shrink:0;"></i>
-              <select class="filter-field" id="tag-filter-recall" onchange="onTagChange(this.value)">
-                <option value="">All tags</option>
-              </select>
-            </div>
-          </div>
-          <div class="suggestions-row">
-            <button class="suggestion-pill" onclick="sendSuggestion('What am I working on?')">What am I working
-              on?</button>
-            <button class="suggestion-pill" onclick="sendSuggestion('What did I decide recently?')">What did I decide
-              recently?</button>
-            <button class="suggestion-pill" onclick="sendSuggestion('Show my tasks')">Show my tasks</button>
-            <button class="suggestion-pill" onclick="sendSuggestion('What are my goals?')">What are my goals?</button>
-            <button class="suggestion-pill" onclick="sendSuggestion('What ideas do I have?')">What ideas do I
-              have?</button>
-            <button class="suggestion-pill" onclick="sendSuggestion('What happened last week?')">Last week</button>
-            <button class="suggestion-pill" onclick="sendSuggestion('What did I decide this month?')">This month</button>
-          </div>
-          <div class="input-bar">
-            <div class="input-inner">
-              <button id="recall-clear-btn" class="refresh-btn" onclick="clearRecall()" style="display:none;"
-                title="Clear Chat">
-                <i class="ti ti-trash"></i>
-              </button>
-              <textarea class="input-field" id="recall-input" placeholder="Ask your brain..." rows="1"
-                onkeydown="handleRecallKey(event)" oninput="autoResize(this)"></textarea>
-              <button class="send-btn" onclick="sendRecall()"><i class="ti ti-arrow-up"></i></button>
-            </div>
-          </div>
-        </div>
-
-
-        <div class="screen" id="screen-recent">
-          <div id="recent-list">
-            <div class="empty-state"><i class="ti ti-clock"></i><span>Loading memories...</span></div>
-          </div>
-          <div class="filter-bar">
-            <div class="filter-inner">
-              <i class="ti ti-tag" style="color:var(--text-tertiary);font-size:13px;flex-shrink:0;"></i>
-              <select class="filter-field" id="tag-filter-recent" onchange="onTagChange(this.value)">
-                <option value="">All tags</option>
-              </select>
-              <select class="filter-field" id="time-filter-recent" onchange="onTimeRangeChange(this.value)" style="min-width:0;">
-                <option value="">All time</option>
-                <option value="today">Today</option>
-                <option value="7">Last 7 days</option>
-                <option value="30">Last 30 days</option>
-                <option value="month">This month</option>
-              </select>
-              <button class="refresh-btn" id="refresh-btn" onclick="loadRecent()"><i class="ti ti-refresh"></i></button>
-            </div>
-          </div>
-        </div>
-
-
-        <div class="screen" id="screen-remember">
-          <div id="remember-messages">
-            <div class="recall-hero" id="remember-intro">
-              <div class="eyebrow">Remember</div>
-              <div class="hero-line">What's worth keeping? Write it down &mdash; add <span class="hashtag">#tags</span> anywhere and I'll file it.</div>
-            </div>
-          </div>
-          <div class="input-bar">
-            <div class="input-hint">Tip: add <span class="hint-tags">#tags</span> anywhere in your message</div>
-            <div class="input-inner">
-              <button id="remember-clear-btn" class="refresh-btn" onclick="clearRemember()" style="display:none;"
-                title="Clear Chat">
-                <i class="ti ti-trash"></i>
-              </button>
-              <textarea class="input-field" id="remember-input" placeholder="Tell your brain something..." rows="1"
-                onkeydown="handleRememberKey(event)" oninput="autoResize(this)"></textarea>
-              <button class="send-btn" onclick="sendRemember()"><i class="ti ti-arrow-up"></i></button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div id="navbar">
-        <button class="nav-tab active" id="tab-recall" onclick="switchTab('recall')">
-          <i class="ti ti-search"></i><span>Recall</span>
-        </button>
-        <button class="nav-tab" id="tab-recent" onclick="switchTab('recent')">
-          <i class="ti ti-clock"></i><span>Recent</span>
-        </button>
-        <button class="nav-tab" id="tab-remember" onclick="switchTab('remember')">
-          <i class="ti ti-plus"></i><span>Remember</span>
-        </button>
-      </div>
-    </div>
-  </div>
-
-
-  <div id="confirm-dialog">
-    <div class="confirm-sheet">
-      <h3>Forget this memory?</h3>
-      <p>This can't be undone. The memory will be removed from your brain.</p>
-      <div class="confirm-actions">
-        <button class="btn-cancel" onclick="closeConfirm()">Cancel</button>
-        <button class="btn-delete" onclick="confirmForget()">Forget</button>
-      </div>
-    </div>
-  </div>
-
-
-  <div id="append-sheet">
-    <div class="append-inner">
-      <h3>Add an update</h3>
-      <div class="append-context" id="append-context-preview"></div>
-      <div class="append-input-wrap">
-        <textarea id="append-textarea" placeholder="What's changed or new?" rows="3"></textarea>
-      </div>
-      <div class="append-actions">
-        <button class="btn-append-cancel" onclick="closeAppend()">Cancel</button>
-        <button class="btn-append-save" id="append-save-btn" onclick="saveAppend()">Update</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="edit-sheet">
-    <div class="edit-inner">
-      <h3>Edit memory</h3>
-      <div class="edit-existing-tags" id="edit-existing-tags"></div>
-      <div class="append-input-wrap">
-        <textarea id="edit-textarea" placeholder="Edit your memory..." rows="5"></textarea>
-      </div>
-      <div class="edit-hint">Use <span style="font-style:italic">#hashtags</span> to add new tags</div>
-      <div class="append-actions">
-        <button class="btn-append-cancel" onclick="closeEdit()">Cancel</button>
-        <button class="btn-append-save" id="edit-save-btn" onclick="saveEdit()">Save</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="view-sheet">
-    <div class="view-inner">
-      <div class="view-header">
-        <h3>Memory</h3>
-        <button class="btn-close-icon" onclick="closeView()"><i class="ti ti-x"></i></button>
-      </div>
-      <div class="view-content" id="view-content-text"></div>
-      <div class="view-tags" id="view-tags-container"></div>
-      <div class="view-actions">
-        <button class="btn-view-append" id="view-btn-append"><i class="ti ti-writing"></i> Append</button>
-        <button class="btn-view-edit" id="view-btn-edit"><i class="ti ti-pencil"></i> Edit</button>
-        <button class="btn-view-forget" id="view-btn-forget"><i class="ti ti-trash"></i> Forget</button>
-      </div>
-    </div>
-  </div>
-
-
-  <div id="menu-sheet">
-    <div class="menu-inner">
-      <h3>Second Brain</h3>
-      <div class="stats-panel" id="stats-panel">
-        <div class="stats-kpi-row">
-          <div class="stats-kpi-card">
-            <div class="stats-kpi-value" id="stats-count">—</div>
-            <div class="stats-kpi-label">Memories</div>
-          </div>
-          <div class="stats-kpi-card">
-            <div class="stats-kpi-value" id="stats-importance">—</div>
-            <div class="stats-kpi-label">Avg Importance</div>
-          </div>
-        </div>
-        <div class="stats-top-tags">
-          <div class="stats-top-tags-label">Most used tags</div>
-          <div class="stats-tags" id="stats-tags"></div>
-        </div>
-      </div>
-      <div class="theme-row">
-        <span class="theme-row-label">Appearance</span>
-        <div class="theme-toggle" id="theme-toggle">
-          <button data-theme-val="light" onclick="setTheme('light')" title="Light"><i class="ti ti-sun"></i></button>
-          <button data-theme-val="dark" onclick="setTheme('dark')" title="Dark"><i class="ti ti-moon"></i></button>
-          <button data-theme-val="auto" onclick="setTheme('auto')" title="Match system">Auto</button>
-        </div>
-      </div>
-      <button class="menu-item" onclick="closeMenu(); switchTab('recent')">
-        <i class="ti ti-clock"></i> View all memories
-      </button>      <button class="menu-item" onclick="exportMemories('json')">
-        <i class="ti ti-download"></i> Export as JSON
-      </button>
-      <button class="menu-item" onclick="exportMemories('markdown')">
-        <i class="ti ti-markdown"></i> Export as Markdown
-      </button>
-      <button class="menu-item danger" onclick="logout()">
-        <i class="ti ti-logout"></i> Disconnect
-      </button>
-    </div>
-  </div>
-
-  <script src="utils.js"></script>
-  <script>
-    let WORKER_URL = '', AUTH_TOKEN = '', allEntries = [];
-    let pendingForgetId = null, pendingAppendId = null, pendingForgetCard = null;
-    let currentTab = 'recall', selectedTag = '', selectedTimeRange = '';
-    let currentCount = 0;
-
-    function init() {
-      applyTheme();
-      // Auto-populate URL from the current page origin (UI is hosted on the same Worker)
-      const origin = window.location.origin;
-      document.getElementById('auth-url').value = origin;
-
-      const url = localStorage.getItem('sb_url') || origin;
-      const tok = localStorage.getItem('sb_token');
-      if (tok) { WORKER_URL = url; AUTH_TOKEN = tok; showApp(); }
-    }
-
-    async function connect() {
-      const url = document.getElementById('auth-url').value.trim().replace(/\/$/, '');
-      const tok = document.getElementById('auth-token').value.trim();
-      const err = document.getElementById('auth-error');
-      const btn = document.getElementById('auth-connect');
-      if (!url || !tok) { err.textContent = 'Please fill in both fields.'; return; }
-      btn.textContent = 'Connecting...'; btn.disabled = true; err.textContent = '';
-      try {
-        const res = await fetch(`${url}/list?n=1`, { headers: { 'Authorization': `Bearer ${tok}` } });
-        if (res.status === 401) throw new Error('Invalid token');
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
-        localStorage.setItem('sb_url', url); localStorage.setItem('sb_token', tok);
-        WORKER_URL = url; AUTH_TOKEN = tok; showApp();
-      } catch (e) {
-        err.textContent = e.message || 'Could not connect.';
-        btn.textContent = 'Connect'; btn.disabled = false;
+      .append-inner {
+        padding: 24px 22px calc(34px + env(safe-area-inset-bottom));
       }
-    }
-
-    function showApp() {
-      document.getElementById('auth-overlay').style.display = 'none';
-      document.getElementById('app').style.display = 'flex';
-      loadRecent(); loadTags(); updateStatus();
-    }
-
-    async function loadTags() {
-      try {
-        const res = await fetch(`${WORKER_URL}/tags`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
-        const tags = await res.json();
-        ['tag-filter-recent', 'tag-filter-recall'].forEach(id => {
-          const sel = document.getElementById(id);
-          if (!sel) return;
-          sel.innerHTML = '<option value="">All tags</option>';
-          tags.forEach(t => {
-            const opt = document.createElement('option');
-            opt.value = t; opt.textContent = t;
-            if (t === selectedTag) opt.selected = true;
-            sel.appendChild(opt);
-          });
-        });
-      } catch { }
-    }
-
-    function onTagChange(tag) {
-      selectedTag = tag;
-      ['tag-filter-recent', 'tag-filter-recall'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = tag;
-      });
-      if (currentTab === 'recent') applyRecentFilters();
-    }
-
-    function onTimeRangeChange(val) {
-      selectedTimeRange = val;
-      applyRecentFilters();
-    }
-
-    function applyRecentFilters() {
-      let entries = allEntries;
-      if (selectedTag) {
-        const tag = selectedTag.replace(/^#/, '').toLowerCase().trim();
-        entries = entries.filter(e => {
-          try { return JSON.parse(e.tags || '[]').some(t => t.toLowerCase() === tag); } catch { return false; }
-        });
+      .edit-inner {
+        padding: 24px 22px calc(34px + env(safe-area-inset-bottom));
       }
-      if (selectedTimeRange) {
-        const now = Date.now(), MS_DAY = 86400000;
-        let cutoff;
-        if (selectedTimeRange === 'today') {
-          const d = new Date(); cutoff = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        } else if (selectedTimeRange === 'month') {
-          const d = new Date(); cutoff = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-        } else {
-          cutoff = now - parseInt(selectedTimeRange) * MS_DAY;
+      .menu-inner {
+        padding: 24px 22px calc(34px + env(safe-area-inset-bottom));
+      }
+
+      .view-inner {
+        padding: 22px 22px calc(34px + env(safe-area-inset-bottom));
+        display: flex;
+        flex-direction: column;
+        max-height: 90vh;
+      }
+
+      .confirm-sheet h3,
+      .append-inner h3,
+      .edit-inner h3,
+      .menu-inner h3,
+      .view-header h3 {
+        font-family: var(--font-serif);
+        font-size: 21px;
+        font-weight: 500;
+        margin-bottom: 9px;
+        letter-spacing: -0.01em;
+        color: var(--text-primary);
+      }
+
+      .confirm-sheet p {
+        font-size: 14px;
+        color: var(--text-secondary);
+        margin-bottom: 22px;
+        line-height: 1.55;
+      }
+
+      .view-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 14px;
+        flex-shrink: 0;
+      }
+
+      .btn-close-icon {
+        background: var(--surface-2);
+        border: none;
+        color: var(--text-secondary);
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s;
+      }
+
+      .btn-close-icon i {
+        font-size: 18px;
+      }
+      .btn-close-icon:hover {
+        background: var(--surface-3);
+      }
+
+      .view-content {
+        font-family: var(--font-serif);
+        font-size: 17px;
+        color: var(--text-primary);
+        line-height: 1.62;
+        overflow-y: auto;
+        margin-bottom: 18px;
+        white-space: pre-wrap;
+      }
+
+      .view-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 22px;
+        flex-shrink: 0;
+      }
+
+      .view-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: auto;
+        flex-shrink: 0;
+      }
+
+      .btn-view-append,
+      .btn-view-edit,
+      .btn-view-forget {
+        flex: 1;
+        padding: 13px;
+        border: none;
+        border-radius: 13px;
+        font-family: var(--font-sans);
+        font-size: 13.5px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        background: var(--surface-2);
+        color: var(--text-primary);
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+
+      .btn-view-append i,
+      .btn-view-edit i,
+      .btn-view-forget i {
+        font-size: 16px;
+      }
+
+      .btn-view-append:hover,
+      .btn-view-edit:hover {
+        background: var(--surface-3);
+      }
+
+      .btn-view-forget {
+        color: var(--danger);
+      }
+      .btn-view-forget:hover {
+        background: var(--danger);
+        color: #fff;
+      }
+
+      .confirm-actions,
+      .append-actions {
+        display: flex;
+        gap: 10px;
+      }
+
+      .btn-cancel,
+      .btn-append-cancel {
+        flex: 1;
+        padding: 14px;
+        background: var(--surface-2);
+        border: none;
+        border-radius: 13px;
+        font-family: var(--font-sans);
+        font-size: 14.5px;
+        font-weight: 500;
+        color: var(--text-primary);
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+
+      .btn-cancel:hover,
+      .btn-append-cancel:hover {
+        background: var(--surface-3);
+      }
+
+      .btn-delete {
+        flex: 1;
+        padding: 14px;
+        background: var(--danger);
+        border: none;
+        border-radius: 13px;
+        font-family: var(--font-sans);
+        font-size: 14.5px;
+        font-weight: 600;
+        color: #fff;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+
+      .btn-delete:hover {
+        opacity: 0.92;
+      }
+
+      .btn-append-save {
+        flex: 1;
+        padding: 14px;
+        background: var(--accent);
+        border: none;
+        border-radius: 13px;
+        font-family: var(--font-sans);
+        font-size: 14.5px;
+        font-weight: 600;
+        color: var(--on-accent);
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+
+      .btn-append-save:hover {
+        background: var(--accent-press);
+      }
+
+      .btn-append-save:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+
+      .append-context {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        margin-bottom: 16px;
+        line-height: 1.5;
+        padding: 12px 14px;
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-card);
+        border-radius: 12px;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .append-input-wrap {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-input);
+        border-radius: 13px;
+        padding: 13px 15px;
+        margin-bottom: 14px;
+        transition:
+          border-color 0.18s,
+          box-shadow 0.18s;
+      }
+
+      .append-input-wrap:focus-within {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      .append-input-wrap textarea {
+        width: 100%;
+        background: none;
+        border: none;
+        outline: none;
+        font-family: var(--font-sans);
+        font-size: 14.5px;
+        color: var(--text-primary);
+        resize: none;
+        line-height: 1.5;
+        min-height: 60px;
+      }
+
+      .append-input-wrap textarea::placeholder {
+        color: var(--text-tertiary);
+      }
+
+      .edit-existing-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 14px;
+      }
+
+      .edit-hint {
+        font-size: 12px;
+        color: var(--text-tertiary);
+        margin-bottom: 14px;
+      }
+
+      .edit-hint span {
+        color: var(--accent-ink);
+      }
+
+      /* ============ MENU SHEET ============ */
+      .menu-inner h3 {
+        margin-bottom: 18px;
+      }
+
+      .theme-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 0 16px;
+        margin-bottom: 4px;
+      }
+
+      .theme-row-label {
+        font-size: 14px;
+        color: var(--text-secondary);
+      }
+
+      .theme-toggle {
+        display: flex;
+        gap: 3px;
+        background: var(--surface-2);
+        border-radius: var(--radius-pill);
+        padding: 3px;
+      }
+
+      .theme-toggle button {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 7px 13px;
+        border-radius: var(--radius-pill);
+        font-family: var(--font-sans);
+        font-size: 12.5px;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        transition:
+          background 0.18s,
+          color 0.18s;
+      }
+
+      .theme-toggle button i {
+        font-size: 16px;
+      }
+
+      .theme-toggle button.active {
+        background: var(--bg-card);
+        color: var(--accent-ink);
+        box-shadow: var(--shadow-card);
+      }
+
+      .menu-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 15px 0;
+        border-top: 0.5px solid var(--border);
+        cursor: pointer;
+        color: var(--text-primary);
+        font-size: 15px;
+        background: none;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+        width: 100%;
+        font-family: var(--font-sans);
+        text-align: left;
+        transition: color 0.15s;
+      }
+
+      .menu-item:hover {
+        color: var(--text-secondary);
+      }
+
+      .menu-item i {
+        font-size: 20px;
+        color: var(--text-secondary);
+      }
+
+      .menu-item.danger {
+        color: var(--danger);
+      }
+      .menu-item.danger i {
+        color: var(--danger);
+      }
+
+      .stats-panel {
+        padding: 2px 0 10px;
+        margin-bottom: 4px;
+      }
+
+      .stats-kpi-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .stats-kpi-card {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-card);
+        border-radius: var(--radius-card);
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .stats-kpi-value {
+        font-family: var(--font-serif);
+        font-size: 26px;
+        font-weight: 500;
+        color: var(--accent-ink);
+        font-variant-numeric: tabular-nums;
+        line-height: 1.05;
+      }
+
+      .stats-kpi-label {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 500;
+      }
+
+      .stats-top-tags {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-card);
+        border-radius: var(--radius-card);
+        padding: 14px;
+      }
+
+      .stats-top-tags-label {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 500;
+        margin-bottom: 9px;
+      }
+
+      .stats-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      /* ============ DESKTOP SIDEBAR ============ */
+      #sidebar {
+        width: 248px;
+        flex-shrink: 0;
+        flex-direction: column;
+        background: var(--bg);
+        border-right: 0.5px solid var(--border);
+        padding: 20px 12px 22px;
+      }
+
+      .sb-logo {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 6px 10px 26px;
+      }
+
+      .sb-brand-name {
+        font-family: var(--font-serif);
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--text-primary);
+      }
+
+      .sb-brand-status {
+        font-size: 11.5px;
+        color: var(--text-secondary);
+        margin-top: 1px;
+      }
+
+      .sb-nav {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .sb-tab {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 10px 11px;
+        border-radius: 10px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--text-secondary);
+        font-size: 14.5px;
+        font-family: var(--font-serif);
+        width: 100%;
+        text-align: left;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+
+      .sb-tab i {
+        font-size: 19px;
+        flex-shrink: 0;
+      }
+
+      .sb-tab:hover {
+        background: var(--surface-2);
+        color: var(--text-primary);
+      }
+
+      .sb-tab.active {
+        background: var(--accent-soft);
+        color: var(--accent-ink);
+      }
+
+      .sb-footer {
+        padding-top: 12px;
+        border-top: 0.5px solid var(--border);
+      }
+
+      .sb-footer-btn {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 10px 11px;
+        border-radius: 10px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--text-secondary);
+        font-size: 14.5px;
+        font-family: var(--font-sans);
+        width: 100%;
+        text-align: left;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+
+      .sb-footer-btn:hover {
+        background: var(--surface-2);
+        color: var(--text-primary);
+      }
+
+      .sb-footer-btn i {
+        font-size: 19px;
+      }
+
+      /* ============ DESKTOP ============ */
+      @media (min-width: 768px) {
+        html,
+        body {
+          height: 100%;
+          overflow: auto;
         }
-        entries = entries.filter(e => e.created_at >= cutoff);
+
+        body {
+          background: var(--surface-3);
+        }
+
+        #auth-overlay {
+          position: fixed;
+          inset: 0;
+          max-width: none;
+          background: color-mix(in srgb, var(--bg) 88%, transparent);
+          backdrop-filter: blur(8px);
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+        }
+
+        .auth-card {
+          background: var(--bg);
+          border-radius: 22px;
+          padding: 44px 38px;
+          width: 420px;
+          box-shadow: var(--shadow-float);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+
+        #app {
+          flex-direction: row;
+          height: 100vh;
+          max-width: 100%;
+          width: 100%;
+          border-radius: 0;
+          overflow: hidden;
+        }
+
+        #sidebar {
+          display: flex;
+        }
+        #topbar {
+          display: none;
+        }
+        #navbar {
+          display: none;
+        }
+
+        #main-panel {
+          max-width: 760px;
+          margin: 0 auto;
+          border-left: 0.5px solid var(--border);
+          border-right: 0.5px solid var(--border);
+        }
+
+        #confirm-dialog,
+        #append-sheet,
+        #edit-sheet,
+        #menu-sheet,
+        #view-sheet {
+          align-items: center;
+          justify-content: center;
+        }
+
+        .confirm-sheet,
+        .append-inner,
+        .edit-inner,
+        .menu-inner,
+        .view-inner {
+          border-radius: 18px;
+          max-width: 420px;
+          transform: translateY(16px) scale(0.98);
+        }
+
+        .open .confirm-sheet,
+        .open .append-inner,
+        .open .edit-inner,
+        .open .menu-inner,
+        .open .view-inner {
+          transform: none;
+        }
       }
-      renderRecent(entries);
-    }
 
-    function filterRecent(val) {
-      selectedTag = val;
-      applyRecentFilters();
-    }
+      ::-webkit-scrollbar {
+        width: 0;
+      }
 
-    function logout() {
-      closeMenu();
-      localStorage.removeItem('sb_url'); localStorage.removeItem('sb_token');
-      WORKER_URL = ''; AUTH_TOKEN = '';
-      document.getElementById('app').style.display = 'none';
-      document.getElementById('auth-overlay').style.display = 'flex';
-      document.getElementById('auth-url').value = '';
-      document.getElementById('auth-token').value = '';
-      document.getElementById('auth-error').textContent = '';
-    }
+      /* forget animation */
+      @keyframes explode-out {
+        0% {
+          transform: scale(1);
+          opacity: 1;
+          filter: brightness(1) blur(0);
+        }
+        20% {
+          transform: scale(1.04) translateY(-2px);
+          opacity: 1;
+          filter: brightness(1.4) blur(1px);
+        }
+        100% {
+          transform: scale(0.6) translateY(20px);
+          opacity: 0;
+          filter: brightness(2.2) blur(8px);
+        }
+      }
 
-    function switchTab(tab) {
-      currentTab = tab;
-      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-      document.querySelectorAll('.nav-tab, .sb-tab').forEach(t => t.classList.remove('active'));
-      document.getElementById('screen-' + tab).classList.add('active');
-      document.getElementById('tab-' + tab).classList.add('active');
-      const sbTab = document.getElementById('sb-tab-' + tab);
-      if (sbTab) sbTab.classList.add('active');
-      if (tab === 'recent') loadRecent();
-    }
+      .explode-out {
+        animation: explode-out 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
+        pointer-events: none;
+      }
 
-    async function updateStatus() {
-      try {
-        const res = await fetch(`${WORKER_URL}/count`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
-        const data = await res.json();
-        currentCount = data.count ?? 0;
-        const text = currentCount === 0 ? 'always remembers' : `${currentCount} memor${currentCount === 1 ? 'y' : 'ies'} stored`;
-        document.getElementById('topbar-status').textContent = text;
-        const sb = document.getElementById('sb-status');
-        if (sb) sb.textContent = text;
-      } catch { }
-    }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.05s !important;
+        }
+      }
+    </style>
+  </head>
 
-    async function apiMcp(toolName, args) {
-      const res = await fetch(`${WORKER_URL}/mcp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: toolName, arguments: args } })
-      });
-      const text = await res.text();
-      const match = text.match(/data: ({.+})/s);
-      if (!match) throw new Error('Invalid response');
-      const json = JSON.parse(match[1]);
-      if (json.error) throw new Error(json.error.message || 'MCP error');
-      return json.result?.content?.[0]?.text ?? '';
-    }
+  <body>
+    <div id="auth-overlay">
+      <div class="auth-card">
+        <div class="brain-logo">
+          <i class="ti ti-brain"></i>
+        </div>
+        <h1>Second Brain</h1>
+        <p>Enter your Bearer token to connect to your personal memory layer.</p>
+        <form
+          class="field-group"
+          onsubmit="
+            connect()
+            return false
+          "
+        >
+          <input type="text" name="username" value="user" autocomplete="username" style="display: none" />
+          <input type="url" id="auth-url" autocomplete="off" autocapitalize="none" />
+          <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="current-password" />
+          <button id="auth-connect" type="submit">Connect</button>
+        </form>
+        <div id="auth-error"></div>
+      </div>
+    </div>
 
-    async function apiCapture(content, tags, source) {
-      const res = await fetch(`${WORKER_URL}/capture`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
-        body: JSON.stringify({ content, tags, source: source || 'web-ui' })
-      });
-      return res.json();
-    }
+    <div id="app" style="display: none">
+      <div id="sidebar">
+        <div class="sb-logo">
+          <div class="brain-avatar">
+            <i class="ti ti-brain"></i>
+          </div>
+          <div>
+            <div class="sb-brand-name">Second Brain</div>
+            <div class="sb-brand-status" id="sb-status">always remembers</div>
+          </div>
+        </div>
+        <nav class="sb-nav">
+          <button class="sb-tab active" id="sb-tab-recall" onclick="switchTab('recall')"><i class="ti ti-search"></i><span>Recall</span></button>
+          <button class="sb-tab" id="sb-tab-recent" onclick="switchTab('recent')"><i class="ti ti-clock"></i><span>Recent</span></button>
+          <button class="sb-tab" id="sb-tab-remember" onclick="switchTab('remember')"><i class="ti ti-plus"></i><span>Remember</span></button>
+        </nav>
+        <div class="sb-footer">
+          <button class="sb-footer-btn" onclick="openMenu()"><i class="ti ti-settings"></i><span>Settings</span></button>
+        </div>
+      </div>
 
-    async function apiList(n = 50) {
-      const res = await fetch(`${WORKER_URL}/list?n=${n}`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
-      return res.json();
-    }
+      <div id="main-panel">
+        <div id="topbar">
+          <div class="brain-avatar">
+            <i class="ti ti-brain"></i>
+          </div>
+          <div class="topbar-info">
+            <div class="topbar-name">Second Brain</div>
+            <div class="topbar-status" id="topbar-status">always remembers</div>
+          </div>
+          <button class="topbar-menu" onclick="openMenu()"><i class="ti ti-dots"></i></button>
+        </div>
 
-    function sendSuggestion(text) {
-      document.getElementById('recall-input').value = text; sendRecall();
-    }
-    function handleRecallKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendRecall(); } }
+        <div id="screens">
+          <div class="screen active" id="screen-recall">
+            <div id="recall-messages">
+              <div class="recall-hero" id="recall-welcome">
+                <div class="eyebrow">Recall</div>
+                <div class="hero-line">Ask me anything you've stored away &mdash; I'll find it and answer in your own words.</div>
+              </div>
+            </div>
+            <div class="filter-bar" style="padding-bottom: 0">
+              <div class="filter-inner">
+                <i class="ti ti-tag" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                <select class="filter-field" id="tag-filter-recall" onchange="onTagChange(this.value)">
+                  <option value="">All tags</option>
+                </select>
+              </div>
+            </div>
+            <div class="suggestions-row">
+              <button class="suggestion-pill" onclick="sendSuggestion('What am I working on?')">What am I working on?</button>
+              <button class="suggestion-pill" onclick="sendSuggestion('What did I decide recently?')">What did I decide recently?</button>
+              <button class="suggestion-pill" onclick="sendSuggestion('Show my tasks')">Show my tasks</button>
+              <button class="suggestion-pill" onclick="sendSuggestion('What are my goals?')">What are my goals?</button>
+              <button class="suggestion-pill" onclick="sendSuggestion('What ideas do I have?')">What ideas do I have?</button>
+              <button class="suggestion-pill" onclick="sendSuggestion('What happened last week?')">Last week</button>
+              <button class="suggestion-pill" onclick="sendSuggestion('What did I decide this month?')">This month</button>
+            </div>
+            <div class="input-bar">
+              <div class="input-inner">
+                <button id="recall-clear-btn" class="refresh-btn" onclick="clearRecall()" style="display: none" title="Clear Chat">
+                  <i class="ti ti-trash"></i>
+                </button>
+                <textarea
+                  class="input-field"
+                  id="recall-input"
+                  placeholder="Ask your brain..."
+                  rows="1"
+                  onkeydown="handleRecallKey(event)"
+                  oninput="autoResize(this)"
+                ></textarea>
+                <button class="send-btn" onclick="sendRecall()"><i class="ti ti-arrow-up"></i></button>
+              </div>
+            </div>
+          </div>
 
-    async function sendRecall() {
-      const input = document.getElementById('recall-input');
-      const query = input.value.trim();
-      if (!query) return;
-      const msgs = document.getElementById('recall-messages');
-      const welcome = document.getElementById('recall-welcome');
-      if (welcome) welcome.remove();
-      appendUserBubble(msgs, query);
-      input.value = ''; autoResize(input);
-      const loadingEl = appendLoading(msgs);
-      msgs.scrollTop = msgs.scrollHeight;
-      try {
-        const result = await apiMcp('recall', { query, topK: 5, ...(selectedTag ? { tag: selectedTag } : {}) });
-        loadingEl.remove();
-        if (!result || result.includes('Nothing found')) {
-          appendBrainBubble(msgs, "I couldn't find anything matching that. Try different words, or check Recent.", 'recall-sys');
-        } else {
-          const entries = parseRecallResult(result);
-          const answerBubble = document.createElement('div');
-          answerBubble.className = 'ex-a-row';
-          const answerEl = document.createElement('div');
-          answerEl.className = 'ex-a';
-          answerBubble.appendChild(answerEl);
-          msgs.appendChild(answerBubble);
+          <div class="screen" id="screen-recent">
+            <div id="recent-list">
+              <div class="empty-state"><i class="ti ti-clock"></i><span>Loading memories...</span></div>
+            </div>
+            <div class="filter-bar">
+              <div class="filter-inner">
+                <i class="ti ti-tag" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                <select class="filter-field" id="tag-filter-recent" onchange="onTagChange(this.value)">
+                  <option value="">All tags</option>
+                </select>
+                <select class="filter-field" id="time-filter-recent" onchange="onTimeRangeChange(this.value)" style="min-width: 0">
+                  <option value="">All time</option>
+                  <option value="today">Today</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="30">Last 30 days</option>
+                  <option value="month">This month</option>
+                </select>
+                <button class="refresh-btn" id="refresh-btn" onclick="loadRecent()"><i class="ti ti-refresh"></i></button>
+              </div>
+            </div>
+          </div>
 
+          <div class="screen" id="screen-remember">
+            <div id="remember-messages">
+              <div class="recall-hero" id="remember-intro">
+                <div class="eyebrow">Remember</div>
+                <div class="hero-line">What's worth keeping? Write it down &mdash; add <span class="hashtag">#tags</span> anywhere and I'll file it.</div>
+              </div>
+            </div>
+            <div class="input-bar">
+              <div class="input-hint">Tip: add <span class="hint-tags">#tags</span> anywhere in your message</div>
+              <div class="input-inner">
+                <button id="remember-clear-btn" class="refresh-btn" onclick="clearRemember()" style="display: none" title="Clear Chat">
+                  <i class="ti ti-trash"></i>
+                </button>
+                <textarea
+                  class="input-field"
+                  id="remember-input"
+                  placeholder="Tell your brain something..."
+                  rows="1"
+                  onkeydown="handleRememberKey(event)"
+                  oninput="autoResize(this)"
+                ></textarea>
+                <button class="send-btn" onclick="sendRemember()"><i class="ti ti-arrow-up"></i></button>
+              </div>
+            </div>
+          </div>
+        </div>
 
-          const res = await fetch(`${WORKER_URL}/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
-            body: JSON.stringify({ query, memories: result })
-          });
+        <div id="navbar">
+          <button class="nav-tab active" id="tab-recall" onclick="switchTab('recall')"><i class="ti ti-search"></i><span>Recall</span></button>
+          <button class="nav-tab" id="tab-recent" onclick="switchTab('recent')"><i class="ti ti-clock"></i><span>Recent</span></button>
+          <button class="nav-tab" id="tab-remember" onclick="switchTab('remember')"><i class="ti ti-plus"></i><span>Remember</span></button>
+        </div>
+      </div>
+    </div>
 
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let fullText = '';
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const chunk = decoder.decode(value);
-              chunk.split('\n').forEach(line => {
-                if (line.startsWith('data: ')) {
-                  const raw = line.slice(6).trim();
-                  if (raw === '[DONE]') return;
-                  try {
-                    const d = JSON.parse(raw);
-                    if (d.response) { fullText += d.response; answerEl.textContent = fullText; }
-                  } catch { }
-                }
-              });
-              msgs.scrollTop = msgs.scrollHeight;
+    <div id="confirm-dialog">
+      <div class="confirm-sheet">
+        <h3>Forget this memory?</h3>
+        <p>This can't be undone. The memory will be removed from your brain.</p>
+        <div class="confirm-actions">
+          <button class="btn-cancel" onclick="closeConfirm()">Cancel</button>
+          <button class="btn-delete" onclick="confirmForget()">Forget</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="append-sheet">
+      <div class="append-inner">
+        <h3>Add an update</h3>
+        <div class="append-context" id="append-context-preview"></div>
+        <div class="append-input-wrap">
+          <textarea id="append-textarea" placeholder="What's changed or new?" rows="3"></textarea>
+        </div>
+        <div class="append-actions">
+          <button class="btn-append-cancel" onclick="closeAppend()">Cancel</button>
+          <button class="btn-append-save" id="append-save-btn" onclick="saveAppend()">Update</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="edit-sheet">
+      <div class="edit-inner">
+        <h3>Edit memory</h3>
+        <div class="edit-existing-tags" id="edit-existing-tags"></div>
+        <div class="append-input-wrap">
+          <textarea id="edit-textarea" placeholder="Edit your memory..." rows="5"></textarea>
+        </div>
+        <div class="edit-hint">Use <span style="font-style: italic">#hashtags</span> to add new tags</div>
+        <div class="append-actions">
+          <button class="btn-append-cancel" onclick="closeEdit()">Cancel</button>
+          <button class="btn-append-save" id="edit-save-btn" onclick="saveEdit()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="view-sheet">
+      <div class="view-inner">
+        <div class="view-header">
+          <h3>Memory</h3>
+          <button class="btn-close-icon" onclick="closeView()"><i class="ti ti-x"></i></button>
+        </div>
+        <div class="view-content" id="view-content-text"></div>
+        <div class="view-tags" id="view-tags-container"></div>
+        <div class="view-actions">
+          <button class="btn-view-append" id="view-btn-append"><i class="ti ti-writing"></i> Append</button>
+          <button class="btn-view-edit" id="view-btn-edit"><i class="ti ti-pencil"></i> Edit</button>
+          <button class="btn-view-forget" id="view-btn-forget"><i class="ti ti-trash"></i> Forget</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="menu-sheet">
+      <div class="menu-inner">
+        <h3>Second Brain</h3>
+        <div class="stats-panel" id="stats-panel">
+          <div class="stats-kpi-row">
+            <div class="stats-kpi-card">
+              <div class="stats-kpi-value" id="stats-count">—</div>
+              <div class="stats-kpi-label">Memories</div>
+            </div>
+            <div class="stats-kpi-card">
+              <div class="stats-kpi-value" id="stats-importance">—</div>
+              <div class="stats-kpi-label">Avg Importance</div>
+            </div>
+          </div>
+          <div class="stats-top-tags">
+            <div class="stats-top-tags-label">Most used tags</div>
+            <div class="stats-tags" id="stats-tags"></div>
+          </div>
+        </div>
+        <div class="theme-row">
+          <span class="theme-row-label">Appearance</span>
+          <div class="theme-toggle" id="theme-toggle">
+            <button data-theme-val="light" onclick="setTheme('light')" title="Light"><i class="ti ti-sun"></i></button>
+            <button data-theme-val="dark" onclick="setTheme('dark')" title="Dark"><i class="ti ti-moon"></i></button>
+            <button data-theme-val="auto" onclick="setTheme('auto')" title="Match system">Auto</button>
+          </div>
+        </div>
+        <button
+          class="menu-item"
+          onclick="
+            closeMenu()
+            switchTab('recent')
+          "
+        >
+          <i class="ti ti-clock"></i> View all memories
+        </button>
+        <button class="menu-item" onclick="exportMemories('json')"><i class="ti ti-download"></i> Export as JSON</button>
+        <button class="menu-item" onclick="exportMemories('markdown')"><i class="ti ti-markdown"></i> Export as Markdown</button>
+        <button class="menu-item danger" onclick="logout()"><i class="ti ti-logout"></i> Disconnect</button>
+      </div>
+    </div>
+
+    <script src="utils.js"></script>
+    <script>
+      let WORKER_URL = '',
+        AUTH_TOKEN = '',
+        allEntries = []
+      let pendingForgetId = null,
+        pendingAppendId = null,
+        pendingForgetCard = null
+      let currentTab = 'recall',
+        selectedTag = '',
+        selectedTimeRange = ''
+      let currentCount = 0
+
+      function init() {
+        applyTheme()
+        // Auto-populate URL from the current page origin (UI is hosted on the same Worker)
+        const origin = window.location.origin
+        document.getElementById('auth-url').value = origin
+
+        const url = localStorage.getItem('sb_url') || origin
+        const tok = localStorage.getItem('sb_token')
+        if (tok) {
+          WORKER_URL = url
+          AUTH_TOKEN = tok
+          showApp()
+        }
+      }
+
+      async function connect() {
+        const url = document.getElementById('auth-url').value.trim().replace(/\/$/, '')
+        const tok = document.getElementById('auth-token').value.trim()
+        const err = document.getElementById('auth-error')
+        const btn = document.getElementById('auth-connect')
+        if (!url || !tok) {
+          err.textContent = 'Please fill in both fields.'
+          return
+        }
+        btn.textContent = 'Connecting...'
+        btn.disabled = true
+        err.textContent = ''
+        try {
+          const res = await fetch(`${url}/list?n=1`, { headers: { Authorization: `Bearer ${tok}` } })
+          if (res.status === 401) throw new Error('Invalid token')
+          if (!res.ok) throw new Error(`Server error: ${res.status}`)
+          localStorage.setItem('sb_url', url)
+          localStorage.setItem('sb_token', tok)
+          WORKER_URL = url
+          AUTH_TOKEN = tok
+          showApp()
+        } catch (e) {
+          err.textContent = e.message || 'Could not connect.'
+          btn.textContent = 'Connect'
+          btn.disabled = false
+        }
+      }
+
+      function showApp() {
+        document.getElementById('auth-overlay').style.display = 'none'
+        document.getElementById('app').style.display = 'flex'
+        loadRecent()
+        loadTags()
+        updateStatus()
+      }
+
+      async function loadTags() {
+        try {
+          const res = await fetch(`${WORKER_URL}/tags`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const tags = await res.json()
+          ;['tag-filter-recent', 'tag-filter-recall'].forEach((id) => {
+            const sel = document.getElementById(id)
+            if (!sel) return
+            sel.innerHTML = '<option value="">All tags</option>'
+            tags.forEach((t) => {
+              const opt = document.createElement('option')
+              opt.value = t
+              opt.textContent = t
+              if (t === selectedTag) opt.selected = true
+              sel.appendChild(opt)
+            })
+          })
+        } catch {}
+      }
+
+      function onTagChange(tag) {
+        selectedTag = tag
+        ;['tag-filter-recent', 'tag-filter-recall'].forEach((id) => {
+          const el = document.getElementById(id)
+          if (el) el.value = tag
+        })
+        if (currentTab === 'recent') applyRecentFilters()
+      }
+
+      function onTimeRangeChange(val) {
+        selectedTimeRange = val
+        applyRecentFilters()
+      }
+
+      function applyRecentFilters() {
+        let entries = allEntries
+        if (selectedTag) {
+          const tag = selectedTag.replace(/^#/, '').toLowerCase().trim()
+          entries = entries.filter((e) => {
+            try {
+              return JSON.parse(e.tags || '[]').some((t) => t.toLowerCase() === tag)
+            } catch {
+              return false
             }
-          } finally {
-            reader.releaseLock();
+          })
+        }
+        if (selectedTimeRange) {
+          const now = Date.now(),
+            MS_DAY = 86400000
+          let cutoff
+          if (selectedTimeRange === 'today') {
+            const d = new Date()
+            cutoff = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+          } else if (selectedTimeRange === 'month') {
+            const d = new Date()
+            cutoff = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
+          } else {
+            cutoff = now - parseInt(selectedTimeRange) * MS_DAY
           }
+          entries = entries.filter((e) => e.created_at >= cutoff)
+        }
+        renderRecent(entries)
+      }
 
-          // Render markdown once the stream is complete (kept plain while streaming for speed)
-          answerEl.innerHTML = renderAnswerMarkdown(fullText);
+      function filterRecent(val) {
+        selectedTag = val
+        applyRecentFilters()
+      }
 
-          // 2. Sources toggle
-          const sourcesToggle = document.createElement('div');
-          sourcesToggle.className = 'sources-toggle';
-          sourcesToggle.innerHTML = `<button onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'flex' : 'none'">
+      function logout() {
+        closeMenu()
+        localStorage.removeItem('sb_url')
+        localStorage.removeItem('sb_token')
+        WORKER_URL = ''
+        AUTH_TOKEN = ''
+        document.getElementById('app').style.display = 'none'
+        document.getElementById('auth-overlay').style.display = 'flex'
+        document.getElementById('auth-url').value = ''
+        document.getElementById('auth-token').value = ''
+        document.getElementById('auth-error').textContent = ''
+      }
+
+      function switchTab(tab) {
+        currentTab = tab
+        document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'))
+        document.querySelectorAll('.nav-tab, .sb-tab').forEach((t) => t.classList.remove('active'))
+        document.getElementById('screen-' + tab).classList.add('active')
+        document.getElementById('tab-' + tab).classList.add('active')
+        const sbTab = document.getElementById('sb-tab-' + tab)
+        if (sbTab) sbTab.classList.add('active')
+        if (tab === 'recent') loadRecent()
+      }
+
+      async function updateStatus() {
+        try {
+          const res = await fetch(`${WORKER_URL}/count`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const data = await res.json()
+          currentCount = data.count ?? 0
+          const text = currentCount === 0 ? 'always remembers' : `${currentCount} memor${currentCount === 1 ? 'y' : 'ies'} stored`
+          document.getElementById('topbar-status').textContent = text
+          const sb = document.getElementById('sb-status')
+          if (sb) sb.textContent = text
+        } catch {}
+      }
+
+      async function apiMcp(toolName, args) {
+        const res = await fetch(`${WORKER_URL}/mcp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${AUTH_TOKEN}` },
+          body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: toolName, arguments: args } }),
+        })
+        const text = await res.text()
+        const match = text.match(/data: ({.+})/s)
+        if (!match) throw new Error('Invalid response')
+        const json = JSON.parse(match[1])
+        if (json.error) throw new Error(json.error.message || 'MCP error')
+        return json.result?.content?.[0]?.text ?? ''
+      }
+
+      async function apiCapture(content, tags, source) {
+        const res = await fetch(`${WORKER_URL}/capture`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+          body: JSON.stringify({ content, tags, source: source || 'web-ui' }),
+        })
+        return res.json()
+      }
+
+      async function apiList(n = 50) {
+        const res = await fetch(`${WORKER_URL}/list?n=${n}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+        return res.json()
+      }
+
+      function sendSuggestion(text) {
+        document.getElementById('recall-input').value = text
+        sendRecall()
+      }
+      function handleRecallKey(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          sendRecall()
+        }
+      }
+
+      async function sendRecall() {
+        const input = document.getElementById('recall-input')
+        const query = input.value.trim()
+        if (!query) return
+        const msgs = document.getElementById('recall-messages')
+        const welcome = document.getElementById('recall-welcome')
+        if (welcome) welcome.remove()
+        appendUserBubble(msgs, query)
+        input.value = ''
+        autoResize(input)
+        const loadingEl = appendLoading(msgs)
+        msgs.scrollTop = msgs.scrollHeight
+        try {
+          const result = await apiMcp('recall', { query, topK: 5, ...(selectedTag ? { tag: selectedTag } : {}) })
+          loadingEl.remove()
+          if (!result || result.includes('Nothing found')) {
+            appendBrainBubble(msgs, "I couldn't find anything matching that. Try different words, or check Recent.", 'recall-sys')
+          } else {
+            const entries = parseRecallResult(result)
+            const answerBubble = document.createElement('div')
+            answerBubble.className = 'ex-a-row'
+            const answerEl = document.createElement('div')
+            answerEl.className = 'ex-a'
+            answerBubble.appendChild(answerEl)
+            msgs.appendChild(answerBubble)
+
+            const res = await fetch(`${WORKER_URL}/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+              body: JSON.stringify({ query, memories: result }),
+            })
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let fullText = ''
+            try {
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                const chunk = decoder.decode(value)
+                chunk.split('\n').forEach((line) => {
+                  if (line.startsWith('data: ')) {
+                    const raw = line.slice(6).trim()
+                    if (raw === '[DONE]') return
+                    try {
+                      const d = JSON.parse(raw)
+                      if (d.response) {
+                        fullText += d.response
+                        answerEl.textContent = fullText
+                      }
+                    } catch {}
+                  }
+                })
+                msgs.scrollTop = msgs.scrollHeight
+              }
+            } finally {
+              reader.releaseLock()
+            }
+
+            // Render markdown once the stream is complete (kept plain while streaming for speed)
+            answerEl.innerHTML = renderAnswerMarkdown(fullText)
+
+            // 2. Sources toggle
+            const sourcesToggle = document.createElement('div')
+            sourcesToggle.className = 'sources-toggle'
+            sourcesToggle.innerHTML = `<button onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'flex' : 'none'">
             <i class="ti ti-files"></i> ${entries.length} source${entries.length === 1 ? '' : 's'}
           </button>
-          <div class="brain-cards-wrapper" style="display:none"></div>`;
-          entries.forEach(e => sourcesToggle.querySelector('.brain-cards-wrapper').appendChild(makeRecallCard(e)));
-          msgs.appendChild(sourcesToggle);
-          document.getElementById('recall-clear-btn').style.display = 'flex';
+          <div class="brain-cards-wrapper" style="display:none"></div>`
+            entries.forEach((e) => sourcesToggle.querySelector('.brain-cards-wrapper').appendChild(makeRecallCard(e)))
+            msgs.appendChild(sourcesToggle)
+            document.getElementById('recall-clear-btn').style.display = 'flex'
+          }
+        } catch {
+          loadingEl.remove()
+          appendBrainBubble(msgs, 'Something went wrong. Check your connection and try again.', 'recall-sys')
         }
-      } catch {
-        loadingEl.remove();
-        appendBrainBubble(msgs, 'Something went wrong. Check your connection and try again.', 'recall-sys');
+        msgs.scrollTop = msgs.scrollHeight
       }
-      msgs.scrollTop = msgs.scrollHeight;
-    }
 
-    function makeRecallCard(entry) {
-      const card = document.createElement('div');
-      card.className = 'memory-card';
-      card.innerHTML = `
+      function makeRecallCard(entry) {
+        const card = document.createElement('div')
+        card.className = 'memory-card'
+        card.innerHTML = `
     <div class="match-line">
       <span class="match-pct">${entry.score}%</span>
       <div class="match-bar-bg"><div class="match-bar-fill" style="width:${entry.score}%"></div></div>
     </div>
     <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
     <div class="card-footer">
-      <div class="card-tags">${entry.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
+      <div class="card-tags">${entry.tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
-        ${entry.id
-          ? `<button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
+        ${
+          entry.id
+            ? `<button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
              <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>`
-          : `<button class="card-action-btn" onclick="openAppendFromContent('${escAttr(entry.content)}')"><i class="ti ti-writing"></i> Append</button>`
+            : `<button class="card-action-btn" onclick="openAppendFromContent('${escAttr(entry.content)}')"><i class="ti ti-writing"></i> Append</button>`
         }
       </div>
-    </div>`;
-      card.querySelector('.card-content').onclick = () => openView(entry, card);
-      return card;
-    }
-
-    async function loadRecent() {
-      const list = document.getElementById('recent-list');
-      const btn = document.getElementById('refresh-btn');
-      btn.classList.add('spinning');
-      list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>Loading...</span></div>`;
-      try {
-        allEntries = await apiList(50);
-        renderRecent(allEntries); updateStatus(); loadTags();
-      } catch {
-        list.innerHTML = `<div class="empty-state"><i class="ti ti-wifi-off"></i><span>Could not load memories.</span></div>`;
+    </div>`
+        card.querySelector('.card-content').onclick = () => openView(entry, card)
+        return card
       }
-      btn.classList.remove('spinning');
-    }
 
-    function filterRecent(val) {
-      const tag = (val || '').replace(/^#/, '').toLowerCase().trim();
-      if (!tag) { renderRecent(allEntries); return; }
-      renderRecent(allEntries.filter(e => {
-        try { return JSON.parse(e.tags || '[]').some(t => t.toLowerCase() === tag); } catch { return false; }
-      }));
-    }
-
-    function renderRecent(entries) {
-      const list = document.getElementById('recent-list');
-      if (!entries.length) {
-        list.innerHTML = `<div class="empty-state"><i class="ti ti-brain"></i><span>No memories yet.<br>Use Remember to add some.</span></div>`;
-        return;
-      }
-      const groups = {}, now = new Date();
-      const today = toDateStr(now), yesterday = toDateStr(new Date(now - 86400000));
-      const sevenDaysAgo = now.getTime() - 7 * 86400000;
-      entries.forEach(entry => {
-        const d = new Date(entry.created_at), ds = toDateStr(d);
-        let label;
-        if (ds === today) {
-          label = 'Today';
-        } else if (ds === yesterday) {
-          label = 'Yesterday';
-        } else if (entry.created_at >= sevenDaysAgo) {
-          label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        } else {
-          // Group by week: find the Monday of that week
-          const dow = d.getDay();
-          const diff = dow === 0 ? -6 : 1 - dow;
-          const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
-          label = 'Week of ' + weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      async function loadRecent() {
+        const list = document.getElementById('recent-list')
+        const btn = document.getElementById('refresh-btn')
+        btn.classList.add('spinning')
+        list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>Loading...</span></div>`
+        try {
+          allEntries = await apiList(50)
+          renderRecent(allEntries)
+          updateStatus()
+          loadTags()
+        } catch {
+          list.innerHTML = `<div class="empty-state"><i class="ti ti-wifi-off"></i><span>Could not load memories.</span></div>`
         }
-        if (!groups[label]) groups[label] = [];
-        groups[label].push(entry);
-      });
-      list.innerHTML = '';
-      Object.entries(groups).forEach(([label, group]) => {
-        const g = document.createElement('div');
-        g.className = 'date-group';
-        g.innerHTML = `<div class="date-label">${label}</div>`;
-        const cards = document.createElement('div');
-        cards.className = 'recent-cards';
-        group.forEach(e => cards.appendChild(makeRecentCard(e)));
-        g.appendChild(cards); list.appendChild(g);
-      });
-    }
+        btn.classList.remove('spinning')
+      }
 
-    function makeRecentCard(entry) {
-      let tags = [];
-      try { tags = JSON.parse(entry.tags || '[]'); } catch { }
-      const card = document.createElement('div');
-      card.className = 'memory-card';
-      card.dataset.id = entry.id;
-      card.innerHTML = `
+      function filterRecent(val) {
+        const tag = (val || '').replace(/^#/, '').toLowerCase().trim()
+        if (!tag) {
+          renderRecent(allEntries)
+          return
+        }
+        renderRecent(
+          allEntries.filter((e) => {
+            try {
+              return JSON.parse(e.tags || '[]').some((t) => t.toLowerCase() === tag)
+            } catch {
+              return false
+            }
+          }),
+        )
+      }
+
+      function renderRecent(entries) {
+        const list = document.getElementById('recent-list')
+        if (!entries.length) {
+          list.innerHTML = `<div class="empty-state"><i class="ti ti-brain"></i><span>No memories yet.<br>Use Remember to add some.</span></div>`
+          return
+        }
+        const groups = {},
+          now = new Date()
+        const today = toDateStr(now),
+          yesterday = toDateStr(new Date(now - 86400000))
+        const sevenDaysAgo = now.getTime() - 7 * 86400000
+        entries.forEach((entry) => {
+          const d = new Date(entry.created_at),
+            ds = toDateStr(d)
+          let label
+          if (ds === today) {
+            label = 'Today'
+          } else if (ds === yesterday) {
+            label = 'Yesterday'
+          } else if (entry.created_at >= sevenDaysAgo) {
+            label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          } else {
+            // Group by week: find the Monday of that week
+            const dow = d.getDay()
+            const diff = dow === 0 ? -6 : 1 - dow
+            const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff)
+            label = 'Week of ' + weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          }
+          if (!groups[label]) groups[label] = []
+          groups[label].push(entry)
+        })
+        list.innerHTML = ''
+        Object.entries(groups).forEach(([label, group]) => {
+          const g = document.createElement('div')
+          g.className = 'date-group'
+          g.innerHTML = `<div class="date-label">${label}</div>`
+          const cards = document.createElement('div')
+          cards.className = 'recent-cards'
+          group.forEach((e) => cards.appendChild(makeRecentCard(e)))
+          g.appendChild(cards)
+          list.appendChild(g)
+        })
+      }
+
+      function makeRecentCard(entry) {
+        let tags = []
+        try {
+          tags = JSON.parse(entry.tags || '[]')
+        } catch {}
+        const card = document.createElement('div')
+        card.className = 'memory-card'
+        card.dataset.id = entry.id
+        card.innerHTML = `
     <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
     <div class="card-footer">
-      <div class="card-tags">${tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
+      <div class="card-tags">${tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
         <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
         <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> Edit</button>
         <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>
       </div>
-    </div>`;
-      card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card);
-      card.querySelector('.edit-btn').onclick = () => openEdit(entry.id, entry.content, tags);
-      return card;
-    }
+    </div>`
+        card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card)
+        card.querySelector('.edit-btn').onclick = () => openEdit(entry.id, entry.content, tags)
+        return card
+      }
 
-    function handleRememberKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendRemember(); } }
+      function handleRememberKey(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          sendRemember()
+        }
+      }
 
-    async function sendRemember() {
-      const input = document.getElementById('remember-input');
-      const raw = input.value.trim();
-      if (!raw) return;
-      const msgs = document.getElementById('remember-messages');
-      const tags = [], tagRe = /#([a-zA-Z0-9_-]+)/g;
-      let m;
-      while ((m = tagRe.exec(raw)) !== null) tags.push(m[1]);
-      const content = raw.replace(/#[a-zA-Z0-9_-]+/g, '').trim();
-      const userRow = document.createElement('div');
-      userRow.className = 'capture-note';
-      const introEl = document.getElementById('remember-intro');
-      if (introEl) introEl.remove();
-      userRow.innerHTML = raw.replace(/#([a-zA-Z0-9_-]+)/g, '<span class="hashtag">#$1</span>');
-      msgs.appendChild(userRow);
-      input.value = ''; autoResize(input);
-      msgs.scrollTop = msgs.scrollHeight;
-      const loadingEl = appendLoading(msgs);
-      msgs.scrollTop = msgs.scrollHeight;
-      try {
-        const result = await apiCapture(content || raw, tags, 'web-ui');
-        loadingEl.remove();
-        if (result.duplicate) {
-          appendBrainBubble(msgs, "Already kept \u2014 I have something very similar, so I skipped the duplicate.", 'sys-note');
-        } else {
-          appendBrainBubble(msgs, "Kept. I'll remember that.", 'sys-note');
-          if (tags.length) {
-            const confirmEl = document.createElement('div');
-            confirmEl.className = 'confirm-block';
-            confirmEl.innerHTML = `<div class="confirm-line"><i class="ti ti-circle-check"></i> Tagged as:</div><div class="confirm-tags">${tags.map(t => `<span class="confirm-tag">${escHtml(t)}</span>`).join('')}</div>`;
-            msgs.appendChild(confirmEl);
+      async function sendRemember() {
+        const input = document.getElementById('remember-input')
+        const raw = input.value.trim()
+        if (!raw) return
+        const msgs = document.getElementById('remember-messages')
+        const tags = [],
+          tagRe = /#([a-zA-Z0-9_-]+)/g
+        let m
+        while ((m = tagRe.exec(raw)) !== null) tags.push(m[1])
+        const content = raw.replace(/#[a-zA-Z0-9_-]+/g, '').trim()
+        const userRow = document.createElement('div')
+        userRow.className = 'capture-note'
+        const introEl = document.getElementById('remember-intro')
+        if (introEl) introEl.remove()
+        userRow.innerHTML = raw.replace(/#([a-zA-Z0-9_-]+)/g, '<span class="hashtag">#$1</span>')
+        msgs.appendChild(userRow)
+        input.value = ''
+        autoResize(input)
+        msgs.scrollTop = msgs.scrollHeight
+        const loadingEl = appendLoading(msgs)
+        msgs.scrollTop = msgs.scrollHeight
+        try {
+          const result = await apiCapture(content || raw, tags, 'web-ui')
+          loadingEl.remove()
+          if (result.duplicate) {
+            appendBrainBubble(msgs, 'Already kept \u2014 I have something very similar, so I skipped the duplicate.', 'sys-note')
+          } else {
+            appendBrainBubble(msgs, "Kept. I'll remember that.", 'sys-note')
+            if (tags.length) {
+              const confirmEl = document.createElement('div')
+              confirmEl.className = 'confirm-block'
+              confirmEl.innerHTML = `<div class="confirm-line"><i class="ti ti-circle-check"></i> Tagged as:</div><div class="confirm-tags">${tags.map((t) => `<span class="confirm-tag">${escHtml(t)}</span>`).join('')}</div>`
+              msgs.appendChild(confirmEl)
+            }
+            updateStatus()
           }
-          updateStatus();
+          document.getElementById('remember-clear-btn').style.display = 'flex'
+        } catch {
+          loadingEl.remove()
+          appendBrainBubble(msgs, 'Something went wrong. Try again.', 'sys-note')
         }
-        document.getElementById('remember-clear-btn').style.display = 'flex';
-      } catch {
-        loadingEl.remove();
-        appendBrainBubble(msgs, 'Something went wrong. Try again.', 'sys-note');
+        msgs.scrollTop = msgs.scrollHeight
       }
-      msgs.scrollTop = msgs.scrollHeight;
-    }
 
-    function openAppend(id, preview) {
-      pendingAppendId = id;
-      document.getElementById('append-context-preview').textContent = preview + '...';
-      document.getElementById('append-textarea').value = '';
-      document.getElementById('append-sheet').classList.add('open');
-      setTimeout(() => document.getElementById('append-textarea').focus(), 100);
-    }
-    function openAppendFromContent() { switchTab('remember'); document.getElementById('remember-input').focus(); }
-    function closeAppend() { document.getElementById('append-sheet').classList.remove('open'); pendingAppendId = null; }
-    async function saveAppend() {
-      const addition = document.getElementById('append-textarea').value.trim();
-      if (!addition || !pendingAppendId) return;
-      const btn = document.getElementById('append-save-btn');
-      btn.disabled = true; btn.textContent = 'Saving...';
-      try {
-        await apiMcp('append', { id: pendingAppendId, addition });
-        closeAppend(); loadRecent(); updateStatus();
-      } catch (e) {
-        btn.disabled = false; btn.textContent = 'Update';
-        alert('Append failed: ' + e.message);
+      function openAppend(id, preview) {
+        pendingAppendId = id
+        document.getElementById('append-context-preview').textContent = preview + '...'
+        document.getElementById('append-textarea').value = ''
+        document.getElementById('append-sheet').classList.add('open')
+        setTimeout(() => document.getElementById('append-textarea').focus(), 100)
       }
-    }
-
-    let pendingEditId = null;
-
-    function openEdit(id, content, tags) {
-      pendingEditId = id;
-      const tagsEl = document.getElementById('edit-existing-tags');
-      tagsEl.innerHTML = tags && tags.length
-        ? tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('') : '';
-      const ta = document.getElementById('edit-textarea');
-      ta.value = content;
-      ta.style.height = 'auto';
-      ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
-      document.getElementById('edit-sheet').classList.add('open');
-      setTimeout(() => ta.focus(), 100);
-    }
-
-    function closeEdit() { document.getElementById('edit-sheet').classList.remove('open'); pendingEditId = null; }
-
-    async function saveEdit() {
-      const newContent = document.getElementById('edit-textarea').value.trim();
-      if (!newContent || !pendingEditId) return;
-      const btn = document.getElementById('edit-save-btn');
-      btn.disabled = true; btn.textContent = 'Saving...';
-      try {
-        const res = await fetch(`${WORKER_URL}/update`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
-          body: JSON.stringify({ id: pendingEditId, content: newContent })
-        });
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
-        closeEdit(); loadRecent();
-      } catch (e) {
-        btn.disabled = false; btn.textContent = 'Save';
-        alert('Edit failed: ' + e.message);
+      function openAppendFromContent() {
+        switchTab('remember')
+        document.getElementById('remember-input').focus()
       }
-    }
-
-    function openConfirm(id, btnOrCard) {
-      pendingForgetId = id;
-      pendingForgetCard = btnOrCard ? (btnOrCard.classList?.contains('memory-card') ? btnOrCard : btnOrCard.closest('.memory-card')) : null;
-      document.getElementById('confirm-dialog').classList.add('open');
-    }
-    function closeConfirm() {
-      document.getElementById('confirm-dialog').classList.remove('open');
-      pendingForgetId = null; pendingForgetCard = null;
-    }
-    async function confirmForget() {
-      if (!pendingForgetId) return;
-      const idToForget = pendingForgetId;
-      const cardElement = pendingForgetCard;
-      const btn = document.querySelector('#confirm-dialog .btn-delete');
-      if (btn) { btn.disabled = true; btn.textContent = 'Forgetting...'; }
-
-      try {
-        await apiMcp('forget', { id: idToForget });
-        closeConfirm();
-        if (cardElement) {
-          cardElement.style.transition = 'none';
-          cardElement.classList.add('explode-out');
-          setTimeout(() => cardElement?.remove(), 400);
+      function closeAppend() {
+        document.getElementById('append-sheet').classList.remove('open')
+        pendingAppendId = null
+      }
+      async function saveAppend() {
+        const addition = document.getElementById('append-textarea').value.trim()
+        if (!addition || !pendingAppendId) return
+        const btn = document.getElementById('append-save-btn')
+        btn.disabled = true
+        btn.textContent = 'Saving...'
+        try {
+          await apiMcp('append', { id: pendingAppendId, addition })
+          closeAppend()
+          loadRecent()
+          updateStatus()
+        } catch (e) {
+          btn.disabled = false
+          btn.textContent = 'Update'
+          alert('Append failed: ' + e.message)
         }
-        allEntries = allEntries.filter(e => e.id !== idToForget);
-        updateStatus(); loadTags();
-      } catch (e) {
-        alert('Could not forget: ' + e.message);
-      } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Forget'; }
       }
-    }
 
-    function openMenu() {
-      document.getElementById('menu-sheet').classList.add('open');
-      loadMenuStats();
-    }
-    function closeMenu() { document.getElementById('menu-sheet').classList.remove('open'); }
+      let pendingEditId = null
 
-    async function loadMenuStats() {
-      try {
-        const res = await fetch(`${WORKER_URL}/stats`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
-        const data = await res.json();
-        document.getElementById('stats-count').textContent = (data.count ?? 0).toLocaleString();
-        document.getElementById('stats-importance').textContent =
-          data.avg_importance != null ? data.avg_importance.toFixed(1) + ' / 10' : '—';
-        const tagsEl = document.getElementById('stats-tags');
-        tagsEl.innerHTML = data.top_tags?.length
-          ? data.top_tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('')
-          : '<span style="font-size:13px;color:var(--text-tertiary)">No tags yet</span>';
-      } catch { }
-    }
+      function openEdit(id, content, tags) {
+        pendingEditId = id
+        const tagsEl = document.getElementById('edit-existing-tags')
+        tagsEl.innerHTML = tags && tags.length ? tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('') : ''
+        const ta = document.getElementById('edit-textarea')
+        ta.value = content
+        ta.style.height = 'auto'
+        ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
+        document.getElementById('edit-sheet').classList.add('open')
+        setTimeout(() => ta.focus(), 100)
+      }
 
-    async function exportMemories(format) {
-      closeMenu();
-      try {
-        const res = await fetch(`${WORKER_URL}/list?n=9999`, { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } });
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
-        const entries = await res.json();
+      function closeEdit() {
+        document.getElementById('edit-sheet').classList.remove('open')
+        pendingEditId = null
+      }
 
-        let content, filename, mime;
-        const ts = new Date().toISOString().slice(0, 10);
+      async function saveEdit() {
+        const newContent = document.getElementById('edit-textarea').value.trim()
+        if (!newContent || !pendingEditId) return
+        const btn = document.getElementById('edit-save-btn')
+        btn.disabled = true
+        btn.textContent = 'Saving...'
+        try {
+          const res = await fetch(`${WORKER_URL}/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            body: JSON.stringify({ id: pendingEditId, content: newContent }),
+          })
+          if (!res.ok) throw new Error(`Server error: ${res.status}`)
+          closeEdit()
+          loadRecent()
+        } catch (e) {
+          btn.disabled = false
+          btn.textContent = 'Save'
+          alert('Edit failed: ' + e.message)
+        }
+      }
 
-        if (format === 'json') {
-          content = JSON.stringify(entries, null, 2);
-          filename = `second-brain-export-${ts}.json`;
-          mime = 'application/json';
+      function openConfirm(id, btnOrCard) {
+        pendingForgetId = id
+        pendingForgetCard = btnOrCard ? (btnOrCard.classList?.contains('memory-card') ? btnOrCard : btnOrCard.closest('.memory-card')) : null
+        document.getElementById('confirm-dialog').classList.add('open')
+      }
+      function closeConfirm() {
+        document.getElementById('confirm-dialog').classList.remove('open')
+        pendingForgetId = null
+        pendingForgetCard = null
+      }
+      async function confirmForget() {
+        if (!pendingForgetId) return
+        const idToForget = pendingForgetId
+        const cardElement = pendingForgetCard
+        const btn = document.querySelector('#confirm-dialog .btn-delete')
+        if (btn) {
+          btn.disabled = true
+          btn.textContent = 'Forgetting...'
+        }
+
+        try {
+          await apiMcp('forget', { id: idToForget })
+          closeConfirm()
+          if (cardElement) {
+            cardElement.style.transition = 'none'
+            cardElement.classList.add('explode-out')
+            setTimeout(() => cardElement?.remove(), 400)
+          }
+          allEntries = allEntries.filter((e) => e.id !== idToForget)
+          updateStatus()
+          loadTags()
+        } catch (e) {
+          alert('Could not forget: ' + e.message)
+        } finally {
+          if (btn) {
+            btn.disabled = false
+            btn.textContent = 'Forget'
+          }
+        }
+      }
+
+      function openMenu() {
+        document.getElementById('menu-sheet').classList.add('open')
+        loadMenuStats()
+      }
+      function closeMenu() {
+        document.getElementById('menu-sheet').classList.remove('open')
+      }
+
+      async function loadMenuStats() {
+        try {
+          const res = await fetch(`${WORKER_URL}/stats`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const data = await res.json()
+          document.getElementById('stats-count').textContent = (data.count ?? 0).toLocaleString()
+          document.getElementById('stats-importance').textContent = data.avg_importance != null ? data.avg_importance.toFixed(1) + ' / 10' : '—'
+          const tagsEl = document.getElementById('stats-tags')
+          tagsEl.innerHTML = data.top_tags?.length
+            ? data.top_tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')
+            : '<span style="font-size:13px;color:var(--text-tertiary)">No tags yet</span>'
+        } catch {}
+      }
+
+      async function exportMemories(format) {
+        closeMenu()
+        try {
+          const res = await fetch(`${WORKER_URL}/list?n=9999`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          if (!res.ok) throw new Error(`Server error: ${res.status}`)
+          const entries = await res.json()
+
+          let content, filename, mime
+          const ts = new Date().toISOString().slice(0, 10)
+
+          if (format === 'json') {
+            content = JSON.stringify(entries, null, 2)
+            filename = `second-brain-export-${ts}.json`
+            mime = 'application/json'
+          } else {
+            const lines = [`# Second Brain Export`, `Exported: ${ts}`, '']
+            entries.forEach((e, i) => {
+              let tags = []
+              try {
+                tags = JSON.parse(e.tags || '[]')
+              } catch {}
+              const date = new Date(e.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+              lines.push(`## Memory ${i + 1}`)
+              lines.push(`**Date:** ${date}`)
+              if (tags.length) lines.push(`**Tags:** ${tags.join(', ')}`)
+              if (e.source) lines.push(`**Source:** ${e.source}`)
+              lines.push('')
+              lines.push(e.content)
+              lines.push('')
+              lines.push('---')
+              lines.push('')
+            })
+            content = lines.join('\n')
+            filename = `second-brain-export-${ts}.md`
+            mime = 'text/markdown'
+          }
+
+          const blob = new Blob([content], { type: mime })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = filename
+          a.click()
+          URL.revokeObjectURL(url)
+        } catch (e) {
+          alert('Export failed: ' + e.message)
+        }
+      }
+
+      function openView(entry, cardElement) {
+        document.getElementById('view-content-text').textContent = entry.content
+        const tagsContainer = document.getElementById('view-tags-container')
+        tagsContainer.innerHTML = ''
+        if (entry.tags && entry.tags.length > 0) {
+          tagsContainer.innerHTML = entry.tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')
+        }
+        const appendBtn = document.getElementById('view-btn-append')
+        if (entry.id) {
+          appendBtn.onclick = () => {
+            closeView()
+            openAppend(entry.id, entry.content.slice(0, 80))
+          }
         } else {
-          const lines = [`# Second Brain Export`, `Exported: ${ts}`, ''];
-          entries.forEach((e, i) => {
-            let tags = [];
-            try { tags = JSON.parse(e.tags || '[]'); } catch { }
-            const date = new Date(e.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-            lines.push(`## Memory ${i + 1}`);
-            lines.push(`**Date:** ${date}`);
-            if (tags.length) lines.push(`**Tags:** ${tags.join(', ')}`);
-            if (e.source) lines.push(`**Source:** ${e.source}`);
-            lines.push('');
-            lines.push(e.content);
-            lines.push('');
-            lines.push('---');
-            lines.push('');
-          });
-          content = lines.join('\n');
-          filename = `second-brain-export-${ts}.md`;
-          mime = 'text/markdown';
+          appendBtn.onclick = () => {
+            closeView()
+            openAppendFromContent(entry.content)
+          }
         }
-
-        const blob = new Blob([content], { type: mime });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = filename; a.click();
-        URL.revokeObjectURL(url);
-      } catch (e) {
-        alert('Export failed: ' + e.message);
-      }
-    }
-
-    function openView(entry, cardElement) {
-      document.getElementById('view-content-text').textContent = entry.content;
-      const tagsContainer = document.getElementById('view-tags-container');
-      tagsContainer.innerHTML = '';
-      if (entry.tags && entry.tags.length > 0) {
-        tagsContainer.innerHTML = entry.tags.map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('');
-      }
-      const appendBtn = document.getElementById('view-btn-append');
-      if (entry.id) {
-        appendBtn.onclick = () => { closeView(); openAppend(entry.id, entry.content.slice(0, 80)); };
-      } else {
-        appendBtn.onclick = () => { closeView(); openAppendFromContent(entry.content); };
-      }
-      const forgetBtn = document.getElementById('view-btn-forget');
-      if (entry.id) {
-        forgetBtn.onclick = () => { closeView(); openConfirm(entry.id, cardElement || null); };
-        forgetBtn.style.display = 'flex';
-      } else {
-        forgetBtn.style.display = 'none';
-      }
-      const editBtn = document.getElementById('view-btn-edit');
-      if (entry.id) {
-        editBtn.onclick = () => { closeView(); openEdit(entry.id, entry.content, entry.tags || []); };
-        editBtn.style.display = 'flex';
-      } else {
-        editBtn.style.display = 'none';
-      }
-      document.getElementById('view-sheet').classList.add('open');
-    }
-    function closeView() { document.getElementById('view-sheet').classList.remove('open'); }
-
-    document.getElementById('confirm-dialog').addEventListener('click', e => { if (e.target === document.getElementById('confirm-dialog')) closeConfirm(); });
-    document.getElementById('append-sheet').addEventListener('click', e => { if (e.target === document.getElementById('append-sheet')) closeAppend(); });
-    document.getElementById('menu-sheet').addEventListener('click', e => { if (e.target === document.getElementById('menu-sheet')) closeMenu(); });
-    document.getElementById('view-sheet').addEventListener('click', e => { if (e.target === document.getElementById('view-sheet')) closeView(); });
-    document.getElementById('edit-sheet').addEventListener('click', e => { if (e.target === document.getElementById('edit-sheet')) closeEdit(); });
-
-    function appendBrainBubble(container, text, cls) {
-      const el = document.createElement('div');
-      el.className = cls || 'recall-sys';
-      el.textContent = text;
-      container.appendChild(el);
-    }
-
-    // Lightweight markdown → HTML for AI answers (headings, bold/italic, bullet & numbered lists).
-    function renderAnswerMarkdown(src) {
-      const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      const inline = (s) => esc(s)
-        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-        .replace(/__([^_]+)__/g, '<strong>$1</strong>')
-        .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>');
-
-      // Some models stream lists inline ("... tools: * a * b * c") with no newlines.
-      // Re-break a run of " * " markers onto their own lines so they parse as a list.
-      let text = String(src || '').replace(/\r/g, '');
-      if (!/\n\s*[*-]\s/.test(text) && (text.match(/\s\*\s/g) || []).length >= 2) {
-        text = text.replace(/\s\*\s+/g, '\n* ');
-      }
-
-      const lines = text.split('\n');
-      let html = '';
-      let listType = null; // 'ul' | 'ol'
-      const closeList = () => { if (listType) { html += `</${listType}>`; listType = null; } };
-
-      lines.forEach((line) => {
-        const t = line.trim();
-        if (!t) { closeList(); return; }
-
-        let m;
-        if ((m = t.match(/^(#{1,4})\s+(.*)$/))) {
-          closeList();
-          const lvl = Math.min(m[1].length + 2, 4); // h3/h4
-          html += `<h${lvl}>${inline(m[2])}</h${lvl}>`;
-        } else if ((m = t.match(/^[*\-•]\s+(.*)$/))) {
-          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
-          html += `<li>${inline(m[1])}</li>`;
-        } else if ((m = t.match(/^\d+[.)]\s+(.*)$/))) {
-          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
-          html += `<li>${inline(m[1])}</li>`;
+        const forgetBtn = document.getElementById('view-btn-forget')
+        if (entry.id) {
+          forgetBtn.onclick = () => {
+            closeView()
+            openConfirm(entry.id, cardElement || null)
+          }
+          forgetBtn.style.display = 'flex'
         } else {
-          closeList();
-          html += `<p>${inline(t)}</p>`;
+          forgetBtn.style.display = 'none'
         }
-      });
-      closeList();
-      return html;
-    }
-    function appendUserBubble(container, text) {
-      const q = document.createElement('div');
-      q.className = 'ex-q';
-      q.innerHTML = '<span class="q-label">You asked</span><span class="q-dash">\u2014</span><span class="q-text"></span>';
-      q.querySelector('.q-text').textContent = text;
-      container.appendChild(q);
-    }
-    function appendLoading(container) {
-      const row = document.createElement('div');
-      row.className = 'bubble-row brain';
-      row.innerHTML = `<div class="loading-dots"><span></span><span></span><span></span></div>`;
-      container.appendChild(row);
-      return row;
-    }
-    function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 80) + 'px'; }
-    function clearRemember() {
-      const msgs = document.getElementById('remember-messages');
-      msgs.innerHTML = `<div class="recall-hero" id="remember-intro"><div class="eyebrow">Remember</div><div class="hero-line">What's worth keeping? Write it down &mdash; add <span class="hashtag">#tags</span> anywhere and I'll file it.</div></div>`;
-      document.getElementById('remember-clear-btn').style.display = 'none';
-    }
-    function clearRecall() {
-      const msgs = document.getElementById('recall-messages');
-      msgs.innerHTML = `<div class="recall-hero" id="recall-welcome"><div class="eyebrow">Recall</div><div class="hero-line">Ask me anything you've stored away &mdash; I'll find it and answer in your own words.</div></div>`;
-      document.getElementById('recall-clear-btn').style.display = 'none';
-    }
+        const editBtn = document.getElementById('view-btn-edit')
+        if (entry.id) {
+          editBtn.onclick = () => {
+            closeView()
+            openEdit(entry.id, entry.content, entry.tags || [])
+          }
+          editBtn.style.display = 'flex'
+        } else {
+          editBtn.style.display = 'none'
+        }
+        document.getElementById('view-sheet').classList.add('open')
+      }
+      function closeView() {
+        document.getElementById('view-sheet').classList.remove('open')
+      }
 
-    // ---- Theme (light / dark / auto) ----
-    const _prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-    function setTheme(mode) {
-      localStorage.setItem('sb_theme', mode);
-      applyTheme();
-    }
-    function applyTheme() {
-      const mode = localStorage.getItem('sb_theme') || 'auto';
-      const dark = mode === 'dark' || (mode === 'auto' && _prefersDark.matches);
-      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-      const tc = document.querySelector('meta[name="theme-color"]');
-      if (tc) tc.setAttribute('content', dark ? '#18160F' : '#F4F1EA');
-      document.querySelectorAll('#theme-toggle [data-theme-val]').forEach(b =>
-        b.classList.toggle('active', b.dataset.themeVal === mode));
-    }
-    _prefersDark.addEventListener('change', applyTheme);
+      document.getElementById('confirm-dialog').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('confirm-dialog')) closeConfirm()
+      })
+      document.getElementById('append-sheet').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('append-sheet')) closeAppend()
+      })
+      document.getElementById('menu-sheet').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('menu-sheet')) closeMenu()
+      })
+      document.getElementById('view-sheet').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('view-sheet')) closeView()
+      })
+      document.getElementById('edit-sheet').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('edit-sheet')) closeEdit()
+      })
 
-    init();
-  </script>
-</body>
+      function appendBrainBubble(container, text, cls) {
+        const el = document.createElement('div')
+        el.className = cls || 'recall-sys'
+        el.textContent = text
+        container.appendChild(el)
+      }
 
+      // Lightweight markdown → HTML for AI answers (headings, bold/italic, bullet & numbered lists).
+      function renderAnswerMarkdown(src) {
+        const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        const inline = (s) =>
+          esc(s)
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+            .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+
+        // Some models stream lists inline ("... tools: * a * b * c") with no newlines.
+        // Re-break a run of " * " markers onto their own lines so they parse as a list.
+        let text = String(src || '').replace(/\r/g, '')
+        if (!/\n\s*[*-]\s/.test(text) && (text.match(/\s\*\s/g) || []).length >= 2) {
+          text = text.replace(/\s\*\s+/g, '\n* ')
+        }
+
+        const lines = text.split('\n')
+        let html = ''
+        let listType = null // 'ul' | 'ol'
+        const closeList = () => {
+          if (listType) {
+            html += `</${listType}>`
+            listType = null
+          }
+        }
+
+        lines.forEach((line) => {
+          const t = line.trim()
+          if (!t) {
+            closeList()
+            return
+          }
+
+          let m
+          if ((m = t.match(/^(#{1,4})\s+(.*)$/))) {
+            closeList()
+            const lvl = Math.min(m[1].length + 2, 4) // h3/h4
+            html += `<h${lvl}>${inline(m[2])}</h${lvl}>`
+          } else if ((m = t.match(/^[*\-•]\s+(.*)$/))) {
+            if (listType !== 'ul') {
+              closeList()
+              html += '<ul>'
+              listType = 'ul'
+            }
+            html += `<li>${inline(m[1])}</li>`
+          } else if ((m = t.match(/^\d+[.)]\s+(.*)$/))) {
+            if (listType !== 'ol') {
+              closeList()
+              html += '<ol>'
+              listType = 'ol'
+            }
+            html += `<li>${inline(m[1])}</li>`
+          } else {
+            closeList()
+            html += `<p>${inline(t)}</p>`
+          }
+        })
+        closeList()
+        return html
+      }
+      function appendUserBubble(container, text) {
+        const q = document.createElement('div')
+        q.className = 'ex-q'
+        q.innerHTML = '<span class="q-label">You asked</span><span class="q-dash">\u2014</span><span class="q-text"></span>'
+        q.querySelector('.q-text').textContent = text
+        container.appendChild(q)
+      }
+      function appendLoading(container) {
+        const row = document.createElement('div')
+        row.className = 'bubble-row brain'
+        row.innerHTML = `<div class="loading-dots"><span></span><span></span><span></span></div>`
+        container.appendChild(row)
+        return row
+      }
+      function autoResize(el) {
+        el.style.height = 'auto'
+        el.style.height = Math.min(el.scrollHeight, 80) + 'px'
+      }
+      function clearRemember() {
+        const msgs = document.getElementById('remember-messages')
+        msgs.innerHTML = `<div class="recall-hero" id="remember-intro"><div class="eyebrow">Remember</div><div class="hero-line">What's worth keeping? Write it down &mdash; add <span class="hashtag">#tags</span> anywhere and I'll file it.</div></div>`
+        document.getElementById('remember-clear-btn').style.display = 'none'
+      }
+      function clearRecall() {
+        const msgs = document.getElementById('recall-messages')
+        msgs.innerHTML = `<div class="recall-hero" id="recall-welcome"><div class="eyebrow">Recall</div><div class="hero-line">Ask me anything you've stored away &mdash; I'll find it and answer in your own words.</div></div>`
+        document.getElementById('recall-clear-btn').style.display = 'none'
+      }
+
+      // ---- Theme (light / dark / auto) ----
+      const _prefersDark = window.matchMedia('(prefers-color-scheme: dark)')
+      function setTheme(mode) {
+        localStorage.setItem('sb_theme', mode)
+        applyTheme()
+      }
+      function applyTheme() {
+        const mode = localStorage.getItem('sb_theme') || 'auto'
+        const dark = mode === 'dark' || (mode === 'auto' && _prefersDark.matches)
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light')
+        const tc = document.querySelector('meta[name="theme-color"]')
+        if (tc) tc.setAttribute('content', dark ? '#18160F' : '#F4F1EA')
+        document.querySelectorAll('#theme-toggle [data-theme-val]').forEach((b) => b.classList.toggle('active', b.dataset.themeVal === mode))
+      }
+      _prefersDark.addEventListener('change', applyTheme)
+
+      init()
+    </script>
+  </body>
 </html>
