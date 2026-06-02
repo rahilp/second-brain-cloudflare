@@ -1,3 +1,5 @@
+> ### Get Started. Deploying to Cloudflare takes only 2 Minutes - [Deploy to Cloudflare in One Click](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
+
 # Second Brain
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
