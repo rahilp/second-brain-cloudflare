@@ -74,6 +74,23 @@ curl -X POST https://<your-worker-url>/capture \
 # → {"ok":true,"id":"..."}
 ```
 
+### OAuth for browser-based clients (claude.ai, ChatGPT)
+
+The `/mcp` endpoint also supports **OAuth 2.0**, so MCP clients that open a browser
+to authenticate — like claude.ai and ChatGPT — can connect without putting a token in
+the URL. When you add `https://<your-worker-url>/mcp` as a connector, you’ll see a
+hosted login page; **enter your `AUTH_TOKEN`** to authorize. Claude Desktop, Claude
+Code, and `mcp-remote` keep using the `Authorization: Bearer <AUTH_TOKEN>` header as
+before — no change needed.
+
+OAuth needs a KV namespace (`OAUTH_KV`) to store tokens and client registrations. The
+**Deploy to Cloudflare** button provisions it automatically. Deploying manually? Create
+it once and paste the id into `wrangler.toml`:
+
+```bash
+wrangler kv namespace create OAUTH_KV
+```
+
 -----
 
 ## Documentation

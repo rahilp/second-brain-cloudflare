@@ -22,5 +22,12 @@ metric = "cosine"
 [ai]
 binding = "AI"
 
+# Stores OAuth tokens and dynamic client registrations for the /mcp endpoint.
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = ""
+# Create manually: wrangler kv namespace create OAUTH_KV
+# then paste the returned id above.
+
 [assets]
 directory = "./public"

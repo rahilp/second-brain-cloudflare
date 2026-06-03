@@ -5,6 +5,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpHandler } from "agents/mcp";
+import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 
 export interface Env {
@@ -12,6 +13,7 @@ export interface Env {
   VECTORIZE: VectorizeIndex;
   AI: Ai;
   AUTH_TOKEN: string;
+  OAUTH_KV: KVNamespace;
 }
 
 const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
@@ -83,6 +85,62 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+}
+
+// Hosted OAuth login page. Styled to match the dashboard's token-entry card
+// (#auth-overlay in public/index.html) — same fonts, palette, and layout.
+function loginHtml(error?: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#F4F1EA" />
+  <title>Second Brain</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f4f1ea; --bg-card: #fcfbf7;
+      --accent: #b26641; --accent-press: #9c522f; --accent-soft: rgba(178, 102, 65, 0.1); --on-accent: #fcfbf7;
+      --text-primary: #26241f; --text-secondary: #6e6b62; --text-tertiary: #a8a498;
+      --border-input: rgba(38, 36, 31, 0.11); --danger: #b3261e;
+      --font-serif: 'Lora', Georgia, serif; --font-sans: 'DM Sans', system-ui, sans-serif;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    body { background: var(--bg); font-family: var(--font-sans); color: var(--text-primary); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .auth-card { width: 100%; max-width: 400px; padding: 40px 32px; display: flex; flex-direction: column; align-items: center; animation: fade-in 0.5s var(--ease); }
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    .brain-logo { width: 70px; height: 70px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; margin-bottom: 24px; position: relative; }
+    .brain-logo i { font-size: 33px; }
+    .brain-logo::after { content: ''; position: absolute; inset: -7px; border-radius: 50%; border: 1px solid var(--accent-soft); }
+    h1 { font-family: var(--font-serif); font-size: 29px; font-weight: 500; margin-bottom: 9px; letter-spacing: -0.015em; }
+    p { font-size: 14px; color: var(--text-secondary); margin-bottom: 34px; text-align: center; line-height: 1.6; max-width: 300px; }
+    form { width: 100%; display: flex; flex-direction: column; gap: 11px; margin-bottom: 14px; }
+    input { width: 100%; padding: 14px 16px; background: var(--bg-card); border: 0.5px solid var(--border-input); border-radius: 13px; font-family: var(--font-sans); font-size: 15px; color: var(--text-primary); outline: none; transition: border-color 0.18s, box-shadow 0.18s; }
+    input::placeholder { color: var(--text-tertiary); }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    button { width: 100%; padding: 15px; background: var(--accent); color: var(--on-accent); border: none; border-radius: 13px; font-family: var(--font-sans); font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.18s, transform 0.12s var(--ease); }
+    button:hover { background: var(--accent-press); }
+    button:active { transform: scale(0.985); }
+    .auth-error { font-size: 13px; color: var(--danger); text-align: center; margin-top: 10px; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <div class="auth-card">
+    <div class="brain-logo"><i class="ti ti-brain"></i></div>
+    <h1>Second Brain</h1>
+    <p>Enter your Bearer token to connect to your personal memory layer.</p>
+    <form method="POST">
+      <input type="password" name="password" placeholder="Bearer token" autofocus autocomplete="current-password" />
+      <button type="submit">Connect</button>
+    </form>
+    <div class="auth-error">${error ? error : ""}</div>
+  </div>
+</body>
+</html>`;
 }
 
 async function embed(text: string, env: Env): Promise<number[]> {
@@ -1097,11 +1155,56 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   return server;
 }
 
-// ─── Main handler ─────────────────────────────────────────────────────────────
+// ─── OAuth API handler — /mcp only ────────────────────────────────────────────
+// OAuthProvider validates the token (OAuth grant, or the static AUTH_TOKEN via
+// resolveExternalToken) before delegating to this handler.
 
-export default {
+const apiHandler = {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (!dbReady) {
+      ctx.waitUntil(initializeDatabase(env).then(() => { dbReady = true; }));
+    }
+    const server = buildMcpServer(env, ctx);
+    return createMcpHandler(server)(request, env, ctx);
+  },
+};
+
+// ─── Default handler — all non-MCP routes ────────────────────────────────────
+
+const defaultHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // OAuth authorize endpoint — hosted login page for browser-based MCP clients.
+    if (url.pathname === "/oauth/authorize") {
+      let oauthReq: any;
+      try {
+        // workers-oauth-provider mis-parses POST bodies; pass a URL-only GET clone
+        // so parseAuthRequest reads the query params cleanly.
+        const parseReq = request.method === "POST" ? new Request(request.url, { method: "GET" }) : request;
+        oauthReq = await (env as any).OAUTH_PROVIDER.parseAuthRequest(parseReq);
+      } catch {
+        return new Response("Invalid authorization request — this page must be opened by an MCP client.", {
+          status: 400, headers: { "Content-Type": "text/plain" },
+        });
+      }
+      if (request.method === "POST") {
+        const form = await request.formData();
+        if (form.get("password") !== env.AUTH_TOKEN) {
+          return new Response(loginHtml("Invalid token"), {
+            status: 401, headers: { "Content-Type": "text/html" },
+          });
+        }
+        const { redirectTo } = await (env as any).OAUTH_PROVIDER.completeAuthorization({
+          request: oauthReq,
+          userId: "owner",
+          scope: oauthReq.scope,
+          props: { userId: "owner" },
+        });
+        return Response.redirect(redirectTo, 302);
+      }
+      return new Response(loginHtml(), { headers: { "Content-Type": "text/html" } });
+    }
 
     if (!dbReady) {
       ctx.waitUntil(
@@ -1276,13 +1379,6 @@ export default {
       return json(results);
     }
 
-    // /mcp
-    if (url.pathname === "/mcp") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
-      const server = buildMcpServer(env, ctx);
-      return createMcpHandler(server)(request, env, ctx);
-    }
-
     // POST /chat
     if (url.pathname === "/chat" && request.method === "POST") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
@@ -1312,3 +1408,23 @@ export default {
     return new Response("Not found", { status: 404 });
   },
 };
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+// Wrap both handlers in OAuthProvider. It auto-serves the OAuth metadata,
+// /oauth/token, and /oauth/register (RFC 7591) endpoints, and gates /mcp.
+
+export default new OAuthProvider({
+  apiRoute: "/mcp",
+  apiHandler,
+  defaultHandler,
+  authorizeEndpoint: "/oauth/authorize",
+  tokenEndpoint: "/oauth/token",
+  clientRegistrationEndpoint: "/oauth/register",
+  // Accept the static AUTH_TOKEN for Claude Desktop + mcp-remote (no browser flow).
+  resolveExternalToken: async ({ token, env }) => {
+    if (token === (env as Env).AUTH_TOKEN) {
+      return { props: { userId: "owner" } };
+    }
+    return null;
+  },
+});

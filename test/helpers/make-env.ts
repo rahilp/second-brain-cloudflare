@@ -32,12 +32,22 @@ export function makeAIMock(): Ai {
 
 export function makeTestDb() { return new D1Mock(); }
 
+export function makeKVMock(): KVNamespace {
+  return {
+    get: vi.fn().mockResolvedValue(null),
+    put: vi.fn().mockResolvedValue(undefined),
+    delete: vi.fn().mockResolvedValue(undefined),
+    list: vi.fn().mockResolvedValue({ keys: [], list_complete: true, cacheStatus: null }),
+  } as unknown as KVNamespace;
+}
+
 export function makeTestEnv(db?: D1Mock, overrides: Partial<Env> = {}): Env {
   return {
     DB: (db ?? new D1Mock()) as unknown as D1Database,
     VECTORIZE: makeVectorizeMock(),
     AI: makeAIMock(),
     AUTH_TOKEN: "test-token",
+    OAUTH_KV: makeKVMock(),
     ...overrides,
   };
 }
