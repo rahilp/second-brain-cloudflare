@@ -76,10 +76,34 @@ describe("rerankWithTimeDecay", () => {
     expect(result[0].id).toBe("new");
   });
 
-  it("combined multiplier never exceeds 1.0 regardless of recall count", () => {
+  it("combined multiplier never exceeds 1.0 regardless of recall count (without importance)", () => {
     const m = match("entry", 1.0, NOW - 14 * MS_DAY, ["context"]);
     const counts = new Map([["entry", 100]]);
     const [result] = rerankWithTimeDecay([m], counts);
     expect(result.score).toBeLessThanOrEqual(1.0);
+  });
+
+  it("importance_score=5 boosts score above the 1.0 recency cap", () => {
+    const m = match("entry", 1.0, NOW);
+    const importance = new Map([["entry", 5]]);
+    const [result] = rerankWithTimeDecay([m], new Map(), importance);
+    expect(result.score).toBeGreaterThan(1.0);
+  });
+
+  it("unscored entry (importance_score=0) uses neutral multiplier", () => {
+    const m = match("entry", 0.8, NOW - 5 * MS_DAY);
+    const withImportance = rerankWithTimeDecay([m], new Map(), new Map([["entry", 0]]));
+    const withDefault = rerankWithTimeDecay([m], new Map());
+    expect(withImportance[0].score).toBeCloseTo(withDefault[0].score, 6);
+  });
+
+  it("high-importance memory (score=5) outranks low-importance memory (score=1) of similar age", () => {
+    // 5-day-old entry with importance=5 should beat a 2-day-old entry with importance=1.
+    // Without importance, recency alone would pick "new". With importance, "old" wins.
+    const old = match("old", 0.9, NOW - 5 * MS_DAY);
+    const fresh = match("new", 0.9, NOW - 2 * MS_DAY);
+    const importance = new Map([["old", 5], ["new", 1]]);
+    const result = rerankWithTimeDecay([old, fresh], new Map(), importance);
+    expect(result[0].id).toBe("old");
   });
 });

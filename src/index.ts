@@ -378,7 +378,8 @@ export function getHalfLifeMs(tags: string[]): number {
 
 export function rerankWithTimeDecay(
   matches: VectorizeMatch[],
-  recallCounts: Map<string, number> = new Map()
+  recallCounts: Map<string, number> = new Map(),
+  importanceScores: Map<string, number> = new Map()
 ): VectorizeMatch[] {
   const now = Date.now();
 
@@ -401,7 +402,12 @@ export function rerankWithTimeDecay(
         typeof meta?.content === "string" && meta.content.length < CHUNK_OVERLAP_CHARS;
       const appendPenalty = isShortAppend ? 0.2 : 1.0;
 
-      return { ...match, score: match.score * combinedMultiplier * appendPenalty };
+      // importance_score 0 = unscored (neutral). 1–5 scales from 0.88 → 1.20.
+      // Lets high-importance memories surface above the recency cap without dominating.
+      const imp = importanceScores.get(parentId) ?? 0;
+      const importanceMultiplier = imp === 0 ? 1.0 : 0.8 + (imp / 5) * 0.4;
+
+      return { ...match, score: match.score * combinedMultiplier * appendPenalty * importanceMultiplier };
     })
     .sort((a, b) => b.score - a.score);
 }
@@ -732,13 +738,19 @@ export async function captureEntry(
     const newContent = mergeAction.action === "merge" ? mergeAction.merged_content : c;
 
     const targetRow = await env.DB.prepare(
-      `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+      `SELECT tags, source, vector_ids, importance_score FROM entries WHERE id = ?`
     ).bind(targetId).first() as Record<string, any> | null;
 
     if (targetRow) {
       const existingTags: string[] = JSON.parse(targetRow.tags ?? "[]");
       const existingSource = targetRow.source as string;
       const oldVectorIds: string[] = JSON.parse(targetRow.vector_ids ?? "[]");
+
+      // Protect high-importance memories from being silently overwritten.
+      // Score ≥ 4 means the existing entry is critical — keep both rather than replace.
+      if ((targetRow.importance_score as number) >= 4) {
+        return { status: "flagged", id: crypto.randomUUID(), matchId: targetId, score: dup.score };
+      }
 
       // Step 1: Update D1 content
       await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, targetId).run();
@@ -999,15 +1011,16 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
       }
 
-      // Fetch recall_count for all candidates to use in scoring
+      // Fetch recall_count and importance_score for all candidates to use in scoring
       const candidateIds = [...new Set(results.matches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
       const rcPlaceholders = candidateIds.map(() => "?").join(", ");
       const { results: rcRows } = await env.DB.prepare(
-        `SELECT id, recall_count FROM entries WHERE id IN (${rcPlaceholders})`
-      ).bind(...candidateIds).all() as { results: { id: string; recall_count: number }[] };
+        `SELECT id, recall_count, importance_score FROM entries WHERE id IN (${rcPlaceholders})`
+      ).bind(...candidateIds).all() as { results: { id: string; recall_count: number; importance_score: number }[] };
       const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
+      const importanceScores = new Map(rcRows.map(r => [r.id, r.importance_score ?? 0]));
 
-      const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts);
+      const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts, importanceScores);
 
       const seen = new Set<string>();
       const deduped = reranked.filter((m) => {
