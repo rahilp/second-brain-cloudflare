@@ -77,19 +77,32 @@ curl -X POST https://<your-worker-url>/capture \
 ### OAuth for browser-based clients (claude.ai, ChatGPT)
 
 The `/mcp` endpoint also supports **OAuth 2.0**, so MCP clients that open a browser
-to authenticate — like claude.ai and ChatGPT — can connect without putting a token in
-the URL. When you add `https://<your-worker-url>/mcp` as a connector, you’ll see a
+to authenticate, like claude.ai and ChatGPT, can connect without putting a token in
+the URL. When you add `https://<your-worker-url>/mcp` as a connector, you'll see a
 hosted login page; **enter your `AUTH_TOKEN`** to authorize. Claude Desktop, Claude
 Code, and `mcp-remote` keep using the `Authorization: Bearer <AUTH_TOKEN>` header as
 before — no change needed.
 
-OAuth needs a KV namespace (`OAUTH_KV`) to store tokens and client registrations. The
-**Deploy to Cloudflare** button provisions it automatically. Deploying manually? Create
-it once and paste the id into `wrangler.toml`:
+OAuth needs a KV namespace (`OAUTH_KV`) to store tokens and client registrations. 
 
-```bash
-wrangler kv namespace create OAUTH_KV
-```
+The **Deploy to Cloudflare** button provisions it automatically.
+
+**Deploying manually**, follow these steps. Wrangler validates the entire config before running any command, so the order matters:
+
+1. Remove the placeholder `[[kv_namespaces]]` block from `wrangler.toml` (the one with
+   the empty `id`).
+2. Create the namespace:
+   ```bash
+   wrangler kv namespace create OAUTH_KV
+   ```
+3. Copy the `id` from the output and add it back to `wrangler.toml`:
+   ```toml
+   [[kv_namespaces]]
+   binding = "OAUTH_KV"
+   id = "<paste id here>"
+   ```
+   
+> The key change is the warning to add the real `id` before running any other wrangler commands, since wrangler validates the entire config upfront and rejects an empty string.
 
 -----
 
