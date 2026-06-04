@@ -6,9 +6,9 @@
 [![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-8B5CF6)](https://modelcontextprotocol.io/)
 
-
 > ## #3 Product of the Day on Product Hunt
-> <a href="https://www.producthunt.com/products/second-brain-cloudflare?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-second-brain-for-ai" target="_blank" rel="noopener noreferrer"><img alt="Second Brain for AI - Persistent memory for Claude, ChatGPT &amp; Cursor. Free. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1151393&amp;theme=light&amp;period=daily&amp;t=1780357463637"></a>
+> 
+> <a href="https://www.producthunt.com/products/second-brain-cloudflare?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_campaign=badge-second-brain-for-ai" target="_blank" rel="noopener noreferrer"><img alt="Second Brain for AI - Persistent memory for Claude, ChatGPT & Cursor. Free. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1151393&theme=light&period=daily&t=1780357463637"></a>
 
 You use Claude for some things, ChatGPT for others, Cursor for code. But your context — your projects, decisions, preferences — doesn’t move with you. You re-explain yourself constantly.
 
@@ -20,6 +20,9 @@ And unlike the built-in memory inside any single app, this one is yours. It live
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)
 
+> [!TIP]
+> Have a question, feature idea, or want to show how you’re using it? [Join the conversation in GitHub Discussions](https://github.com/rahilp/second-brain-cloudflare/discussions)! That’s where releases get announced and the roadmap gets shaped.
+
 -----
 
 ## How it works
@@ -30,7 +33,7 @@ Connect Second Brain to whichever AI tools you use. Then tell it things once. It
 |-------------|------------------------------------------------------------|
 |`remember`   |Store anything: ideas, decisions, project context           |
 |`append`     |Add updates to an existing entry without creating duplicates|
-|`update`     |Replace an entry's content entirely                         |
+|`update`     |Replace an entry’s content entirely                         |
 |`recall`     |Finds memories by meaning, not exact wording                |
 |`list_recent`|Browse recent memories by date                              |
 |`forget`     |Delete an entry                                             |
@@ -41,13 +44,14 @@ Connect Second Brain to whichever AI tools you use. Then tell it things once. It
 
 Memory is only useful if it actually gets filled. Second Brain connects to the tools and moments where context naturally lives.
 
-- **CLI** -- `brain remember`, `brain recall`, and more from your terminal — `npm install -g second-brain-cf-cli`
-- **Obsidian** -- notes sync automatically via the [community plugin](https://github.com/rahilp/second-brain-obsidian-plugin)
-- **iOS** -- Brain Dump, Text Brain Dump, and Save to Brain shortcuts in one tap
-- **Browser extension** -- capture any page or highlighted text in one click via the [Chrome extension](https://github.com/rahilp/second-brain-browser-extension)
-- **Any AI client** -- use `remember` mid-conversation, right when something matters
+- **CLI** — `brain remember`, `brain recall`, and more from your terminal — `npm install -g second-brain-cf-cli`
+- **Obsidian** — notes sync automatically via the [community plugin](https://github.com/rahilp/second-brain-obsidian-plugin) · available in [Obsidian Community Plugins](https://community.obsidian.md/plugins/second-brain-sync)
+- **iOS** — Brain Dump, Text Brain Dump, and Save to Brain shortcuts in [`integrations/ios-shortcuts/`](integrations/ios-shortcuts/)
+- **Browser extension** — capture any page or highlighted text in one click via the [Chrome extension](https://github.com/rahilp/second-brain-browser-extension)
+- **Bookmarklet** — lightweight option in [`integrations/bookmarklet.js`](integrations/bookmarklet.js)
+- **Any AI client** — use `remember` mid-conversation, right when something matters
 
----
+-----
 
 ## Setup
 
@@ -66,9 +70,9 @@ Memory is only useful if it actually gets filled. Second Brain connects to the t
 That’s it. Your memory is live and ready across every tool you connect.
 
 ```bash
-# Verify it's working (replace with your worker URL and token)
-curl -X POST https://<your-worker-url>/capture \
-  -H "Authorization: Bearer coffee-lover-2026" \
+# Verify it's working (replace YOUR-WORKER-URL and YOUR-TOKEN with your values)
+curl -X POST https://YOUR-WORKER-URL/capture \
+  -H "Authorization: Bearer YOUR-TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"content": "second brain is working", "source": "test"}'
 # → {"ok":true,"id":"..."}
@@ -78,12 +82,12 @@ curl -X POST https://<your-worker-url>/capture \
 
 The `/mcp` endpoint also supports **OAuth 2.0**, so MCP clients that open a browser
 to authenticate, like claude.ai and ChatGPT, can connect without putting a token in
-the URL. When you add `https://<your-worker-url>/mcp` as a connector, you'll see a
+the URL. When you add `https://<your-worker-url>/mcp` as a connector, you’ll see a
 hosted login page; **enter your `AUTH_TOKEN`** to authorize. Claude Desktop, Claude
 Code, and `mcp-remote` keep using the `Authorization: Bearer <AUTH_TOKEN>` header as
 before — no change needed.
 
-OAuth needs a KV namespace (`OAUTH_KV`) to store tokens and client registrations. 
+OAuth needs a KV namespace (`OAUTH_KV`) to store tokens and client registrations.
 
 The **Deploy to Cloudflare** button provisions it automatically.
 
@@ -91,17 +95,19 @@ The **Deploy to Cloudflare** button provisions it automatically.
 
 1. Remove the placeholder `[[kv_namespaces]]` block from `wrangler.toml` (the one with
    the empty `id`).
-2. Create the namespace:
+1. Create the namespace:
+   
    ```bash
    wrangler kv namespace create OAUTH_KV
    ```
-3. Copy the `id` from the output and add it back to `wrangler.toml`:
+1. Copy the `id` from the output and add it back to `wrangler.toml`:
+   
    ```toml
    [[kv_namespaces]]
    binding = "OAUTH_KV"
    id = "<paste id here>"
    ```
-   
+
 > The key change is the warning to add the real `id` before running any other wrangler commands, since wrangler validates the entire config upfront and rejects an empty string.
 
 -----
@@ -118,19 +124,9 @@ The **Deploy to Cloudflare** button provisions it automatically.
 
 -----
 
-## Integrations
-
-- **CLI** — `npm install -g second-brain-cf-cli`
-- **Obsidian** — [second-brain-obsidian-plugin](https://github.com/rahilp/second-brain-obsidian-plugin) · available in [Obsidian Community Plugins](https://community.obsidian.md/plugins/second-brain-sync)
-- **iOS** — Brain Dump, Text Brain Dump, and Save to Brain shortcuts in [`integrations/ios-shortcuts/`](integrations/ios-shortcuts/)
-- **Browser extension** — [second-brain-browser-extension](https://github.com/rahilp/second-brain-browser-extension) · capture pages and highlighted text from any tab
-- **Bookmarklet** — lightweight option in [`integrations/bookmarklet.js`](integrations/bookmarklet.js)
-
------
-
 ## Stack
 
-Cloudflare Workers · D1 SQLite · Vectorize · Workers AI · MCP TypeScript SDK · MIT License
+Cloudflare Workers · D1 SQLite · Vectorize · Workers AI · KV · MCP TypeScript SDK · MIT License
 
 All free tier at personal scale. Your data stays in your own Cloudflare account.
 
