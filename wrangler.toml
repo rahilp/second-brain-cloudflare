@@ -31,3 +31,6 @@ id = ""
 
 [assets]
 directory = "./public"
+
+[triggers]
+crons = ["0 1 * * *"]

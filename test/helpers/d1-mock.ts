@@ -36,6 +36,27 @@ export class D1Mock {
           if (row) row.content = content;
           return { meta: { changes: row ? 1 : 0 } };
         }
+        if (s.startsWith("UPDATE entries SET tags = json_insert(tags, '$[#]', 'rolled-up'), content = content ||")) {
+          const [addition, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) {
+            const tags: string[] = JSON.parse(row.tags ?? "[]");
+            if (!tags.includes("rolled-up")) tags.push("rolled-up");
+            row.tags = JSON.stringify(tags);
+            row.content = row.content + addition;
+          }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET tags = json_insert(tags, '$[#]'")) {
+          const [tag, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) {
+            const tags: string[] = JSON.parse(row.tags ?? "[]");
+            if (!tags.includes(tag)) tags.push(tag);
+            row.tags = JSON.stringify(tags);
+          }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
         if (s.startsWith("UPDATE entries SET recall_count")) {
           const [id] = args;
           const row = db.entries.find((e: any) => e.id === id);
@@ -75,6 +96,23 @@ export class D1Mock {
         if (s.includes("WHERE id") && !s.includes("json_each")) {
           return db.entries.find((e: any) => e.id === args[0]) ?? null;
         }
+        if (s.includes("WHERE tags LIKE") && s.includes("created_at >")) {
+          // Cooldown check: find entries matching arg LIKE patterns + any hardcoded tags in SQL
+          const likePatterns: string[] = args.slice(0, -1).map((a: any) => String(a));
+          const cutoff = args[args.length - 1] as number;
+          // Extract hardcoded tags from SQL (e.g. '%"synthesized"%')
+          const hardcoded = [...s.matchAll(/'%"(\w+)"%'/g)].map(m => m[1]);
+          const match = db.entries.find((e: any) => {
+            if (e.created_at <= cutoff) return false;
+            const tags: string[] = JSON.parse(e.tags ?? "[]");
+            if (!hardcoded.every(t => tags.includes(t))) return false;
+            return likePatterns.every((p: string) => {
+              const tag = p.replace(/%"/g, "").replace(/"%/g, "");
+              return tags.includes(tag);
+            });
+          });
+          return match ? { id: match.id } : null;
+        }
         return null;
       },
       async all() {
@@ -82,6 +120,26 @@ export class D1Mock {
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
             .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0 }));
+          return { results };
+        }
+        if (s.includes("SELECT id, content FROM entries") && s.includes("WHERE tags LIKE") && s.includes("ORDER BY created_at DESC")) {
+          // compressTag raw entries query — filter by tag, exclude system tags and high importance
+          const tagPattern = args[0] as string;
+          const tag = tagPattern.replace(/%"/g, "").replace(/"%/g, "");
+          const results = [...db.entries]
+            .filter((e: any) => {
+              const tags: string[] = JSON.parse(e.tags ?? "[]");
+              return (
+                tags.includes(tag) &&
+                !tags.includes("synthesized") &&
+                !tags.includes("auto-pattern") &&
+                !tags.includes("rolled-up") &&
+                (e.importance_score == null || e.importance_score < 4)
+              );
+            })
+            .sort((a: any, b: any) => b.created_at - a.created_at)
+            .slice(0, 50)
+            .map((e: any) => ({ id: e.id, content: e.content }));
           return { results };
         }
         if (s.includes("SELECT id, content FROM entries WHERE id IN")) {

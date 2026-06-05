@@ -62,15 +62,15 @@ describe("derivePattern()", () => {
     expect(env.AI.run).not.toHaveBeenCalled();
   });
 
-  it("returns without calling AI when rows.length is 4 (below threshold)", async () => {
+  it("returns without calling AI when rows.length is 9 (below threshold)", async () => {
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(4), env, ctx);
+    await derivePattern(makeRows(9), env, ctx);
     expect(env.AI.run).not.toHaveBeenCalled();
   });
 
-  it("calls AI when rows.length is exactly 5 (at threshold)", async () => {
+  it("calls AI when rows.length is exactly 10 (at threshold)", async () => {
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(env.AI.run).toHaveBeenCalled();
   });
 
@@ -90,7 +90,7 @@ describe("derivePattern()", () => {
   it("truncates each memory's content to 300 characters in the prompt", async () => {
     const long = "x".repeat(400);
     const { ctx } = makeCtx();
-    await derivePattern([...makeRows(4), { id: "long", content: long }], env, ctx);
+    await derivePattern([...makeRows(9), { id: "long", content: long }], env, ctx);
     const calls = (env.AI.run as ReturnType<typeof vi.fn>).mock.calls;
     const llmCall = calls.find((call: any[]) => call[0] !== "@cf/baai/bge-small-en-v1.5");
     const prompt: string = llmCall![1].messages[0].content;
@@ -106,8 +106,9 @@ describe("derivePattern()", () => {
       { id: "d", content: "Unique memory delta" },
       { id: "e", content: "Unique memory epsilon" },
     ];
+    const allRows = [...rows, ...makeRows(5).map(r => ({ ...r, id: `filler-${r.id}` }))];
     const { ctx } = makeCtx();
-    await derivePattern(rows, env, ctx);
+    await derivePattern(allRows, env, ctx);
     const calls = (env.AI.run as ReturnType<typeof vi.fn>).mock.calls;
     const llmCall = calls.find((call: any[]) => call[0] !== "@cf/baai/bge-small-en-v1.5");
     const prompt: string = llmCall![1].messages[0].content;
@@ -116,7 +117,7 @@ describe("derivePattern()", () => {
 
   it("sends a non-streaming request to AI (no stream flag)", async () => {
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     const calls = (env.AI.run as ReturnType<typeof vi.fn>).mock.calls;
     const llmCall = calls.find((call: any[]) => call[0] !== "@cf/baai/bge-small-en-v1.5");
     expect(llmCall![1].stream).toBeUndefined();
@@ -128,42 +129,42 @@ describe("derivePattern()", () => {
   it("does not store entry when AI returns NONE", async () => {
     env = makeTestEnv(db, { AI: makePatternAI("NONE") });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(0);
   });
 
   it("does not store entry when AI returns empty string", async () => {
     env = makeTestEnv(db, { AI: makePatternAI("") });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(0);
   });
 
   it("does not store entry when AI returns only whitespace", async () => {
     env = makeTestEnv(db, { AI: makePatternAI("   ") });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(0);
   });
 
   it("does not store entry when AI returns NONE with surrounding whitespace", async () => {
     env = makeTestEnv(db, { AI: makePatternAI("  NONE  ") });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(0);
   });
 
   it("does not store entry when AI response lacks a valid starter", async () => {
     env = makeTestEnv(db, { AI: makePatternAI("I notice you tend to work late.") });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(0);
   });
 
   it("does not store entry when AI response begins with similar-but-wrong prefix", async () => {
     env = makeTestEnv(db, { AI: makePatternAI("You tend") }); // incomplete — still valid prefix but no trailing text
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     // "You tend" does start with "You tend to"? No — "You tend to" !== "You tend"
     // "You tend".startsWith("You tend to") === false
     expect(db.entries).toHaveLength(0);
@@ -175,7 +176,7 @@ describe("derivePattern()", () => {
     const pattern = "You tend to start new projects on Mondays.";
     env = makeTestEnv(db, { AI: makePatternAI(pattern) });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(1);
     expect(db.entries[0].content).toBe(pattern);
   });
@@ -184,7 +185,7 @@ describe("derivePattern()", () => {
     const pattern = "There's a recurring theme of late-night coding sessions.";
     env = makeTestEnv(db, { AI: makePatternAI(pattern) });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(1);
     expect(db.entries[0].content).toBe(pattern);
   });
@@ -193,7 +194,7 @@ describe("derivePattern()", () => {
     const pattern = "Across your memories, exercise features heavily on weekends.";
     env = makeTestEnv(db, { AI: makePatternAI(pattern) });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(1);
     expect(db.entries[0].content).toBe(pattern);
   });
@@ -201,7 +202,7 @@ describe("derivePattern()", () => {
   it("stores pattern with 'auto-pattern' tag", async () => {
     env = makeTestEnv(db, { AI: makePatternAI("You tend to prefer async communication.") });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     const tags: string[] = JSON.parse(db.entries[0].tags);
     expect(tags).toContain("auto-pattern");
   });
@@ -209,7 +210,7 @@ describe("derivePattern()", () => {
   it("stores pattern with source 'system'", async () => {
     env = makeTestEnv(db, { AI: makePatternAI("You tend to prefer async communication.") });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries[0].source).toBe("system");
   });
 
@@ -217,7 +218,7 @@ describe("derivePattern()", () => {
     const pattern = "You tend to journal in the mornings.";
     env = makeTestEnv(db, { AI: makePatternAI(`  ${pattern}  `) });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(1);
     expect(db.entries[0].content).toBe(pattern);
   });
@@ -237,7 +238,7 @@ describe("derivePattern()", () => {
       } as unknown as Ai,
     });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries).toHaveLength(1);
     expect(db.entries[0].content).toBe(pattern);
   });
@@ -255,7 +256,7 @@ describe("derivePattern()", () => {
       } as unknown as Ai,
     });
     const { ctx } = makeCtx();
-    await derivePattern(makeRows(5), env, ctx);
+    await derivePattern(makeRows(10), env, ctx);
     expect(db.entries[0].content).toBe(fromChoices);
   });
 
@@ -264,7 +265,7 @@ describe("derivePattern()", () => {
   it("does not throw when AI call rejects — error is non-fatal", async () => {
     env = makeTestEnv(db, { AI: makePatternAI(null) });
     const { ctx } = makeCtx();
-    await expect(derivePattern(makeRows(5), env, ctx)).resolves.toBeUndefined();
+    await expect(derivePattern(makeRows(10), env, ctx)).resolves.toBeUndefined();
     expect(db.entries).toHaveLength(0);
   });
 });

@@ -47,6 +47,7 @@ const CONTRADICTION_MAX_TOKENS = 80;
 const SMART_MERGE_MAX_TOKENS = 250;
 const INSIGHT_MAX_TOKENS = 300;
 const PATTERN_MAX_TOKENS = 100;
+const DIGEST_MAX_TOKENS = 400;
 
 // ─── Vectorize constants ──────────────────────────────────────────────────────
 
@@ -401,13 +402,14 @@ export function rerankWithTimeDecay(
       const isShortAppend = match.id.includes("-update-") &&
         typeof meta?.content === "string" && meta.content.length < CHUNK_OVERLAP_CHARS;
       const appendPenalty = isShortAppend ? 0.2 : 1.0;
+      const rolledUpPenalty = tags.includes("rolled-up") ? 0.4 : 1.0;
 
       // importance_score 0 = unscored (neutral). 1–5 scales from 0.88 → 1.20.
       // Lets high-importance memories surface above the recency cap without dominating.
       const imp = importanceScores.get(parentId) ?? 0;
       const importanceMultiplier = imp === 0 ? 1.0 : 0.8 + (imp / 5) * 0.4;
 
-      return { ...match, score: match.score * combinedMultiplier * appendPenalty * importanceMultiplier };
+      return { ...match, score: match.score * combinedMultiplier * appendPenalty * rolledUpPenalty * importanceMultiplier };
     })
     .sort((a, b) => b.score - a.score);
 }
@@ -663,7 +665,13 @@ export async function derivePattern(
   env: Env,
   ctx: ExecutionContext
 ): Promise<void> {
-  if (rows.length < 5) return;
+  if (rows.length < 10) return;
+
+  // At most one auto-pattern per 48h to prevent spam across repeated recalls
+  const recentPattern = await env.DB.prepare(
+    `SELECT id FROM entries WHERE tags LIKE '%"auto-pattern"%' AND created_at > ? LIMIT 1`
+  ).bind(Date.now() - 172800000).first();
+  if (recentPattern) return;
 
   const sample = rows.slice(0, 20);
   const memoriesList = sample
@@ -701,6 +709,124 @@ If no genuine pattern exists across 3+ memories, respond with exactly: NONE`;
     await captureEntry(trimmed, ["auto-pattern"], "system", env, ctx);
   } catch (e) {
     console.error("derivePattern failed (non-fatal):", String(e));
+  }
+}
+
+// ─── Semantic compression ─────────────────────────────────────────────────────
+
+export async function synthesizeDigest(
+  tag: string,
+  rows: { id: string; content: string }[],
+  env: Env
+): Promise<string> {
+  if (!rows.length) return "";
+
+  const memoriesList = rows
+    .map((r, i) => `[${i + 1}] ${r.content.slice(0, 400)}`)
+    .join("\n\n");
+
+  const prompt = `You are a second brain assistant. Based on these stored memories tagged "${tag}", write a single cohesive paragraph describing the current state of this area — what has been done, decided, and is being worked toward. Write as one flowing paragraph, not a list.
+
+Memories:
+${memoriesList}
+
+State of "${tag}":`;
+
+  let digest = "";
+  try {
+    const stream = await (env.AI as any).run(LLM_MODEL as any, {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: DIGEST_MAX_TOKENS,
+      stream: true,
+    });
+    digest = await readStreamText(stream as ReadableStream);
+  } catch (e) {
+    console.error("synthesizeDigest LLM call failed (non-fatal):", e);
+  }
+
+  return digest.trim();
+}
+
+export async function compressTag(
+  tag: string,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<{ synthesizedId: string | null; entriesUsed: number; text: string }> {
+  const recentSynth = await env.DB.prepare(`
+    SELECT id FROM entries
+    WHERE tags LIKE '%"synthesized"%'
+      AND tags LIKE ?
+      AND created_at > ?
+    LIMIT 1
+  `).bind(`%"${tag}"%`, Date.now() - 86400000).first();
+
+  if (recentSynth) {
+    return { synthesizedId: null, entriesUsed: 0, text: "" };
+  }
+
+  // Fetch compressible entries: tagged with this tag, not system-tagged, not high-importance
+  const { results: rawEntries } = await env.DB.prepare(`
+    SELECT id, content FROM entries
+    WHERE tags LIKE ?
+      AND tags NOT LIKE '%"synthesized"%'
+      AND tags NOT LIKE '%"auto-pattern"%'
+      AND tags NOT LIKE '%"rolled-up"%'
+      AND (importance_score IS NULL OR importance_score < 4)
+    ORDER BY created_at DESC
+    LIMIT 50
+  `).bind(`%"${tag}"%`).all();
+
+  if (rawEntries.length < 10) {
+    return { synthesizedId: null, entriesUsed: 0, text: "" };
+  }
+
+  const rows = rawEntries.map(r => ({ id: r.id as string, content: r.content as string }));
+  const text = await synthesizeDigest(tag, rows, env);
+  if (!text) return { synthesizedId: null, entriesUsed: 0, text: "" };
+
+  const content = `[Synthesized from ${rows.length} entries tagged "${tag}"]\n\n${text}`;
+  const result = await captureEntry(content, ["synthesized", tag], "system", env, ctx);
+
+  if (result.status !== "stored") {
+    return { synthesizedId: null, entriesUsed: 0, text };
+  }
+
+  for (const id of rows.map(r => r.id)) {
+    try {
+      await env.DB.prepare(
+        `UPDATE entries SET tags = json_insert(tags, '$[#]', 'rolled-up'), content = content || ? WHERE id = ?`
+      ).bind(`\n\n[Digest: ${result.id}]`, id).run();
+    } catch (e) {
+      console.error(`Failed to update source entry ${id} (non-fatal):`, e);
+    }
+  }
+
+  return { synthesizedId: result.id, entriesUsed: rows.length, text };
+}
+
+async function runNightlyCompression(env: Env, ctx: ExecutionContext): Promise<void> {
+  await initializeDatabase(env);
+
+  const { results } = await env.DB.prepare(`
+    SELECT value as tag, COUNT(*) as count
+    FROM entries, json_each(entries.tags)
+    WHERE value NOT IN ('synthesized', 'auto-pattern', 'duplicate-candidate', 'contradiction-resolved', 'rolled-up')
+      AND entries.tags NOT LIKE '%"rolled-up"%'
+      AND entries.tags NOT LIKE '%"synthesized"%'
+      AND entries.tags NOT LIKE '%"auto-pattern"%'
+      AND (entries.importance_score IS NULL OR entries.importance_score < 4)
+    GROUP BY value
+    HAVING count > 10
+    ORDER BY count DESC
+  `).all();
+
+  for (const row of results) {
+    const tag = row.tag as string;
+    try {
+      await compressTag(tag, env, ctx);
+    } catch (e) {
+      console.error(`Compression failed for tag "${tag}" (non-fatal):`, e);
+    }
   }
 }
 
@@ -1371,14 +1497,38 @@ const defaultHandler = {
     // GET /stats
     if (url.pathname === "/stats" && request.method === "GET") {
       if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
-      const [summary, tagRows] = await Promise.all([
+      const [summary, tagRows, candidateRows] = await Promise.all([
         env.DB.prepare(`SELECT COUNT(*) as count, AVG(importance_score) as avg_importance FROM entries`).first() as Promise<Record<string, any> | null>,
         env.DB.prepare(`SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags) GROUP BY value ORDER BY n DESC LIMIT 5`).all(),
+        env.DB.prepare(`
+          SELECT value as tag, COUNT(*) as count
+          FROM entries, json_each(entries.tags)
+          WHERE value NOT IN ('synthesized', 'auto-pattern', 'duplicate-candidate', 'contradiction-resolved', 'rolled-up')
+            AND entries.tags NOT LIKE '%"rolled-up"%'
+            AND entries.tags NOT LIKE '%"synthesized"%'
+            AND entries.tags NOT LIKE '%"auto-pattern"%'
+            AND (entries.importance_score IS NULL OR entries.importance_score < 4)
+          GROUP BY value
+          HAVING count > 10
+          ORDER BY count DESC
+          LIMIT 10
+        `).all(),
       ]);
+
+      const cutoff = Date.now() - 86400000;
+      const digestCandidates: { tag: string; count: number }[] = [];
+      for (const row of candidateRows.results as any[]) {
+        const existing = await env.DB.prepare(
+          `SELECT id FROM entries WHERE tags LIKE '%"synthesized"%' AND tags LIKE ? AND created_at > ? LIMIT 1`
+        ).bind(`%"${row.tag}"%`, cutoff).first();
+        if (!existing) digestCandidates.push({ tag: row.tag as string, count: row.count as number });
+      }
+
       return json({
         count: (summary?.count as number) ?? 0,
         avg_importance: summary?.avg_importance != null ? Math.round((summary.avg_importance as number) * 10) / 10 : null,
         top_tags: (tagRows.results as any[]).map(r => r.value as string),
+        digest_candidates: digestCandidates,
       });
     }
 
@@ -1418,6 +1568,21 @@ const defaultHandler = {
       });
     }
 
+    // GET /digest
+    if (url.pathname === "/digest" && request.method === "GET") {
+      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const tag = url.searchParams.get("tag")?.trim();
+      if (!tag) return json({ error: "tag parameter is required" }, 400);
+
+      const result = await compressTag(tag, env, ctx);
+
+      if (!result.synthesizedId) {
+        return json({ tag, error: "Could not create digest — tag may have fewer than 20 entries or was recently compressed", source_count: result.entriesUsed });
+      }
+
+      return json({ tag, synthesis: result.text, entry_id: result.synthesizedId, source_count: result.entriesUsed });
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };
@@ -1425,8 +1590,9 @@ const defaultHandler = {
 // ─── Export ───────────────────────────────────────────────────────────────────
 // Wrap both handlers in OAuthProvider. It auto-serves the OAuth metadata,
 // /oauth/token, and /oauth/register (RFC 7591) endpoints, and gates /mcp.
+// The scheduled handler runs the nightly compression cron alongside the fetch handler.
 
-export default new OAuthProvider({
+const oauthProvider = new OAuthProvider({
   apiRoute: "/mcp",
   apiHandler,
   defaultHandler,
@@ -1441,3 +1607,11 @@ export default new OAuthProvider({
     return null;
   },
 });
+
+export default {
+  fetch: (req: Request, env: Env, ctx: ExecutionContext) =>
+    oauthProvider.fetch(req, env as any, ctx),
+  scheduled: async (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+    ctx.waitUntil(runNightlyCompression(env, ctx));
+  },
+};

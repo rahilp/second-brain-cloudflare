@@ -964,6 +964,20 @@
         box-shadow: var(--shadow-float);
       }
 
+      .memory-card.card--rolled-up {
+        opacity: 0.65;
+      }
+
+      .memory-card.card--synthesized {
+        border-left: 3px solid var(--accent);
+      }
+
+      .tag-chip.tag-chip--synthesized {
+        background: var(--accent);
+        color: var(--on-accent);
+        font-weight: 500;
+      }
+
       .match-line {
         display: flex;
         align-items: center;
@@ -1491,6 +1505,8 @@
       }
       .menu-inner {
         padding: 24px 22px calc(34px + env(safe-area-inset-bottom));
+        max-height: 80vh;
+        overflow-y: auto;
       }
 
       .view-inner {
@@ -1896,6 +1912,96 @@
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
+      }
+
+      .digest-section {
+        margin-bottom: 6px;
+      }
+
+      .digest-section-label {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 500;
+        margin-bottom: 9px;
+      }
+
+      .digest-candidate-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 0;
+        border-bottom: 0.5px solid var(--line-soft);
+      }
+
+      .digest-candidate-row:last-of-type {
+        border-bottom: none;
+      }
+
+      .digest-candidate-label {
+        font-size: 13px;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .digest-candidate-count {
+        font-size: 11px;
+        color: var(--text-tertiary);
+      }
+
+      .digest-btn {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--accent);
+        background: var(--accent-soft);
+        border: none;
+        border-radius: var(--radius-pill);
+        padding: 5px 12px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 0.15s;
+      }
+
+      .digest-btn:hover {
+        background: rgba(178, 102, 65, 0.18);
+      }
+
+      .digest-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .digest-btn--loading i {
+        animation: spin 0.7s linear infinite;
+        display: inline-block;
+      }
+
+      .digest-note {
+        font-size: 12px;
+        color: var(--text-tertiary);
+        line-height: 1.5;
+        margin-bottom: 10px;
+      }
+
+      .digest-result {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-top: 6px;
+        line-height: 1.5;
+        padding: 8px 10px;
+        background: var(--accent-soft);
+        border-radius: 8px;
+      }
+
+      .digest-result-meta {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--good);
+        font-weight: 500;
       }
 
       /* ============ DESKTOP SIDEBAR ============ */
@@ -2361,6 +2467,7 @@
             <div class="stats-tags" id="stats-tags"></div>
           </div>
         </div>
+        <div class="digest-section" id="digest-section" style="display:none"></div>
         <div class="theme-row">
           <span class="theme-row-label">Appearance</span>
           <div class="theme-toggle" id="theme-toggle">
@@ -2673,7 +2780,9 @@
 
       function makeRecallCard(entry) {
         const card = document.createElement('div')
-        card.className = 'memory-card'
+        const isSynthesized = entry.tags.includes('synthesized')
+        const isRolledUp = entry.tags.includes('rolled-up')
+        card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '')
         card.innerHTML = `
     <div class="match-line">
       <span class="match-pct">${entry.score}%</span>
@@ -2681,7 +2790,7 @@
     </div>
     <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
     <div class="card-footer">
-      <div class="card-tags">${entry.tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
+      <div class="card-tags">${entry.tags.map((t) => `<span class="tag-chip${t === 'synthesized' ? ' tag-chip--synthesized' : ''}">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
         ${
           entry.id
@@ -2777,13 +2886,15 @@
         try {
           tags = JSON.parse(entry.tags || '[]')
         } catch {}
+        const isSynthesized = tags.includes('synthesized')
+        const isRolledUp = tags.includes('rolled-up')
         const card = document.createElement('div')
-        card.className = 'memory-card'
+        card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '')
         card.dataset.id = entry.id
         card.innerHTML = `
     <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
     <div class="card-footer">
-      <div class="card-tags">${tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}</div>
+      <div class="card-tags">${tags.map((t) => `<span class="tag-chip${t === 'synthesized' ? ' tag-chip--synthesized' : ''}">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
         <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
         <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> Edit</button>
@@ -2979,7 +3090,66 @@
           tagsEl.innerHTML = data.top_tags?.length
             ? data.top_tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')
             : '<span style="font-size:13px;color:var(--text-tertiary)">No tags yet</span>'
+          renderDigestSection(data.digest_candidates ?? [])
         } catch {}
+      }
+
+      function renderDigestSection(candidates) {
+        const el = document.getElementById('digest-section')
+        if (!candidates.length) { el.style.display = 'none'; return }
+        el.style.display = ''
+        el.innerHTML = `
+          <div class="digest-section-label">Ready to compress</div>
+          <p class="digest-note">Originals are never deleted — digest adds a summary and ranks originals lower in recall so they don't crowd results.</p>
+          ${candidates.map(c => `
+            <div class="digest-candidate-row" id="digest-row-${escAttr(c.tag)}">
+              <div class="digest-candidate-label">
+                <span>${escHtml(c.tag)}</span>
+                <span class="digest-candidate-count">${c.count} entries</span>
+              </div>
+              <button class="digest-btn" onclick="runDigest('${escAttr(c.tag)}', this)">Digest →</button>
+            </div>
+          `).join('')}
+        `
+      }
+
+      async function runDigest(tag, btn) {
+        btn.disabled = true
+        btn.classList.add('digest-btn--loading')
+        btn.innerHTML = '<i class="ti ti-loader-2"></i> Working…'
+        const row = document.getElementById('digest-row-' + tag)
+        try {
+          const res = await fetch(`${WORKER_URL}/digest?tag=${encodeURIComponent(tag)}`, {
+            headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
+          })
+          const data = await res.json()
+          if (data.synthesis) {
+            btn.classList.remove('digest-btn--loading')
+            btn.innerHTML = '<i class="ti ti-check"></i> Done'
+            btn.style.color = 'var(--good)'
+            setTimeout(() => {
+              row.innerHTML = `<div class="digest-result"><strong>${escHtml(tag)}</strong> — ${escHtml(data.synthesis)}<div class="digest-result-meta"><i class="ti ti-lock"></i> ${data.source_count} original memories preserved &amp; still searchable</div></div>`
+            }, 700)
+          } else {
+            btn.classList.remove('digest-btn--loading')
+            btn.innerHTML = '<i class="ti ti-alert-triangle"></i> ' + escHtml(data.error ?? 'Could not create digest')
+            btn.style.color = 'var(--danger)'
+            setTimeout(() => {
+              btn.disabled = false
+              btn.innerHTML = 'Digest →'
+              btn.style.color = ''
+            }, 3000)
+          }
+        } catch {
+          btn.classList.remove('digest-btn--loading')
+          btn.innerHTML = '<i class="ti ti-wifi-off"></i> Request failed'
+          btn.style.color = 'var(--danger)'
+          setTimeout(() => {
+            btn.disabled = false
+            btn.innerHTML = 'Digest →'
+            btn.style.color = ''
+          }, 3000)
+        }
       }
 
       async function exportMemories(format) {
