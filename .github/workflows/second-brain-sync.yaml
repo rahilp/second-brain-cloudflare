@@ -52,4 +52,4 @@ jobs:
           PR_COMMITS: ${{ steps.commits.outputs.messages }}
           REPO: ${{ github.repository }}
         run: |
-          brain remember "PR merged: $PR_TITLE | Repo: $REPO | PR: #$PR_NUMBER | Author: $PR_AUTHOR | Merged by: $PR_MERGED_BY | Branch: $PR_HEAD -> $PR_BASE | Description: $PR_BODY | Commits: $PR_COMMITS"
+          brain remember "PR merged: $PR_TITLE | Repo: $REPO | PR: \#$PR_NUMBER | Author: $PR_AUTHOR | Merged by: $PR_MERGED_BY | Branch: $PR_HEAD -> $PR_BASE | Description: $PR_BODY | Commits: $PR_COMMITS"
