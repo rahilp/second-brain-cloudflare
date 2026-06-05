@@ -1,0 +1,57 @@
+name: Store Merged PR to Second Brain
+
+on:
+  pull_request:
+    types:
+      - closed
+
+jobs:
+  store-to-second-brain:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Second Brain CLI
+        run: npm install -g second-brain-cf-cli
+
+      - name: Write Second Brain config
+        run: |
+          mkdir -p ~/.config/second-brain
+          echo '{
+            "workerUrl": "${{ secrets.SECOND_BRAIN_URL }}",
+            "authToken": "${{ secrets.SECOND_BRAIN_TOKEN }}"
+          }' > ~/.config/second-brain/config.json
+
+      - name: Collect commit messages
+        id: commits
+        run: |
+          COMMITS=$(git log origin/${{ github.event.pull_request.base.ref }}..HEAD --pretty=format:"- %s" | head -20)
+          echo "messages<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Store PR to Second Brain
+        run: |
+          brain remember "PR merged: ${{ github.event.pull_request.title }}
+
+Description:
+${{ github.event.pull_request.body }}
+
+Commits:
+${{ steps.commits.outputs.messages }}
+
+Repo: ${{ github.repository }}
+PR: #${{ github.event.pull_request.number }}
+Author: ${{ github.event.pull_request.user.login }}
+Merged by: ${{ github.event.pull_request.merged_by.login }}
+Branch: ${{ github.event.pull_request.head.ref }} -> ${{ github.event.pull_request.base.ref }}"
