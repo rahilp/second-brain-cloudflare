@@ -1052,12 +1052,13 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       }
 
-      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      const tags: string[] = JSON.parse(row.tags ?? "[]").filter((t: string) => t !== "rolled-up");
       const source = row.source as string;
       const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
 
-      // Step 1: Update D1 content
-      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, id).run();
+      // Step 1: Update D1 content and tags (strip rolled-up so updated entry ranks normally)
+      await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
+        .bind(newContent, JSON.stringify(tags), id).run();
 
       // Step 2: Re-embed new content → inserts new vectors + updates vector_ids in D1
       let newVectorCount = 0;
