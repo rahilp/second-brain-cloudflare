@@ -65,7 +65,21 @@ Memory is only useful if it actually gets filled. Second Brain connects to the t
 
 1. **Click Deploy** — everything provisions automatically
 1. **Set your token** — you’ll be prompted during deploy
-1. **Connect your AI tools** — [instructions here](../../wiki/Connect-to-AI-Clients)
+1. **Connect your AI tools** — run one command and paste in your worker URL:
+
+   ```bash
+   # macOS / Linux / WSL / Git Bash
+   curl -fsSL https://raw.githubusercontent.com/rahilp/second-brain-cloudflare/main/scripts/connect-ai-clients.sh | bash -s -- https://YOUR-WORKER-URL
+   ```
+
+   ```powershell
+   # Windows (PowerShell)
+   iex "& { $(irm https://raw.githubusercontent.com/rahilp/second-brain-cloudflare/main/scripts/connect-ai-clients.ps1) } -WorkerUrl https://YOUR-WORKER-URL"
+   ```
+
+   This appends the global system instructions to Claude Code (`~/.claude/CLAUDE.md`) and Codex CLI (`~/.codex/AGENTS.md`), and registers the `/mcp` endpoint with both via OAuth — the only thing you need on hand is your worker URL. Your `AUTH_TOKEN` is entered once in the browser during the OAuth handshake; it never touches the script, your shell history, or a config file. More detail in the [wiki](../../wiki/Connect-to-AI-Clients).
+
+   > Using the **ChatGPT** or **Claude** apps (not Codex CLI / Claude Code)? Their personalization / custom-instructions settings are account-level, behind your login, with no public write API — the script can't reach them. Paste `AI_Instructions/CHATGPT_INSTRUCTIONS.md` into ChatGPT's Settings → Personalization → Custom Instructions, and an equivalent block into claude.ai's profile preferences, by hand.
 
 That’s it. Your memory is live and ready across every tool you connect.
 
@@ -78,14 +92,20 @@ curl -X POST https://YOUR-WORKER-URL/capture \
 # → {"ok":true,"id":"..."}
 ```
 
-### OAuth for browser-based clients (claude.ai, ChatGPT)
+### OAuth for browser-based clients
 
-The `/mcp` endpoint also supports **OAuth 2.0**, so MCP clients that open a browser
-to authenticate, like claude.ai and ChatGPT, can connect without putting a token in
-the URL. When you add `https://<your-worker-url>/mcp` as a connector, you’ll see a
-hosted login page; **enter your `AUTH_TOKEN`** to authorize. Claude Desktop, Claude
-Code, and `mcp-remote` keep using the `Authorization: Bearer <AUTH_TOKEN>` header as
-before — no change needed.
+The `/mcp` endpoint supports **OAuth 2.0** (discovery + dynamic client registration),
+so any MCP client that can open a browser to authenticate connects without ever
+putting a token in a config file or URL. When you add `https://<your-worker-url>/mcp`
+as a connector — including via the one-liner above — the client detects the
+`WWW-Authenticate` challenge, registers itself, and opens the worker's hosted login
+page; **enter your `AUTH_TOKEN`** there to authorize. claude.ai, ChatGPT, Claude Code
+(`claude mcp add --transport http second-brain <url>/mcp`, no `--header` needed), and
+Codex CLI (`codex mcp add second-brain --url <url>/mcp`, which detects OAuth support
+and starts the login flow itself) all use this flow.
+
+Clients that can't open a browser — e.g. `mcp-remote` in headless contexts — can still
+fall back to the static token via `Authorization: Bearer <AUTH_TOKEN>`.
 
 OAuth needs a KV namespace (`OAUTH_KV`) to store tokens and client registrations.
 
