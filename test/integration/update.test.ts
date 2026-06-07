@@ -159,7 +159,10 @@ describe("POST /update", () => {
 
   // ── Vector orphan prevention ────────────────────────────────────────────────
 
-  it("deletes old vector IDs after re-embedding", async () => {
+  it("deletes only stale vectors, preserving the re-embedded (reused) id", async () => {
+    // Entry previously had 2 chunks. The short update re-embeds to a single
+    // chunk keyed by the entry id ("entry-abc"), which must NOT be deleted —
+    // only the now-orphaned "entry-abc-chunk-1" should be removed.
     const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({ deleteByIds: deleteByIdsMock }),
@@ -172,7 +175,24 @@ describe("POST /update", () => {
     );
 
     expect(deleteByIdsMock).toHaveBeenCalledOnce();
-    expect(deleteByIdsMock.mock.calls[0][0]).toEqual(["entry-abc", "entry-abc-chunk-1"]);
+    expect(deleteByIdsMock.mock.calls[0][0]).toEqual(["entry-abc-chunk-1"]);
+  });
+
+  it("does NOT delete the re-embedded single-chunk vector (id-reuse regression)", async () => {
+    // Single-chunk entry: vector id == entry id. The re-embed reuses that id,
+    // so there is nothing stale — deleting it would make the entry unsearchable.
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({ deleteByIds: deleteByIdsMock }),
+    });
+    seedEntry(db, { vector_ids: '["entry-abc"]' });
+
+    await worker.fetch(
+      req("POST", "/update", { body: { id: "entry-abc", content: "Updated" } }),
+      env, ctx
+    );
+
+    expect(deleteByIdsMock).not.toHaveBeenCalled();
   });
 
   it("does not call deleteByIds when vector_ids is empty", async () => {

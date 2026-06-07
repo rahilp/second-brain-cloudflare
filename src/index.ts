@@ -569,6 +569,15 @@ async function storeEntry(
   return vectorIds;
 }
 
+// Delete vectors that are no longer referenced after a re-embed. Ids reused by
+// the new embedding must survive: single-chunk entries are keyed by the entry
+// id, so the re-embedded vector reuses the old id. Deleting the full old set
+// would remove the vector we just inserted, leaving the entry unsearchable.
+async function deleteStaleVectors(env: Env, oldIds: string[], newIds: string[]): Promise<void> {
+  const stale = oldIds.filter(v => !newIds.includes(v));
+  if (stale.length) await env.VECTORIZE.deleteByIds(stale);
+}
+
 // ─── Append to existing entry ─────────────────────────────────────────────────
 // For short appends (combined content ≤ CHUNK_MAX_CHARS): adds only the new
 // addition as a single new Vectorize vector pointing to the parent ID.
@@ -605,15 +614,16 @@ async function appendToEntry(
       .bind(newContent, id).run();
 
     // Step 2: Re-chunk + re-embed full content (also updates vector_ids in D1)
+    let newVectorIds: string[] = [];
     try {
-      await storeEntry(env, id, newContent, tags, source, Date.now());
+      newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
     } catch (e) {
       console.error("Vectorize re-embed failed (non-fatal):", e);
     }
 
-    // Step 3: Delete old vectors after new ones are safely inserted
+    // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
     try {
-      if (existingVectorIds.length) await env.VECTORIZE.deleteByIds(existingVectorIds);
+      await deleteStaleVectors(env, existingVectorIds, newVectorIds);
     } catch (e) {
       console.error("Old vector cleanup failed (non-fatal):", e);
     }
@@ -1066,13 +1076,14 @@ export async function captureEntry(
       await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, targetId).run();
 
       // Step 2: Re-embed new content — inserts new vectors, updates vector_ids in D1
+      let newVectorIds: string[] = [];
       try {
-        await storeEntry(env, targetId, newContent, existingTags, existingSource, Date.now());
+        newVectorIds = await storeEntry(env, targetId, newContent, existingTags, existingSource, Date.now());
       } catch (e) { console.error("Vectorize re-embed failed (non-fatal):", e); }
 
-      // Step 3: Delete old vectors after new ones are safely in place
+      // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
       try {
-        if (oldVectorIds.length) await env.VECTORIZE.deleteByIds(oldVectorIds);
+        await deleteStaleVectors(env, oldVectorIds, newVectorIds);
       } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
 
       return mergeAction.action === "merge"
@@ -1276,17 +1287,17 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         .bind(newContent, JSON.stringify(tags), id).run();
 
       // Step 2: Re-embed new content → inserts new vectors + updates vector_ids in D1
-      let newVectorCount = 0;
+      let newVectorIds: string[] = [];
       try {
-        const newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
-        newVectorCount = newVectorIds.length;
+        newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }
+      const newVectorCount = newVectorIds.length;
 
-      // Step 3: Delete old vectors — after new ones are safely in place
+      // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
       try {
-        if (oldVectorIds.length) await env.VECTORIZE.deleteByIds(oldVectorIds);
+        await deleteStaleVectors(env, oldVectorIds, newVectorIds);
       } catch (e) {
         console.error("Old vector cleanup failed (non-fatal):", e);
       }
@@ -1553,16 +1564,16 @@ const defaultHandler = {
       await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
         .bind(finalContent, JSON.stringify(mergedTags), id).run();
 
-      let newVectorCount = 0;
+      let newVectorIds: string[] = [];
       try {
-        const newVectorIds = await storeEntry(env, id, finalContent, mergedTags, source, Date.now());
-        newVectorCount = newVectorIds.length;
+        newVectorIds = await storeEntry(env, id, finalContent, mergedTags, source, Date.now());
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }
+      const newVectorCount = newVectorIds.length;
 
       try {
-        if (oldVectorIds.length) await env.VECTORIZE.deleteByIds(oldVectorIds);
+        await deleteStaleVectors(env, oldVectorIds, newVectorIds);
       } catch (e) {
         console.error("Old vector cleanup failed (non-fatal):", e);
       }

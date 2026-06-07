@@ -250,7 +250,8 @@ describe("captureEntry()", () => {
     });
     const { ctx } = makeCtx();
     await captureEntry("I switched to Cursor", [], "api", env, ctx);
-    expect(deleteByIdsMock).toHaveBeenCalledWith(["existing", "existing-chunk-1"]);
+    // Only the stale chunk is deleted; the reused "existing" vector survives.
+    expect(deleteByIdsMock).toHaveBeenCalledWith(["existing-chunk-1"]);
   });
 
   it("replace: falls through to normal insert when target not found in DB", async () => {
@@ -333,7 +334,8 @@ describe("captureEntry()", () => {
     });
     const { ctx } = makeCtx();
     await captureEntry("I like dark mode at night", [], "api", env, ctx);
-    expect(deleteByIdsMock).toHaveBeenCalledWith(["existing", "existing-chunk-1"]);
+    // Only the stale chunk is deleted; the reused "existing" vector survives.
+    expect(deleteByIdsMock).toHaveBeenCalledWith(["existing-chunk-1"]);
   });
 
   // ── Smart merge: keep_both falls back to flagged (existing behaviour) ────────
