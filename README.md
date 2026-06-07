@@ -120,7 +120,7 @@ The **Deploy to Cloudflare** button provisions it automatically.
 - [Capture from Anywhere](../../wiki/Capture-from-Anywhere) — browser extension, bookmarklet, iOS Shortcuts, share sheet
 - [Web UI](../../wiki/Web-UI) — dashboard and mobile interface
 - [Obsidian Plugin](../../wiki/Obsidian-Plugin) — install, configure, sync modes
-- [API Reference](../../wiki/API-Reference) — /capture, /append, /update, /list, /count, /tags, /stats, /chat, /mcp endpoints
+- [API Reference](../../wiki/API-Reference) — /capture, /append, /update, /list, /recall, /forget, /count, /tags, /stats, /chat, /digest, /mcp endpoints
 
 -----
 

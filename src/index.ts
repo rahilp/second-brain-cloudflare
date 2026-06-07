@@ -88,6 +88,13 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+// Returns a 401 Response if the request lacks a valid token, otherwise null —
+// lets routes early-return with `const authErr = requireAuth(...); if (authErr) return authErr;`
+function requireAuth(request: Request, env: Env): Response | null {
+  if (isAuthorized(request, env)) return null;
+  return json({ ok: false, error: "Unauthorized" }, 401);
+}
+
 // Hosted OAuth login page. Styled to match the dashboard's token-entry card
 // (#auth-overlay in public/index.html) — same fonts, palette, and layout.
 function loginHtml(error?: string): string {
@@ -489,6 +496,30 @@ export function extractHashtags(content: string): { cleanContent: string; hashta
   return { cleanContent, hashtags };
 }
 
+// ─── Shared entry-listing filter builder ─────────────────────────────────────
+// Builds the WHERE/ORDER/LIMIT clause shared by list_recent and GET /list so
+// both stay in sync on which filters (tag, after, before) are supported.
+
+export function buildEntryFilterQuery(params: {
+  n: number;
+  tag?: string;
+  after?: number;
+  before?: number;
+}): { sql: string; bindings: (string | number)[] } {
+  const conds: string[] = [];
+  const bindings: (string | number)[] = [];
+  if (params.tag) { conds.push(`tags LIKE ?`); bindings.push(`%"${params.tag}"%`); }
+  if (params.after !== undefined) { conds.push(`created_at >= ?`); bindings.push(params.after); }
+  if (params.before !== undefined) { conds.push(`created_at <= ?`); bindings.push(params.before); }
+
+  let sql = `SELECT id, content, tags, source, created_at FROM entries`;
+  if (conds.length) sql += ` WHERE ` + conds.join(` AND `);
+  sql += ` ORDER BY created_at DESC LIMIT ?`;
+  bindings.push(params.n);
+
+  return { sql, bindings };
+}
+
 // ─── Store entry (full embed + chunk) ────────────────────────────────────────
 // Returns the list of vector IDs inserted so forget() can clean up exactly.
 
@@ -830,6 +861,159 @@ async function runNightlyCompression(env: Env, ctx: ExecutionContext): Promise<v
   }
 }
 
+// ─── Shared search path ───────────────────────────────────────────────────────
+// Used by both the `recall` MCP tool and GET /recall — the full semantic
+// search pipeline (embed → vector query → time-decay rerank → dedupe → D1
+// hydration → insight synthesis) lives here once; callers format the result.
+
+export interface RecallMatch {
+  id: string;
+  content: string;
+  score: number;
+  createdAt: number;
+  tags: string[];
+  source: string;
+  isUpdate: boolean;
+}
+
+export interface RecallSearchResult {
+  matches: RecallMatch[];
+  insight: string;
+}
+
+export async function recallEntries(
+  params: { query: string; topK: number; tag?: string; after?: number; before?: number },
+  env: Env,
+  ctx: ExecutionContext
+): Promise<RecallSearchResult> {
+  const { query, topK } = params;
+  let { tag, after, before } = params;
+  const now = Date.now();
+
+  let embedQuery = query;
+  if (after === undefined && before === undefined) {
+    const parsed = parseTimePhrase(query, now);
+    after = parsed.after;
+    before = parsed.before;
+    embedQuery = parsed.cleanQuery;
+  }
+
+  const values = await embed(embedQuery, env);
+
+  // If tag filter, resolve matching IDs from D1 first (D1 is source of truth for tags)
+  let tagFilterIds: Set<string> | null = null;
+  if (tag) {
+    const { results: tagRows } = await env.DB.prepare(
+      `SELECT id FROM entries WHERE tags LIKE ?`
+    ).bind(`%"${tag}"%`).all();
+    tagFilterIds = new Set((tagRows as any[]).map(r => r.id as string));
+    if (tagFilterIds.size === 0) return { matches: [], insight: "" };
+  }
+
+  // Query Vectorize without filter — tag filtering happens in-memory below
+  // Cloudflare Vectorize caps topK at 50 when returnMetadata="all" (error 40025)
+  const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
+  let results = await env.VECTORIZE.query(values, {
+    topK: vectorizeTopK,
+    returnMetadata: "all",
+  });
+
+  if (results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
+    results = await env.VECTORIZE.query(values, {
+      topK: 50,
+      returnMetadata: "all",
+    });
+  }
+
+  if (!results.matches.length) return { matches: [], insight: "" };
+
+  // Fetch recall_count and importance_score for all candidates to use in scoring
+  const candidateIds = [...new Set(results.matches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
+  const rcPlaceholders = candidateIds.map(() => "?").join(", ");
+  const { results: rcRows } = await env.DB.prepare(
+    `SELECT id, recall_count, importance_score FROM entries WHERE id IN (${rcPlaceholders})`
+  ).bind(...candidateIds).all() as { results: { id: string; recall_count: number; importance_score: number }[] };
+  const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
+  const importanceScores = new Map(rcRows.map(r => [r.id, r.importance_score ?? 0]));
+
+  const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts, importanceScores);
+
+  const seen = new Set<string>();
+  const deduped = reranked.filter((m) => {
+    const parentId = (m.metadata as any)?.parentId ?? m.id;
+    if (seen.has(parentId)) return false;
+    // Apply tag filter against D1-resolved IDs
+    if (tagFilterIds && !tagFilterIds.has(parentId)) return false;
+    seen.add(parentId);
+    return true;
+  }).slice(0, topK);
+
+  if (!deduped.length) return { matches: [], insight: "" };
+
+  // Fetch full content from D1 for all matched parent IDs, applying time filter if set
+  const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
+  const placeholders = parentIds.map(() => "?").join(", ");
+  const d1Bindings: (string | number)[] = [...parentIds];
+  let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%'`;
+  if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
+  if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
+  const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
+
+  const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
+
+  // Increment recall_count for entries actually shown
+  ctx.waitUntil(
+    Promise.all(
+      [...d1Map.keys()].map(id =>
+        env.DB.prepare(`UPDATE entries SET recall_count = recall_count + 1 WHERE id = ?`).bind(id).run()
+      )
+    ).catch(e => console.error("recall_count update failed (non-fatal):", e))
+  );
+
+  const matches: RecallMatch[] = deduped.map((m) => {
+    const meta = m.metadata as Record<string, any>;
+    const parentId = (meta?.parentId ?? m.id) as string;
+    const row = d1Map.get(parentId);
+    const isUpdate = !!meta?.isUpdate;
+
+    if (row) {
+      return {
+        id: parentId,
+        content: row.content as string,
+        score: m.score,
+        createdAt: row.created_at as number,
+        tags: JSON.parse(row.tags ?? "[]"),
+        source: row.source as string,
+        isUpdate,
+      };
+    }
+
+    // Fallback to metadata if D1 row not found (shouldn't happen)
+    return {
+      id: parentId,
+      content: (meta?.content as string) ?? "",
+      score: m.score,
+      createdAt: (meta?.created_at as number) ?? now,
+      tags: Array.isArray(meta?.tags) ? (meta.tags as string[]) : [],
+      source: (meta?.source as string) ?? "",
+      isUpdate,
+    };
+  });
+
+  const insight = d1Rows.length > 1
+    ? await synthesizeInsight(embedQuery, d1Rows as { id: string; content: string }[], env)
+    : "";
+
+  if (d1Rows.length >= 5) {
+    ctx.waitUntil(
+      derivePattern(d1Rows as { id: string; content: string }[], env, ctx)
+        .catch(e => console.error("derivePattern failed (non-fatal):", e))
+    );
+  }
+
+  return { matches, insight };
+}
+
 // ─── Shared write path ────────────────────────────────────────────────────────
 
 export type CaptureResult =
@@ -938,6 +1122,37 @@ export async function captureEntry(
   }
 
   return { status: "stored", id };
+}
+
+// ─── Shared delete path ───────────────────────────────────────────────────────
+// Used by both the `forget` MCP tool and POST /forget so the cleanup logic
+// (D1 row + tracked Vectorize IDs) lives in exactly one place.
+
+export type ForgetResult =
+  | { status: "not_found" }
+  | { status: "deleted"; vectorCount: number };
+
+export async function forgetEntry(id: string, env: Env): Promise<ForgetResult> {
+  const row = await env.DB.prepare(
+    `SELECT vector_ids FROM entries WHERE id = ?`
+  ).bind(id).first() as Record<string, any> | null;
+
+  if (!row) return { status: "not_found" };
+
+  const vectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+
+  await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(id).run();
+
+  try {
+    if (vectorIds.length) {
+      // Delete exact IDs — no guessing, no leaks
+      await env.VECTORIZE.deleteByIds(vectorIds);
+    }
+  } catch (e) {
+    console.error("Vectorize delete failed (non-fatal):", e);
+  }
+
+  return { status: "deleted", vectorCount: vectorIds.length };
 }
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
@@ -1096,125 +1311,20 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ query, topK, tag, after, before }) => {
-      const now = Date.now();
-      let embedQuery = query;
-      if (after === undefined && before === undefined) {
-        const parsed = parseTimePhrase(query, now);
-        after = parsed.after;
-        before = parsed.before;
-        embedQuery = parsed.cleanQuery;
-      }
+      const { matches, insight } = await recallEntries({ query, topK, tag, after, before }, env, ctx);
 
-      const values = await embed(embedQuery, env);
-
-      // If tag filter, resolve matching IDs from D1 first (D1 is source of truth for tags)
-      let tagFilterIds: Set<string> | null = null;
-      if (tag) {
-        const { results: tagRows } = await env.DB.prepare(
-          `SELECT id FROM entries WHERE tags LIKE ?`
-        ).bind(`%"${tag}"%`).all();
-        tagFilterIds = new Set((tagRows as any[]).map(r => r.id as string));
-        if (tagFilterIds.size === 0) {
-          return { content: [{ type: "text", text: "Nothing found matching that query." }] };
-        }
-      }
-
-      // Query Vectorize without filter — tag filtering happens in-memory below
-      // Cloudflare Vectorize caps topK at 50 when returnMetadata="all" (error 40025)
-      const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
-      let results = await env.VECTORIZE.query(values, {
-        topK: vectorizeTopK,
-        returnMetadata: "all",
-      });
-
-      if (results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
-        results = await env.VECTORIZE.query(values, {
-          topK: 50,
-          returnMetadata: "all",
-        });
-      }
-
-      if (!results.matches.length) {
+      if (!matches.length) {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
       }
 
-      // Fetch recall_count and importance_score for all candidates to use in scoring
-      const candidateIds = [...new Set(results.matches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
-      const rcPlaceholders = candidateIds.map(() => "?").join(", ");
-      const { results: rcRows } = await env.DB.prepare(
-        `SELECT id, recall_count, importance_score FROM entries WHERE id IN (${rcPlaceholders})`
-      ).bind(...candidateIds).all() as { results: { id: string; recall_count: number; importance_score: number }[] };
-      const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
-      const importanceScores = new Map(rcRows.map(r => [r.id, r.importance_score ?? 0]));
-
-      const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts, importanceScores);
-
-      const seen = new Set<string>();
-      const deduped = reranked.filter((m) => {
-        const parentId = (m.metadata as any)?.parentId ?? m.id;
-        if (seen.has(parentId)) return false;
-        // Apply tag filter against D1-resolved IDs
-        if (tagFilterIds && !tagFilterIds.has(parentId)) return false;
-        seen.add(parentId);
-        return true;
-      }).slice(0, topK);
-
-      if (!deduped.length) {
-        return { content: [{ type: "text", text: "Nothing found matching that query." }] };
-      }
-
-      // Fetch full content from D1 for all matched parent IDs, applying time filter if set
-      const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
-      const placeholders = parentIds.map(() => "?").join(", ");
-      const d1Bindings: (string | number)[] = [...parentIds];
-      let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%'`;
-      if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
-      if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
-      const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
-
-      const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
-
-      // Increment recall_count for entries actually shown
-      ctx.waitUntil(
-        Promise.all(
-          [...d1Map.keys()].map(id =>
-            env.DB.prepare(`UPDATE entries SET recall_count = recall_count + 1 WHERE id = ?`).bind(id).run()
-          )
-        ).catch(e => console.error("recall_count update failed (non-fatal):", e))
-      );
-
-      const text = deduped.map((m, i) => {
-        const meta = m.metadata as Record<string, any>;
-        const parentId = (meta?.parentId ?? m.id) as string;
-        const row = d1Map.get(parentId);
+      const text = matches.map((m, i) => {
+        const date = new Date(m.createdAt).toLocaleDateString();
+        const tagList = m.tags.length ? ` [${m.tags.join(", ")}]` : "";
+        const src = m.source ? ` · ${m.source}` : "";
         const score = (m.score * 100).toFixed(0);
-        const updateLabel = meta?.isUpdate ? " [updated]" : "";
-
-        if (row) {
-          const date = new Date(row.created_at as number).toLocaleDateString();
-          const tags: string[] = JSON.parse(row.tags ?? "[]");
-          const tagList = tags.length ? ` [${tags.join(", ")}]` : "";
-          const src = row.source ? ` · ${row.source}` : "";
-          return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}\n${row.content}`;
-        }
-
-        // Fallback to metadata if D1 row not found (shouldn't happen)
-        const date = meta?.created_at ? new Date(meta.created_at as number).toLocaleDateString() : "?";
-        const tagList = Array.isArray(meta?.tags) && meta.tags.length ? ` [${(meta.tags as string[]).join(", ")}]` : "";
-        const src = meta?.source ? ` · ${meta.source}` : "";
-        return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}\n${meta?.content ?? ""}`;
+        const updateLabel = m.isUpdate ? " [updated]" : "";
+        return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}\n${m.content}`;
       }).join("\n\n");
-
-      const insight = d1Rows.length > 1
-        ? await synthesizeInsight(embedQuery, d1Rows as { id: string; content: string }[], env)
-        : "";
-
-      if (d1Rows.length >= 5) {
-        ctx.waitUntil(
-          derivePattern(d1Rows as { id: string; content: string }[], env, ctx)
-            .catch(e => console.error("derivePattern failed (non-fatal):", e))
-        );
-      }
 
       const finalText = insight ? `**Insight:** ${insight}\n\n---\n\n${text}` : text;
       return { content: [{ type: "text", text: finalText }] };
@@ -1234,16 +1344,8 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ n, tag, after, before }) => {
-      const conds: string[] = [];
-      const p: (string | number)[] = [];
-      if (tag) { conds.push(`tags LIKE ?`); p.push(`%"${tag}"%`); }
-      if (after !== undefined) { conds.push(`created_at >= ?`); p.push(after); }
-      if (before !== undefined) { conds.push(`created_at <= ?`); p.push(before); }
-      let q = `SELECT id, content, tags, source, created_at FROM entries`;
-      if (conds.length) q += ` WHERE ` + conds.join(` AND `);
-      q += ` ORDER BY created_at DESC LIMIT ?`; p.push(n);
-
-      const { results } = await env.DB.prepare(q).bind(...p).all();
+      const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+      const { results } = await env.DB.prepare(sql).bind(...bindings).all();
 
       if (!results.length) {
         return { content: [{ type: "text", text: "No entries found." }] };
@@ -1270,25 +1372,11 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ id }) => {
-      // Fetch tracked vector IDs before deleting the D1 row
-      const row = await env.DB.prepare(
-        `SELECT vector_ids FROM entries WHERE id = ?`
-      ).bind(id).first() as Record<string, any> | null;
-
-      const vectorIds: string[] = JSON.parse(row?.vector_ids ?? "[]");
-
-      await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(id).run();
-
-      try {
-        if (vectorIds.length) {
-          // Delete exact IDs — no guessing, no leaks
-          await env.VECTORIZE.deleteByIds(vectorIds);
-        }
-      } catch (e) {
-        console.error("Vectorize delete failed (non-fatal):", e);
+      const result = await forgetEntry(id, env);
+      if (result.status === "not_found") {
+        return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       }
-
-      return { content: [{ type: "text", text: `Deleted entry ${id} and ${vectorIds.length} vector(s)` }] };
+      return { content: [{ type: "text", text: `Deleted entry ${id} and ${result.vectorCount} vector(s)` }] };
     }
   );
 
@@ -1358,11 +1446,12 @@ const defaultHandler = {
 
     // POST /capture
     if (url.pathname === "/capture" && request.method === "POST") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
 
       let body: { content?: string; tags?: string[]; source?: string };
-      try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-      if (!body.content?.trim()) return json({ error: "content is required" }, 400);
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.content?.trim()) return json({ ok: false, error: "content is required" }, 400);
 
       const result = await captureEntry(body.content, body.tags ?? [], body.source ?? "api", env, ctx);
 
@@ -1399,12 +1488,13 @@ const defaultHandler = {
 
     // POST /append
     if (url.pathname === "/append" && request.method === "POST") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
 
       let body: { id?: string; addition?: string };
-      try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-      if (!body.id?.trim()) return json({ error: "id is required" }, 400);
-      if (!body.addition?.trim()) return json({ error: "addition is required" }, 400);
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+      if (!body.addition?.trim()) return json({ ok: false, error: "addition is required" }, 400);
 
       const id = body.id.trim();
       const addition = body.addition.trim();
@@ -1436,12 +1526,13 @@ const defaultHandler = {
 
     // POST /update
     if (url.pathname === "/update" && request.method === "POST") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
 
       let body: { id?: string; content?: string };
-      try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-      if (!body.id?.trim()) return json({ error: "id is required" }, 400);
-      if (!body.content?.trim()) return json({ error: "content is required" }, 400);
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+      if (!body.content?.trim()) return json({ ok: false, error: "content is required" }, 400);
 
       const id = body.id.trim();
       const newContent = body.content.trim();
@@ -1481,14 +1572,16 @@ const defaultHandler = {
 
     // GET /count
     if (url.pathname === "/count" && request.method === "GET") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
       const row = await env.DB.prepare(`SELECT COUNT(*) as count FROM entries`).first() as Record<string, any> | null;
       return json({ count: (row?.count as number) ?? 0 });
     }
 
     // GET /tags
     if (url.pathname === "/tags" && request.method === "GET") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
       const { results } = await env.DB.prepare(
         `SELECT DISTINCT value FROM entries, json_each(entries.tags) ORDER BY value`
       ).all();
@@ -1497,7 +1590,8 @@ const defaultHandler = {
 
     // GET /stats
     if (url.pathname === "/stats" && request.method === "GET") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
       const [summary, tagRows, candidateRows] = await Promise.all([
         env.DB.prepare(`SELECT COUNT(*) as count, AVG(importance_score) as avg_importance FROM entries`).first() as Promise<Record<string, any> | null>,
         env.DB.prepare(`SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags) GROUP BY value ORDER BY n DESC LIMIT 5`).all(),
@@ -1535,21 +1629,79 @@ const defaultHandler = {
 
     // GET /list
     if (url.pathname === "/list" && request.method === "GET") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
       const n = Math.min(parseInt(url.searchParams.get("n") ?? "20", 10), 100);
-      const { results } = await env.DB.prepare(
-        `SELECT id, content, tags, source, created_at FROM entries ORDER BY created_at DESC LIMIT ?`
-      ).bind(n).all();
+      const tag = url.searchParams.get("tag")?.trim() || undefined;
+      const after = url.searchParams.has("after") ? parseInt(url.searchParams.get("after")!, 10) : undefined;
+      const before = url.searchParams.has("before") ? parseInt(url.searchParams.get("before")!, 10) : undefined;
+
+      const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+      const { results } = await env.DB.prepare(sql).bind(...bindings).all();
       return json(results);
+    }
+
+    // GET /recall — semantic search, mirrors the MCP `recall` tool
+    if (url.pathname === "/recall" && request.method === "GET") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      const query = url.searchParams.get("query")?.trim();
+      if (!query) return json({ ok: false, error: "query is required" }, 400);
+
+      const topK = Math.min(Math.max(parseInt(url.searchParams.get("topK") ?? "5", 10), 1), 20);
+      const tag = url.searchParams.get("tag")?.trim() || undefined;
+      const after = url.searchParams.has("after") ? parseInt(url.searchParams.get("after")!, 10) : undefined;
+      const before = url.searchParams.has("before") ? parseInt(url.searchParams.get("before")!, 10) : undefined;
+
+      const { matches, insight } = await recallEntries({ query, topK, tag, after, before }, env, ctx);
+
+      if (!matches.length) {
+        return json({ ok: true, results: [], message: "Nothing found matching that query." });
+      }
+
+      return json({
+        ok: true,
+        results: matches.map(m => ({
+          id: m.id,
+          content: m.content,
+          score: parseFloat((m.score * 100).toFixed(1)),
+          tags: m.tags,
+          source: m.source,
+          created_at: m.createdAt,
+          updated: m.isUpdate,
+        })),
+        insight: insight || null,
+      });
+    }
+
+    // POST /forget — delete-by-id, mirrors the MCP `forget` tool
+    if (url.pathname === "/forget" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      let body: { id?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+
+      const id = body.id.trim();
+      const result = await forgetEntry(id, env);
+
+      if (result.status === "not_found") {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      }
+
+      return json({ ok: true, id, deletedVectors: result.vectorCount });
     }
 
     // POST /chat
     if (url.pathname === "/chat" && request.method === "POST") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
 
       let body: { query?: string; memories?: string };
-      try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-      if (!body.query?.trim()) return json({ error: "query is required" }, 400);
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.query?.trim()) return json({ ok: false, error: "query is required" }, 400);
 
       const systemPrompt = `You are a personal memory assistant. Answer the user's question using ONLY the memories provided. Even if the match scores are low, extract any relevant facts and answer directly. Never say you don't have enough information if the answer exists anywhere in the memories. Be concise.`;
 
@@ -1571,9 +1723,10 @@ const defaultHandler = {
 
     // GET /digest
     if (url.pathname === "/digest" && request.method === "GET") {
-      if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
       const tag = url.searchParams.get("tag")?.trim();
-      if (!tag) return json({ error: "tag parameter is required" }, 400);
+      if (!tag) return json({ ok: false, error: "tag parameter is required" }, 400);
 
       const result = await compressTag(tag, env, ctx);
 

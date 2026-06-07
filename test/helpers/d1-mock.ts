@@ -116,10 +116,39 @@ export class D1Mock {
         return null;
       },
       async all() {
-        if (s.includes("recall_count FROM entries")) {
+        if (s === "SELECT id FROM entries WHERE tags LIKE ?") {
+          const pattern = String(args[0]);
+          const tag = pattern.replace(/%"/g, "").replace(/"%/g, "");
+          const results = db.entries
+            .filter((e: any) => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag))
+            .map((e: any) => ({ id: e.id }));
+          return { results };
+        }
+        if (s.includes("SELECT id, recall_count, importance_score FROM entries")) {
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0 }));
+            .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0, importance_score: e.importance_score ?? 0 }));
+          return { results };
+        }
+        if (s.includes("FROM entries WHERE id IN") && s.includes("tags NOT LIKE")) {
+          // recallEntries D1 hydration — filter by IDs, exclude auto-pattern entries, apply after/before
+          const inMatch = s.match(/WHERE id IN \(([^)]*)\)/);
+          const idCount = inMatch ? inMatch[1].split(",").length : 0;
+          const ids = args.slice(0, idCount);
+          const rest = args.slice(idCount);
+          let argIdx = 0;
+          let rows = db.entries.filter((e: any) =>
+            ids.includes(e.id) && !(JSON.parse(e.tags ?? "[]") as string[]).includes("auto-pattern")
+          );
+          if (s.includes("created_at >= ?")) {
+            const after = Number(rest[argIdx++]);
+            rows = rows.filter((e: any) => e.created_at >= after);
+          }
+          if (s.includes("created_at <= ?")) {
+            const before = Number(rest[argIdx++]);
+            rows = rows.filter((e: any) => e.created_at <= before);
+          }
+          const results = rows.map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results };
         }
         if (s.includes("SELECT id, content FROM entries") && s.includes("WHERE tags LIKE") && s.includes("ORDER BY created_at DESC")) {
@@ -167,7 +196,23 @@ export class D1Mock {
         }
         if (s.includes("ORDER BY created_at DESC LIMIT")) {
           const limit = Number(args[args.length - 1]);
-          const rows = [...db.entries].sort((a: any, b: any) => b.created_at - a.created_at);
+          const filterArgs = args.slice(0, -1);
+          let argIdx = 0;
+          let rows = [...db.entries];
+          if (s.includes("tags LIKE ?")) {
+            const pattern = String(filterArgs[argIdx++]);
+            const tag = pattern.replace(/%"/g, "").replace(/"%/g, "");
+            rows = rows.filter((e: any) => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag));
+          }
+          if (s.includes("created_at >= ?")) {
+            const after = Number(filterArgs[argIdx++]);
+            rows = rows.filter((e: any) => e.created_at >= after);
+          }
+          if (s.includes("created_at <= ?")) {
+            const before = Number(filterArgs[argIdx++]);
+            rows = rows.filter((e: any) => e.created_at <= before);
+          }
+          rows.sort((a: any, b: any) => b.created_at - a.created_at);
           return { results: rows.slice(0, limit) };
         }
         return { results: [] };

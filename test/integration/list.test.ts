@@ -64,4 +64,60 @@ describe("GET /list", () => {
     const data = await res.json();
     expect(Array.isArray(data)).toBe(true);
   });
+
+  // ── Filter parity with list_recent (?tag, ?after, ?before) ──────────────────
+
+  it("filters by ?tag=", async () => {
+    db.entries.push(
+      { id: "work-1", content: "Work note", tags: '["work"]', source: "api", created_at: 1000, vector_ids: "[]" },
+      { id: "idea-1", content: "Idea note", tags: '["idea"]', source: "api", created_at: 2000, vector_ids: "[]" },
+    );
+
+    const res = await worker.fetch(req("GET", "/list?tag=work"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe("work-1");
+  });
+
+  it("filters by ?after=", async () => {
+    db.entries.push(
+      { id: "old", content: "Old", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]" },
+      { id: "new", content: "New", tags: "[]", source: "api", created_at: 2000, vector_ids: "[]" },
+    );
+
+    const res = await worker.fetch(req("GET", "/list?after=1500"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe("new");
+  });
+
+  it("filters by ?before=", async () => {
+    db.entries.push(
+      { id: "old", content: "Old", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]" },
+      { id: "new", content: "New", tags: "[]", source: "api", created_at: 2000, vector_ids: "[]" },
+    );
+
+    const res = await worker.fetch(req("GET", "/list?before=1500"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe("old");
+  });
+
+  it("combines ?tag=, ?after= and ?before=", async () => {
+    db.entries.push(
+      { id: "work-old", content: "Work old", tags: '["work"]', source: "api", created_at: 1000, vector_ids: "[]" },
+      { id: "work-mid", content: "Work mid", tags: '["work"]', source: "api", created_at: 2000, vector_ids: "[]" },
+      { id: "work-new", content: "Work new", tags: '["work"]', source: "api", created_at: 3000, vector_ids: "[]" },
+      { id: "idea-mid", content: "Idea mid", tags: '["idea"]', source: "api", created_at: 2000, vector_ids: "[]" },
+    );
+
+    const res = await worker.fetch(req("GET", "/list?tag=work&after=1500&before=2500"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe("work-mid");
+  });
 });
