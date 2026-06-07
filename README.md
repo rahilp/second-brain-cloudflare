@@ -53,19 +53,24 @@ Memory is only useful if it actually gets filled. Second Brain connects to the t
 
 -----
 
-## Setup
+## Quick Start
 
-> **Before you deploy:** You’ll be asked to set an `AUTH_TOKEN`. This is the password your AI clients use to connect.
-> 
-> **Quick option:** Use a memorable phrase like `coffee-lover-2026`
-> 
-> **Secure option:** Run `openssl rand -base64 32` in your terminal and paste the result
-> 
-> **Save it.** You’ll need it in the next step.
+> **Before you deploy:** You’ll be asked to set an `AUTH_TOKEN` — the password your AI clients use to connect. Use a memorable phrase (`coffee-lover-2026`) or run `openssl rand -base64 32` for a stronger one. **Save it** — you'll need it in step 3.
 
-1. **Click Deploy** — everything provisions automatically
-1. **Set your token** — you’ll be prompted during deploy
-1. **Connect your AI tools** — [instructions here](../../wiki/Connect-to-AI-Clients) (one-line setup available for Claude Code and Codex CLI)
+1. **[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)** — one click, everything provisions automatically. Set your `AUTH_TOKEN` when prompted.
+
+1. **Using Claude Code or Codex CLI?** Run one command and paste in your worker URL — it wires up global instructions *and* the MCP connection via OAuth, so your token never touches the script:
+
+   ```bash
+   # macOS / Linux / WSL / Git Bash
+   curl -fsSL https://raw.githubusercontent.com/rahilp/second-brain-cloudflare/main/scripts/connect-ai-clients.sh | bash -s -- https://YOUR-WORKER-URL
+   ```
+   ```powershell
+   # Windows (PowerShell)
+   iex "& { $(irm https://raw.githubusercontent.com/rahilp/second-brain-cloudflare/main/scripts/connect-ai-clients.ps1) } -WorkerUrl https://YOUR-WORKER-URL"
+   ```
+
+1. **Using ChatGPT or Claude (desktop app or web)?** These need two quick manual steps in their UI — paste your custom instructions into their personalization settings, and add `https://YOUR-WORKER-URL/mcp` as a custom MCP connector. Each app's exact menus differ, so follow the **[per-app steps in the wiki](../../wiki/Connect-to-AI-Clients)**.
 
 That’s it. Your memory is live and ready across every tool you connect.
 
