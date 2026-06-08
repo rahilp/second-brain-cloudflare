@@ -88,7 +88,11 @@ export class D1Mock {
           const avg_importance = scored.length > 0
             ? scored.reduce((sum: number, e: any) => sum + e.importance_score, 0) / scored.length
             : null;
-          return { count, avg_importance };
+          const cutoff = args.length > 0 ? Number(args[0]) : undefined;
+          const unvectorized = cutoff !== undefined
+            ? db.entries.filter((e: any) => e.vector_ids === '[]' && e.created_at < cutoff).length
+            : 0;
+          return { count, avg_importance, unvectorized };
         }
         if (s.includes("COUNT(*) as count")) {
           return { count: db.entries.length };

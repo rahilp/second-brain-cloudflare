@@ -1608,8 +1608,13 @@ const defaultHandler = {
     if (url.pathname === "/stats" && request.method === "GET") {
       const authErr = requireAuth(request, env);
       if (authErr) return authErr;
+      const graceCutoff = Date.now() - graceMs(env);
       const [summary, tagRows, candidateRows] = await Promise.all([
-        env.DB.prepare(`SELECT COUNT(*) as count, AVG(importance_score) as avg_importance FROM entries`).first() as Promise<Record<string, any> | null>,
+        env.DB.prepare(
+          `SELECT COUNT(*) as count, AVG(importance_score) as avg_importance,
+           SUM(CASE WHEN vector_ids = '[]' AND created_at < ? THEN 1 ELSE 0 END) as unvectorized
+           FROM entries`
+        ).bind(graceCutoff).first() as Promise<Record<string, any> | null>,
         env.DB.prepare(`SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags) GROUP BY value ORDER BY n DESC LIMIT 5`).all(),
         env.DB.prepare(`
           SELECT value as tag, COUNT(*) as count
@@ -1640,6 +1645,8 @@ const defaultHandler = {
         avg_importance: summary?.avg_importance != null ? Math.round((summary.avg_importance as number) * 10) / 10 : null,
         top_tags: (tagRows.results as any[]).map(r => r.value as string),
         digest_candidates: digestCandidates,
+        unvectorized: (summary?.unvectorized as number) ?? 0,
+        vectorize_grace_ms: graceMs(env),
       });
     }
 
