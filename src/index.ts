@@ -14,6 +14,7 @@ export interface Env {
   AI: Ai;
   AUTH_TOKEN: string;
   OAUTH_KV: KVNamespace;
+  VECTORIZE_GRACE_MS?: string;
 }
 
 const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
@@ -25,6 +26,10 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
 };
+
+function graceMs(env: Env): number {
+  return parseInt(env.VECTORIZE_GRACE_MS ?? "300000", 10) || 300000;
+}
 
 // ─── Thresholds ───────────────────────────────────────────────────────────────
 
