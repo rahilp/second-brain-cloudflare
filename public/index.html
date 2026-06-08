@@ -2491,6 +2491,7 @@
           </div>
         </div>
         <div class="digest-section" id="digest-section" style="display:none"></div>
+        <div class="digest-section" id="vectorize-section" style="display:none"></div>
         <div class="theme-row">
           <span class="theme-row-label">Appearance</span>
           <div class="theme-toggle" id="theme-toggle">
@@ -3128,7 +3129,9 @@
           tagsEl.innerHTML = data.top_tags?.length
             ? data.top_tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')
             : '<span style="font-size:13px;color:var(--text-tertiary)">No tags yet</span>'
+          vectorizeGraceMs = data.vectorize_grace_ms ?? vectorizeGraceMs
           renderDigestSection(data.digest_candidates ?? [])
+          renderVectorizeSection(data.unvectorized ?? 0)
         } catch {}
       }
 
@@ -3185,6 +3188,50 @@
           setTimeout(() => {
             btn.disabled = false
             btn.innerHTML = 'Digest →'
+            btn.style.color = ''
+          }, 3000)
+        }
+      }
+
+      function renderVectorizeSection(count) {
+        const el = document.getElementById('vectorize-section')
+        if (!count) { el.style.display = 'none'; return }
+        el.style.display = ''
+        el.innerHTML = `
+          <div class="digest-section-label">Not indexed</div>
+          <p class="digest-note">${count} ${count === 1 ? 'memory' : 'memories'} failed to embed and won't appear in recall.</p>
+          <button class="digest-btn" id="vectorize-btn" onclick="runVectorize(this)">Vectorize now →</button>
+        `
+      }
+
+      async function runVectorize(btn) {
+        btn.disabled = true
+        btn.classList.add('digest-btn--loading')
+        btn.innerHTML = '<i class="ti ti-loader-2"></i> Working…'
+        try {
+          let remaining = 1
+          let totalProcessed = 0
+          while (remaining > 0) {
+            const res = await fetch(`${WORKER_URL}/vectorize-pending`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
+            })
+            const data = await res.json()
+            remaining = data.remaining ?? 0
+            totalProcessed += data.processed ?? 0
+          }
+          btn.classList.remove('digest-btn--loading')
+          btn.innerHTML = `<i class="ti ti-check"></i> Done — ${totalProcessed} re-indexed`
+          btn.style.color = 'var(--good)'
+          await loadMenuStats()
+          loadRecent()
+        } catch {
+          btn.classList.remove('digest-btn--loading')
+          btn.innerHTML = '<i class="ti ti-wifi-off"></i> Request failed'
+          btn.style.color = 'var(--danger)'
+          setTimeout(() => {
+            btn.disabled = false
+            btn.innerHTML = 'Vectorize now →'
             btn.style.color = ''
           }, 3000)
         }
