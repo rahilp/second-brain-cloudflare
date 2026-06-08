@@ -1787,7 +1787,8 @@ const defaultHandler = {
             row.created_at as number
           );
           processed++;
-        } catch {
+        } catch (e) {
+          console.error("Re-embed failed for entry", row.id, e);
           failed++;
         }
       }

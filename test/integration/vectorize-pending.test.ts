@@ -109,6 +109,7 @@ describe("POST /vectorize-pending", () => {
     const data = await res.json() as any;
     expect(data.processed).toBe(1);
     expect(data.failed).toBe(1);
+    expect(data.remaining).toBe(1);
   });
 
   it("respects VECTORIZE_GRACE_MS env var", async () => {
