@@ -978,6 +978,29 @@
         font-weight: 500;
       }
 
+      .vec-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: var(--radius-tag);
+        white-space: nowrap;
+      }
+      .vec-chip--on {
+        background: var(--accent-soft);
+        color: var(--accent-ink);
+      }
+      .vec-chip--pending {
+        background: var(--surface-2);
+        color: var(--text-tag);
+      }
+      .vec-chip--off {
+        background: color-mix(in srgb, var(--danger) 15%, transparent);
+        color: var(--danger);
+        font-weight: 500;
+      }
+
       .match-line {
         display: flex;
         align-items: center;
@@ -2503,6 +2526,7 @@
         selectedTag = '',
         selectedTimeRange = ''
       let currentCount = 0
+      let vectorizeGraceMs = 300000
 
       function init() {
         applyTheme()
@@ -2888,19 +2912,33 @@
         } catch {}
         const isSynthesized = tags.includes('synthesized')
         const isRolledUp = tags.includes('rolled-up')
+
+        let vectorIds = []
+        try { vectorIds = JSON.parse(entry.vector_ids || '[]') } catch {}
+        const vectorized = vectorIds.length > 0
+        // Pending state is computed at render time; won't auto-flip — reload required
+        const pending = !vectorized && (Date.now() - (entry.created_at || 0) < vectorizeGraceMs)
+        const vec = vectorized ? 'on' : (pending ? 'pending' : 'off')
+
+        const vecChip = vec === 'on'
+          ? `<span class="tag-chip vec-chip vec-chip--on" title="Vectorized — searchable via recall"><i class="ti ti-circle-check"></i></span>`
+          : vec === 'pending'
+          ? `<span class="tag-chip vec-chip vec-chip--pending" title="Vectorizing… (just captured)"><i class="ti ti-clock"></i></span>`
+          : `<span class="tag-chip vec-chip vec-chip--off" title="Not vectorized — won't appear in recall">Not indexed</span>`
+
         const card = document.createElement('div')
         card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '')
         card.dataset.id = entry.id
         card.innerHTML = `
-    <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
-    <div class="card-footer">
-      <div class="card-tags">${tags.map((t) => `<span class="tag-chip${t === 'synthesized' ? ' tag-chip--synthesized' : ''}">${escHtml(t)}</span>`).join('')}</div>
-      <div class="card-actions">
-        <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
-        <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> Edit</button>
-        <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>
-      </div>
-    </div>`
+<div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
+<div class="card-footer">
+  <div class="card-tags">${tags.map((t) => `<span class="tag-chip${t === 'synthesized' ? ' tag-chip--synthesized' : ''}">${escHtml(t)}</span>`).join('')}${vecChip}</div>
+  <div class="card-actions">
+    <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
+    <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> Edit</button>
+    <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>
+  </div>
+</div>`
         card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card)
         card.querySelector('.edit-btn').onclick = () => openEdit(entry.id, entry.content, tags)
         return card
