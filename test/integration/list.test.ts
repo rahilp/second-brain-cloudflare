@@ -120,4 +120,22 @@ describe("GET /list", () => {
     expect(data).toHaveLength(1);
     expect(data[0].id).toBe("work-mid");
   });
+
+  it("includes vector_ids field in each entry", async () => {
+    db.entries.push({
+      id: "v1", content: "Vectorized note", tags: "[]", source: "api",
+      created_at: 1000, vector_ids: '["v1"]',
+    });
+    db.entries.push({
+      id: "v2", content: "Unvectorized note", tags: "[]", source: "api",
+      created_at: 2000, vector_ids: "[]",
+    });
+
+    const res = await worker.fetch(req("GET", "/list"), env, ctx);
+    const data = await res.json() as any[];
+    const v1 = data.find((e: any) => e.id === "v1");
+    const v2 = data.find((e: any) => e.id === "v2");
+    expect(v1.vector_ids).toBe('["v1"]');
+    expect(v2.vector_ids).toBe("[]");
+  });
 });
