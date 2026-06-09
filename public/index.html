@@ -3216,9 +3216,11 @@
               method: 'POST',
               headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
             })
+            if (!res.ok) throw new Error(`Server error: ${res.status}`)
             const data = await res.json()
             remaining = data.remaining ?? 0
             totalProcessed += data.processed ?? 0
+            if ((data.processed ?? 0) === 0 && remaining > 0) break
           }
           btn.classList.remove('digest-btn--loading')
           btn.innerHTML = `<i class="ti ti-check"></i> Done — ${totalProcessed} re-indexed`
