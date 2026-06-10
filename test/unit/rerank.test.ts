@@ -106,4 +106,19 @@ describe("rerankWithTimeDecay", () => {
     const result = rerankWithTimeDecay([old, fresh], new Map(), importance);
     expect(result[0].id).toBe("old");
   });
+
+  it("tag-overlapping entry outranks equal-vector-score entry without matching tag", () => {
+    const withTag = match("tagged", 0.9, NOW - 5 * MS_DAY, ["work"]);
+    const withoutTag = match("untagged", 0.9, NOW - 5 * MS_DAY, ["personal"]);
+    const result = rerankWithTimeDecay([withoutTag, withTag], new Map(), new Map(), ["work"]);
+    expect(result[0].id).toBe("tagged");
+    expect(result[0].score).toBeGreaterThan(result[1].score);
+  });
+
+  it("queryTags=[] produces identical scores to no queryTags argument (backward compat)", () => {
+    const m = match("entry", 0.9, NOW - 5 * MS_DAY, ["work"]);
+    const [withEmpty] = rerankWithTimeDecay([m], new Map(), new Map(), []);
+    const [withDefault] = rerankWithTimeDecay([m]);
+    expect(withEmpty.score).toBeCloseTo(withDefault.score, 6);
+  });
 });

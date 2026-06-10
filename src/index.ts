@@ -413,7 +413,8 @@ export function cosineSim(a: ArrayLike<number>, b: ArrayLike<number>): number {
 export function rerankWithTimeDecay(
   matches: VectorizeMatch[],
   recallCounts: Map<string, number> = new Map(),
-  importanceScores: Map<string, number> = new Map()
+  importanceScores: Map<string, number> = new Map(),
+  queryTags: string[] = []
 ): VectorizeMatch[] {
   const now = Date.now();
 
@@ -442,7 +443,12 @@ export function rerankWithTimeDecay(
       const imp = importanceScores.get(parentId) ?? 0;
       const importanceMultiplier = imp === 0 ? 1.0 : 0.8 + (imp / 5) * 0.4;
 
-      return { ...match, score: match.score * combinedMultiplier * appendPenalty * rolledUpPenalty * importanceMultiplier };
+      // Tag boost: applied outside the recency ≤1.0 cap so a tag-relevant memory can
+      // surface above a marginally-closer but irrelevant one.
+      const overlap = queryTags.length ? tags.filter(t => queryTags.includes(t)).length : 0;
+      const tagBoost = overlap ? Math.min(TAG_BOOST_MAX, 1 + overlap * TAG_BOOST_STEP) : 1.0;
+
+      return { ...match, score: match.score * combinedMultiplier * appendPenalty * rolledUpPenalty * importanceMultiplier * tagBoost };
     })
     .sort((a, b) => b.score - a.score);
 }
