@@ -57,8 +57,9 @@ const DIGEST_MAX_TOKENS = 400;
 // ─── Vectorize constants ──────────────────────────────────────────────────────
 
 const VECTORIZE_TOP_K_MULTIPLIER = 3;
-// getByIds batch size for tag-scoped recall — keeps each call well under request limits
-const VECTORIZE_GET_BY_IDS_BATCH = 500;
+// getByIds batch size for tag-scoped recall — Vectorize rejects more than 20 IDs
+// per call (VECTOR_GET_ERROR, code 40007)
+const VECTORIZE_GET_BY_IDS_BATCH = 20;
 // D1 allows at most 100 bound parameters per query
 const D1_MAX_BOUND_PARAMS = 100;
 

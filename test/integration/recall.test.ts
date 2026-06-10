@@ -197,8 +197,8 @@ describe("GET /recall", () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
-  it("batches getByIds calls at 500 IDs", async () => {
-    const manyIds = Array.from({ length: 501 }, (_, i) => `entry-1-chunk-${i}`);
+  it("batches getByIds calls at 20 IDs (Vectorize error 40007 above that)", async () => {
+    const manyIds = Array.from({ length: 41 }, (_, i) => `entry-1-chunk-${i}`);
     db.entries.push(
       { id: "entry-1", content: "Heavily chunked memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: JSON.stringify(manyIds), recall_count: 0, importance_score: 0 },
     );
@@ -206,9 +206,10 @@ describe("GET /recall", () => {
     env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
 
     await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
-    expect(getByIdsMock).toHaveBeenCalledTimes(2);
-    expect(getByIdsMock.mock.calls[0][0]).toEqual(manyIds.slice(0, 500));
-    expect(getByIdsMock.mock.calls[1][0]).toEqual(manyIds.slice(500));
+    expect(getByIdsMock).toHaveBeenCalledTimes(3);
+    expect(getByIdsMock.mock.calls[0][0]).toEqual(manyIds.slice(0, 20));
+    expect(getByIdsMock.mock.calls[1][0]).toEqual(manyIds.slice(20, 40));
+    expect(getByIdsMock.mock.calls[2][0]).toEqual(manyIds.slice(40));
   });
 
   it("dedupes duplicate vector IDs shared across tagged entries before fetching", async () => {
