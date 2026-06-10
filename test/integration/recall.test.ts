@@ -172,13 +172,14 @@ describe("GET /recall", () => {
     db.entries.push(
       { id: "entry-1", content: "Orphaned memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },
     );
-    // Default getByIds mock resolves to [] — every ID is stale
-    env = makeTestEnv(db);
+    const getByIdsMock = vi.fn().mockResolvedValue([]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
 
     const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
     expect(data.results).toEqual([]);
+    expect(getByIdsMock).toHaveBeenCalledWith(["entry-1"]);
   });
 
   it("returns empty without calling Vectorize when tagged entries have no vectors", async () => {
@@ -206,8 +207,8 @@ describe("GET /recall", () => {
 
     await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
     expect(getByIdsMock).toHaveBeenCalledTimes(2);
-    expect(getByIdsMock.mock.calls[0][0]).toHaveLength(500);
-    expect(getByIdsMock.mock.calls[1][0]).toHaveLength(1);
+    expect(getByIdsMock.mock.calls[0][0]).toEqual(manyIds.slice(0, 500));
+    expect(getByIdsMock.mock.calls[1][0]).toEqual(manyIds.slice(500));
   });
 
   it("dedupes duplicate vector IDs shared across tagged entries before fetching", async () => {
@@ -221,5 +222,37 @@ describe("GET /recall", () => {
     await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
     expect(getByIdsMock).toHaveBeenCalledTimes(1);
     expect(getByIdsMock.mock.calls[0][0]).toEqual(["shared-vec"]);
+  });
+
+  it("respects topK in tag-scoped recall", async () => {
+    for (let i = 1; i <= 5; i++) {
+      db.entries.push(
+        { id: `entry-${i}`, content: `Memory ${i}`, tags: '["work"]', source: "api", created_at: 1000 + i, vector_ids: `["entry-${i}"]`, recall_count: 0, importance_score: 0 },
+      );
+    }
+    const getByIdsMock = vi.fn().mockResolvedValue(
+      Array.from({ length: 5 }, (_, i) => ({ id: `entry-${i + 1}`, values: SIMILAR_VEC, metadata: { parentId: `entry-${i + 1}`, isUpdate: false } })),
+    );
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work&topK=2"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.results).toHaveLength(2);
+  });
+
+  it("dedupes tag-scoped chunk vectors that share the same parentId", async () => {
+    db.entries.push(
+      { id: "entry-1", content: "Chunked memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1-chunk-0","entry-1-chunk-1"]', recall_count: 0, importance_score: 0 },
+    );
+    const getByIdsMock = vi.fn().mockResolvedValue([
+      { id: "entry-1-chunk-0", values: SIMILAR_VEC, metadata: { parentId: "entry-1", isUpdate: false } },
+      { id: "entry-1-chunk-1", values: SIMILAR_VEC, metadata: { parentId: "entry-1", isUpdate: false } },
+    ]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].id).toBe("entry-1");
   });
 });
