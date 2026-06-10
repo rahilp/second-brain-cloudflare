@@ -389,6 +389,20 @@ export function getHalfLifeMs(tags: string[]): number {
   return 30 * 24 * 60 * 60 * 1000; // 30 days default
 }
 
+// Cosine similarity between two vectors. BGE embeddings are not normalized,
+// so the denominator matters — this keeps tag-path scores on the same scale
+// as Vectorize's cosine query scores.
+export function cosineSim(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
 export function rerankWithTimeDecay(
   matches: VectorizeMatch[],
   recallCounts: Map<string, number> = new Map(),
