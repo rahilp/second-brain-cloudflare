@@ -36,6 +36,8 @@ function graceMs(env: Env): number {
 const DUPLICATE_BLOCK_THRESHOLD = 0.95;
 const DUPLICATE_FLAG_THRESHOLD = 0.85;
 const CANDIDATE_SCORE_THRESHOLD = 0.45;
+const TAG_BOOST_STEP = 0.15;
+const TAG_BOOST_MAX = 1.5;
 
 // ─── Model constants ──────────────────────────────────────────────────────────
 
@@ -62,8 +64,6 @@ const VECTORIZE_TOP_K_MULTIPLIER = 3;
 const VECTORIZE_GET_BY_IDS_BATCH = 20;
 // D1 allows at most 100 bound parameters per query
 const D1_MAX_BOUND_PARAMS = 100;
-const TAG_BOOST_STEP = 0.15;
-const TAG_BOOST_MAX = 1.5;
 
 // ─── Runtime state ────────────────────────────────────────────────────────────
 
@@ -526,19 +526,19 @@ export function extractHashtags(content: string): { cleanContent: string; hashta
 
 export async function inferQueryTags(query: string, env: Env): Promise<string[]> {
   const { hashtags } = extractHashtags(query);
+  if (hashtags.length) return hashtags;
 
-  const { results: tagRows } = await env.DB.prepare(`SELECT tags FROM entries`).all();
-  const knownTags = [...new Set(
-    (tagRows as any[]).flatMap(r => JSON.parse((r.tags as string) ?? "[]") as string[])
-  )];
+  const { results: tagRows } = await env.DB.prepare(
+    `SELECT DISTINCT value FROM entries, json_each(entries.tags) ORDER BY value`
+  ).all();
+  const knownTags = (tagRows as { value: string }[]).map(r => r.value);
 
   const lowerQuery = query.toLowerCase();
   const keywordMatches = knownTags.filter(t =>
     new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(lowerQuery)
   );
 
-  const combined = [...new Set([...hashtags, ...keywordMatches])];
-  if (combined.length) return combined;
+  if (keywordMatches.length) return keywordMatches;
 
   if (!knownTags.length) return [];
 
