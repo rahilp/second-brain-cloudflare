@@ -255,4 +255,26 @@ describe("GET /recall", () => {
     expect(data.results).toHaveLength(1);
     expect(data.results[0].id).toBe("entry-1");
   });
+
+  it("chunks the candidate scoring query for tags with more than 100 entries", async () => {
+    const count = 150;
+    for (let i = 1; i <= count; i++) {
+      db.entries.push(
+        { id: `entry-${i}`, content: `Memory ${i}`, tags: '["work"]', source: "api", created_at: 1000 + i, vector_ids: `["entry-${i}"]`, recall_count: 0, importance_score: 0 },
+      );
+    }
+    const getByIdsMock = vi.fn().mockResolvedValue(
+      Array.from({ length: count }, (_, i) => ({ id: `entry-${i + 1}`, values: SIMILAR_VEC, metadata: { parentId: `entry-${i + 1}`, isUpdate: false } })),
+    );
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+    const prepareSpy = vi.spyOn(db, "prepare");
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.results).toHaveLength(5); // default topK
+    // D1 allows max 100 bound parameters per query — 150 candidates must be chunked into 2 calls
+    const scoringCalls = prepareSpy.mock.calls.filter(([sql]) => sql.includes("recall_count, importance_score"));
+    expect(scoringCalls).toHaveLength(2);
+  });
 });
