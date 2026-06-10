@@ -541,7 +541,7 @@ export async function inferQueryTags(query: string, env: Env): Promise<string[]>
 
   const lowerQuery = query.toLowerCase();
   const keywordMatches = knownTags.filter(t =>
-    new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(lowerQuery)
+    new RegExp(`(?<![\\w-])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`, "i").test(lowerQuery)
   );
 
   if (keywordMatches.length) return keywordMatches;

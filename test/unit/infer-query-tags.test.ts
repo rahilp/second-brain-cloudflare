@@ -83,8 +83,23 @@ describe("inferQueryTags", () => {
     const db = makeTestDb();
     db.entries.push({ id: "e1", content: "Note", tags: '["net"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 });
     const env = makeTestEnv(db);
-    // \bnet\b must not match "networking" (word boundary after 't' is before 'w', not end of word)
     const tags = await inferQueryTags("networking event", env);
     expect(tags).not.toContain("net");
+  });
+
+  it("does not match a hyphenated compound — 'my-claude-response-thing' does not match tag 'claude-response'", async () => {
+    const db = makeTestDb();
+    db.entries.push({ id: "e1", content: "Note", tags: '["claude-response"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 });
+    const env = makeTestEnv(db);
+    const tags = await inferQueryTags("my-claude-response-thing happened", env);
+    expect(tags).not.toContain("claude-response");
+  });
+
+  it("matches a hyphenated tag that appears standalone in the query", async () => {
+    const db = makeTestDb();
+    db.entries.push({ id: "e1", content: "Note", tags: '["claude-response"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 });
+    const env = makeTestEnv(db);
+    const tags = await inferQueryTags("what claude-response notes do I have", env);
+    expect(tags).toContain("claude-response");
   });
 });
