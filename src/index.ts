@@ -62,6 +62,8 @@ const VECTORIZE_TOP_K_MULTIPLIER = 3;
 const VECTORIZE_GET_BY_IDS_BATCH = 20;
 // D1 allows at most 100 bound parameters per query
 const D1_MAX_BOUND_PARAMS = 100;
+const TAG_BOOST_STEP = 0.15;
+const TAG_BOOST_MAX = 1.5;
 
 // ─── Runtime state ────────────────────────────────────────────────────────────
 
@@ -518,6 +520,43 @@ export function extractHashtags(content: string): { cleanContent: string; hashta
   const hashtags = (content.match(/#\w+/g) ?? []).map(t => t.slice(1).toLowerCase());
   const cleanContent = content.replace(/#\w+/g, '').replace(/\s+/g, ' ').trim();
   return { cleanContent, hashtags };
+}
+
+// ─── Query tag inference ──────────────────────────────────────────────────────
+
+export async function inferQueryTags(query: string, env: Env): Promise<string[]> {
+  const { hashtags } = extractHashtags(query);
+
+  const { results: tagRows } = await env.DB.prepare(`SELECT tags FROM entries`).all();
+  const knownTags = [...new Set(
+    (tagRows as any[]).flatMap(r => JSON.parse((r.tags as string) ?? "[]") as string[])
+  )];
+
+  const lowerQuery = query.toLowerCase();
+  const keywordMatches = knownTags.filter(t =>
+    new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(lowerQuery)
+  );
+
+  const combined = [...new Set([...hashtags, ...keywordMatches])];
+  if (combined.length) return combined;
+
+  if (!knownTags.length) return [];
+
+  try {
+    const stream = await env.AI.run(LLM_MODEL as any, {
+      messages: [{
+        role: "user",
+        content: `From this list of tags: ${knownTags.slice(0, 50).join(", ")}\n\nWhich tags best match this query? Reply with only a comma-separated list of matching tag names from the list, or nothing if none apply.\n\nQuery: ${query.slice(0, 300)}`,
+      }],
+      max_tokens: 100,
+      stream: true,
+    });
+    const text = await readStreamText(stream as ReadableStream);
+    const knownSet = new Set(knownTags);
+    return text.split(",").map(t => t.trim().toLowerCase()).filter(t => t && knownSet.has(t));
+  } catch {
+    return [];
+  }
 }
 
 // ─── Shared entry-listing filter builder ─────────────────────────────────────
