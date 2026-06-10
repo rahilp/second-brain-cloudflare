@@ -399,8 +399,8 @@ export function cosineSim(a: ArrayLike<number>, b: ArrayLike<number>): number {
     normA += a[i] * a[i];
     normB += b[i] * b[i];
   }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
+  // Guard on the raw norms, not the sqrt product — the product can underflow to 0
+  return normA === 0 || normB === 0 ? 0 : dot / Math.sqrt(normA * normB);
 }
 
 export function rerankWithTimeDecay(
