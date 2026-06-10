@@ -977,7 +977,10 @@ export async function recallEntries(
     embedQuery = parsed.cleanQuery;
   }
 
-  const values = await embed(embedQuery, env);
+  const [values, queryTags] = await Promise.all([
+    embed(embedQuery, env),
+    inferQueryTags(embedQuery, env),
+  ]);
 
   let results: { matches: VectorizeMatch[] };
   if (tag) {
@@ -1041,7 +1044,7 @@ export async function recallEntries(
   const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
   const importanceScores = new Map(rcRows.map(r => [r.id, r.importance_score ?? 0]));
 
-  const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts, importanceScores);
+  const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts, importanceScores, queryTags);
 
   const seen = new Set<string>();
   const deduped = reranked.filter((m) => {

@@ -278,4 +278,62 @@ describe("GET /recall", () => {
     const scoringCalls = prepareSpy.mock.calls.filter(([sql]) => sql.includes("recall_count, importance_score"));
     expect(scoringCalls).toHaveLength(2);
   });
+
+  it("hashtag or keyword in query skips the LLM during tag inference", async () => {
+    db.entries.push(
+      { id: "entry-1", content: "Work meeting notes", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },
+    );
+    const aiRun = vi.fn().mockImplementation(async (model: string) => {
+      if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
+      return new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode('data: {"response":"work"}\n\n'));
+          c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          c.close();
+        },
+      });
+    });
+    env = makeTestEnv(db, {
+      AI: { run: aiRun } as unknown as Ai,
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [makeMatch("entry-1", 0.9)] }),
+      }),
+    });
+
+    const res = await worker.fetch(req("GET", "/recall?query=work+meeting"), env, ctx);
+    expect(res.status).toBe(200);
+    // "work" is a known tag AND appears as a keyword in the query → LLM not called for inference
+    // (embed call uses BGE model; only LLM calls use other models)
+    const llmCalls = aiRun.mock.calls.filter((args: any[]) => args[0] !== "@cf/baai/bge-small-en-v1.5");
+    expect(llmCalls).toHaveLength(0);
+  });
+
+  it("query with no matching keywords exercises the LLM fallback for tag inference", async () => {
+    db.entries.push(
+      { id: "entry-1", content: "Office lease renewal", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },
+    );
+    const aiRun = vi.fn().mockImplementation(async (model: string) => {
+      if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
+      return new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode('data: {"response":"work"}\n\n'));
+          c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          c.close();
+        },
+      });
+    });
+    env = makeTestEnv(db, {
+      AI: { run: aiRun } as unknown as Ai,
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [makeMatch("entry-1", 0.9)] }),
+      }),
+    });
+
+    // "quarterly planning" — no hashtags, "work" is not a whole word in this query
+    const res = await worker.fetch(req("GET", "/recall?query=quarterly+planning"), env, ctx);
+    expect(res.status).toBe(200);
+    // LLM called at least once (for tag inference); embedding uses BGE model (not counted)
+    const llmCalls = aiRun.mock.calls.filter((args: any[]) => args[0] !== "@cf/baai/bge-small-en-v1.5");
+    expect(llmCalls.length).toBeGreaterThanOrEqual(1);
+  });
 });
