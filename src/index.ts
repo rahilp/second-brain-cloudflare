@@ -57,6 +57,8 @@ const DIGEST_MAX_TOKENS = 400;
 // ─── Vectorize constants ──────────────────────────────────────────────────────
 
 const VECTORIZE_TOP_K_MULTIPLIER = 3;
+// getByIds batch size for tag-scoped recall — keeps each call well under request limits
+const VECTORIZE_GET_BY_IDS_BATCH = 500;
 
 // ─── Runtime state ────────────────────────────────────────────────────────────
 
@@ -929,29 +931,48 @@ export async function recallEntries(
 
   const values = await embed(embedQuery, env);
 
-  // If tag filter, resolve matching IDs from D1 first (D1 is source of truth for tags)
-  let tagFilterIds: Set<string> | null = null;
+  let results: { matches: VectorizeMatch[] };
   if (tag) {
+    // Tag path: score the tag's own vectors directly. An unconstrained Vectorize
+    // query caps at 50 candidates, silently dropping tagged entries whose global
+    // semantic rank falls outside the top 50 (issue #141). D1 is the source of
+    // truth for tags and already stores each entry's vector_ids.
     const { results: tagRows } = await env.DB.prepare(
-      `SELECT id FROM entries WHERE tags LIKE ?`
+      `SELECT id, vector_ids FROM entries WHERE tags LIKE ?`
     ).bind(`%"${tag}"%`).all();
-    tagFilterIds = new Set((tagRows as any[]).map(r => r.id as string));
-    if (tagFilterIds.size === 0) return { matches: [], insight: "" };
-  }
+    if (!tagRows.length) return { matches: [], insight: "" };
 
-  // Query Vectorize without filter — tag filtering happens in-memory below
-  // Cloudflare Vectorize caps topK at 50 when returnMetadata="all" (error 40025)
-  const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
-  let results = await env.VECTORIZE.query(values, {
-    topK: vectorizeTopK,
-    returnMetadata: "all",
-  });
+    const vectorIds = [...new Set(
+      (tagRows as any[]).flatMap(r => JSON.parse((r.vector_ids as string) ?? "[]") as string[])
+    )];
+    if (!vectorIds.length) return { matches: [], insight: "" };
 
-  if (results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
+    const vectors: VectorizeVector[] = [];
+    for (let i = 0; i < vectorIds.length; i += VECTORIZE_GET_BY_IDS_BATCH) {
+      vectors.push(...await env.VECTORIZE.getByIds(vectorIds.slice(i, i + VECTORIZE_GET_BY_IDS_BATCH)));
+    }
+
+    results = {
+      matches: vectors.map(v => ({
+        id: v.id,
+        score: cosineSim(values, v.values as number[]),
+        metadata: v.metadata,
+      })) as VectorizeMatch[],
+    };
+  } else {
+    // Cloudflare Vectorize caps topK at 50 when returnMetadata="all" (error 40025)
+    const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
     results = await env.VECTORIZE.query(values, {
-      topK: 50,
+      topK: vectorizeTopK,
       returnMetadata: "all",
     });
+
+    if (results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
+      results = await env.VECTORIZE.query(values, {
+        topK: 50,
+        returnMetadata: "all",
+      });
+    }
   }
 
   if (!results.matches.length) return { matches: [], insight: "" };
@@ -971,8 +992,6 @@ export async function recallEntries(
   const deduped = reranked.filter((m) => {
     const parentId = (m.metadata as any)?.parentId ?? m.id;
     if (seen.has(parentId)) return false;
-    // Apply tag filter against D1-resolved IDs
-    if (tagFilterIds && !tagFilterIds.has(parentId)) return false;
     seen.add(parentId);
     return true;
   }).slice(0, topK);
