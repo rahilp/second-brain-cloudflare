@@ -30,8 +30,8 @@ describe("inferQueryTags", () => {
     db.entries.push({ id: "e1", content: "Office lease note", tags: '["work","legal"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 });
     const env = makeTestEnv(db);
     const tags = await inferQueryTags("what work and legal things did I decide?", env);
-    expect(tags).toContain("work");
-    expect(tags).toContain("legal");
+    expect(tags).toHaveLength(2);
+    expect(tags).toEqual(expect.arrayContaining(["work", "legal"]));
   });
 
   it("does not call the LLM when keyword matches are found", async () => {
@@ -39,7 +39,8 @@ describe("inferQueryTags", () => {
     db.entries.push({ id: "e1", content: "Note", tags: '["work"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 });
     const aiRun = vi.fn().mockResolvedValue(makeSseStream("work"));
     const env = makeTestEnv(db, { AI: { run: aiRun } as unknown as Ai });
-    await inferQueryTags("work meeting notes", env);
+    const tags = await inferQueryTags("work meeting notes", env);
+    expect(tags).toContain("work");
     expect(aiRun).not.toHaveBeenCalled();
   });
 
@@ -49,6 +50,7 @@ describe("inferQueryTags", () => {
     const aiRun = vi.fn().mockResolvedValue(makeSseStream("work, personal"));
     const env = makeTestEnv(db, { AI: { run: aiRun } as unknown as Ai });
     const tags = await inferQueryTags("quarterly planning session", env);
+    expect(tags).toHaveLength(2);
     expect(tags).toEqual(expect.arrayContaining(["work", "personal"]));
     expect(aiRun).toHaveBeenCalledTimes(1);
   });
