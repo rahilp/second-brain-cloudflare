@@ -63,6 +63,26 @@ describe("parseRecallResult — direct object input (non-string path)", () => {
     expect(results[0].content).toBe("direct object");
     expect(results[0].score).toBe(80);
   });
+
+  it("parses the GET /recall REST response shape — one entry per result, regardless of content", () => {
+    // Contract test: the REST response shape must yield one entry per result,
+    // never splitting on list items inside content (the old text-parsing bug).
+    // The recall chat flow now maps data.results directly (inline in index.html,
+    // not testable here); this pins the shape both depend on.
+    const restResponse = {
+      ok: true,
+      results: [
+        { id: "r1", content: "Changelog:\n- item one\n- item two\n1. numbered line", score: 87.3, tags: ["work"], source: "api", created_at: 1717000000000, updated: false },
+        { id: "r2", content: "Plain note", score: 64.9, tags: [], source: "claude-desktop", created_at: 1717000001000, updated: true },
+      ],
+      insight: "Some synthesized insight.",
+    };
+    const results = parseRecallResult(restResponse);
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({ id: "r1", score: 87, tags: ["work"] });
+    expect(results[0].content).toContain("- item one");
+    expect(results[1]).toMatchObject({ id: "r2", score: 65, content: "Plain note" });
+  });
 });
 
 describe("parseRecallResult — text block with no score", () => {

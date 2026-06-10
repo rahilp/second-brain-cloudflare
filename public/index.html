@@ -2736,12 +2736,21 @@
         const loadingEl = appendLoading(msgs)
         msgs.scrollTop = msgs.scrollHeight
         try {
-          const result = await apiMcp('recall', { query, topK: 5, ...(selectedTag ? { tag: selectedTag } : {}) })
+          // Use the REST endpoint for structured results — parsing the MCP tool's
+          // formatted text miscounts sources when memory content contains list items
+          const params = new URLSearchParams({ query, topK: '5' })
+          if (selectedTag) params.set('tag', selectedTag)
+          const recallRes = await fetch(`${WORKER_URL}/recall?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const data = await recallRes.json()
+          // Server/auth errors must not render as "no results" — let the catch handle them
+          if (!recallRes.ok || !data.ok) throw new Error(data.error || 'recall failed')
           loadingEl.remove()
-          if (!result || result.includes('Nothing found')) {
+          if (!data.results || !data.results.length) {
             appendBrainBubble(msgs, "I couldn't find anything matching that. Try different words, or check Recent.", 'recall-sys')
           } else {
-            const entries = parseRecallResult(result)
+            // REST scores are already 0–100 (one decimal); map directly rather than via
+            // normalizeEntry, whose 0–1 rescale heuristic would turn a 0.8% match into 80%
+            const entries = data.results.map((m) => ({ id: m.id, content: m.content, tags: m.tags || [], score: Math.min(100, Math.round(m.score)) }))
             const answerBubble = document.createElement('div')
             answerBubble.className = 'ex-a-row'
             const answerEl = document.createElement('div')
@@ -2749,10 +2758,20 @@
             answerBubble.appendChild(answerEl)
             msgs.appendChild(answerBubble)
 
+            // Serialize results for the /chat LLM context, mirroring the MCP tool's
+            // format — dates/tags/source are needed for temporal questions
+            const memories =
+              (data.insight ? `Insight: ${data.insight}\n\n` : '') +
+              data.results.map((m, i) => {
+                const date = new Date(m.created_at).toLocaleDateString()
+                const tagList = m.tags && m.tags.length ? ` [${m.tags.join(', ')}]` : ''
+                const src = m.source ? ` · ${m.source}` : ''
+                return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}\n${m.content}`
+              }).join('\n\n')
             const res = await fetch(`${WORKER_URL}/chat`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-              body: JSON.stringify({ query, memories: result }),
+              body: JSON.stringify({ query, memories }),
             })
 
             const reader = res.body.getReader()
