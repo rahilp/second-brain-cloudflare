@@ -15,6 +15,11 @@ function makeMatch(id: string, score: number, overrides: Record<string, any> = {
   };
 }
 
+// The AI mock embeds every query as 384 dims of 0.1 (make-env.ts) —
+// SIMILAR_VEC scores cosine 1.0 against it, DISSIMILAR_VEC scores ~0.
+const SIMILAR_VEC = new Array(384).fill(0.1);
+const DISSIMILAR_VEC = Array.from({ length: 384 }, (_, i) => (i % 2 === 0 ? 0.1 : -0.1));
+
 describe("GET /recall", () => {
   let env: Env;
   let db: D1Mock;
@@ -87,28 +92,31 @@ describe("GET /recall", () => {
     expect(data.results[0].id).toBe("entry-1");
   });
 
-  it("filters out matches whose parent entry doesn't carry the requested tag", async () => {
+  it("surfaces tagged entries via getByIds even when a global query would miss them", async () => {
     db.entries.push(
-      { id: "entry-1", content: "Work memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 },
-      { id: "entry-2", content: "Idea memory", tags: '["idea"]', source: "api", created_at: 2000, vector_ids: "[]", recall_count: 0, importance_score: 0 },
+      { id: "entry-1", content: "Work memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },
+      { id: "entry-2", content: "Idea memory", tags: '["idea"]', source: "api", created_at: 2000, vector_ids: '["entry-2"]', recall_count: 0, importance_score: 0 },
     );
-    env = makeTestEnv(db, {
-      VECTORIZE: makeVectorizeMock({
-        query: vi.fn().mockResolvedValue({
-          matches: [makeMatch("entry-1", 0.9), makeMatch("entry-2", 0.85)],
-        }),
-      }),
-    });
+    // Global semantic query returns nothing — the old path would lose this entry entirely
+    const queryMock = vi.fn().mockResolvedValue({ matches: [] });
+    const getByIdsMock = vi.fn().mockResolvedValue([
+      { id: "entry-1", values: SIMILAR_VEC, metadata: { parentId: "entry-1", isUpdate: false } },
+    ]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query: queryMock, getByIds: getByIdsMock }) });
 
     const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
     const data = await res.json() as any;
     expect(data.results).toHaveLength(1);
     expect(data.results[0].id).toBe("entry-1");
+    // Only the tag's own vectors are fetched; the global query is never used
+    expect(getByIdsMock).toHaveBeenCalledWith(["entry-1"]);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("returns empty results immediately when the tag has no matching entries", async () => {
     const queryMock = vi.fn().mockResolvedValue({ matches: [makeMatch("entry-1", 0.9)] });
-    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query: queryMock }) });
+    const getByIdsMock = vi.fn().mockResolvedValue([]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query: queryMock, getByIds: getByIdsMock }) });
 
     const res = await worker.fetch(req("GET", "/recall?query=memory&tag=nonexistent"), env, ctx);
     const data = await res.json() as any;
@@ -116,6 +124,7 @@ describe("GET /recall", () => {
     expect(data.results).toEqual([]);
     // Short-circuits before hitting Vectorize since the tag resolves to no IDs in D1
     expect(queryMock).not.toHaveBeenCalled();
+    expect(getByIdsMock).not.toHaveBeenCalled();
   });
 
   it("clamps ?topK= to the 1-20 range", async () => {
@@ -125,5 +134,92 @@ describe("GET /recall", () => {
     await worker.fetch(req("GET", "/recall?query=memory&topK=999"), env, ctx);
     const [, opts] = queryMock.mock.calls[0];
     expect(opts.topK).toBeLessThanOrEqual(50);
+  });
+
+  it("ranks tag-scoped results by cosine similarity to the query", async () => {
+    db.entries.push(
+      { id: "entry-1", content: "Less similar", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },
+      { id: "entry-2", content: "More similar", tags: '["work"]', source: "api", created_at: 2000, vector_ids: '["entry-2"]', recall_count: 0, importance_score: 0 },
+    );
+    const getByIdsMock = vi.fn().mockResolvedValue([
+      { id: "entry-1", values: DISSIMILAR_VEC, metadata: { parentId: "entry-1", isUpdate: false } },
+      { id: "entry-2", values: SIMILAR_VEC, metadata: { parentId: "entry-2", isUpdate: false } },
+    ]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.results.map((r: any) => r.id)).toEqual(["entry-2", "entry-1"]);
+    expect(data.results[0].score).toBeGreaterThan(data.results[1].score);
+  });
+
+  it("omits stale vector IDs that getByIds does not return", async () => {
+    db.entries.push(
+      { id: "entry-1", content: "Live memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1","entry-1-stale"]', recall_count: 0, importance_score: 0 },
+    );
+    const getByIdsMock = vi.fn().mockResolvedValue([
+      { id: "entry-1", values: SIMILAR_VEC, metadata: { parentId: "entry-1", isUpdate: false } },
+    ]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].id).toBe("entry-1");
+  });
+
+  it("returns empty results when all of the tag's vectors are stale", async () => {
+    db.entries.push(
+      { id: "entry-1", content: "Orphaned memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },
+    );
+    // Default getByIds mock resolves to [] — every ID is stale
+    env = makeTestEnv(db);
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.results).toEqual([]);
+  });
+
+  it("returns empty without calling Vectorize when tagged entries have no vectors", async () => {
+    db.entries.push(
+      { id: "entry-1", content: "Unvectorized memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 },
+    );
+    const queryMock = vi.fn().mockResolvedValue({ matches: [] });
+    const getByIdsMock = vi.fn().mockResolvedValue([]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query: queryMock, getByIds: getByIdsMock }) });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.results).toEqual([]);
+    expect(getByIdsMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("batches getByIds calls at 500 IDs", async () => {
+    const manyIds = Array.from({ length: 501 }, (_, i) => `entry-1-chunk-${i}`);
+    db.entries.push(
+      { id: "entry-1", content: "Heavily chunked memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: JSON.stringify(manyIds), recall_count: 0, importance_score: 0 },
+    );
+    const getByIdsMock = vi.fn().mockResolvedValue([]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+
+    await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
+    expect(getByIdsMock).toHaveBeenCalledTimes(2);
+    expect(getByIdsMock.mock.calls[0][0]).toHaveLength(500);
+    expect(getByIdsMock.mock.calls[1][0]).toHaveLength(1);
+  });
+
+  it("dedupes duplicate vector IDs shared across tagged entries before fetching", async () => {
+    db.entries.push(
+      { id: "entry-1", content: "First", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["shared-vec"]', recall_count: 0, importance_score: 0 },
+      { id: "entry-2", content: "Second", tags: '["work"]', source: "api", created_at: 2000, vector_ids: '["shared-vec"]', recall_count: 0, importance_score: 0 },
+    );
+    const getByIdsMock = vi.fn().mockResolvedValue([]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+
+    await worker.fetch(req("GET", "/recall?query=memory&tag=work"), env, ctx);
+    expect(getByIdsMock).toHaveBeenCalledTimes(1);
+    expect(getByIdsMock.mock.calls[0][0]).toEqual(["shared-vec"]);
   });
 });

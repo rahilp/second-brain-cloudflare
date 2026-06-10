@@ -125,12 +125,12 @@ export class D1Mock {
         return null;
       },
       async all() {
-        if (s === "SELECT id FROM entries WHERE tags LIKE ?") {
+        if (s === "SELECT id FROM entries WHERE tags LIKE ?" || s === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?") {
           const pattern = String(args[0]);
           const tag = pattern.replace(/%"/g, "").replace(/"%/g, "");
           const results = db.entries
             .filter((e: any) => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag))
-            .map((e: any) => ({ id: e.id }));
+            .map((e: any) => ({ id: e.id, vector_ids: e.vector_ids ?? "[]" }));
           return { results };
         }
         if (s.includes("SELECT id, recall_count, importance_score FROM entries")) {
