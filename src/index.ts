@@ -50,6 +50,7 @@ const CHUNK_OVERLAP_CHARS = 200;
 
 // ─── Token limits ─────────────────────────────────────────────────────────────
 
+const CLASSIFY_MAX_TOKENS = 30;
 const CONTRADICTION_MAX_TOKENS = 80;
 const SMART_MERGE_MAX_TOKENS = 250;
 const INSIGHT_MAX_TOKENS = 300;
@@ -521,22 +522,34 @@ export function parseTimePhrase(query: string, now: number): { after?: number; b
   return { cleanQuery: query };
 }
 
-// ─── AI importance scoring ────────────────────────────────────────────────────
+// ─── AI classification (importance + canonical) ───────────────────────────────
 
-async function scoreImportance(content: string, env: Env): Promise<number> {
+export async function classifyEntry(content: string, env: Env): Promise<{ importance: number; canonical: boolean }> {
+  let text: string;
   try {
     const stream = await env.AI.run(LLM_MODEL as any, {
-      messages: [{
-        role: "user", content:
-          `Rate the long-term importance of this memory 1-5. Reply with only a single digit.\n1=trivial 3=useful context 5=critical decision or goal\n\nMemory: ${content.slice(0, 500)}`
+      messages: [{ role: "user", content:
+        `Analyze this memory and reply with ONLY JSON.\n` +
+        `1) "importance": long-term importance 1-5 (1=trivial, 3=useful context, 5=critical decision or goal).\n` +
+        `2) "canonical": true ONLY if this is a confirmed decision, durable fact, or stated permanent preference that should be authoritative and protected from being overwritten. Be conservative — false for anything tentative, one-off, time-bound, or event-like.\n` +
+        `JSON shape: {"importance": <1-5>, "canonical": <true|false>}\n\nMemory: ${content.slice(0, 500)}`,
       }],
+      max_tokens: CLASSIFY_MAX_TOKENS,
       stream: true,
     });
-    const text = await readStreamText(stream as ReadableStream);
-    const score = parseInt(text.trim(), 10);
-    return score >= 1 && score <= 5 ? score : 3;
+    text = await readStreamText(stream as ReadableStream);
   } catch {
-    return 0;
+    return { importance: 0, canonical: false }; // call/stream failure — hard sentinel
+  }
+  const json = text.match(/\{[^{}]*\}/);
+  if (!json) return { importance: 3, canonical: false };
+  try {
+    const parsed = JSON.parse(json[0]);
+    const importance = parsed.importance >= 1 && parsed.importance <= 5 ? parsed.importance : 3;
+    const canonical = parsed.canonical === true;
+    return { importance, canonical };
+  } catch {
+    return { importance: 3, canonical: false }; // unparseable model output — soft default
   }
 }
 
@@ -1218,9 +1231,18 @@ export async function captureEntry(
   );
 
   ctx.waitUntil(
-    scoreImportance(c, env)
-      .then(score => env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(score, id).run())
-      .catch(e => console.error("Importance scoring failed (non-fatal):", e))
+    classifyEntry(c, env)
+      .then(async ({ importance, canonical }) => {
+        await env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(importance, id).run();
+        if (!canonical) return;
+        const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
+        if (!row) return;
+        const current: string[] = JSON.parse(row.tags ?? "[]");
+        if (getStatus(current) !== null) return; // don't override draft/deprecated/canonical already set
+        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`)
+          .bind(JSON.stringify(withStatus(current, "canonical")), id).run();
+      })
+      .catch(e => console.error("Classification failed (non-fatal):", e))
   );
 
   if (contradiction.detected && contradiction.conflicting_id) {
