@@ -308,6 +308,27 @@ describe("GET /recall", () => {
     expect(llmCalls).toHaveLength(0);
   });
 
+  it("excludes status:deprecated entries from recall results", async () => {
+    db.entries.push(
+      { id: "entry-active", content: "Active memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-active"]', recall_count: 0, importance_score: 0 },
+      { id: "entry-deprecated", content: "Deprecated memory", tags: '["work","status:deprecated"]', source: "api", created_at: 2000, vector_ids: '["entry-deprecated"]', recall_count: 0, importance_score: 0 },
+    );
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [makeMatch("entry-active", 0.9), makeMatch("entry-deprecated", 0.85)],
+        }),
+      }),
+    });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].id).toBe("entry-active");
+  });
+
   it("query with no matching keywords exercises the LLM fallback for tag inference", async () => {
     db.entries.push(
       { id: "entry-1", content: "Office lease renewal", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },

@@ -158,9 +158,13 @@ export class D1Mock {
           const ids = args.slice(0, idCount);
           const rest = args.slice(idCount);
           let argIdx = 0;
-          let rows = db.entries.filter((e: any) =>
-            ids.includes(e.id) && !(JSON.parse(e.tags ?? "[]") as string[]).includes("auto-pattern")
-          );
+          let rows = db.entries.filter((e: any) => {
+            const tags: string[] = JSON.parse(e.tags ?? "[]");
+            if (!ids.includes(e.id)) return false;
+            if (tags.includes("auto-pattern")) return false;
+            if (s.includes('"status:deprecated"') && tags.includes("status:deprecated")) return false;
+            return true;
+          });
           if (s.includes("created_at >= ?")) {
             const after = Number(rest[argIdx++]);
             rows = rows.filter((e: any) => e.created_at >= after);

@@ -1080,7 +1080,7 @@ export async function recallEntries(
   const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
   const placeholders = parentIds.map(() => "?").join(", ");
   const d1Bindings: (string | number)[] = [...parentIds];
-  let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%'`;
+  let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
   if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
   if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
   const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
@@ -1096,34 +1096,26 @@ export async function recallEntries(
     ).catch(e => console.error("recall_count update failed (non-fatal):", e))
   );
 
-  const matches: RecallMatch[] = deduped.map((m) => {
+  const matches: RecallMatch[] = deduped.flatMap((m) => {
     const meta = m.metadata as Record<string, any>;
     const parentId = (meta?.parentId ?? m.id) as string;
     const row = d1Map.get(parentId);
     const isUpdate = !!meta?.isUpdate;
 
-    if (row) {
-      return {
-        id: parentId,
-        content: row.content as string,
-        score: m.score,
-        createdAt: row.created_at as number,
-        tags: JSON.parse(row.tags ?? "[]"),
-        source: row.source as string,
-        isUpdate,
-      };
+    if (!row) {
+      // D1 row not found — either filtered out (e.g. status:deprecated) or genuinely missing
+      return [];
     }
 
-    // Fallback to metadata if D1 row not found (shouldn't happen)
-    return {
+    return [{
       id: parentId,
-      content: (meta?.content as string) ?? "",
+      content: row.content as string,
       score: m.score,
-      createdAt: (meta?.created_at as number) ?? now,
-      tags: Array.isArray(meta?.tags) ? (meta.tags as string[]) : [],
-      source: (meta?.source as string) ?? "",
+      createdAt: row.created_at as number,
+      tags: JSON.parse(row.tags ?? "[]"),
+      source: row.source as string,
       isUpdate,
-    };
+    }];
   });
 
   const insight = d1Rows.length > 1
