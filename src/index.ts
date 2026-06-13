@@ -65,6 +65,26 @@ const VECTORIZE_GET_BY_IDS_BATCH = 20;
 // D1 allows at most 100 bound parameters per query
 const D1_MAX_BOUND_PARAMS = 100;
 
+// ─── Memory status layer (issue #119) ──────────────────────────────────────────
+// Status lives as a reserved tag (e.g. "status:canonical") on entries.tags — no
+// schema change. Absent status = unspecified = default behavior.
+
+export const STATUS_VALUES = ["canonical", "draft", "deprecated"] as const;
+export type MemoryStatus = (typeof STATUS_VALUES)[number];
+const STATUS_PREFIX = "status:";
+
+export function getStatus(tags: string[]): MemoryStatus | null {
+  const tag = tags.find(t => t.startsWith(STATUS_PREFIX));
+  if (!tag) return null;
+  const value = tag.slice(STATUS_PREFIX.length) as MemoryStatus;
+  return (STATUS_VALUES as readonly string[]).includes(value) ? value : null;
+}
+
+export function withStatus(tags: string[], status: MemoryStatus): string[] {
+  const cleaned = tags.filter(t => !t.startsWith(STATUS_PREFIX));
+  return [...cleaned, `${STATUS_PREFIX}${status}`];
+}
+
 // ─── Runtime state ────────────────────────────────────────────────────────────
 
 let dbReady = false;
