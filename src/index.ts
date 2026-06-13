@@ -1016,12 +1016,12 @@ export interface RecallSearchResult {
 }
 
 export async function recallEntries(
-  params: { query: string; topK: number; tag?: string; after?: number; before?: number },
+  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind },
   env: Env,
   ctx: ExecutionContext
 ): Promise<RecallSearchResult> {
   const { query, topK } = params;
-  let { tag, after, before } = params;
+  let { tag, after, before, kind } = params;
   const now = Date.now();
 
   let embedQuery = query;
@@ -1111,11 +1111,18 @@ export async function recallEntries(
 
   if (!deduped.length) return { matches: [], insight: "" };
 
-  // Fetch full content from D1 for all matched parent IDs, applying time filter if set
+  // Fetch full content from D1 for all matched parent IDs, applying filters: auto-pattern
+  // exclusion, status:deprecated exclusion, optional kind match, and optional after/before range
   const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
   const placeholders = parentIds.map(() => "?").join(", ");
   const d1Bindings: (string | number)[] = [...parentIds];
   let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
+  if (kind && (KIND_VALUES as readonly string[]).includes(kind)) {
+    // Safe to interpolate: `kind` is validated against the KIND_VALUES enum just above,
+    // so only "episodic"/"semantic" can reach the string. Kept as a literal (not a bound
+    // param) so it doesn't shift the positional after/before bindings below.
+    d1Sql += ` AND tags LIKE '%"kind:${kind}"%'`;
+  }
   if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
   if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
   const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
@@ -1537,10 +1544,11 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         tag: z.string().optional().describe("Filter by a specific tag"),
         after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
+        kind: z.enum([...KIND_VALUES] as [string, ...string[]]).optional().describe("Filter to episodic (events) or semantic (facts/knowledge)"),
       },
     },
-    async ({ query, topK, tag, after, before }) => {
-      const { matches, insight } = await recallEntries({ query, topK, tag, after, before }, env, ctx);
+    async ({ query, topK, tag, after, before, kind }) => {
+      const { matches, insight } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined }, env, ctx);
 
       if (!matches.length) {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
@@ -1892,8 +1900,10 @@ const defaultHandler = {
       const tag = url.searchParams.get("tag")?.trim() || undefined;
       const after = url.searchParams.has("after") ? parseInt(url.searchParams.get("after")!, 10) : undefined;
       const before = url.searchParams.has("before") ? parseInt(url.searchParams.get("before")!, 10) : undefined;
+      const kindParam = url.searchParams.get("kind")?.trim();
+      const kind = kindParam && (KIND_VALUES as readonly string[]).includes(kindParam) ? kindParam as MemoryKind : undefined;
 
-      const { matches, insight } = await recallEntries({ query, topK, tag, after, before }, env, ctx);
+      const { matches, insight } = await recallEntries({ query, topK, tag, after, before, kind }, env, ctx);
 
       if (!matches.length) {
         return json({ ok: true, results: [], message: "Nothing found matching that query." });

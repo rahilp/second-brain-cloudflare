@@ -329,6 +329,27 @@ describe("GET /recall", () => {
     expect(data.results[0].id).toBe("entry-active");
   });
 
+  it("filters recall results to only the requested kind", async () => {
+    db.entries.push(
+      { id: "entry-episodic", content: "Attended a team offsite in January", tags: '["work","kind:episodic"]', source: "api", created_at: 1000, vector_ids: '["entry-episodic"]', recall_count: 0, importance_score: 0 },
+      { id: "entry-semantic", content: "The company uses a monorepo structure", tags: '["work","kind:semantic"]', source: "api", created_at: 2000, vector_ids: '["entry-semantic"]', recall_count: 0, importance_score: 0 },
+    );
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [makeMatch("entry-episodic", 0.9), makeMatch("entry-semantic", 0.85)],
+        }),
+      }),
+    });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&kind=episodic"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].id).toBe("entry-episodic");
+  });
+
   it("query with no matching keywords exercises the LLM fallback for tag inference", async () => {
     db.entries.push(
       { id: "entry-1", content: "Office lease renewal", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },

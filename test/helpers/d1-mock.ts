@@ -158,11 +158,13 @@ export class D1Mock {
           const ids = args.slice(0, idCount);
           const rest = args.slice(idCount);
           let argIdx = 0;
+          const kindMatch = s.match(/tags LIKE '%"(kind:(?:episodic|semantic))"%'/);
           let rows = db.entries.filter((e: any) => {
             const tags: string[] = JSON.parse(e.tags ?? "[]");
             if (!ids.includes(e.id)) return false;
             if (tags.includes("auto-pattern")) return false;
             if (s.includes('"status:deprecated"') && tags.includes("status:deprecated")) return false;
+            if (kindMatch && !tags.includes(kindMatch[1])) return false;
             return true;
           });
           if (s.includes("created_at >= ?")) {
