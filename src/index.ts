@@ -1176,6 +1176,25 @@ export async function recallEntries(
 
 // ─── Shared write path ────────────────────────────────────────────────────────
 
+// Classify an entry's content (importance + canonical + kind) and apply the tags,
+// asynchronously. Used for both newly-inserted entries and smart-merge targets.
+function scheduleClassifyAndTag(entryId: string, content: string, env: Env, ctx: ExecutionContext): void {
+  ctx.waitUntil(
+    classifyEntry(content, env)
+      .then(async ({ importance, canonical, kind }) => {
+        await env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(importance, entryId).run();
+        if (!kind && !canonical) return;
+        const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(entryId).first() as Record<string, any> | null;
+        if (!row) return;
+        let tags: string[] = JSON.parse(row.tags ?? "[]");
+        if (kind) tags = withKind(tags, kind);
+        if (canonical && getStatus(tags) === null) tags = withStatus(tags, "canonical");
+        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(tags), entryId).run();
+      })
+      .catch(e => console.error("Classification failed (non-fatal):", e))
+  );
+}
+
 export type CaptureResult =
   | { status: "blocked"; matchId: string; score: number }
   | { status: "stored"; id: string }
@@ -1238,6 +1257,9 @@ export async function captureEntry(
         await deleteStaleVectors(env, oldVectorIds, newVectorIds);
       } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
 
+      // Re-classify the merged/replaced content — updates importance_score + kind (and canonical if warranted) on the target.
+      scheduleClassifyAndTag(targetId, newContent, env, ctx);
+
       return mergeAction.action === "merge"
         ? { status: "merged", id: targetId }
         : { status: "replaced", id: targetId };
@@ -1259,20 +1281,7 @@ export async function captureEntry(
       .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
   );
 
-  ctx.waitUntil(
-    classifyEntry(c, env)
-      .then(async ({ importance, canonical, kind }) => {
-        await env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(importance, id).run();
-        if (!kind && !canonical) return;
-        const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
-        if (!row) return;
-        let tags: string[] = JSON.parse(row.tags ?? "[]");
-        if (kind) tags = withKind(tags, kind);
-        if (canonical && getStatus(tags) === null) tags = withStatus(tags, "canonical");
-        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(tags), id).run();
-      })
-      .catch(e => console.error("Classification failed (non-fatal):", e))
-  );
+  scheduleClassifyAndTag(id, c, env, ctx);
 
   if (contradiction.detected && contradiction.conflicting_id) {
     const conflictId = contradiction.conflicting_id;

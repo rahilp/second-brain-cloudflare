@@ -7,6 +7,46 @@ import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
+function makeCtx() {
+  const pending: Promise<any>[] = [];
+  return {
+    ctx: { waitUntil: (p: Promise<any>) => pending.push(p) } as any,
+    drain: () => Promise.allSettled(pending),
+  };
+}
+
+function makeSseStream(response: string) {
+  return new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(response)}}\n\n`));
+      c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+      c.close();
+    },
+  });
+}
+
+// Prompt-aware AI stub that distinguishes 3 call types:
+//   1. embed  — model === "@cf/baai/bge-small-en-v1.5" → return vector
+//   2. merge  — prompt contains "Choose exactly one action" → return mergeResponse
+//   3. classify — prompt contains "reply with ONLY JSON" → return classifyResponse
+function makePromptAwareAI(mergeResponse: string, classifyResponse: string): Ai {
+  return {
+    run: vi.fn().mockImplementation(async (model: string, opts: any) => {
+      if (model === "@cf/baai/bge-small-en-v1.5")
+        return { data: [new Array(384).fill(0.1)] };
+      const prompt: string = (opts?.messages ?? []).map((m: any) => m.content).join("\n");
+      if (prompt.includes("Choose exactly one action")) {
+        return makeSseStream(mergeResponse);
+      }
+      // classify call
+      if (prompt.includes("reply with ONLY JSON")) {
+        return makeSseStream(classifyResponse);
+      }
+      throw new Error(`Unexpected AI.run call in makePromptAwareAI. Prompt starts: ${prompt.slice(0, 120)}`);
+    }),
+  } as unknown as Ai;
+}
+
 // AI mock that returns a specific LLM response while still handling embed calls
 function makeMergeAI(response: string): Ai {
   return {
@@ -340,6 +380,79 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
     // No new entry was inserted — the early-return guard returns a synthetic ID
     // without persisting to DB (mirrors importance guard behaviour)
     expect(db.entries).toHaveLength(1);
+  });
+
+  // ── Classification on smart-merge path ───────────────────────────────────────
+
+  it("merge: classifies the TARGET entry (kind + importance_score set) after draining waitUntil", async () => {
+    seedEntry(db, "existing-id", "I prefer dark mode", '["existing-id"]');
+    // The seeded entry has no kind tag and importance_score=3 (from seedEntry default).
+    const { ctx: testCtx, drain } = makeCtx();
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
+        }),
+      }),
+      AI: makePromptAwareAI(
+        '{"action":"merge","target_id":"existing-id","merged_content":"I prefer dark mode in all apps"}',
+        '{"importance":4,"canonical":false,"kind":"semantic"}'
+      ),
+    });
+
+    const res = await worker.fetch(
+      req("POST", "/capture", { body: { content: "I like dark mode everywhere" } }),
+      env, testCtx
+    );
+
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.action).toBe("merged");
+
+    // Before drain: classification hasn't run yet
+    const target = db.entries.find((e: any) => e.id === "existing-id");
+    expect(target).toBeDefined();
+
+    // Drain all waitUntil promises (classification fires here)
+    await drain();
+
+    // After drain: importance_score and kind:semantic tag must be set on the target
+    const updated = db.entries.find((e: any) => e.id === "existing-id");
+    expect(updated!.importance_score).toBe(4);
+    const updatedTags: string[] = JSON.parse(updated!.tags);
+    expect(updatedTags).toContain("kind:semantic");
+  });
+
+  it("replace: classifies the TARGET entry (kind + importance_score set) after draining waitUntil", async () => {
+    seedEntry(db, "existing-id", "I use VSCode", '["existing-id"]');
+    const { ctx: testCtx, drain } = makeCtx();
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
+        }),
+      }),
+      AI: makePromptAwareAI(
+        '{"action":"replace","target_id":"existing-id"}',
+        '{"importance":2,"canonical":false,"kind":"episodic"}'
+      ),
+    });
+
+    const res = await worker.fetch(
+      req("POST", "/capture", { body: { content: "I switched to Cursor IDE" } }),
+      env, testCtx
+    );
+
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.action).toBe("replaced");
+
+    await drain();
+
+    const updated = db.entries.find((e: any) => e.id === "existing-id");
+    expect(updated!.importance_score).toBe(2);
+    const updatedTags: string[] = JSON.parse(updated!.tags);
+    expect(updatedTags).toContain("kind:episodic");
   });
 
   // ── Existing functionality unaffected ─────────────────────────────────────────
