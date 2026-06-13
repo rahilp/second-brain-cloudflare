@@ -4,7 +4,7 @@ import { makeTestDb, makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
 import type { Env } from "../../src/index";
 
-// SSE stream helper — used by scoreImportance (streaming) inside captureEntry
+// SSE stream helper — used by classifyEntry (streaming) inside captureEntry
 function makeSseStream(response: string) {
   return new ReadableStream({
     start(c) {
@@ -17,7 +17,7 @@ function makeSseStream(response: string) {
 
 // AI mock that handles:
 //   - EMBEDDING_MODEL calls → vector data
-//   - streaming LLM calls (scoreImportance inside captureEntry) → SSE stream
+//   - streaming LLM calls (classifyEntry inside captureEntry) → SSE stream
 //   - non-streaming LLM call (derivePattern itself) → { response: string }
 function makePatternAI(patternResponse: string | null = "You tend to work in short focused bursts") {
   return {

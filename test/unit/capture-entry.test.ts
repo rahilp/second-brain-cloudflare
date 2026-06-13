@@ -145,23 +145,25 @@ describe("captureEntry()", () => {
 
   // ── Contradiction ───────────────────────────────────────────────────────────
 
-  it("returns status=contradiction, stores new entry, and removes conflicting entry", async () => {
+  it("returns status=contradiction, stores new entry, and DEPRECATES (not deletes) the conflicting entry", async () => {
     db.entries.push({
       id: "old-entry",
       content: "I live in NYC",
       tags: "[]",
       source: "api",
       created_at: Date.now(),
-      vector_ids: "[]",
+      vector_ids: '["old-vec-1","old-vec-2"]',
       recall_count: 0,
       importance_score: 0,
     });
 
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "old-entry", score: 0.72, metadata: { parentId: "old-entry" } }],
         }),
+        deleteByIds: deleteByIdsMock,
       }),
       AI: makeContradictionAI('{"contradicts": true, "conflicting_id": "old-entry", "reason": "different city"}'),
     });
@@ -175,9 +177,66 @@ describe("captureEntry()", () => {
     expect(result.reason).toBe("different city");
     expect(typeof result.id).toBe("string");
 
-    // New entry stored, conflicting entry removed
+    // New entry stored
     expect(db.entries.some(e => e.id === result.id)).toBe(true);
-    expect(db.entries.some(e => e.id === "old-entry")).toBe(false);
+    // Conflicting entry row STILL EXISTS (deprecated, not deleted)
+    const conflictRow = db.entries.find(e => e.id === "old-entry");
+    expect(conflictRow).toBeDefined();
+    const conflictTags: string[] = JSON.parse(conflictRow!.tags);
+    expect(conflictTags).toContain("status:deprecated");
+    // Vectors cleared from D1 row
+    expect(conflictRow!.vector_ids).toBe("[]");
+    // Vectorize deleteByIds called with old vector ids
+    expect(deleteByIdsMock).toHaveBeenCalledWith(["old-vec-1", "old-vec-2"]);
+  });
+
+  it("returns status=contradiction_protected when conflicting entry is canonical — keeps canonical, demotes new to draft", async () => {
+    db.entries.push({
+      id: "canonical-entry",
+      content: "I live in NYC",
+      tags: '["status:canonical"]',
+      source: "api",
+      created_at: Date.now(),
+      vector_ids: '["canonical-vec-1"]',
+      recall_count: 0,
+      importance_score: 0,
+    });
+
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "canonical-entry", score: 0.72, metadata: { parentId: "canonical-entry" } }],
+        }),
+        deleteByIds: deleteByIdsMock,
+      }),
+      AI: makeContradictionAI('{"contradicts": true, "conflicting_id": "canonical-entry", "reason": "different city"}'),
+    });
+
+    const { ctx } = makeCtx();
+    const result = await captureEntry("I moved to LA", [], "api", env, ctx);
+
+    expect(result.status).toBe("contradiction_protected");
+    if (result.status !== "contradiction_protected") return;
+    expect(result.id).toBeDefined();
+    expect(result.canonicalId).toBe("canonical-entry");
+    expect(result.reason).toBe("different city");
+
+    // Canonical entry is UNCHANGED
+    const canonicalRow = db.entries.find(e => e.id === "canonical-entry");
+    expect(canonicalRow).toBeDefined();
+    const canonicalTags: string[] = JSON.parse(canonicalRow!.tags);
+    expect(canonicalTags).toContain("status:canonical");
+    expect(canonicalRow!.vector_ids).toBe('["canonical-vec-1"]');
+    // deleteByIds NOT called on canonical vectors
+    expect(deleteByIdsMock).not.toHaveBeenCalled();
+
+    // New entry stored as draft
+    const newRow = db.entries.find(e => e.id === result.id);
+    expect(newRow).toBeDefined();
+    const newTags: string[] = JSON.parse(newRow!.tags);
+    expect(newTags).toContain("status:draft");
+    expect(newTags).not.toContain("contradiction-resolved");
   });
 
   it("adds contradiction-resolved tag when contradiction detected", async () => {
@@ -368,6 +427,125 @@ describe("captureEntry()", () => {
     await captureEntry("Important decision", [], "api", env, ctx);
     await drain();
     expect(db.entries[0].importance_score).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Canonical auto-tagging ──────────────────────────────────────────────────
+
+  it("promotes entry to status:canonical when classifyEntry returns canonical:true", async () => {
+    function makeSseStream(response: string) {
+      return new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(response)}}\n\n`));
+          c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          c.close();
+        },
+      });
+    }
+    env = makeTestEnv(db, {
+      AI: {
+        run: vi.fn().mockImplementation(async (model: string) => {
+          if (model === "@cf/baai/bge-small-en-v1.5")
+            return { data: [new Array(384).fill(0.1)] };
+          return makeSseStream('{"importance":5,"canonical":true}');
+        }),
+      } as unknown as Ai,
+    });
+    const { ctx, drain } = makeCtx();
+    const result = await captureEntry("I will always prefer TypeScript over JavaScript", [], "api", env, ctx);
+    expect(result.status).toBe("stored");
+    await drain();
+    const tags: string[] = JSON.parse(db.entries[0].tags);
+    expect(tags).toContain("status:canonical");
+  });
+
+  it("does NOT add status: tag when classifyEntry returns canonical:false", async () => {
+    function makeSseStream(response: string) {
+      return new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(response)}}\n\n`));
+          c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          c.close();
+        },
+      });
+    }
+    env = makeTestEnv(db, {
+      AI: {
+        run: vi.fn().mockImplementation(async (model: string) => {
+          if (model === "@cf/baai/bge-small-en-v1.5")
+            return { data: [new Array(384).fill(0.1)] };
+          return makeSseStream('{"importance":2,"canonical":false}');
+        }),
+      } as unknown as Ai,
+    });
+    const { ctx, drain } = makeCtx();
+    const result = await captureEntry("Had a nice lunch today", [], "api", env, ctx);
+    expect(result.status).toBe("stored");
+    await drain();
+    const tags: string[] = JSON.parse(db.entries[0].tags);
+    const hasStatusTag = tags.some(t => t.startsWith("status:"));
+    expect(hasStatusTag).toBe(false);
+  });
+
+  // ── Re-read guard: status:draft blocks canonical auto-promotion ─────────────
+
+  it("does NOT overwrite status:draft with status:canonical when classifier returns canonical:true", async () => {
+    // Arrange: a canonical conflicting entry so the new entry is demoted to draft
+    // before the async classify promise drains.
+    db.entries.push({
+      id: "canonical-conflict",
+      content: "I live in NYC",
+      tags: '["status:canonical"]',
+      source: "api",
+      created_at: Date.now(),
+      vector_ids: '["canonical-vec"]',
+      recall_count: 0,
+      importance_score: 5,
+    });
+
+    // AI always returns canonical:true for the classification call, and the
+    // contradiction-check JSON for the smart-merge call.
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "canonical-conflict", score: 0.72, metadata: { parentId: "canonical-conflict" } }],
+        }),
+      }),
+      AI: {
+        run: vi.fn().mockImplementation(async (model: string) => {
+          if (model === "@cf/baai/bge-small-en-v1.5")
+            return { data: [new Array(384).fill(0.1)] };
+          // Both the smart-merge/contradiction call and the classify call get this
+          // stream. The contradiction handler parses "contradicts/conflicting_id";
+          // the classify handler parses "importance/canonical". Returning a JSON
+          // object that satisfies both decoders lets a single mock serve both calls.
+          return new ReadableStream({
+            start(c) {
+              const payload = '{"contradicts":true,"conflicting_id":"canonical-conflict","reason":"different city","importance":5,"canonical":true}';
+              c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(payload)}}\n\n`));
+              c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+              c.close();
+            },
+          });
+        }),
+      } as unknown as Ai,
+    });
+
+    const { ctx, drain } = makeCtx();
+    const result = await captureEntry("I moved to LA", [], "api", env, ctx);
+
+    // The capture itself must be contradiction_protected — new entry is stored as draft
+    expect(result.status).toBe("contradiction_protected");
+    if (result.status !== "contradiction_protected") return;
+
+    // Drain all async work including the classify waitUntil
+    await drain();
+
+    // Re-read guard: status:draft must be preserved — NOT overwritten to canonical
+    const newRow = db.entries.find(e => e.id === result.id);
+    expect(newRow).toBeDefined();
+    const tags: string[] = JSON.parse(newRow!.tags);
+    expect(tags).toContain("status:draft");
+    expect(tags).not.toContain("status:canonical");
   });
 
   // ── Non-fatal error handling ────────────────────────────────────────────────
