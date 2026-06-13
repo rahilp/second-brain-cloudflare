@@ -129,4 +129,38 @@ describe("classifyEntry()", () => {
     const result = await classifyEntry("Some memory", env);
     expect(result).toEqual({ importance: 3, canonical: false, kind: null });
   });
+
+  // ── Malformed JSON / tolerant parsing ─────────────────────────────────────
+
+  it('salvages kind from real regression payload: {"importance": 3, "canonical":, "kind": "episodic"}', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance": 3, "canonical":, "kind": "episodic"}'),
+    });
+    const result = await classifyEntry("Some memory", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: "episodic" });
+  });
+
+  it('salvages canonical and kind when importance is malformed: {"importance":, "canonical": true, "kind": "semantic"}', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":, "canonical": true, "kind": "semantic"}'),
+    });
+    const result = await classifyEntry("Some memory", env);
+    expect(result).toEqual({ importance: 3, canonical: true, kind: "semantic" });
+  });
+
+  it('extracts kind from garbage-surrounding text: blah blah "kind": "episodic" blah', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('blah blah "kind": "episodic" blah'),
+    });
+    const result = await classifyEntry("Some memory", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: "episodic" });
+  });
+
+  it("returns all defaults when no recoverable fields exist: 'not json at all'", async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI("not json at all"),
+    });
+    const result = await classifyEntry("Some memory", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: null });
+  });
 });

@@ -554,6 +554,31 @@ function normalizeKind(raw: unknown): MemoryKind | null {
   return null;
 }
 
+// Parse the classifier's response. Tries strict JSON first, then falls back to
+// tolerant per-field extraction so one malformed field (small models intermittently
+// emit e.g. {"canonical":,}) doesn't discard the other valid fields.
+function parseClassification(text: string): { importance: number; canonical: boolean; kind: MemoryKind | null } {
+  const obj = text.match(/\{[^{}]*\}/);
+  if (obj) {
+    try {
+      const p = JSON.parse(obj[0]);
+      return {
+        importance: p.importance >= 1 && p.importance <= 5 ? p.importance : 3,
+        canonical: p.canonical === true,
+        kind: normalizeKind(p.kind),
+      };
+    } catch { /* fall through to tolerant extraction */ }
+  }
+  const imp = text.match(/"importance"\s*:\s*([1-5])/);
+  const can = text.match(/"canonical"\s*:\s*(true|false)/i);
+  const knd = text.match(/"kind"\s*:\s*"?([a-zA-Z]+)/);
+  return {
+    importance: imp ? parseInt(imp[1], 10) : 3,
+    canonical: can ? can[1].toLowerCase() === "true" : false,
+    kind: knd ? normalizeKind(knd[1]) : null,
+  };
+}
+
 export async function classifyEntry(content: string, env: Env): Promise<{ importance: number; canonical: boolean; kind: MemoryKind | null }> {
   let text: string;
   try {
@@ -573,17 +598,7 @@ export async function classifyEntry(content: string, env: Env): Promise<{ import
   } catch {
     return { importance: 0, canonical: false, kind: null };
   }
-  const json = text.match(/\{[^{}]*\}/);
-  if (!json) return { importance: 3, canonical: false, kind: null };
-  try {
-    const parsed = JSON.parse(json[0]);
-    const importance = parsed.importance >= 1 && parsed.importance <= 5 ? parsed.importance : 3;
-    const canonical = parsed.canonical === true;
-    const kind = normalizeKind(parsed.kind);
-    return { importance, canonical, kind };
-  } catch {
-    return { importance: 3, canonical: false, kind: null };
-  }
+  return parseClassification(text);
 }
 
 // ─── Hashtag extraction ───────────────────────────────────────────────────────
