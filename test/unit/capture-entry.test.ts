@@ -548,6 +548,63 @@ describe("captureEntry()", () => {
     expect(tags).not.toContain("status:canonical");
   });
 
+  // ── Kind auto-tagging ───────────────────────────────────────────────────────
+
+  it("adds kind:episodic tag when classifyEntry returns kind:'episodic'", async () => {
+    function makeSseStream(response: string) {
+      return new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(response)}}\n\n`));
+          c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          c.close();
+        },
+      });
+    }
+    env = makeTestEnv(db, {
+      AI: {
+        run: vi.fn().mockImplementation(async (model: string) => {
+          if (model === "@cf/baai/bge-small-en-v1.5")
+            return { data: [new Array(384).fill(0.1)] };
+          return makeSseStream('{"importance":2,"canonical":false,"kind":"episodic"}');
+        }),
+      } as unknown as Ai,
+    });
+    const { ctx, drain } = makeCtx();
+    const result = await captureEntry("Went for a run this morning", [], "api", env, ctx);
+    expect(result.status).toBe("stored");
+    await drain();
+    const tags: string[] = JSON.parse(db.entries[0].tags);
+    expect(tags).toContain("kind:episodic");
+  });
+
+  it("does NOT add any kind: tag when classifyEntry returns kind:null", async () => {
+    function makeSseStream(response: string) {
+      return new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(response)}}\n\n`));
+          c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          c.close();
+        },
+      });
+    }
+    env = makeTestEnv(db, {
+      AI: {
+        run: vi.fn().mockImplementation(async (model: string) => {
+          if (model === "@cf/baai/bge-small-en-v1.5")
+            return { data: [new Array(384).fill(0.1)] };
+          return makeSseStream('{"importance":3,"canonical":false}');
+        }),
+      } as unknown as Ai,
+    });
+    const { ctx, drain } = makeCtx();
+    const result = await captureEntry("Some generic note", [], "api", env, ctx);
+    expect(result.status).toBe("stored");
+    await drain();
+    const tags: string[] = JSON.parse(db.entries[0].tags);
+    const hasKindTag = tags.some(t => t.startsWith("kind:"));
+    expect(hasKindTag).toBe(false);
+  });
+
   // ── Non-fatal error handling ────────────────────────────────────────────────
 
   it("stores to D1 and returns stored even when Vectorize insert throws", async () => {

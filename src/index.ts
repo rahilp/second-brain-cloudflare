@@ -50,7 +50,7 @@ const CHUNK_OVERLAP_CHARS = 200;
 
 // ─── Token limits ─────────────────────────────────────────────────────────────
 
-const CLASSIFY_MAX_TOKENS = 30;
+const CLASSIFY_MAX_TOKENS = 80;
 const CONTRADICTION_MAX_TOKENS = 80;
 const SMART_MERGE_MAX_TOKENS = 250;
 const INSIGHT_MAX_TOKENS = 300;
@@ -84,6 +84,26 @@ export function getStatus(tags: string[]): MemoryStatus | null {
 export function withStatus(tags: string[], status: MemoryStatus): string[] {
   const cleaned = tags.filter(t => !t.startsWith(STATUS_PREFIX));
   return [...cleaned, `${STATUS_PREFIX}${status}`];
+}
+
+// ─── Memory kind layer (issue #12) ──────────────────────────────────────────────
+// Kind lives as a reserved tag (e.g. "kind:episodic") on entries.tags — no schema
+// change. Absent kind = unknown (unclassified). Orthogonal to status (#119).
+
+export const KIND_VALUES = ["episodic", "semantic"] as const;
+export type MemoryKind = (typeof KIND_VALUES)[number];
+const KIND_PREFIX = "kind:";
+
+export function getKind(tags: string[]): MemoryKind | null {
+  const tag = tags.find(t => t.startsWith(KIND_PREFIX));
+  if (!tag) return null;
+  const value = tag.slice(KIND_PREFIX.length) as MemoryKind;
+  return (KIND_VALUES as readonly string[]).includes(value) ? value : null;
+}
+
+export function withKind(tags: string[], kind: MemoryKind): string[] {
+  const cleaned = tags.filter(t => !t.startsWith(KIND_PREFIX));
+  return [...cleaned, `${KIND_PREFIX}${kind}`];
 }
 
 // ─── Runtime state ────────────────────────────────────────────────────────────
@@ -524,33 +544,61 @@ export function parseTimePhrase(query: string, now: number): { after?: number; b
 
 // ─── AI classification (importance + canonical) ───────────────────────────────
 
-export async function classifyEntry(content: string, env: Env): Promise<{ importance: number; canonical: boolean }> {
+// Map the model's free-text kind to our enum — tolerant of case, whitespace, and
+// common synonyms a small model emits (e.g. "event" → episodic, "fact" → semantic).
+function normalizeKind(raw: unknown): MemoryKind | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  if (/episod|event|decision|milestone|occurrence/.test(v)) return "episodic";
+  if (/semantic|fact|preference|knowledge|belief/.test(v)) return "semantic";
+  return null;
+}
+
+// Parse the classifier's response. Tries strict JSON first, then falls back to
+// tolerant per-field extraction so one malformed field (small models intermittently
+// emit e.g. {"canonical":,}) doesn't discard the other valid fields.
+function parseClassification(text: string): { importance: number; canonical: boolean; kind: MemoryKind | null } {
+  const obj = text.match(/\{[^{}]*\}/);
+  if (obj) {
+    try {
+      const p = JSON.parse(obj[0]);
+      return {
+        importance: p.importance >= 1 && p.importance <= 5 ? p.importance : 3,
+        canonical: p.canonical === true,
+        kind: normalizeKind(p.kind),
+      };
+    } catch { /* fall through to tolerant extraction */ }
+  }
+  const imp = text.match(/"importance"\s*:\s*([1-5])/);
+  const can = text.match(/"canonical"\s*:\s*(true|false)/i);
+  const knd = text.match(/"kind"\s*:\s*"?([a-zA-Z]+)/);
+  return {
+    importance: imp ? parseInt(imp[1], 10) : 3,
+    canonical: can ? can[1].toLowerCase() === "true" : false,
+    kind: knd ? normalizeKind(knd[1]) : null,
+  };
+}
+
+export async function classifyEntry(content: string, env: Env): Promise<{ importance: number; canonical: boolean; kind: MemoryKind | null }> {
   let text: string;
   try {
     const stream = await env.AI.run(LLM_MODEL as any, {
       messages: [{ role: "user", content:
-        `Analyze this memory and reply with ONLY JSON.\n` +
-        `1) "importance": long-term importance 1-5 (1=trivial, 3=useful context, 5=critical decision or goal).\n` +
-        `2) "canonical": true ONLY if this is a confirmed decision, durable fact, or stated permanent preference that should be authoritative and protected from being overwritten. Be conservative — false for anything tentative, one-off, time-bound, or event-like.\n` +
-        `JSON shape: {"importance": <1-5>, "canonical": <true|false>}\n\nMemory: ${content.slice(0, 500)}`,
+        `Classify this memory. Respond with ONLY one JSON object and nothing else — no prose, no markdown, no code fences.\n` +
+        `{"importance": <1-5>, "canonical": <true|false>, "kind": "episodic"|"semantic"}\n` +
+        `importance: 1=trivial, 3=useful context, 5=critical decision or goal.\n` +
+        `canonical: true ONLY for a confirmed decision, durable fact, or stated permanent preference that should be authoritative (be conservative; false for anything tentative, one-off, or event-like).\n` +
+        `kind: "episodic" for a specific event/decision/milestone that happened at a point in time; "semantic" for a general fact, preference, or piece of knowledge.\n\n` +
+        `Memory: ${content.slice(0, 500)}`,
       }],
       max_tokens: CLASSIFY_MAX_TOKENS,
       stream: true,
     });
     text = await readStreamText(stream as ReadableStream);
   } catch {
-    return { importance: 0, canonical: false }; // call/stream failure — hard sentinel
+    return { importance: 0, canonical: false, kind: null };
   }
-  const json = text.match(/\{[^{}]*\}/);
-  if (!json) return { importance: 3, canonical: false };
-  try {
-    const parsed = JSON.parse(json[0]);
-    const importance = parsed.importance >= 1 && parsed.importance <= 5 ? parsed.importance : 3;
-    const canonical = parsed.canonical === true;
-    return { importance, canonical };
-  } catch {
-    return { importance: 3, canonical: false }; // unparseable model output — soft default
-  }
+  return parseClassification(text);
 }
 
 // ─── Hashtag extraction ───────────────────────────────────────────────────────
@@ -994,12 +1042,12 @@ export interface RecallSearchResult {
 }
 
 export async function recallEntries(
-  params: { query: string; topK: number; tag?: string; after?: number; before?: number },
+  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind },
   env: Env,
   ctx: ExecutionContext
 ): Promise<RecallSearchResult> {
   const { query, topK } = params;
-  let { tag, after, before } = params;
+  let { tag, after, before, kind } = params;
   const now = Date.now();
 
   let embedQuery = query;
@@ -1089,11 +1137,18 @@ export async function recallEntries(
 
   if (!deduped.length) return { matches: [], insight: "" };
 
-  // Fetch full content from D1 for all matched parent IDs, applying time filter if set
+  // Fetch full content from D1 for all matched parent IDs, applying filters: auto-pattern
+  // exclusion, status:deprecated exclusion, optional kind match, and optional after/before range
   const parentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
   const placeholders = parentIds.map(() => "?").join(", ");
   const d1Bindings: (string | number)[] = [...parentIds];
   let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
+  if (kind && (KIND_VALUES as readonly string[]).includes(kind)) {
+    // Safe to interpolate: `kind` is validated against the KIND_VALUES enum just above,
+    // so only "episodic"/"semantic" can reach the string. Kept as a literal (not a bound
+    // param) so it doesn't shift the positional after/before bindings below.
+    d1Sql += ` AND tags LIKE '%"kind:${kind}"%'`;
+  }
   if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
   if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
   const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
@@ -1146,6 +1201,25 @@ export async function recallEntries(
 }
 
 // ─── Shared write path ────────────────────────────────────────────────────────
+
+// Classify an entry's content (importance + canonical + kind) and apply the tags,
+// asynchronously. Used for both newly-inserted entries and smart-merge targets.
+function scheduleClassifyAndTag(entryId: string, content: string, env: Env, ctx: ExecutionContext): void {
+  ctx.waitUntil(
+    classifyEntry(content, env)
+      .then(async ({ importance, canonical, kind }) => {
+        await env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(importance, entryId).run();
+        if (!kind && !canonical) return;
+        const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(entryId).first() as Record<string, any> | null;
+        if (!row) return;
+        let tags: string[] = JSON.parse(row.tags ?? "[]");
+        if (kind) tags = withKind(tags, kind);
+        if (canonical && getStatus(tags) === null) tags = withStatus(tags, "canonical");
+        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(tags), entryId).run();
+      })
+      .catch(e => console.error("Classification failed (non-fatal):", e))
+  );
+}
 
 export type CaptureResult =
   | { status: "blocked"; matchId: string; score: number }
@@ -1209,6 +1283,9 @@ export async function captureEntry(
         await deleteStaleVectors(env, oldVectorIds, newVectorIds);
       } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
 
+      // Re-classify the merged/replaced content — updates importance_score + kind (and canonical if warranted) on the target.
+      scheduleClassifyAndTag(targetId, newContent, env, ctx);
+
       return mergeAction.action === "merge"
         ? { status: "merged", id: targetId }
         : { status: "replaced", id: targetId };
@@ -1230,20 +1307,7 @@ export async function captureEntry(
       .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
   );
 
-  ctx.waitUntil(
-    classifyEntry(c, env)
-      .then(async ({ importance, canonical }) => {
-        await env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(importance, id).run();
-        if (!canonical) return;
-        const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
-        if (!row) return;
-        const current: string[] = JSON.parse(row.tags ?? "[]");
-        if (getStatus(current) !== null) return; // don't override draft/deprecated/canonical already set
-        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`)
-          .bind(JSON.stringify(withStatus(current, "canonical")), id).run();
-      })
-      .catch(e => console.error("Classification failed (non-fatal):", e))
-  );
+  scheduleClassifyAndTag(id, c, env, ctx);
 
   if (contradiction.detected && contradiction.conflicting_id) {
     const conflictId = contradiction.conflicting_id;
@@ -1515,10 +1579,11 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         tag: z.string().optional().describe("Filter by a specific tag"),
         after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
+        kind: z.enum([...KIND_VALUES] as [string, ...string[]]).optional().describe("Filter to episodic (events) or semantic (facts/knowledge)"),
       },
     },
-    async ({ query, topK, tag, after, before }) => {
-      const { matches, insight } = await recallEntries({ query, topK, tag, after, before }, env, ctx);
+    async ({ query, topK, tag, after, before, kind }) => {
+      const { matches, insight } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined }, env, ctx);
 
       if (!matches.length) {
         return { content: [{ type: "text", text: "Nothing found matching that query." }] };
@@ -1870,8 +1935,10 @@ const defaultHandler = {
       const tag = url.searchParams.get("tag")?.trim() || undefined;
       const after = url.searchParams.has("after") ? parseInt(url.searchParams.get("after")!, 10) : undefined;
       const before = url.searchParams.has("before") ? parseInt(url.searchParams.get("before")!, 10) : undefined;
+      const kindParam = url.searchParams.get("kind")?.trim();
+      const kind = kindParam && (KIND_VALUES as readonly string[]).includes(kindParam) ? kindParam as MemoryKind : undefined;
 
-      const { matches, insight } = await recallEntries({ query, topK, tag, after, before }, env, ctx);
+      const { matches, insight } = await recallEntries({ query, topK, tag, after, before, kind }, env, ctx);
 
       if (!matches.length) {
         return json({ ok: true, results: [], message: "Nothing found matching that query." });
