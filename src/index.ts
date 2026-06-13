@@ -86,6 +86,26 @@ export function withStatus(tags: string[], status: MemoryStatus): string[] {
   return [...cleaned, `${STATUS_PREFIX}${status}`];
 }
 
+// ─── Memory kind layer (issue #12) ──────────────────────────────────────────────
+// Kind lives as a reserved tag (e.g. "kind:episodic") on entries.tags — no schema
+// change. Absent kind = unknown (unclassified). Orthogonal to status (#119).
+
+export const KIND_VALUES = ["episodic", "semantic"] as const;
+export type MemoryKind = (typeof KIND_VALUES)[number];
+const KIND_PREFIX = "kind:";
+
+export function getKind(tags: string[]): MemoryKind | null {
+  const tag = tags.find(t => t.startsWith(KIND_PREFIX));
+  if (!tag) return null;
+  const value = tag.slice(KIND_PREFIX.length) as MemoryKind;
+  return (KIND_VALUES as readonly string[]).includes(value) ? value : null;
+}
+
+export function withKind(tags: string[], kind: MemoryKind): string[] {
+  const cleaned = tags.filter(t => !t.startsWith(KIND_PREFIX));
+  return [...cleaned, `${KIND_PREFIX}${kind}`];
+}
+
 // ─── Runtime state ────────────────────────────────────────────────────────────
 
 let dbReady = false;
