@@ -1304,6 +1304,17 @@ export async function deprecateEntry(id: string, env: Env): Promise<boolean> {
   return true;
 }
 
+// Apply a lifecycle status to an entry (issue #119). 'deprecated' deletes vectors
+// (via deprecateEntry); others swap the status:* tag in place. Returns ok=false if no such entry.
+export async function applyStatus(id: string, status: MemoryStatus, env: Env): Promise<boolean> {
+  if (status === "deprecated") return deprecateEntry(id, env);
+  const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
+  if (!row) return false;
+  const tags: string[] = JSON.parse(row.tags ?? "[]");
+  await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(withStatus(tags, status)), id).run();
+  return true;
+}
+
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
 function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
@@ -1443,6 +1454,23 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       return {
         content: [{ type: "text", text: `Updated entry ${id}. Re-embedded as ${newVectorCount} vector(s).` }],
       };
+    }
+  );
+
+  // ── set_status ─────────────────────────────────────────────────────────────
+  server.registerTool(
+    "set_status",
+    {
+      description: "Set a memory's lifecycle status. 'canonical' = confirmed/authoritative (protected from auto-overwrite), 'draft' = tentative, 'deprecated' = no longer accurate (removed from recall, kept for audit). Get the entry ID from recall or list_recent first.",
+      inputSchema: {
+        id: z.string().describe("Entry ID — from recall or list_recent"),
+        status: z.enum([...STATUS_VALUES] as [string, ...string[]]).describe("canonical | draft | deprecated"),
+      },
+    },
+    async ({ id, status }) => {
+      const ok = await applyStatus(id, status as MemoryStatus, env);
+      if (!ok) return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      return { content: [{ type: "text", text: status === "deprecated" ? `Entry ${id} deprecated — removed from recall, kept for audit.` : `Entry ${id} marked ${status}.` }] };
     }
   );
 
@@ -1848,6 +1876,29 @@ const defaultHandler = {
       }
 
       return json({ ok: true, id, deletedVectors: result.vectorCount });
+    }
+
+    // POST /status — set lifecycle status, mirrors the MCP `set_status` tool
+    if (url.pathname === "/status" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      let body: { id?: string; status?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+      if (!(STATUS_VALUES as readonly string[]).includes(body.status ?? "")) {
+        return json({ ok: false, error: `status must be one of: ${STATUS_VALUES.join(", ")}` }, 400);
+      }
+
+      const id = body.id.trim();
+      const status = body.status as MemoryStatus;
+      const ok = await applyStatus(id, status, env);
+
+      if (!ok) {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      }
+
+      return json({ ok: true, id, status });
     }
 
     // POST /chat
