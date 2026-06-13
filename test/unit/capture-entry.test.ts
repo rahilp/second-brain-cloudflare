@@ -145,23 +145,25 @@ describe("captureEntry()", () => {
 
   // ── Contradiction ───────────────────────────────────────────────────────────
 
-  it("returns status=contradiction, stores new entry, and removes conflicting entry", async () => {
+  it("returns status=contradiction, stores new entry, and DEPRECATES (not deletes) the conflicting entry", async () => {
     db.entries.push({
       id: "old-entry",
       content: "I live in NYC",
       tags: "[]",
       source: "api",
       created_at: Date.now(),
-      vector_ids: "[]",
+      vector_ids: '["old-vec-1","old-vec-2"]',
       recall_count: 0,
       importance_score: 0,
     });
 
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "old-entry", score: 0.72, metadata: { parentId: "old-entry" } }],
         }),
+        deleteByIds: deleteByIdsMock,
       }),
       AI: makeContradictionAI('{"contradicts": true, "conflicting_id": "old-entry", "reason": "different city"}'),
     });
@@ -175,9 +177,66 @@ describe("captureEntry()", () => {
     expect(result.reason).toBe("different city");
     expect(typeof result.id).toBe("string");
 
-    // New entry stored, conflicting entry removed
+    // New entry stored
     expect(db.entries.some(e => e.id === result.id)).toBe(true);
-    expect(db.entries.some(e => e.id === "old-entry")).toBe(false);
+    // Conflicting entry row STILL EXISTS (deprecated, not deleted)
+    const conflictRow = db.entries.find(e => e.id === "old-entry");
+    expect(conflictRow).toBeDefined();
+    const conflictTags: string[] = JSON.parse(conflictRow!.tags);
+    expect(conflictTags).toContain("status:deprecated");
+    // Vectors cleared from D1 row
+    expect(conflictRow!.vector_ids).toBe("[]");
+    // Vectorize deleteByIds called with old vector ids
+    expect(deleteByIdsMock).toHaveBeenCalledWith(["old-vec-1", "old-vec-2"]);
+  });
+
+  it("returns status=contradiction_protected when conflicting entry is canonical — keeps canonical, demotes new to draft", async () => {
+    db.entries.push({
+      id: "canonical-entry",
+      content: "I live in NYC",
+      tags: '["status:canonical"]',
+      source: "api",
+      created_at: Date.now(),
+      vector_ids: '["canonical-vec-1"]',
+      recall_count: 0,
+      importance_score: 0,
+    });
+
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "canonical-entry", score: 0.72, metadata: { parentId: "canonical-entry" } }],
+        }),
+        deleteByIds: deleteByIdsMock,
+      }),
+      AI: makeContradictionAI('{"contradicts": true, "conflicting_id": "canonical-entry", "reason": "different city"}'),
+    });
+
+    const { ctx } = makeCtx();
+    const result = await captureEntry("I moved to LA", [], "api", env, ctx);
+
+    expect(result.status).toBe("contradiction_protected");
+    if (result.status !== "contradiction_protected") return;
+    expect(result.id).toBeDefined();
+    expect(result.canonicalId).toBe("canonical-entry");
+    expect(result.reason).toBe("different city");
+
+    // Canonical entry is UNCHANGED
+    const canonicalRow = db.entries.find(e => e.id === "canonical-entry");
+    expect(canonicalRow).toBeDefined();
+    const canonicalTags: string[] = JSON.parse(canonicalRow!.tags);
+    expect(canonicalTags).toContain("status:canonical");
+    expect(canonicalRow!.vector_ids).toBe('["canonical-vec-1"]');
+    // deleteByIds NOT called on canonical vectors
+    expect(deleteByIdsMock).not.toHaveBeenCalled();
+
+    // New entry stored as draft
+    const newRow = db.entries.find(e => e.id === result.id);
+    expect(newRow).toBeDefined();
+    const newTags: string[] = JSON.parse(newRow!.tags);
+    expect(newTags).toContain("status:draft");
+    expect(newTags).not.toContain("contradiction-resolved");
   });
 
   it("adds contradiction-resolved tag when contradiction detected", async () => {

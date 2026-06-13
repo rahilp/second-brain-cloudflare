@@ -215,13 +215,15 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
 
   // ── Contradiction via combined prompt ─────────────────────────────────────────
 
-  it("contradiction detected via combined prompt in flagged band — new entry stored, conflicting removed", async () => {
+  it("contradiction detected via combined prompt in flagged band — new entry stored, conflicting DEPRECATED (not deleted)", async () => {
     seedEntry(db, "old-id", "I live in NYC");
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "old-id", score: 0.88, metadata: { parentId: "old-id" } }],
         }),
+        deleteByIds: deleteByIdsMock,
       }),
       AI: makeMergeAI('{"action":"contradiction","conflicting_id":"old-id","reason":"different city"}'),
     });
@@ -235,8 +237,16 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
     expect(data.ok).toBe(true);
     expect(data.resolved_conflict).toBe("old-id");
     expect(data.reason).toBe("different city");
-    expect(db.entries.some((e: any) => e.id === "old-id")).toBe(false);
-    expect(db.entries).toHaveLength(1);
+    // Conflicting row is deprecated (kept in D1), not deleted
+    const conflictRow = db.entries.find((e: any) => e.id === "old-id");
+    expect(conflictRow).toBeDefined();
+    const conflictTags: string[] = JSON.parse(conflictRow!.tags);
+    expect(conflictTags).toContain("status:deprecated");
+    expect(conflictRow!.vector_ids).toBe("[]");
+    // Vectors deleted from Vectorize
+    expect(deleteByIdsMock).toHaveBeenCalledWith(["existing-id"]);
+    // New entry also stored (total: old deprecated + new = 2)
+    expect(db.entries).toHaveLength(2);
   });
 
   // ── Non-fatal error handling ──────────────────────────────────────────────────

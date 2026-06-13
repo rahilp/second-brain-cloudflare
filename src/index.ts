@@ -1139,6 +1139,7 @@ export type CaptureResult =
   | { status: "stored"; id: string }
   | { status: "flagged"; id: string; matchId: string; score: number }
   | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string }
+  | { status: "contradiction_protected"; id: string; canonicalId: string; reason?: string }
   | { status: "merged"; id: string }
   | { status: "replaced"; id: string };
 
@@ -1224,15 +1225,26 @@ export async function captureEntry(
 
   if (contradiction.detected && contradiction.conflicting_id) {
     const conflictId = contradiction.conflicting_id;
+    const conflictRow = await env.DB.prepare(
+      `SELECT tags FROM entries WHERE id = ?`
+    ).bind(conflictId).first() as Record<string, any> | null;
+    const conflictStatus = conflictRow ? getStatus(JSON.parse(conflictRow.tags ?? "[]")) : null;
+
+    if (conflictStatus === "canonical") {
+      // Don't overwrite a canonical memory — keep it, demote the new entry to draft.
+      // Strip "contradiction-resolved" — that tag marks entries that WON a contradiction;
+      // this entry lost, so it must not carry that tag.
+      const draftTags = finalTags.filter(t => t !== "contradiction-resolved");
+      await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`)
+        .bind(JSON.stringify(withStatus(draftTags, "draft")), id).run();
+      return { status: "contradiction_protected", id, canonicalId: conflictId, reason: contradiction.reason };
+    }
+
+    // Non-canonical loser: deprecate (keep row for audit) instead of hard-delete.
     try {
-      const conflictRow = await env.DB.prepare(
-        `SELECT vector_ids FROM entries WHERE id = ?`
-      ).bind(conflictId).first() as Record<string, any> | null;
-      const conflictVectorIds: string[] = JSON.parse(conflictRow?.vector_ids ?? "[]");
-      await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(conflictId).run();
-      if (conflictVectorIds.length) await env.VECTORIZE.deleteByIds(conflictVectorIds);
+      await deprecateEntry(conflictId, env);
     } catch (e) {
-      console.error("Contradiction resolution cleanup failed (non-fatal):", e);
+      console.error("Contradiction deprecation failed (non-fatal):", e);
     }
     return { status: "contradiction", id, resolvedConflict: conflictId, reason: contradiction.reason };
   }
@@ -1331,6 +1343,9 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       }
       if (result.status === "contradiction") {
         return { content: [{ type: "text", text: `Stored. ID: ${result.id} — resolved contradiction with entry ${result.resolvedConflict}${result.reason ? `: ${result.reason}` : ""}.` }] };
+      }
+      if (result.status === "contradiction_protected") {
+        return { content: [{ type: "text", text: `Stored as draft (ID: ${result.id}) — conflicts with a canonical memory (${result.canonicalId}), which was kept${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
       if (result.status === "replaced") {
         return { content: [{ type: "text", text: `Memory updated — new content replaced outdated entry (ID: ${result.id}).` }] };
@@ -1636,6 +1651,9 @@ const defaultHandler = {
       }
       if (result.status === "contradiction") {
         return json({ ok: true, id: result.id, resolved_conflict: result.resolvedConflict, reason: result.reason });
+      }
+      if (result.status === "contradiction_protected") {
+        return json({ ok: true, id: result.id, status: "draft", kept_canonical: result.canonicalId, reason: result.reason });
       }
       if (result.status === "replaced") {
         return json({ ok: true, id: result.id, action: "replaced", message: "New memory replaced an outdated existing entry" });
