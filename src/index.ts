@@ -1174,9 +1174,10 @@ export async function captureEntry(
       const existingSource = targetRow.source as string;
       const oldVectorIds: string[] = JSON.parse(targetRow.vector_ids ?? "[]");
 
-      // Protect high-importance memories from being silently overwritten.
-      // Score ≥ 4 means the existing entry is critical — keep both rather than replace.
-      if ((targetRow.importance_score as number) >= 4) {
+      // Protect high-importance or canonical memories from being silently overwritten.
+      // Score ≥ 4 means the existing entry is critical; canonical = confirmed authoritative.
+      const targetStatus = getStatus(existingTags);
+      if ((targetRow.importance_score as number) >= 4 || targetStatus === "canonical") {
         return { status: "flagged", id: crypto.randomUUID(), matchId: targetId, score: dup.score };
       }
 

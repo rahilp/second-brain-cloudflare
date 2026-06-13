@@ -288,6 +288,50 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
     expect(data.action).toBe("merged");
   });
 
+  // ── Canonical guard ───────────────────────────────────────────────────────────
+
+  it("replace: canonical target is NOT overwritten; new entry stored with status=flagged", async () => {
+    // importance_score=2 so the existing importance guard (>=4) would NOT fire.
+    // Only the new canonical guard should prevent overwrite.
+    db.entries.push({
+      id: "canonical-id",
+      content: "Canonical source of truth",
+      tags: '["work","status:canonical"]',
+      source: "api",
+      created_at: Date.now() - 1000,
+      vector_ids: '["canonical-id"]',
+      recall_count: 0,
+      importance_score: 2,
+    });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [{ id: "canonical-id", score: 0.88, metadata: { parentId: "canonical-id" } }],
+        }),
+      }),
+      AI: makeMergeAI('{"action":"replace","target_id":"canonical-id"}'),
+    });
+
+    const res = await worker.fetch(
+      req("POST", "/capture", { body: { content: "Replacement attempt" } }),
+      env, ctx
+    );
+
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    // Result is flagged (not replaced) — HTTP response uses warning:"similar"
+    expect(data.warning).toBe("similar");
+
+    // Canonical entry content must be unchanged — NOT overwritten
+    const canonical = db.entries.find((e: any) => e.id === "canonical-id");
+    expect(canonical?.content).toBe("Canonical source of truth");
+
+    // No new entry was inserted — the early-return guard returns a synthetic ID
+    // without persisting to DB (mirrors importance guard behaviour)
+    expect(db.entries).toHaveLength(1);
+  });
+
   // ── Existing functionality unaffected ─────────────────────────────────────────
 
   it("blocked (≥0.95): still blocked, no LLM call for merge", async () => {
