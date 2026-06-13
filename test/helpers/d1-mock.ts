@@ -18,6 +18,12 @@ export class D1Mock {
           if (row) { row.content = content; row.vector_ids = vector_ids; }
           return { meta: { changes: row ? 1 : 0 } };
         }
+        if (s.startsWith("UPDATE entries SET tags = ?, vector_ids")) {
+          const [tags, vector_ids, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.tags = tags; row.vector_ids = vector_ids; }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
         if (s.startsWith("UPDATE entries SET vector_ids")) {
           const [vector_ids, id] = args;
           const row = db.entries.find((e: any) => e.id === id);

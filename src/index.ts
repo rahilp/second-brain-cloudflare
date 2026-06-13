@@ -1282,6 +1282,28 @@ export async function forgetEntry(id: string, env: Env): Promise<ForgetResult> {
   return { status: "deleted", vectorCount: vectorIds.length };
 }
 
+// Deprecate (issue #119): keep the D1 row for audit but make the entry
+// unrecallable by deleting its vectors and tagging it status:deprecated.
+export async function deprecateEntry(id: string, env: Env): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT tags, vector_ids FROM entries WHERE id = ?`
+  ).bind(id).first() as Record<string, any> | null;
+  if (!row) return false;
+
+  const tags: string[] = JSON.parse(row.tags ?? "[]");
+  const vectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+
+  await env.DB.prepare(`UPDATE entries SET tags = ?, vector_ids = ? WHERE id = ?`)
+    .bind(JSON.stringify(withStatus(tags, "deprecated")), "[]", id).run();
+
+  try {
+    if (vectorIds.length) await env.VECTORIZE.deleteByIds(vectorIds);
+  } catch (e) {
+    console.error("Vectorize deleteByIds failed during deprecate (non-fatal):", e);
+  }
+  return true;
+}
+
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
 function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
