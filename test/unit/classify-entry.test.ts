@@ -25,35 +25,51 @@ function makeClassifyAI(response: string | null = null, shouldThrow = false) {
 }
 
 describe("classifyEntry()", () => {
-  it('parses {"importance":5,"canonical":true} correctly', async () => {
+  it('parses {"importance":5,"canonical":true,"kind":"semantic"} correctly', async () => {
     const env = makeTestEnv(makeTestDb(), {
-      AI: makeClassifyAI('{"importance":5,"canonical":true}'),
+      AI: makeClassifyAI('{"importance":5,"canonical":true,"kind":"semantic"}'),
     });
     const result = await classifyEntry("I decided to quit my job and start a company", env);
-    expect(result).toEqual({ importance: 5, canonical: true });
+    expect(result).toEqual({ importance: 5, canonical: true, kind: "semantic" });
   });
 
-  it('parses {"importance":2,"canonical":false} correctly', async () => {
+  it('parses {"importance":2,"canonical":false,"kind":"episodic"} correctly', async () => {
     const env = makeTestEnv(makeTestDb(), {
-      AI: makeClassifyAI('{"importance":2,"canonical":false}'),
+      AI: makeClassifyAI('{"importance":2,"canonical":false,"kind":"episodic"}'),
     });
     const result = await classifyEntry("Had coffee this morning", env);
-    expect(result).toEqual({ importance: 2, canonical: false });
+    expect(result).toEqual({ importance: 2, canonical: false, kind: "episodic" });
   });
 
-  it("falls back to { importance: 3, canonical: false } when LLM returns unparseable text", async () => {
+  it("returns kind:null when JSON is missing kind field", async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":3,"canonical":false}'),
+    });
+    const result = await classifyEntry("Some memory", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: null });
+  });
+
+  it("returns kind:null when JSON has bogus kind value", async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":3,"canonical":false,"kind":"bogus"}'),
+    });
+    const result = await classifyEntry("Some memory", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: null });
+  });
+
+  it("falls back to { importance: 3, canonical: false, kind: null } when LLM returns unparseable text", async () => {
     const env = makeTestEnv(makeTestDb(), {
       AI: makeClassifyAI("sorry I cannot help with that"),
     });
     const result = await classifyEntry("Some memory", env);
-    expect(result).toEqual({ importance: 3, canonical: false });
+    expect(result).toEqual({ importance: 3, canonical: false, kind: null });
   });
 
-  it("falls back to { importance: 0, canonical: false } when env.AI.run throws", async () => {
+  it("falls back to { importance: 0, canonical: false, kind: null } when env.AI.run throws", async () => {
     const env = makeTestEnv(makeTestDb(), {
       AI: makeClassifyAI(null, true),
     });
     const result = await classifyEntry("Some memory", env);
-    expect(result).toEqual({ importance: 0, canonical: false });
+    expect(result).toEqual({ importance: 0, canonical: false, kind: null });
   });
 });

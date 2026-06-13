@@ -50,7 +50,7 @@ const CHUNK_OVERLAP_CHARS = 200;
 
 // ─── Token limits ─────────────────────────────────────────────────────────────
 
-const CLASSIFY_MAX_TOKENS = 30;
+const CLASSIFY_MAX_TOKENS = 45;
 const CONTRADICTION_MAX_TOKENS = 80;
 const SMART_MERGE_MAX_TOKENS = 250;
 const INSIGHT_MAX_TOKENS = 300;
@@ -544,7 +544,7 @@ export function parseTimePhrase(query: string, now: number): { after?: number; b
 
 // ─── AI classification (importance + canonical) ───────────────────────────────
 
-export async function classifyEntry(content: string, env: Env): Promise<{ importance: number; canonical: boolean }> {
+export async function classifyEntry(content: string, env: Env): Promise<{ importance: number; canonical: boolean; kind: MemoryKind | null }> {
   let text: string;
   try {
     const stream = await env.AI.run(LLM_MODEL as any, {
@@ -552,24 +552,26 @@ export async function classifyEntry(content: string, env: Env): Promise<{ import
         `Analyze this memory and reply with ONLY JSON.\n` +
         `1) "importance": long-term importance 1-5 (1=trivial, 3=useful context, 5=critical decision or goal).\n` +
         `2) "canonical": true ONLY if this is a confirmed decision, durable fact, or stated permanent preference that should be authoritative and protected from being overwritten. Be conservative — false for anything tentative, one-off, time-bound, or event-like.\n` +
-        `JSON shape: {"importance": <1-5>, "canonical": <true|false>}\n\nMemory: ${content.slice(0, 500)}`,
+        `3) "kind": "episodic" for a specific event/decision/milestone that happened at a point in time; "semantic" for a general fact, preference, or piece of knowledge.\n` +
+        `JSON shape: {"importance": <1-5>, "canonical": <true|false>, "kind": "episodic"|"semantic"}\n\nMemory: ${content.slice(0, 500)}`,
       }],
       max_tokens: CLASSIFY_MAX_TOKENS,
       stream: true,
     });
     text = await readStreamText(stream as ReadableStream);
   } catch {
-    return { importance: 0, canonical: false }; // call/stream failure — hard sentinel
+    return { importance: 0, canonical: false, kind: null };
   }
   const json = text.match(/\{[^{}]*\}/);
-  if (!json) return { importance: 3, canonical: false };
+  if (!json) return { importance: 3, canonical: false, kind: null };
   try {
     const parsed = JSON.parse(json[0]);
     const importance = parsed.importance >= 1 && parsed.importance <= 5 ? parsed.importance : 3;
     const canonical = parsed.canonical === true;
-    return { importance, canonical };
+    const kind = (KIND_VALUES as readonly string[]).includes(parsed.kind) ? parsed.kind as MemoryKind : null;
+    return { importance, canonical, kind };
   } catch {
-    return { importance: 3, canonical: false }; // unparseable model output — soft default
+    return { importance: 3, canonical: false, kind: null };
   }
 }
 
@@ -1252,15 +1254,15 @@ export async function captureEntry(
 
   ctx.waitUntil(
     classifyEntry(c, env)
-      .then(async ({ importance, canonical }) => {
+      .then(async ({ importance, canonical, kind }) => {
         await env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(importance, id).run();
-        if (!canonical) return;
+        if (!kind && !canonical) return;
         const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
         if (!row) return;
-        const current: string[] = JSON.parse(row.tags ?? "[]");
-        if (getStatus(current) !== null) return; // don't override draft/deprecated/canonical already set
-        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`)
-          .bind(JSON.stringify(withStatus(current, "canonical")), id).run();
+        let tags: string[] = JSON.parse(row.tags ?? "[]");
+        if (kind) tags = withKind(tags, kind);
+        if (canonical && getStatus(tags) === null) tags = withStatus(tags, "canonical");
+        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(tags), id).run();
       })
       .catch(e => console.error("Classification failed (non-fatal):", e))
   );
