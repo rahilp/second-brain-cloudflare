@@ -50,7 +50,7 @@ const CHUNK_OVERLAP_CHARS = 200;
 
 // ─── Token limits ─────────────────────────────────────────────────────────────
 
-const CLASSIFY_MAX_TOKENS = 45;
+const CLASSIFY_MAX_TOKENS = 80;
 const CONTRADICTION_MAX_TOKENS = 80;
 const SMART_MERGE_MAX_TOKENS = 250;
 const INSIGHT_MAX_TOKENS = 300;
@@ -544,16 +544,27 @@ export function parseTimePhrase(query: string, now: number): { after?: number; b
 
 // ─── AI classification (importance + canonical) ───────────────────────────────
 
+// Map the model's free-text kind to our enum — tolerant of case, whitespace, and
+// common synonyms a small model emits (e.g. "event" → episodic, "fact" → semantic).
+function normalizeKind(raw: unknown): MemoryKind | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  if (/episod|event|decision|milestone|occurrence/.test(v)) return "episodic";
+  if (/semantic|fact|preference|knowledge|belief/.test(v)) return "semantic";
+  return null;
+}
+
 export async function classifyEntry(content: string, env: Env): Promise<{ importance: number; canonical: boolean; kind: MemoryKind | null }> {
   let text: string;
   try {
     const stream = await env.AI.run(LLM_MODEL as any, {
       messages: [{ role: "user", content:
-        `Analyze this memory and reply with ONLY JSON.\n` +
-        `1) "importance": long-term importance 1-5 (1=trivial, 3=useful context, 5=critical decision or goal).\n` +
-        `2) "canonical": true ONLY if this is a confirmed decision, durable fact, or stated permanent preference that should be authoritative and protected from being overwritten. Be conservative — false for anything tentative, one-off, time-bound, or event-like.\n` +
-        `3) "kind": "episodic" for a specific event/decision/milestone that happened at a point in time; "semantic" for a general fact, preference, or piece of knowledge.\n` +
-        `JSON shape: {"importance": <1-5>, "canonical": <true|false>, "kind": "episodic"|"semantic"}\n\nMemory: ${content.slice(0, 500)}`,
+        `Classify this memory. Respond with ONLY one JSON object and nothing else — no prose, no markdown, no code fences.\n` +
+        `{"importance": <1-5>, "canonical": <true|false>, "kind": "episodic"|"semantic"}\n` +
+        `importance: 1=trivial, 3=useful context, 5=critical decision or goal.\n` +
+        `canonical: true ONLY for a confirmed decision, durable fact, or stated permanent preference that should be authoritative (be conservative; false for anything tentative, one-off, or event-like).\n` +
+        `kind: "episodic" for a specific event/decision/milestone that happened at a point in time; "semantic" for a general fact, preference, or piece of knowledge.\n\n` +
+        `Memory: ${content.slice(0, 500)}`,
       }],
       max_tokens: CLASSIFY_MAX_TOKENS,
       stream: true,
@@ -568,7 +579,7 @@ export async function classifyEntry(content: string, env: Env): Promise<{ import
     const parsed = JSON.parse(json[0]);
     const importance = parsed.importance >= 1 && parsed.importance <= 5 ? parsed.importance : 3;
     const canonical = parsed.canonical === true;
-    const kind = (KIND_VALUES as readonly string[]).includes(parsed.kind) ? parsed.kind as MemoryKind : null;
+    const kind = normalizeKind(parsed.kind);
     return { importance, canonical, kind };
   } catch {
     return { importance: 3, canonical: false, kind: null };

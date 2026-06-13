@@ -72,4 +72,61 @@ describe("classifyEntry()", () => {
     const result = await classifyEntry("Some memory", env);
     expect(result).toEqual({ importance: 0, canonical: false, kind: null });
   });
+
+  // normalizeKind synonym/case/substring mapping tests
+  it('maps kind:"event" → "episodic"', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":2,"canonical":false,"kind":"event"}'),
+    });
+    const result = await classifyEntry("Attended a conference today", env);
+    expect(result).toEqual({ importance: 2, canonical: false, kind: "episodic" });
+  });
+
+  it('maps kind:"milestone" → "episodic"', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":2,"canonical":false,"kind":"milestone"}'),
+    });
+    const result = await classifyEntry("Shipped the first release", env);
+    expect(result).toEqual({ importance: 2, canonical: false, kind: "episodic" });
+  });
+
+  it('maps kind:"fact" → "semantic"', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":3,"canonical":false,"kind":"fact"}'),
+    });
+    const result = await classifyEntry("The office is in downtown", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: "semantic" });
+  });
+
+  it('maps kind:"preference" → "semantic"', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":3,"canonical":false,"kind":"preference"}'),
+    });
+    const result = await classifyEntry("I prefer dark mode", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: "semantic" });
+  });
+
+  it('maps kind:"Episodic" (mixed case) → "episodic"', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":3,"canonical":false,"kind":"Episodic"}'),
+    });
+    const result = await classifyEntry("Went for a run this morning", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: "episodic" });
+  });
+
+  it('maps kind:"episodic event" (substring) → "episodic"', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":3,"canonical":false,"kind":"episodic event"}'),
+    });
+    const result = await classifyEntry("Had a team meeting", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: "episodic" });
+  });
+
+  it('maps kind:"banana" (unknown synonym) → null', async () => {
+    const env = makeTestEnv(makeTestDb(), {
+      AI: makeClassifyAI('{"importance":3,"canonical":false,"kind":"banana"}'),
+    });
+    const result = await classifyEntry("Some memory", env);
+    expect(result).toEqual({ importance: 3, canonical: false, kind: null });
+  });
 });

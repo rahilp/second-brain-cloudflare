@@ -28,7 +28,7 @@ function makeSseStream(response: string) {
 // Prompt-aware AI stub that distinguishes 3 call types:
 //   1. embed  — model === "@cf/baai/bge-small-en-v1.5" → return vector
 //   2. merge  — prompt contains "Choose exactly one action" → return mergeResponse
-//   3. classify — prompt contains "reply with ONLY JSON" → return classifyResponse
+//   3. classify — prompt contains "Classify this memory" → return classifyResponse
 function makePromptAwareAI(mergeResponse: string, classifyResponse: string): Ai {
   return {
     run: vi.fn().mockImplementation(async (model: string, opts: any) => {
@@ -39,7 +39,7 @@ function makePromptAwareAI(mergeResponse: string, classifyResponse: string): Ai 
         return makeSseStream(mergeResponse);
       }
       // classify call
-      if (prompt.includes("reply with ONLY JSON")) {
+      if (prompt.includes("Classify this memory")) {
         return makeSseStream(classifyResponse);
       }
       throw new Error(`Unexpected AI.run call in makePromptAwareAI. Prompt starts: ${prompt.slice(0, 120)}`);
