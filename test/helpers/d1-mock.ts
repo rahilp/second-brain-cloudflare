@@ -1,3 +1,5 @@
+import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL } from "../../src/index";
+
 export class D1Mock {
   entries: any[] = [];
 
@@ -191,19 +193,21 @@ export class D1Mock {
           return { results };
         }
         if (s.includes("SELECT id, content FROM entries") && s.includes("WHERE tags LIKE") && s.includes("ORDER BY created_at DESC")) {
-          // compressTag raw entries query — filter by tag, exclude system tags and high importance
+          // compressTag raw entries query — tag match, system-tag exclusion, and the
+          // recall/age/contradiction eligibility predicate (cutoff is the 2nd bind param).
           const tagPattern = args[0] as string;
           const tag = tagPattern.replace(/%"/g, "").replace(/"%/g, "");
+          const cutoff = Number(args[1]);
           const results = [...db.entries]
             .filter((e: any) => {
               const tags: string[] = JSON.parse(e.tags ?? "[]");
-              return (
-                tags.includes(tag) &&
-                !tags.includes("synthesized") &&
-                !tags.includes("auto-pattern") &&
-                !tags.includes("rolled-up") &&
-                (e.importance_score == null || e.importance_score < 4)
-              );
+              if (!tags.includes(tag)) return false;
+              if (tags.includes("synthesized") || tags.includes("auto-pattern") || tags.includes("rolled-up")) return false;
+              if (!(e.importance_score == null || e.importance_score < COMPRESSION_IMPORTANCE_THRESHOLD)) return false;
+              const rc = e.recall_count ?? 0;
+              if (!(rc === 0 || (rc < COMPRESSION_MIN_RECALL && e.created_at < cutoff))) return false;
+              if (!(e.contradiction_wins == null || e.contradiction_wins === 0)) return false;
+              return true;
             })
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .slice(0, 50)

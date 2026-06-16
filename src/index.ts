@@ -1000,10 +1000,10 @@ export async function compressTag(
       AND tags NOT LIKE '%"synthesized"%'
       AND tags NOT LIKE '%"auto-pattern"%'
       AND tags NOT LIKE '%"rolled-up"%'
-      AND (importance_score IS NULL OR importance_score < 4)
+      AND ${compressionEligibilitySql()}
     ORDER BY created_at DESC
     LIMIT 50
-  `).bind(`%"${tag}"%`).all();
+  `).bind(`%"${tag}"%`, Date.now() - COMPRESSION_MIN_AGE_MS).all();
 
   if (rawEntries.length < 10) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };

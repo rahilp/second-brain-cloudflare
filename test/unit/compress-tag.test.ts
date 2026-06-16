@@ -191,4 +191,64 @@ describe("compressTag()", () => {
     expect(JSON.parse(critical.tags)).not.toContain("rolled-up");
     expect(critical.content).not.toContain("[Digest:");
   });
+
+  // ── Recall- and contradiction-aware protection ───────────────────────────────
+
+  it("protects entries recalled >= 2 times from compression", async () => {
+    seedEntries(db, "work", 12, { recall_count: 5 });
+    const { ctx } = makeCtx();
+    const result = await compressTag("work", env, ctx);
+    expect(result.synthesizedId).toBeNull();
+  });
+
+  it("treats never-recalled entries as eligible", async () => {
+    seedEntries(db, "work", 12, { recall_count: 0 });
+    const { ctx, drain } = makeCtx();
+    const result = await compressTag("work", env, ctx);
+    await drain();
+    expect(result.synthesizedId).not.toBeNull();
+    expect(result.entriesUsed).toBe(12);
+  });
+
+  it("treats recall_count=1 entries older than 60 days as eligible", async () => {
+    seedEntries(db, "work", 12, { recall_count: 1, created_at: Date.now() - 61 * 86400000 });
+    const { ctx, drain } = makeCtx();
+    const result = await compressTag("work", env, ctx);
+    await drain();
+    expect(result.synthesizedId).not.toBeNull();
+    expect(result.entriesUsed).toBe(12);
+  });
+
+  it("protects recall_count=1 entries newer than 60 days", async () => {
+    seedEntries(db, "work", 12, { recall_count: 1, created_at: Date.now() - 5 * 86400000 });
+    const { ctx } = makeCtx();
+    const result = await compressTag("work", env, ctx);
+    expect(result.synthesizedId).toBeNull();
+  });
+
+  it("protects contradiction survivors (contradiction_wins > 0) from compression", async () => {
+    seedEntries(db, "work", 12, { contradiction_wins: 1 });
+    const { ctx } = makeCtx();
+    const result = await compressTag("work", env, ctx);
+    expect(result.synthesizedId).toBeNull();
+  });
+
+  it("only rolls up the eligible subset when a tag mixes protected and eligible entries", async () => {
+    seedEntries(db, "work", 11, { recall_count: 0 }); // 11 eligible (ids entry-0..entry-10)
+    for (let i = 0; i < 3; i++) {
+      db.entries.push({
+        id: `hot-${i}`, content: `hot ${i}`, tags: JSON.stringify(["work"]),
+        source: "api", created_at: Date.now(), vector_ids: "[]",
+        recall_count: 9, importance_score: 0, contradiction_wins: 0,
+      });
+    }
+    const { ctx, drain } = makeCtx();
+    const result = await compressTag("work", env, ctx);
+    await drain();
+    expect(result.entriesUsed).toBe(11);
+    for (let i = 0; i < 3; i++) {
+      const hot = db.entries.find(e => e.id === `hot-${i}`);
+      expect(JSON.parse(hot.tags)).not.toContain("rolled-up");
+    }
+  });
 });
