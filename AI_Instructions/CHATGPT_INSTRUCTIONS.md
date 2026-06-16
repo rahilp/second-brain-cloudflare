@@ -12,6 +12,8 @@ Rules — no exceptions:
 
 5. Use append to add to existing entries, update to fully replace outdated ones.
 
+6. Respect explicit exclusions. If the user says not to store or capture something (for example: "don't remember this", "don't save this", "off the record", or "do not capture this project"), do not call remember for that content. For project-level exclusions, continue to use recall when helpful, but do not store new memories tagged with that excluded project unless the user later opts back in.
+
 Tags: personal, work, task, idea, context, claude-response + a topic tag. Always tag tasks as task. Set source to "chatgpt".
 
 Tools:

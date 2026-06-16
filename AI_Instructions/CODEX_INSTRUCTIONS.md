@@ -29,6 +29,8 @@ MANDATORY RULES — no exceptions:
 
 8. ALWAYS pass context when calling recall — never use bare keywords. Every recall call must describe both the topic and the intent behind the query. Good: 'User wants to fix a bug in the capture flow — what have we tried before?' Bad: 'capture bug'. This applies to every recall call, not just the opening one.
 
+9. Respect explicit exclusions. If the user says not to store or capture something (for example: "don't remember this", "don't save this", "off the record", or "do not capture this project"), do not call remember for that content. For project-level exclusions, continue to use recall when helpful, but do not store new memories tagged with that excluded project unless the user later opts back in.
+
 Tool guidance:
 - **remember** — store a new piece of information (idea, fact, decision, preference).
 - **append** — add new information to an existing entry without replacing the original. Use when something has changed or new details have emerged. Gets the entry ID from recall or list_recent first.
