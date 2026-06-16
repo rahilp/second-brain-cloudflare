@@ -38,6 +38,9 @@ const DUPLICATE_FLAG_THRESHOLD = 0.85;
 const CANDIDATE_SCORE_THRESHOLD = 0.45;
 const TAG_BOOST_STEP = 0.15;
 const TAG_BOOST_MAX = 1.5;
+// Each net contradiction (win or loss) shifts a memory's effective importance by
+// log1p(|net|) * this step, clamped to the [1,5] importance band. Tunable.
+const CONTRADICTION_IMPORTANCE_STEP = 1.0;
 
 // ─── Model constants ──────────────────────────────────────────────────────────
 
@@ -455,7 +458,9 @@ export function rerankWithTimeDecay(
   matches: VectorizeMatch[],
   recallCounts: Map<string, number> = new Map(),
   importanceScores: Map<string, number> = new Map(),
-  queryTags: string[] = []
+  queryTags: string[] = [],
+  contradictionWins: Map<string, number> = new Map(),
+  contradictionLosses: Map<string, number> = new Map()
 ): VectorizeMatch[] {
   const now = Date.now();
 
@@ -479,10 +484,23 @@ export function rerankWithTimeDecay(
       const appendPenalty = isShortAppend ? 0.2 : 1.0;
       const rolledUpPenalty = tags.includes("rolled-up") ? 0.4 : 1.0;
 
-      // importance_score 0 = unscored (neutral). 1–5 scales from 0.88 → 1.20.
-      // Lets high-importance memories surface above the recency cap without dominating.
+      // Effective importance = classifier score adjusted by net contradiction history.
+      // Survivors (net wins) rise toward 5; repeatedly-contradicted memories (net losses)
+      // fall toward 1. log1p gives diminishing returns; clamp keeps the effect inside the
+      // existing 0.88–1.20 importance band. The stored importance_score is never mutated.
       const imp = importanceScores.get(parentId) ?? 0;
-      const importanceMultiplier = imp === 0 ? 1.0 : 0.8 + (imp / 5) * 0.4;
+      const wins = contradictionWins.get(parentId) ?? 0;
+      const losses = contradictionLosses.get(parentId) ?? 0;
+      const net = wins - losses;
+      let importanceMultiplier: number;
+      if (imp === 0 && net === 0) {
+        importanceMultiplier = 1.0; // unscored and never contested — unchanged baseline
+      } else {
+        const base = imp === 0 ? 3 : imp; // unscored-but-contested → neutral midpoint
+        const adj = Math.sign(net) * Math.log1p(Math.abs(net)) * CONTRADICTION_IMPORTANCE_STEP;
+        const effectiveImp = Math.max(1, Math.min(5, base + adj));
+        importanceMultiplier = 0.8 + (effectiveImp / 5) * 0.4;
+      }
 
       // Tag boost: applied outside the recency ≤1.0 cap so a tag-relevant memory can
       // surface above a marginally-closer but irrelevant one.

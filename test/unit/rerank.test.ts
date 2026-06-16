@@ -121,4 +121,80 @@ describe("rerankWithTimeDecay", () => {
     const [withDefault] = rerankWithTimeDecay([m]);
     expect(withEmpty.score).toBeCloseTo(withDefault.score, 6);
   });
+
+  it("canonical survivor (contradiction wins) ranks above an identical entry with no history", () => {
+    const a = match("survivor", 0.9, NOW - 5 * MS_DAY);
+    const b = match("plain", 0.9, NOW - 5 * MS_DAY);
+    const imp = new Map([["survivor", 4], ["plain", 4]]);
+    const wins = new Map([["survivor", 3]]);
+    const result = rerankWithTimeDecay([a, b], new Map(), imp, [], wins, new Map());
+    expect(result[0].id).toBe("survivor");
+  });
+
+  it("draft loser (contradiction losses) ranks below an identical entry with no history", () => {
+    const a = match("loser", 0.9, NOW - 5 * MS_DAY);
+    const b = match("plain", 0.9, NOW - 5 * MS_DAY);
+    const imp = new Map([["loser", 3], ["plain", 3]]);
+    const losses = new Map([["loser", 3]]);
+    const result = rerankWithTimeDecay([a, b], new Map(), imp, [], new Map(), losses);
+    expect(result[0].id).toBe("plain");
+  });
+
+  it("equal wins and losses produce no change vs no history", () => {
+    const [withHistory] = rerankWithTimeDecay(
+      [match("e", 0.9, NOW - 5 * MS_DAY)], new Map(), new Map([["e", 3]]), [],
+      new Map([["e", 2]]), new Map([["e", 2]]),
+    );
+    const [without] = rerankWithTimeDecay(
+      [match("e", 0.9, NOW - 5 * MS_DAY)], new Map(), new Map([["e", 3]]),
+    );
+    expect(withHistory.score).toBeCloseTo(without.score, 6);
+  });
+
+  it("unscored entry with contradiction wins is boosted (scored from neutral midpoint)", () => {
+    const contested = match("contested", 0.9, NOW - 5 * MS_DAY);
+    const unscored = match("unscored", 0.9, NOW - 5 * MS_DAY);
+    const result = rerankWithTimeDecay(
+      [contested, unscored], new Map(), new Map(), [], new Map([["contested", 2]]), new Map(),
+    );
+    expect(result[0].id).toBe("contested");
+  });
+
+  it("contradiction wins cannot push effective importance above the imp=5 ceiling", () => {
+    const [r] = rerankWithTimeDecay(
+      [match("max", 1.0, NOW)], new Map(), new Map([["max", 5]]), [], new Map([["max", 50]]), new Map(),
+    );
+    expect(r.score).toBeCloseTo(1.2, 2);
+  });
+
+  it("contradiction losses cannot push effective importance below the imp=1 floor", () => {
+    const [r] = rerankWithTimeDecay(
+      [match("min", 1.0, NOW)], new Map(), new Map([["min", 1]]), [], new Map(), new Map([["min", 50]]),
+    );
+    expect(r.score).toBeCloseTo(0.88, 2);
+  });
+
+  it("contradiction effect has diminishing returns (3 wins < 3x the boost of 1 win)", () => {
+    const [neutral] = rerankWithTimeDecay([match("b", 0.9, NOW - 5 * MS_DAY)], new Map(), new Map([["b", 3]]));
+    const [one] = rerankWithTimeDecay(
+      [match("b", 0.9, NOW - 5 * MS_DAY)], new Map(), new Map([["b", 3]]), [], new Map([["b", 1]]), new Map(),
+    );
+    const [three] = rerankWithTimeDecay(
+      [match("b", 0.9, NOW - 5 * MS_DAY)], new Map(), new Map([["b", 3]]), [], new Map([["b", 3]]), new Map(),
+    );
+    const boost1 = one.score - neutral.score;
+    const boost3 = three.score - neutral.score;
+    expect(boost3).toBeGreaterThan(boost1);
+    expect(boost3).toBeLessThan(boost1 * 3);
+  });
+
+  it("omitting contradiction maps behaves identically to passing empty maps", () => {
+    const withEmpty = rerankWithTimeDecay(
+      [match("a", 0.9, NOW - 10 * MS_DAY)], new Map(), new Map([["a", 4]]), [], new Map(), new Map(),
+    );
+    const withDefault = rerankWithTimeDecay(
+      [match("a", 0.9, NOW - 10 * MS_DAY)], new Map(), new Map([["a", 4]]),
+    );
+    expect(withDefault[0].score).toBeCloseTo(withEmpty[0].score, 6);
+  });
 });
