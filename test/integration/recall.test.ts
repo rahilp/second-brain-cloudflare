@@ -378,4 +378,24 @@ describe("GET /recall", () => {
     const llmCalls = aiRun.mock.calls.filter((args: any[]) => args[0] !== "@cf/baai/bge-small-en-v1.5");
     expect(llmCalls.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("a contradiction survivor outranks an equally-scored contested loser", async () => {
+    db.entries.push(
+      { id: "shaky", content: "Contested fact", tags: '["work"]', source: "api", created_at: 2000, vector_ids: "[]", recall_count: 0, importance_score: 4, contradiction_wins: 0, contradiction_losses: 3 },
+      { id: "survivor", content: "Battle-tested fact", tags: '["work"]', source: "api", created_at: 2000, vector_ids: "[]", recall_count: 0, importance_score: 4, contradiction_wins: 3, contradiction_losses: 0 },
+    );
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [makeMatch("shaky", 0.9), makeMatch("survivor", 0.9)],
+        }),
+      }),
+    });
+
+    const res = await worker.fetch(req("GET", "/recall?query=fact"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.results[0].id).toBe("survivor");
+    expect(data.results[1].id).toBe("shaky");
+  });
 });

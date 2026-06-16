@@ -226,6 +226,8 @@ async function initializeDatabase(env: Env): Promise<void> {
   for (const alter of [
     `ALTER TABLE entries ADD COLUMN recall_count INTEGER DEFAULT 0`,
     `ALTER TABLE entries ADD COLUMN importance_score INTEGER DEFAULT 0`,
+    `ALTER TABLE entries ADD COLUMN contradiction_wins INTEGER DEFAULT 0`,
+    `ALTER TABLE entries ADD COLUMN contradiction_losses INTEGER DEFAULT 0`,
   ]) {
     try { await env.DB.exec(alter); } catch { /* column already exists — no-op */ }
   }
@@ -1131,19 +1133,21 @@ export async function recallEntries(
   // The tag path can produce far more than 100 candidates, so chunk the IN query
   // to stay under D1's bound-parameter limit.
   const candidateIds = [...new Set(results.matches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
-  const rcRows: { id: string; recall_count: number; importance_score: number }[] = [];
+  const rcRows: { id: string; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number }[] = [];
   for (let i = 0; i < candidateIds.length; i += D1_MAX_BOUND_PARAMS) {
     const batch = candidateIds.slice(i, i + D1_MAX_BOUND_PARAMS);
     const rcPlaceholders = batch.map(() => "?").join(", ");
     const { results: rows } = await env.DB.prepare(
-      `SELECT id, recall_count, importance_score FROM entries WHERE id IN (${rcPlaceholders})`
-    ).bind(...batch).all() as { results: { id: string; recall_count: number; importance_score: number }[] };
+      `SELECT id, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries WHERE id IN (${rcPlaceholders})`
+    ).bind(...batch).all() as { results: { id: string; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number }[] };
     rcRows.push(...rows);
   }
   const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
   const importanceScores = new Map(rcRows.map(r => [r.id, r.importance_score ?? 0]));
+  const contradictionWins = new Map(rcRows.map(r => [r.id, r.contradiction_wins ?? 0]));
+  const contradictionLosses = new Map(rcRows.map(r => [r.id, r.contradiction_losses ?? 0]));
 
-  const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts, importanceScores, queryTags);
+  const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses);
 
   const seen = new Set<string>();
   const deduped = reranked.filter((m) => {

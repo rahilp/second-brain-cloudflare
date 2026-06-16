@@ -9,7 +9,7 @@ export class D1Mock {
       async run() {
         if (s.startsWith("INSERT INTO entries")) {
           const [id, content, tags, source, created_at, vector_ids] = args;
-          db.entries.push({ id, content, tags, source, created_at, vector_ids, recall_count: 0, importance_score: 0 });
+          db.entries.push({ id, content, tags, source, created_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 });
           return { meta: { changes: 1 } };
         }
         if (s.startsWith("UPDATE entries SET content = ?, vector_ids")) {
@@ -145,10 +145,10 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, vector_ids: e.vector_ids ?? "[]" }));
           return { results };
         }
-        if (s.includes("SELECT id, recall_count, importance_score FROM entries")) {
+        if (s.includes("SELECT id, recall_count, importance_score") && s.includes("WHERE id IN")) {
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0, importance_score: e.importance_score ?? 0 }));
+            .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0, importance_score: e.importance_score ?? 0, contradiction_wins: e.contradiction_wins ?? 0, contradiction_losses: e.contradiction_losses ?? 0 }));
           return { results };
         }
         if (s.includes("FROM entries WHERE id IN") && s.includes("tags NOT LIKE")) {
