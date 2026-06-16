@@ -981,6 +981,14 @@ export async function compressTag(
   env: Env,
   ctx: ExecutionContext
 ): Promise<{ synthesizedId: string | null; entriesUsed: number; text: string }> {
+  // Reserved/namespaced tags (kind:*, status:*) describe a memory's type/lifecycle,
+  // not a topic — digesting them would blend unrelated memories (and could compress
+  // protected/canonical ones). Never compress by them. This also guards /digest and
+  // the web UI Compress button, not just the nightly cron.
+  if (tag.startsWith(STATUS_PREFIX) || tag.startsWith(KIND_PREFIX)) {
+    return { synthesizedId: null, entriesUsed: 0, text: "" };
+  }
+
   const recentSynth = await env.DB.prepare(`
     SELECT id FROM entries
     WHERE tags LIKE '%"synthesized"%'
@@ -1040,6 +1048,8 @@ async function runNightlyCompression(env: Env, ctx: ExecutionContext): Promise<v
     SELECT value as tag, COUNT(*) as count
     FROM entries, json_each(entries.tags)
     WHERE value NOT IN ('synthesized', 'auto-pattern', 'duplicate-candidate', 'contradiction-resolved', 'rolled-up')
+      AND value NOT LIKE 'status:%'
+      AND value NOT LIKE 'kind:%'
       AND entries.tags NOT LIKE '%"rolled-up"%'
       AND entries.tags NOT LIKE '%"synthesized"%'
       AND entries.tags NOT LIKE '%"auto-pattern"%'
@@ -1934,6 +1944,8 @@ const defaultHandler = {
           SELECT value as tag, COUNT(*) as count
           FROM entries, json_each(entries.tags)
           WHERE value NOT IN ('synthesized', 'auto-pattern', 'duplicate-candidate', 'contradiction-resolved', 'rolled-up')
+            AND value NOT LIKE 'status:%'
+            AND value NOT LIKE 'kind:%'
             AND entries.tags NOT LIKE '%"rolled-up"%'
             AND entries.tags NOT LIKE '%"synthesized"%'
             AND entries.tags NOT LIKE '%"auto-pattern"%'

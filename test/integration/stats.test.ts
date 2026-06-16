@@ -163,4 +163,19 @@ describe("GET /stats — digest candidates", () => {
     const data = await res.json() as any;
     expect(data.digest_candidates.some((c: any) => c.tag === "work")).toBe(false);
   });
+
+  it("excludes reserved namespaced tags (kind:* / status:*) from digest candidates", async () => {
+    for (let i = 0; i < 12; i++) {
+      db.entries.push({
+        ...compressible(`e-${i}`, "work"),
+        tags: JSON.stringify(["work", "kind:semantic", "status:canonical"]),
+      });
+    }
+    const res = await worker.fetch(req("GET", "/stats"), env, ctx);
+    const data = await res.json() as any;
+    const tags = data.digest_candidates.map((c: any) => c.tag);
+    expect(tags).toContain("work");                  // topical tag still a candidate
+    expect(tags).not.toContain("kind:semantic");     // namespaced excluded
+    expect(tags).not.toContain("status:canonical");  // namespaced excluded
+  });
 });

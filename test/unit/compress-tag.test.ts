@@ -251,4 +251,22 @@ describe("compressTag()", () => {
       expect(JSON.parse(hot.tags)).not.toContain("rolled-up");
     }
   });
+
+  // ── Reserved namespace protection ────────────────────────────────────────────
+
+  it("refuses to compress a kind:* namespaced tag", async () => {
+    seedEntries(db, "kind:semantic", 15, { recall_count: 0 });
+    const { ctx } = makeCtx();
+    const result = await compressTag("kind:semantic", env, ctx);
+    expect(result.synthesizedId).toBeNull();
+    expect(env.AI.run).not.toHaveBeenCalled();
+  });
+
+  it("refuses to compress a status:* namespaced tag", async () => {
+    seedEntries(db, "status:canonical", 15, { recall_count: 0 });
+    const { ctx } = makeCtx();
+    const result = await compressTag("status:canonical", env, ctx);
+    expect(result.synthesizedId).toBeNull();
+    expect(env.AI.run).not.toHaveBeenCalled();
+  });
 });

@@ -235,6 +235,7 @@ export class D1Mock {
             if (!(e.contradiction_wins == null || e.contradiction_wins === 0)) continue;
             for (const t of tags) {
               if (SYSTEM.includes(t)) continue;
+              if (t.startsWith("status:") || t.startsWith("kind:")) continue;
               counts.set(t, (counts.get(t) ?? 0) + 1);
             }
           }
