@@ -188,6 +188,9 @@ describe("captureEntry()", () => {
     expect(conflictRow!.vector_ids).toBe("[]");
     // Vectorize deleteByIds called with old vector ids
     expect(deleteByIdsMock).toHaveBeenCalledWith(["old-vec-1", "old-vec-2"]);
+    // New entry won the contradiction; deprecated incumbent recorded the loss.
+    expect(db.entries.find(e => e.id === result.id)!.contradiction_wins).toBe(1);
+    expect(conflictRow!.contradiction_losses).toBe(1);
   });
 
   it("returns status=contradiction_protected when conflicting entry is canonical — keeps canonical, demotes new to draft", async () => {
@@ -237,6 +240,9 @@ describe("captureEntry()", () => {
     const newTags: string[] = JSON.parse(newRow!.tags);
     expect(newTags).toContain("status:draft");
     expect(newTags).not.toContain("contradiction-resolved");
+    // Canonical incumbent survived (win); new draft entry recorded the loss.
+    expect(canonicalRow!.contradiction_wins).toBe(1);
+    expect(newRow!.contradiction_losses).toBe(1);
   });
 
   it("adds contradiction-resolved tag when contradiction detected", async () => {

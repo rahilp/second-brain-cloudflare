@@ -1345,10 +1345,25 @@ export async function captureEntry(
       const draftTags = finalTags.filter(t => t !== "contradiction-resolved");
       await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`)
         .bind(JSON.stringify(withStatus(draftTags, "draft")), id).run();
+      // Record the outcome: canonical incumbent survived (win), new draft lost (loss).
+      // Non-fatal — a failed count update must not abort capture.
+      try {
+        await env.DB.prepare(`UPDATE entries SET contradiction_wins = contradiction_wins + 1 WHERE id = ?`).bind(conflictId).run();
+        await env.DB.prepare(`UPDATE entries SET contradiction_losses = contradiction_losses + 1 WHERE id = ?`).bind(id).run();
+      } catch (e) {
+        console.error("Contradiction count update failed (non-fatal):", e);
+      }
       return { status: "contradiction_protected", id, canonicalId: conflictId, reason: contradiction.reason };
     }
 
-    // Non-canonical loser: deprecate (keep row for audit) instead of hard-delete.
+    // Non-canonical loser: the new entry wins; the incumbent loses and is deprecated
+    // (row kept for audit). Record the outcome before deprecating. Non-fatal.
+    try {
+      await env.DB.prepare(`UPDATE entries SET contradiction_wins = contradiction_wins + 1 WHERE id = ?`).bind(id).run();
+      await env.DB.prepare(`UPDATE entries SET contradiction_losses = contradiction_losses + 1 WHERE id = ?`).bind(conflictId).run();
+    } catch (e) {
+      console.error("Contradiction count update failed (non-fatal):", e);
+    }
     try {
       await deprecateEntry(conflictId, env);
     } catch (e) {

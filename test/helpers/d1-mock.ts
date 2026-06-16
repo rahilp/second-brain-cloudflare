@@ -69,6 +69,18 @@ export class D1Mock {
           }
           return { meta: { changes: row ? 1 : 0 } };
         }
+        if (s.startsWith("UPDATE entries SET contradiction_wins = contradiction_wins + 1")) {
+          const [id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) row.contradiction_wins = (row.contradiction_wins ?? 0) + 1;
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET contradiction_losses = contradiction_losses + 1")) {
+          const [id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) row.contradiction_losses = (row.contradiction_losses ?? 0) + 1;
+          return { meta: { changes: row ? 1 : 0 } };
+        }
         if (s.startsWith("UPDATE entries SET recall_count")) {
           const [id] = args;
           const row = db.entries.find((e: any) => e.id === id);
