@@ -204,7 +204,7 @@ export class D1Mock {
               if (!tags.includes(tag)) return false;
               if (tags.includes("synthesized") || tags.includes("auto-pattern") || tags.includes("rolled-up")) return false;
               if (!(e.importance_score == null || e.importance_score < COMPRESSION_IMPORTANCE_THRESHOLD)) return false;
-              const rc = e.recall_count ?? 0;
+              const rc = e.recall_count; // NULL/undefined → recall clause is falsy → protected (matches SQL)
               if (!(rc === 0 || (rc < COMPRESSION_MIN_RECALL && e.created_at < cutoff))) return false;
               if (!(e.contradiction_wins == null || e.contradiction_wins === 0)) return false;
               return true;
@@ -230,7 +230,7 @@ export class D1Mock {
             const tags: string[] = JSON.parse(e.tags ?? "[]");
             if (tags.includes("rolled-up") || tags.includes("synthesized") || tags.includes("auto-pattern")) continue;
             if (!(e.importance_score == null || e.importance_score < COMPRESSION_IMPORTANCE_THRESHOLD)) continue;
-            const rc = e.recall_count ?? 0;
+            const rc = e.recall_count; // NULL/undefined → recall clause is falsy → protected (matches SQL)
             if (!(rc === 0 || (rc < COMPRESSION_MIN_RECALL && e.created_at < cutoff))) continue;
             if (!(e.contradiction_wins == null || e.contradiction_wins === 0)) continue;
             for (const t of tags) {
