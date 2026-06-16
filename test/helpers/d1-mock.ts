@@ -220,6 +220,30 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content }));
           return { results };
         }
+        if (s.includes("json_each(entries.tags)") && s.includes("HAVING count > 10")) {
+          // Digest-candidate query (nightly compression + /stats): per-tag count of
+          // entries that pass the compression eligibility predicate. Cutoff is args[0].
+          const cutoff = Number(args[0]);
+          const SYSTEM = ["synthesized", "auto-pattern", "duplicate-candidate", "contradiction-resolved", "rolled-up"];
+          const counts = new Map<string, number>();
+          for (const e of db.entries as any[]) {
+            const tags: string[] = JSON.parse(e.tags ?? "[]");
+            if (tags.includes("rolled-up") || tags.includes("synthesized") || tags.includes("auto-pattern")) continue;
+            if (!(e.importance_score == null || e.importance_score < COMPRESSION_IMPORTANCE_THRESHOLD)) continue;
+            const rc = e.recall_count ?? 0;
+            if (!(rc === 0 || (rc < COMPRESSION_MIN_RECALL && e.created_at < cutoff))) continue;
+            if (!(e.contradiction_wins == null || e.contradiction_wins === 0)) continue;
+            for (const t of tags) {
+              if (SYSTEM.includes(t)) continue;
+              counts.set(t, (counts.get(t) ?? 0) + 1);
+            }
+          }
+          const results = [...counts.entries()]
+            .filter(([, c]) => c > 10)
+            .sort((a, b) => b[1] - a[1])
+            .map(([tag, count]) => ({ tag, count }));
+          return { results };
+        }
         if (s.includes("json_each(entries.tags)") && s.includes("GROUP BY value")) {
           // Top tags by frequency — for /stats
           const freq = new Map<string, number>();

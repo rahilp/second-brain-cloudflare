@@ -1043,11 +1043,11 @@ async function runNightlyCompression(env: Env, ctx: ExecutionContext): Promise<v
       AND entries.tags NOT LIKE '%"rolled-up"%'
       AND entries.tags NOT LIKE '%"synthesized"%'
       AND entries.tags NOT LIKE '%"auto-pattern"%'
-      AND (entries.importance_score IS NULL OR entries.importance_score < 4)
+      AND ${compressionEligibilitySql("entries.")}
     GROUP BY value
     HAVING count > 10
     ORDER BY count DESC
-  `).all();
+  `).bind(Date.now() - COMPRESSION_MIN_AGE_MS).all();
 
   for (const row of results) {
     const tag = row.tag as string;
@@ -1937,12 +1937,12 @@ const defaultHandler = {
             AND entries.tags NOT LIKE '%"rolled-up"%'
             AND entries.tags NOT LIKE '%"synthesized"%'
             AND entries.tags NOT LIKE '%"auto-pattern"%'
-            AND (entries.importance_score IS NULL OR entries.importance_score < 4)
+            AND ${compressionEligibilitySql("entries.")}
           GROUP BY value
           HAVING count > 10
           ORDER BY count DESC
           LIMIT 10
-        `).all(),
+        `).bind(Date.now() - COMPRESSION_MIN_AGE_MS).all(),
       ]);
 
       const cutoff = Date.now() - 86400000;
