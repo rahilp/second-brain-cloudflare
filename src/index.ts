@@ -863,14 +863,19 @@ export async function synthesizeInsight(
     .map((r, i) => `[${i + 1}] ID: ${r.id}\n${r.content}`)
     .join("\n\n");
 
-  const prompt = `You are a second brain assistant. Given the user's query and their relevant stored memories, synthesize what they most need to know. Be specific and concise.
+  const prompt = `You are a second brain assistant. Summarize what the user's stored memories below say in relation to their query. Base the insight ONLY on these memories.
 
 Query: "${query}"
 
-Relevant memories:
+Memories:
 ${memoriesList}
 
-Provide a brief insight (2-4 sentences) focused on what's most relevant to this query.`;
+Rules:
+- Use ONLY the information in the memories above. Do not add, infer, guess, or speculate, and do not use hedging language like "might" or "it seems".
+- These memories are a retrieved subset, not the user's full memory store. Never say that information is missing, unavailable, or does not exist.
+- If the memories don't address the query, briefly state only what they do contain.
+
+Write a brief insight (2-4 sentences).`;
 
   let insight = "";
   try {
