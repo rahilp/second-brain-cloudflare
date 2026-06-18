@@ -151,13 +151,28 @@ export class D1Mock {
         return null;
       },
       async all() {
-        if (s === "SELECT id FROM entries WHERE tags LIKE ?" || s === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?") {
+        if (
+          s === "SELECT id FROM entries WHERE tags LIKE ?" ||
+          s === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?" ||
+          s === "SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?"
+        ) {
           const pattern = String(args[0]);
           const tag = pattern.replace(/%"/g, "").replace(/"%/g, "");
           const results = db.entries
             .filter((e: any) => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag))
-            .map((e: any) => ({ id: e.id, vector_ids: e.vector_ids ?? "[]" }));
+            .map((e: any) => ({ id: e.id, vector_ids: e.vector_ids ?? "[]", content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results };
+        }
+        if (s.includes("WHERE content LIKE") && s.includes("ORDER BY created_at DESC LIMIT")) {
+          // Keyword (hybrid recall) query: content LIKE ? OR content LIKE ? ... LIMIT ?
+          const limit = Number(args[args.length - 1]);
+          const patterns = args.slice(0, -1).map((a: any) => String(a).replace(/^%/, "").replace(/%$/, "").toLowerCase());
+          const rows = [...db.entries]
+            .filter((e: any) => patterns.some((p: string) => String(e.content).toLowerCase().includes(p)))
+            .sort((a: any, b: any) => b.created_at - a.created_at)
+            .slice(0, limit)
+            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
+          return { results: rows };
         }
         if (s.includes("SELECT id, recall_count, importance_score") && s.includes("WHERE id IN")) {
           const results = db.entries

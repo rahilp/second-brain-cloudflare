@@ -87,6 +87,16 @@ const VECTORIZE_GET_BY_IDS_BATCH = 20;
 // D1 allows at most 100 bound parameters per query
 const D1_MAX_BOUND_PARAMS = 100;
 
+// ─── Hybrid recall (keyword + semantic fusion) ─────────────────────────────────
+const RRF_K = 60;                    // Reciprocal Rank Fusion dampening constant
+const KEYWORD_CANDIDATE_LIMIT = 100; // max rows the LIKE keyword query scans
+const KEYWORD_MIN_TOKEN_LEN = 2;     // ignore 1-char tokens
+const KEYWORD_STOPWORDS = new Set([
+  "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are", "was", "were", "be", "been",
+  "i", "me", "my", "we", "you", "it", "this", "that", "these", "those", "with", "about", "from", "at", "as", "by",
+  "do", "did", "does", "what", "when", "where", "who", "whom", "how", "why", "which",
+]);
+
 // ─── Memory status layer (issue #119) ──────────────────────────────────────────
 // Status lives as a reserved tag (e.g. "status:canonical") on entries.tags — no
 // schema change. Absent status = unspecified = default behavior.
@@ -1089,6 +1099,85 @@ export interface RecallSearchResult {
   insight: string;
 }
 
+// ─── Hybrid recall: keyword search + Reciprocal Rank Fusion ────────────────────
+
+interface KeywordRow { id: string; content: string; tags: string; source: string; created_at: number; }
+
+// Split a query into lexical search tokens: lowercase, strip surrounding punctuation,
+// drop stopwords / 1-char tokens, and remove SQL LIKE wildcards so each token is a literal
+// substring. Identifier-shaped tokens (e.g. "v1.9", "#149") are preserved intact.
+export function tokenizeQuery(query: string): string[] {
+  return [...new Set(
+    query.toLowerCase().split(/\s+/)
+      .map(t => t.replace(/^[^\w#.]+|[^\w#.]+$/g, "").replace(/[%_]/g, ""))
+      .filter(t => t.length >= KEYWORD_MIN_TOKEN_LEN && !KEYWORD_STOPWORDS.has(t))
+  )];
+}
+
+// Keyword candidates: entries whose content contains any query token, bounded by
+// KEYWORD_CANDIDATE_LIMIT. Relevance ranking happens in fuseDenseAndKeyword.
+async function keywordSearch(tokens: string[], env: Env): Promise<KeywordRow[]> {
+  if (!tokens.length) return [];
+  const where = tokens.map(() => "content LIKE ?").join(" OR ");
+  const { results } = await env.DB.prepare(
+    `SELECT id, content, tags, source, created_at FROM entries WHERE ${where} ORDER BY created_at DESC LIMIT ?`
+  ).bind(...tokens.map(t => `%${t}%`), KEYWORD_CANDIDATE_LIMIT).all();
+  return results as unknown as KeywordRow[];
+}
+
+// Reciprocal Rank Fusion. Dense candidates contribute 1/(k+rank); keyword candidates
+// contribute weight/(k+rank), where weight = number of distinct query tokens the entry
+// matched — so an exact multi-token/identifier hit outweighs entries that merely share a
+// common word, and an entry present in BOTH lists accumulates from both.
+export function rrfFuse(
+  denseRanked: string[],
+  keywordRanked: { id: string; weight: number }[],
+  k = RRF_K
+): Map<string, number> {
+  const scores = new Map<string, number>();
+  denseRanked.forEach((id, i) => scores.set(id, (scores.get(id) ?? 0) + 1 / (k + i)));
+  keywordRanked.forEach((e, i) => scores.set(e.id, (scores.get(e.id) ?? 0) + e.weight / (k + i)));
+  return scores;
+}
+
+// Fuse a dense match list (Vectorize chunks, or tag-path cosine scores) with keyword rows
+// into one per-parent candidate list scored by RRF, ready for rerankWithTimeDecay. With
+// allowKeywordOnly=false (tag path) keyword is a re-ranking signal only — it never
+// introduces an entry the dense pass didn't already surface.
+function fuseDenseAndKeyword(
+  denseMatches: VectorizeMatch[],
+  keywordRows: KeywordRow[],
+  tokens: string[],
+  allowKeywordOnly: boolean
+): VectorizeMatch[] {
+  const denseByParent = new Map<string, VectorizeMatch>();
+  for (const m of [...denseMatches].sort((a, b) => b.score - a.score)) {
+    const pid = ((m.metadata as any)?.parentId ?? m.id) as string;
+    if (!denseByParent.has(pid)) denseByParent.set(pid, m);
+  }
+  const denseRanked = [...denseByParent.keys()];
+
+  const keywordRanked = keywordRows
+    .map(r => ({ row: r, weight: tokens.reduce((n, t) => n + (r.content.toLowerCase().includes(t) ? 1 : 0), 0) }))
+    .filter(x => x.weight > 0 && (allowKeywordOnly || denseByParent.has(x.row.id)))
+    .sort((a, b) => b.weight - a.weight || b.row.created_at - a.row.created_at || (a.row.id < b.row.id ? -1 : 1));
+
+  const fused = rrfFuse(denseRanked, keywordRanked.map(x => ({ id: x.row.id, weight: x.weight })));
+  const keywordRowById = new Map(keywordRows.map(r => [r.id, r]));
+
+  const out: VectorizeMatch[] = [];
+  for (const [pid, score] of fused) {
+    const dm = denseByParent.get(pid);
+    if (dm) {
+      out.push({ id: dm.id, score, metadata: dm.metadata });
+    } else {
+      const r = keywordRowById.get(pid)!;
+      out.push({ id: pid, score, metadata: { parentId: pid, created_at: r.created_at, tags: JSON.parse(r.tags ?? "[]"), content: r.content, source: r.source } });
+    }
+  }
+  return out;
+}
+
 export async function recallEntries(
   params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind },
   env: Env,
@@ -1106,11 +1195,13 @@ export async function recallEntries(
     embedQuery = parsed.cleanQuery;
   }
 
+  const tokens = tokenizeQuery(embedQuery);
   const [values, queryTags] = await Promise.all([
     embed(embedQuery, env),
     inferQueryTags(embedQuery, env),
   ]);
 
+  let keywordRows: KeywordRow[] = [];
   let results: { matches: VectorizeMatch[] };
   if (tag) {
     // Tag path: score the tag's own vectors directly. An unconstrained Vectorize
@@ -1118,9 +1209,10 @@ export async function recallEntries(
     // semantic rank falls outside the top 50 (issue #141). D1 is the source of
     // truth for tags and already stores each entry's vector_ids.
     const { results: tagRows } = await env.DB.prepare(
-      `SELECT id, vector_ids FROM entries WHERE tags LIKE ?`
+      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?`
     ).bind(`%"${tag}"%`).all();
     if (!tagRows.length) return { matches: [], insight: "" };
+    keywordRows = tagRows as unknown as KeywordRow[];
 
     const vectorIds = [...new Set(
       (tagRows as any[]).flatMap(r => JSON.parse((r.vector_ids as string) ?? "[]") as string[])
@@ -1140,12 +1232,15 @@ export async function recallEntries(
       })) as VectorizeMatch[],
     };
   } else {
-    // Cloudflare Vectorize caps topK at 50 when returnMetadata="all" (error 40025)
+    // Cloudflare Vectorize caps topK at 50 when returnMetadata="all" (error 40025).
+    // Run the keyword search in parallel with the dense query.
     const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
-    results = await env.VECTORIZE.query(values, {
-      topK: vectorizeTopK,
-      returnMetadata: "all",
-    });
+    const [denseResults, kwRows] = await Promise.all([
+      env.VECTORIZE.query(values, { topK: vectorizeTopK, returnMetadata: "all" }),
+      keywordSearch(tokens, env),
+    ]);
+    results = denseResults;
+    keywordRows = kwRows;
 
     if (results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
       results = await env.VECTORIZE.query(values, {
@@ -1155,12 +1250,16 @@ export async function recallEntries(
     }
   }
 
-  if (!results.matches.length) return { matches: [], insight: "" };
+  // Always-on hybrid retrieval: fuse dense + keyword candidates via RRF. On the tag path
+  // keyword is a re-ranking signal only (allowKeywordOnly=false); on the default path it can
+  // also surface exact-identifier matches the dense top-K missed entirely.
+  const fusedMatches = fuseDenseAndKeyword(results.matches as VectorizeMatch[], keywordRows, tokens, !tag);
+  if (!fusedMatches.length) return { matches: [], insight: "" };
 
   // Fetch recall_count and importance_score for all candidates to use in scoring.
   // The tag path can produce far more than 100 candidates, so chunk the IN query
   // to stay under D1's bound-parameter limit.
-  const candidateIds = [...new Set(results.matches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
+  const candidateIds = [...new Set(fusedMatches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
   const rcRows: { id: string; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number }[] = [];
   for (let i = 0; i < candidateIds.length; i += D1_MAX_BOUND_PARAMS) {
     const batch = candidateIds.slice(i, i + D1_MAX_BOUND_PARAMS);
@@ -1175,7 +1274,7 @@ export async function recallEntries(
   const contradictionWins = new Map(rcRows.map(r => [r.id, r.contradiction_wins ?? 0]));
   const contradictionLosses = new Map(rcRows.map(r => [r.id, r.contradiction_losses ?? 0]));
 
-  const reranked = rerankWithTimeDecay(results.matches as VectorizeMatch[], recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses);
+  const reranked = rerankWithTimeDecay(fusedMatches, recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses);
 
   const seen = new Set<string>();
   const deduped = reranked.filter((m) => {
@@ -1235,6 +1334,11 @@ export async function recallEntries(
       isUpdate,
     }];
   });
+
+  // Normalize fused scores to 0–1 (top match = 1.0) so the displayed match % is a clean,
+  // monotonically-decreasing scale rather than raw RRF values.
+  const maxScore = matches.reduce((mx, m) => Math.max(mx, m.score), 0);
+  if (maxScore > 0) for (const m of matches) m.score = m.score / maxScore;
 
   const insight = d1Rows.length > 1
     ? await synthesizeInsight(embedQuery, d1Rows as { id: string; content: string }[], env)

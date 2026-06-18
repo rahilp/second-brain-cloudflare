@@ -86,7 +86,9 @@ describe("GET /recall", () => {
     expect(data.ok).toBe(true);
     expect(data.results).toHaveLength(2);
     expect(data.results[0]).toMatchObject({ id: "entry-1", content: "First memory", tags: ["work"], source: "api" });
-    expect(data.results[0].score).toBeCloseTo(90, 0);
+    // Fused scores are normalized so the top match is 100% and the list descends.
+    expect(data.results[0].score).toBe(100);
+    expect(data.results[1].score).toBeLessThanOrEqual(data.results[0].score);
     expect(data.results[1]).toMatchObject({ id: "entry-2", content: "Second memory" });
     expect(typeof data.insight === "string" || data.insight === null).toBe(true);
   });
@@ -505,5 +507,67 @@ describe("GET /recall", () => {
     // peer (contradiction_wins=0, imp=3 → effectiveImp=3.0) even though peer was listed first.
     expect(data.results[0].id).toBe(winnerId);
     expect(data.results[1].id).toBe("peer");
+  });
+
+  // ── Hybrid recall: keyword fusion surfaces exact-identifier matches ──
+
+  it("surfaces an exact-identifier match the dense top-K missed, via keyword fusion", async () => {
+    const now = Date.now();
+    const seed: [string, string][] = [
+      ["v16", "Release notes for v1.6 — web UI polish"],
+      ["v17", "Release notes for v1.7 — added OAuth support"],
+      ["v18", "Release notes for v1.8 — fixed a re-embed bug"],
+      ["v19", "Release notes for v1.9 — added the memory status layer"],
+    ];
+    seed.forEach(([id, content], i) => db.entries.push({
+      id, content, tags: "[]", source: "api",
+      created_at: now - (seed.length - i) * 1000,
+      vector_ids: `["${id}"]`, recall_count: 0, importance_score: 0,
+      contradiction_wins: 0, contradiction_losses: 0,
+    }));
+
+    // Dense search returns the near-twins at high scores but misses v1.9 entirely —
+    // version tokens embed near-identically, so cosine can't single it out.
+    const queryMock = vi.fn().mockResolvedValue({
+      matches: [makeMatch("v16", 0.82), makeMatch("v17", 0.81), makeMatch("v18", 0.80)],
+    });
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query: queryMock }) });
+    const prepareSpy = vi.spyOn(db, "prepare");
+
+    const res = await worker.fetch(req("GET", "/recall?query=release+v1.9"), env, ctx);
+    const data = await res.json() as any;
+
+    // Keyword search ran on this recall — it's always-on, not a fallback
+    expect(prepareSpy.mock.calls.some(([sql]) => sql.includes("content LIKE"))).toBe(true);
+    // The exact v1.9 entry is surfaced AND ranked first despite being absent from dense
+    const ids = data.results.map((r: any) => r.id);
+    expect(ids).toContain("v19");
+    expect(ids[0]).toBe("v19");
+    expect(data.results[0].score).toBe(100);
+  });
+
+  it("re-ranks an identifier hit to the top within a tag (hybrid on the tag path)", async () => {
+    const now = Date.now();
+    const seed: [string, string][] = [
+      ["v16", "Release notes for v1.6"],
+      ["v17", "Release notes for v1.7"],
+      ["v18", "Release notes for v1.8"],
+      ["v19", "Release notes for v1.9"],
+    ];
+    seed.forEach(([id, content], i) => db.entries.push({
+      id, content, tags: '["rel"]', source: "api",
+      created_at: now - (seed.length - i) * 1000,
+      vector_ids: `["${id}"]`, recall_count: 0, importance_score: 0,
+      contradiction_wins: 0, contradiction_losses: 0,
+    }));
+    // All tagged vectors score equally on cosine — only keyword fusion distinguishes them.
+    const getByIdsMock = vi.fn().mockResolvedValue(
+      seed.map(([id]) => ({ id, values: SIMILAR_VEC, metadata: { parentId: id, isUpdate: false } })),
+    );
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+
+    const res = await worker.fetch(req("GET", "/recall?query=release+v1.9&tag=rel"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.results[0].id).toBe("v19");
   });
 });
