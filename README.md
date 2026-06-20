@@ -29,14 +29,14 @@ And unlike the built-in memory inside any single app, this one is yours. It live
 
 Connect Second Brain to whichever AI tools you use. Then tell it things once. It finds them later by meaning, so asking “what did I decide about the pricing model?” surfaces the right note even if you never used those exact words when you saved it.
 
-|Tool         |What it does                                                |
-|-------------|------------------------------------------------------------|
-|`remember`   |Store anything: ideas, decisions, project context           |
-|`append`     |Add updates to an existing entry without creating duplicates|
-|`update`     |Replace an entry’s content entirely                         |
-|`recall`     |Finds memories by meaning, not exact wording                |
-|`list_recent`|Browse recent memories by date                              |
-|`forget`     |Delete an entry                                             |
+| Tool          | What it does                                                 |
+| ------------- | ------------------------------------------------------------ |
+| `remember`    | Store anything: ideas, decisions, project context            |
+| `append`      | Add updates to an existing entry without creating duplicates |
+| `update`      | Replace an entry’s content entirely                          |
+| `recall`      | Finds memories by meaning, not exact wording                 |
+| `list_recent` | Browse recent memories by date                               |
+| `forget`      | Delete an entry                                              |
 
 -----
 
@@ -102,7 +102,7 @@ OAuth needs a KV namespace (`OAUTH_KV`) to store tokens and client registrations
 
 The **Deploy to Cloudflare** button provisions it automatically.
 
-**Deploying manually:** Simply run `rpm run deploy`. Wrangler will auto-provision the necessary resources and fill out the rest of your wrangler.jsonc file.
+**Deploying manually:** Simply run `npm run deploy`. Wrangler will auto-provision the necessary resources and fill out the rest of your wrangler.jsonc file.
 
 -----
 
