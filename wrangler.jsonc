@@ -16,8 +16,8 @@
 		{
 			"binding": "VECTORIZE",
 			"index_name": "second-brain-vectors",
-			"metric": "cosine",
-			"dimensions": "384"
+			"dimensions": "${VECTORIZE_DIMENSIONS}",
+    	"metric": "${VECTORIZE_METRIC}"
 		}
 	],
 	"ai": {
