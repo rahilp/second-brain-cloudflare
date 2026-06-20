@@ -3,12 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "node scripts/prepare-wrangler.mjs && wrangler dev --config wrangler.deploy.jsonc",
+    "deploy": "node scripts/prepare-wrangler.mjs --create && wrangler deploy --config wrangler.deploy.jsonc",
     "db:create": "wrangler d1 create second-brain-db",
     "db:migrate": "wrangler d1 execute second-brain-db --file=db/schema.sql",
     "db:migrate:remote": "wrangler d1 execute second-brain-db --remote --file=db/schema.sql",
-    "vectors:create": "wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -32,14 +31,6 @@
     "bindings": {
       "AUTH_TOKEN": {
         "description": "Your authentication token. Use a memorable phrase (like 'coffee-lover-2026') or generate a secure token with: openssl rand -base64 32. Save it - you'll need this for AI client connections!"
-      },
-      "VECTORIZE_DIMENSIONS": {
-        "description": "Number of dimensions for the Vectorize index = 384",
-        "default": "384"
-      },
-      "VECTORIZE_METRIC": {
-        "description": "Cosine is recommended for semantic search",
-        "default": "cosine"
       }
     }
   }
