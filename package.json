@@ -26,12 +26,20 @@
     "@vitest/coverage-v8": "^4.1.7",
     "typescript": "^5.5.0",
     "vitest": "^4.1.7",
-    "wrangler": "^4.93.0"
+    "wrangler": "^4.101.0"
   },
   "cloudflare": {
     "bindings": {
       "AUTH_TOKEN": {
         "description": "Your authentication token. Use a memorable phrase (like 'coffee-lover-2026') or generate a secure token with: openssl rand -base64 32. Save it - you'll need this for AI client connections!"
+      },
+      "VECTORIZE_DIMENSIONS": {
+        "description": "Number of dimensions for the Vectorize index = 384",
+        "default": "384"
+      },
+      "VECTORIZE_METRIC": {
+        "description": "Cosine is recommended for semantic search",
+        "default": "cosine"
       }
     }
   }
