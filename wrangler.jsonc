@@ -16,10 +16,12 @@
 	// binding is present in this file, the one-click "Deploy to Cloudflare" form
 	// prompts for index dimensions/metric with no way to preset them, leaving
 	// users stuck on blank fields (cloudflare/workers-sdk#14075). Instead,
-	// scripts/prepare-wrangler.mjs creates the index (384 dims / cosine) and
-	// injects the binding at deploy time into a generated wrangler.deploy.jsonc.
-	// Deploy with `npm run deploy` and run locally with `npm run dev` — calling
-	// `wrangler deploy`/`wrangler dev` directly will omit the VECTORIZE binding.
+	// scripts/prepare-wrangler.mjs (run on postinstall) creates the index
+	// (384 dims / cosine), writes the binding into a generated
+	// wrangler.deploy.jsonc, and drops a .wrangler/deploy/config.json redirect so
+	// wrangler uses that generated config. The redirect means even a bare
+	// `wrangler deploy` — what the one-click flow runs by default — picks up the
+	// VECTORIZE binding, no special deploy command required.
 	"ai": {
 		"binding": "AI"
 	},

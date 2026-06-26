@@ -214,7 +214,7 @@ npm install
 npm run deploy
 ```
 
-Wrangler will provision the required Cloudflare resources and update the remaining values in `wrangler.jsonc`.
+Wrangler provisions the required Cloudflare resources automatically. The Vectorize index (384 dimensions, cosine) and its `VECTORIZE` binding are created and wired up for you by the `postinstall`/deploy scripts — no manual configuration needed.
 
 </details>
 

@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/prepare-wrangler.mjs && wrangler dev --config wrangler.deploy.jsonc",
-    "deploy": "node scripts/prepare-wrangler.mjs --create && wrangler deploy --config wrangler.deploy.jsonc",
+    "postinstall": "node scripts/prepare-wrangler.mjs",
+    "dev": "node scripts/prepare-wrangler.mjs && wrangler dev",
+    "deploy": "node scripts/prepare-wrangler.mjs --create && wrangler deploy",
     "db:create": "wrangler d1 create second-brain-db",
     "db:migrate": "wrangler d1 execute second-brain-db --file=db/schema.sql",
     "db:migrate:remote": "wrangler d1 execute second-brain-db --remote --file=db/schema.sql",

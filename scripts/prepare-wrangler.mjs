@@ -1,41 +1,73 @@
-// Provisions the Vectorize index and injects its binding at build/deploy time.
+// Wires up the Vectorize index + binding so that BOTH the one-click "Deploy to
+// Cloudflare" button and a manual `wrangler deploy` end up with the VECTORIZE
+// binding — without ever declaring it in wrangler.jsonc.
 //
-// Why this exists: the one-click "Deploy to Cloudflare" form prompts for
-// Vectorize dimensions/metric whenever a vectorize binding is present in the
-// committed wrangler config, and there is no supported way to preset those
-// values (cloudflare/workers-sdk#14075). So the binding is kept OUT of
-// wrangler.jsonc — which stops the form from prompting — and added back here
-// against an index we create ourselves with the correct shape (384 / cosine).
+// Why it can't just live in wrangler.jsonc: when a vectorize binding is present
+// in the committed config, the Deploy form prompts for the index
+// dimensions/metric, and wrangler forbids presetting those inline
+// (cloudflare/workers-sdk#14075). So users get stuck on blank fields. Keeping
+// the binding out of wrangler.jsonc keeps that form clean.
 //
-// Produces wrangler.deploy.jsonc (gitignored). `npm run dev` and
-// `npm run deploy` both run wrangler with `--config wrangler.deploy.jsonc`.
+// How the binding still gets applied: this script writes a generated config
+// (wrangler.deploy.jsonc) that DOES contain the binding, plus the official
+// `.wrangler/deploy/config.json` "redirect" that points wrangler at it. Wrangler
+// honors that redirect for `deploy`/`dev`/`versions ...`, so even a bare
+// `wrangler deploy` (what the one-click flow runs by default) picks up the
+// binding. See: https://developers.cloudflare.com/workers/wrangler/configuration/
+//
+// This runs automatically on `postinstall`, so it happens during the install
+// step that every path performs — no need for the deploy command to be
+// `npm run deploy`.
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const INDEX = "second-brain-vectors";
 const DIMENSIONS = 384;
 const METRIC = "cosine";
 
-// `npm run deploy` passes --create to provision the index (idempotently) with
-// the right shape before deploying. `npm run dev` skips it.
-if (process.argv.includes("--create")) {
+const DEPLOY_CONFIG = "wrangler.deploy.jsonc";
+
+// Create the index only where it makes sense: an explicit `--create` (manual
+// `npm run deploy`) or inside a Cloudflare build (the one-click flow sets
+// WORKERS_CI). A plain `npm install` / CI test run does neither, so it stays
+// offline and side-effect free. Vectorize can't be auto-provisioned at deploy
+// the way KV/R2/D1 can, so the index must exist before the binding is applied.
+const shouldCreateIndex =
+  process.argv.includes("--create") || Boolean(process.env.WORKERS_CI);
+
+if (shouldCreateIndex) {
   try {
     execSync(
-      `wrangler vectorize create ${INDEX} --dimensions=${DIMENSIONS} --metric=${METRIC}`,
+      `npx wrangler vectorize create ${INDEX} --dimensions=${DIMENSIONS} --metric=${METRIC}`,
       { stdio: "inherit" },
     );
   } catch {
-    // Index already exists (re-deploy) or the deploy token lacks permission to
-    // create it — either way, carry on and bind to whatever index is there.
+    // Index already exists (re-deploy) or the token can't create it — either
+    // way, carry on and bind to whatever index is there. Never fail install.
   }
 }
 
-// Insert the binding as the first key after the opening brace. The rest of the
-// file — including any resource IDs the deploy form injected for D1/KV — is
-// preserved verbatim, comments and all, since the output stays a .jsonc file.
-const source = readFileSync("wrangler.jsonc", "utf8");
-const binding = `
+try {
+  // Insert the binding as the first key after the opening brace. The rest of the
+  // file — including any resource IDs the deploy form injected for D1/KV — is
+  // preserved verbatim, comments and all, since the output stays a .jsonc file.
+  const source = readFileSync("wrangler.jsonc", "utf8");
+  const binding = `
 \t"vectorize": [
 \t\t{ "binding": "VECTORIZE", "index_name": "${INDEX}" }
 \t],`;
-writeFileSync("wrangler.deploy.jsonc", source.replace("{", `{${binding}`));
+  writeFileSync(DEPLOY_CONFIG, source.replace("{", `{${binding}`));
+
+  // Redirect wrangler at the generated config. With this in place, a bare
+  // `wrangler deploy` / `wrangler dev` uses wrangler.deploy.jsonc (binding and
+  // all) instead of wrangler.jsonc. configPath is resolved relative to this
+  // file, i.e. ../../ is the repo root.
+  mkdirSync(".wrangler/deploy", { recursive: true });
+  writeFileSync(
+    ".wrangler/deploy/config.json",
+    `${JSON.stringify({ configPath: `../../${DEPLOY_CONFIG}` }, null, 2)}\n`,
+  );
+} catch (err) {
+  // Don't let a config-generation hiccup break `npm install`.
+  console.error(`[prepare-wrangler] skipped config generation: ${err.message}`);
+}
