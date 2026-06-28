@@ -2185,7 +2185,6 @@
         }
 
         #main-panel {
-          max-width: 760px;
           margin: 0 auto;
           border-left: 0.5px solid var(--border);
           border-right: 0.5px solid var(--border);
@@ -2410,9 +2409,9 @@
           <div class="screen" id="screen-graph">
             <div class="graph-toolbar">
               <div class="graph-legend">
-                <span><i class="gl-dot" style="background:#b26641"></i>Knowledge</span>
-                <span><i class="gl-dot" style="background:#4a7c8c"></i>Events</span>
-                <span><i class="gl-dot" style="background:#9a958a"></i>Unsorted</span>
+                <span><i class="gl-dot" style="background: #b26641"></i>Knowledge</span>
+                <span><i class="gl-dot" style="background: #4a7c8c"></i>Events</span>
+                <span><i class="gl-dot" style="background: #9a958a"></i>Unsorted</span>
               </div>
               <div class="graph-controls">
                 <button class="graph-btn" onclick="graphZoom(0.8)" title="Zoom out"><i class="ti ti-minus"></i></button>
@@ -2422,7 +2421,7 @@
               </div>
             </div>
             <canvas id="graph-canvas"></canvas>
-            <div class="graph-empty" id="graph-empty" style="display:none">No connections yet — link memories, or let them auto-connect as you add more.</div>
+            <div class="graph-empty" id="graph-empty" style="display: none">No connections yet — link memories, or let them auto-connect as you add more.</div>
           </div>
         </div>
 
@@ -2476,23 +2475,115 @@
     </div>
 
     <style>
-      #screen-graph { padding: 0; }
-      #screen-graph.active { display: flex; flex-direction: column; }
-      .graph-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border-input); }
-      .graph-hint { font-size: 12px; color: var(--text-tertiary); }
-      .graph-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-secondary); flex-wrap: wrap; }
-      .graph-legend span { display: inline-flex; align-items: center; gap: 5px; }
-      .graph-legend .gl-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-      .graph-controls { display: flex; gap: 4px; }
-      .graph-btn { background: none; border: 1px solid var(--border-input); border-radius: 8px; color: var(--text-secondary); cursor: pointer; font-size: 15px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
-      .graph-btn:hover { background: var(--accent-soft); color: var(--accent); }
-      #graph-canvas { flex: 1 1 auto; width: 100%; min-height: 320px; display: block; touch-action: none; cursor: grab; }
-      .graph-empty { padding: 48px 24px; text-align: center; color: var(--text-tertiary); font-size: 14px; }
-      .view-related { margin-top: 14px; border-top: 1px solid var(--border-input); padding-top: 12px; }
-      .view-related-label { font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-      .related-item { display: block; width: 100%; text-align: left; background: var(--accent-soft); border: none; border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer; font-size: 13px; line-height: 1.35; color: var(--text-primary); font-family: inherit; }
-      .related-item:hover { background: rgba(178, 102, 65, 0.16); }
-      .related-type { font-weight: 600; color: var(--accent); margin-right: 6px; }
+      #screen-graph {
+        padding: 0;
+      }
+      #screen-graph.active {
+        display: flex;
+        flex-direction: column;
+      }
+      .graph-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-input);
+      }
+      .graph-hint {
+        font-size: 12px;
+        color: var(--text-tertiary);
+      }
+      .graph-legend {
+        display: flex;
+        gap: 14px;
+        font-size: 11px;
+        color: var(--text-secondary);
+        flex-wrap: wrap;
+      }
+      .graph-legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .graph-legend .gl-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .graph-controls {
+        display: flex;
+        gap: 4px;
+      }
+      .graph-btn {
+        background: none;
+        border: 1px solid var(--border-input);
+        border-radius: 8px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 15px;
+        width: 30px;
+        height: 30px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      .graph-btn:hover {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      #graph-canvas {
+        flex: 1 1 auto;
+        width: 100%;
+        min-height: 320px;
+        display: block;
+        touch-action: none;
+        cursor: grab;
+      }
+      .graph-empty {
+        padding: 48px 24px;
+        text-align: center;
+        color: var(--text-tertiary);
+        font-size: 14px;
+      }
+      .view-related {
+        margin-top: 14px;
+        border-top: 1px solid var(--border-input);
+        padding-top: 12px;
+      }
+      .view-related-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 8px;
+      }
+      .related-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: var(--accent-soft);
+        border: none;
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        line-height: 1.35;
+        color: var(--text-primary);
+        font-family: inherit;
+      }
+      .related-item:hover {
+        background: rgba(178, 102, 65, 0.16);
+      }
+      .related-type {
+        font-weight: 600;
+        color: var(--accent);
+        margin-right: 6px;
+      }
     </style>
 
     <div id="view-sheet">
@@ -2503,7 +2594,7 @@
         </div>
         <div class="view-content" id="view-content-text"></div>
         <div class="view-tags" id="view-tags-container"></div>
-        <div class="view-related" id="view-related" style="display:none"></div>
+        <div class="view-related" id="view-related" style="display: none"></div>
         <div class="view-actions">
           <button class="btn-view-append" id="view-btn-append"><i class="ti ti-writing"></i> Append</button>
           <button class="btn-view-edit" id="view-btn-edit"><i class="ti ti-pencil"></i> Edit</button>
@@ -2531,8 +2622,8 @@
             <div class="stats-tags" id="stats-tags"></div>
           </div>
         </div>
-        <div class="digest-section" id="digest-section" style="display:none"></div>
-        <div class="digest-section" id="vectorize-section" style="display:none"></div>
+        <div class="digest-section" id="digest-section" style="display: none"></div>
+        <div class="digest-section" id="vectorize-section" style="display: none"></div>
         <div class="theme-row">
           <span class="theme-row-label">Appearance</span>
           <div class="theme-toggle" id="theme-toggle">
@@ -2819,12 +2910,14 @@
             // format — dates/tags/source are needed for temporal questions
             const memories =
               (data.insight ? `Insight: ${data.insight}\n\n` : '') +
-              data.results.map((m, i) => {
-                const date = new Date(m.created_at).toLocaleDateString()
-                const tagList = m.tags && m.tags.length ? ` [${m.tags.join(', ')}]` : ''
-                const src = m.source ? ` · ${m.source}` : ''
-                return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}\n${m.content}`
-              }).join('\n\n')
+              data.results
+                .map((m, i) => {
+                  const date = new Date(m.created_at).toLocaleDateString()
+                  const tagList = m.tags && m.tags.length ? ` [${m.tags.join(', ')}]` : ''
+                  const src = m.source ? ` · ${m.source}` : ''
+                  return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}\n${m.content}`
+                })
+                .join('\n\n')
             const res = await fetch(`${WORKER_URL}/chat`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
@@ -2991,17 +3084,20 @@
         const isRolledUp = tags.includes('rolled-up')
 
         let vectorIds = []
-        try { vectorIds = JSON.parse(entry.vector_ids || '[]') } catch {}
+        try {
+          vectorIds = JSON.parse(entry.vector_ids || '[]')
+        } catch {}
         const vectorized = vectorIds.length > 0
         // Pending state is computed at render time; won't auto-flip — reload required
-        const pending = !vectorized && (Date.now() - (entry.created_at || 0) < vectorizeGraceMs)
-        const vec = vectorized ? 'on' : (pending ? 'pending' : 'off')
+        const pending = !vectorized && Date.now() - (entry.created_at || 0) < vectorizeGraceMs
+        const vec = vectorized ? 'on' : pending ? 'pending' : 'off'
 
-        const vecChip = vec === 'on'
-          ? `<span class="tag-chip vec-chip vec-chip--on" title="Vectorized — searchable via recall"><i class="ti ti-circle-check"></i></span>`
-          : vec === 'pending'
-          ? `<span class="tag-chip vec-chip vec-chip--pending" title="Vectorizing… (just captured)"><i class="ti ti-clock"></i></span>`
-          : `<span class="tag-chip vec-chip vec-chip--off" title="Not vectorized — won't appear in recall">Not indexed</span>`
+        const vecChip =
+          vec === 'on'
+            ? `<span class="tag-chip vec-chip vec-chip--on" title="Vectorized — searchable via recall"><i class="ti ti-circle-check"></i></span>`
+            : vec === 'pending'
+              ? `<span class="tag-chip vec-chip vec-chip--pending" title="Vectorizing… (just captured)"><i class="ti ti-clock"></i></span>`
+              : `<span class="tag-chip vec-chip vec-chip--off" title="Not vectorized — won't appear in recall">Not indexed</span>`
 
         const card = document.createElement('div')
         card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '')
@@ -3213,12 +3309,17 @@
 
       function renderDigestSection(candidates) {
         const el = document.getElementById('digest-section')
-        if (!candidates.length) { el.style.display = 'none'; return }
+        if (!candidates.length) {
+          el.style.display = 'none'
+          return
+        }
         el.style.display = ''
         el.innerHTML = `
           <div class="digest-section-label">Ready to compress</div>
           <p class="digest-note">Originals are never deleted — digest adds a summary and ranks originals lower in recall so they don't crowd results.</p>
-          ${candidates.map(c => `
+          ${candidates
+            .map(
+              (c) => `
             <div class="digest-candidate-row" id="digest-row-${escAttr(c.tag)}">
               <div class="digest-candidate-label">
                 <span>${escHtml(c.tag)}</span>
@@ -3226,7 +3327,9 @@
               </div>
               <button class="digest-btn" onclick="runDigest('${escAttr(c.tag)}', this)">Digest →</button>
             </div>
-          `).join('')}
+          `,
+            )
+            .join('')}
         `
       }
 
@@ -3237,7 +3340,7 @@
         const row = document.getElementById('digest-row-' + tag)
         try {
           const res = await fetch(`${WORKER_URL}/digest?tag=${encodeURIComponent(tag)}`, {
-            headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
+            headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
           })
           const data = await res.json()
           if (data.synthesis) {
@@ -3271,7 +3374,10 @@
 
       function renderVectorizeSection(count) {
         const el = document.getElementById('vectorize-section')
-        if (!count) { el.style.display = 'none'; return }
+        if (!count) {
+          el.style.display = 'none'
+          return
+        }
         el.style.display = ''
         el.innerHTML = `
           <div class="digest-section-label">Not indexed</div>
@@ -3290,7 +3396,7 @@
           while (remaining > 0) {
             const res = await fetch(`${WORKER_URL}/vectorize-pending`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
+              headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
             })
             if (!res.ok) throw new Error(`Server error: ${res.status}`)
             const data = await res.json()
@@ -3426,7 +3532,7 @@
             data.connections
               .map(
                 (c) =>
-                  `<button class="related-item" data-id="${escHtml(c.id)}"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button>`
+                  `<button class="related-item" data-id="${escHtml(c.id)}"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button>`,
               )
               .join('')
           el.style.display = 'block'
@@ -3450,7 +3556,10 @@
           const res = await fetch(`${WORKER_URL}/graph`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
           const data = await res.json()
           if (!data.ok || !data.nodes || !data.nodes.length) {
-            if (graphState) { cancelAnimationFrame(graphState.raf); graphState = null }
+            if (graphState) {
+              cancelAnimationFrame(graphState.raf)
+              graphState = null
+            }
             canvas.style.display = 'none'
             emptyEl.style.display = 'block'
             return
@@ -3493,21 +3602,42 @@
         // cam maps world → screen: screen = world * scale + (x, y). Node coords are in world space.
         const cam = { x: 0, y: 0, scale: 1 }
         const pointers = new Map()
-        const state = { raf: 0, running: false, hover: null, dragNode: null, panning: false, panStart: null, moved: false, downId: null, pinch: null, didFit: false, cam }
+        const state = {
+          raf: 0,
+          running: false,
+          hover: null,
+          dragNode: null,
+          panning: false,
+          panStart: null,
+          moved: false,
+          downId: null,
+          pinch: null,
+          didFit: false,
+          cam,
+        }
         graphState = state
 
         const SHOW_LABELS = nodes.length <= 50 // hide always-on labels on big graphs (hover still works)
         const nodeRadius = (n) => 5 + Math.min(6, n.importance || 0)
 
-        const localXY = (ev) => { const r = canvas.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top } }
+        const localXY = (ev) => {
+          const r = canvas.getBoundingClientRect()
+          return { x: ev.clientX - r.left, y: ev.clientY - r.top }
+        }
         const screenToWorld = (sx, sy) => ({ x: (sx - cam.x) / cam.scale, y: (sy - cam.y) / cam.scale })
         function nodeAt(sx, sy) {
           const w = screenToWorld(sx, sy)
           const tol = 18 / cam.scale
-          let best = null, bestD = tol * tol
+          let best = null,
+            bestD = tol * tol
           for (const n of nodes) {
-            const dx = n.x - w.x, dy = n.y - w.y, d = dx * dx + dy * dy
-            if (d < bestD) { bestD = d; best = n }
+            const dx = n.x - w.x,
+              dy = n.y - w.y,
+              d = dx * dx + dy * dy
+            if (d < bestD) {
+              bestD = d
+              best = n
+            }
           }
           return best
         }
@@ -3523,10 +3653,19 @@
         }
         function fit() {
           if (!nodes.length) return
-          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-          for (const n of nodes) { minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x); minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y) }
+          let minX = Infinity,
+            minY = Infinity,
+            maxX = -Infinity,
+            maxY = -Infinity
+          for (const n of nodes) {
+            minX = Math.min(minX, n.x)
+            maxX = Math.max(maxX, n.x)
+            minY = Math.min(minY, n.y)
+            maxY = Math.max(maxY, n.y)
+          }
           const pad = 70
-          const gw = (maxX - minX) || 1, gh = (maxY - minY) || 1
+          const gw = maxX - minX || 1,
+            gh = maxY - minY || 1
           cam.scale = clampScale(Math.min((W - pad) / gw, (H - pad) / gh, 1.4))
           cam.x = W / 2 - ((minX + maxX) / 2) * cam.scale
           cam.y = H / 2 - ((minY + maxY) / 2) * cam.scale
@@ -3535,12 +3674,21 @@
         state.api = { zoomBy: (f) => zoomAround(W / 2, H / 2, f), fit }
 
         // ── input: wheel zoom, pointer drag/pan, two-pointer pinch ──
-        canvas.addEventListener('wheel', (ev) => { ev.preventDefault(); const p = localXY(ev); zoomAround(p.x, p.y, Math.exp(-ev.deltaY * 0.0015)) }, { passive: false })
+        canvas.addEventListener(
+          'wheel',
+          (ev) => {
+            ev.preventDefault()
+            const p = localXY(ev)
+            zoomAround(p.x, p.y, Math.exp(-ev.deltaY * 0.0015))
+          },
+          { passive: false },
+        )
 
         const twoPointers = () => [...pointers.values()]
         function startPinch() {
           const [a, b] = twoPointers()
-          state.dragNode = null; state.panning = false
+          state.dragNode = null
+          state.panning = false
           state.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale: cam.scale }
         }
         function movePinch() {
@@ -3554,26 +3702,39 @@
           canvas.setPointerCapture(ev.pointerId)
           const p = localXY(ev)
           pointers.set(ev.pointerId, p)
-          if (pointers.size === 2) { startPinch(); return }
+          if (pointers.size === 2) {
+            startPinch()
+            return
+          }
           state.moved = false
           state.downId = ev.pointerId
           const hit = nodeAt(p.x, p.y)
           if (hit) state.dragNode = hit
-          else { state.panning = true; state.panStart = { x: ev.clientX - cam.x, y: ev.clientY - cam.y } }
+          else {
+            state.panning = true
+            state.panStart = { x: ev.clientX - cam.x, y: ev.clientY - cam.y }
+          }
           canvas.style.cursor = 'grabbing'
         })
 
         canvas.addEventListener('pointermove', (ev) => {
           const p = localXY(ev)
           if (pointers.has(ev.pointerId)) pointers.set(ev.pointerId, p)
-          if (state.pinch && pointers.size === 2) { movePinch(); return }
+          if (state.pinch && pointers.size === 2) {
+            movePinch()
+            return
+          }
           if (state.dragNode) {
             const w = screenToWorld(p.x, p.y)
-            state.dragNode.x = w.x; state.dragNode.y = w.y; state.dragNode.vx = 0; state.dragNode.vy = 0
+            state.dragNode.x = w.x
+            state.dragNode.y = w.y
+            state.dragNode.vx = 0
+            state.dragNode.vy = 0
             state.moved = true
             energize() // reheat so the rest of the graph re-settles around the dragged node
           } else if (state.panning) {
-            cam.x = ev.clientX - state.panStart.x; cam.y = ev.clientY - state.panStart.y
+            cam.x = ev.clientX - state.panStart.x
+            cam.y = ev.clientY - state.panStart.y
             state.moved = true
             requestDraw()
           } else {
@@ -3586,18 +3747,27 @@
 
         function endPointer(ev) {
           pointers.delete(ev.pointerId)
-          try { canvas.releasePointerCapture(ev.pointerId) } catch (e) {}
+          try {
+            canvas.releasePointerCapture(ev.pointerId)
+          } catch (e) {}
           if (state.pinch && pointers.size < 2) state.pinch = null
           if (ev.pointerId === state.downId) {
             if (state.dragNode && !state.moved) openView({ id: state.dragNode.id, content: state.dragNode.label, tags: state.dragNode.tags }, null)
-            state.dragNode = null; state.panning = false; state.downId = null
+            state.dragNode = null
+            state.panning = false
+            state.downId = null
             canvas.style.cursor = 'grab'
             energize()
           }
         }
         canvas.addEventListener('pointerup', endPointer)
         canvas.addEventListener('pointercancel', endPointer)
-        canvas.addEventListener('pointerleave', () => { if (!state.dragNode && !state.panning && state.hover) { state.hover = null; if (!state.running) draw() } })
+        canvas.addEventListener('pointerleave', () => {
+          if (!state.dragNode && !state.panning && state.hover) {
+            state.hover = null
+            if (!state.running) draw()
+          }
+        })
 
         function shortLabel(n) {
           const t = (n.label || '').replace(/\s+/g, ' ').trim()
@@ -3607,7 +3777,9 @@
         function labelPill(text, cx, topY, emphasize, alpha) {
           ctx.font = (emphasize ? '600 ' : '') + '11px "DM Sans", system-ui, sans-serif'
           const tw = ctx.measureText(text).width
-          const padX = 5, h = 16, rr = 5
+          const padX = 5,
+            h = 16,
+            rr = 5
           const x = cx - tw / 2 - padX
           const w = tw + padX * 2
           ctx.globalAlpha = alpha
@@ -3636,8 +3808,12 @@
               let d2 = dx * dx + dy * dy || 0.01
               const d = Math.sqrt(d2)
               const f = 2000 / d2
-              const fx = (dx / d) * f, fy = (dy / d) * f
-              a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy
+              const fx = (dx / d) * f,
+                fy = (dy / d) * f
+              a.vx += fx
+              a.vy += fy
+              b.vx -= fx
+              b.vy -= fy
             }
           }
           for (const l of links) {
@@ -3645,16 +3821,26 @@
             let dy = l.t.y - l.s.y
             const d = Math.sqrt(dx * dx + dy * dy) || 0.01
             const f = (d - 88) * 0.02 * (0.5 + l.w)
-            const fx = (dx / d) * f, fy = (dy / d) * f
-            l.s.vx += fx; l.s.vy += fy; l.t.vx -= fx; l.t.vy -= fy
+            const fx = (dx / d) * f,
+              fy = (dy / d) * f
+            l.s.vx += fx
+            l.s.vy += fy
+            l.t.vx -= fx
+            l.t.vy -= fy
           }
           let energy = 0
           for (const n of nodes) {
-            if (n === state.dragNode) { n.vx = 0; n.vy = 0; continue } // pinned under the cursor
+            if (n === state.dragNode) {
+              n.vx = 0
+              n.vy = 0
+              continue
+            } // pinned under the cursor
             n.vx += (W / 2 - n.x) * 0.002
             n.vy += (H / 2 - n.y) * 0.002
-            n.vx *= 0.85; n.vy *= 0.85
-            n.x += n.vx; n.y += n.vy
+            n.vx *= 0.85
+            n.vy *= 0.85
+            n.x += n.vx
+            n.y += n.vy
             energy += n.vx * n.vx + n.vy * n.vy
           }
           draw()
@@ -3662,11 +3848,21 @@
             state.raf = requestAnimationFrame(tick)
           } else {
             state.running = false
-            if (!state.didFit) { state.didFit = true; fit() } // frame the graph once it first settles
+            if (!state.didFit) {
+              state.didFit = true
+              fit()
+            } // frame the graph once it first settles
           }
         }
-        function energize() { if (!state.running) { state.running = true; state.raf = requestAnimationFrame(tick) } }
-        function requestDraw() { if (!state.running) draw() }
+        function energize() {
+          if (!state.running) {
+            state.running = true
+            state.raf = requestAnimationFrame(tick)
+          }
+        }
+        function requestDraw() {
+          if (!state.running) draw()
+        }
 
         function draw() {
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -3676,7 +3872,7 @@
           for (const l of links) {
             const dim = l.s.status === 'deprecated' || l.t.status === 'deprecated'
             const lit = hover && (l.s === hover || l.t === hover)
-            ctx.strokeStyle = lit ? 'rgba(178,102,65,0.55)' : (dim ? 'rgba(38,36,31,0.05)' : 'rgba(38,36,31,0.13)')
+            ctx.strokeStyle = lit ? 'rgba(178,102,65,0.55)' : dim ? 'rgba(38,36,31,0.05)' : 'rgba(38,36,31,0.13)'
             ctx.lineWidth = lit ? Math.max(1.5, l.w * 2.5) : Math.max(0.5, l.w * 2)
             ctx.beginPath()
             ctx.moveTo(l.s.x, l.s.y)
@@ -3717,8 +3913,12 @@
         energize()
       }
 
-      function graphZoom(factor) { if (graphState && graphState.api) graphState.api.zoomBy(factor) }
-      function graphFit() { if (graphState && graphState.api) graphState.api.fit() }
+      function graphZoom(factor) {
+        if (graphState && graphState.api) graphState.api.zoomBy(factor)
+      }
+      function graphFit() {
+        if (graphState && graphState.api) graphState.api.fit()
+      }
 
       document.getElementById('confirm-dialog').addEventListener('click', (e) => {
         if (e.target === document.getElementById('confirm-dialog')) closeConfirm()
