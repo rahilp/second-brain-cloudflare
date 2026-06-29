@@ -88,13 +88,15 @@ Save this token somewhere secure. You will need it when authorizing clients and 
 
 Click **[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)** and follow the prompts.
 
-Enter the following value during setup:
+Enter the following values during setup:
 
 | FIELD      | VALUE                           |
 | ---------- | ------------------------------- |
 | AUTH_TOKEN | The token you created in step 1 |
+| DIMENSION  | `384`                           |
+| METRIC     | `cosine`                        |
 
-Cloudflare will provision the required resources and deploy your Worker automatically. The Vectorize index is created for you during deployment with the correct settings (384 dimensions, cosine metric), so there is nothing else to fill in.
+Cloudflare will provision the required resources and deploy your Worker automatically.
 
 When deployment finishes, copy your Worker URL. It will look similar to:
 
@@ -211,10 +213,11 @@ To deploy without the one-click button:
 
 ```bash
 npm install
+npm run vectors:create
 npm run deploy
 ```
 
-Wrangler provisions the required Cloudflare resources automatically. The Vectorize index (384 dimensions, cosine) and its `VECTORIZE` binding are created and wired up for you by the `postinstall`/deploy scripts — no manual configuration needed.
+`npm run vectors:create` creates the Vectorize index (384 dimensions, cosine). Wrangler then provisions the remaining Cloudflare resources automatically and fills in the required values in `wrangler.jsonc`.
 
 </details>
 
