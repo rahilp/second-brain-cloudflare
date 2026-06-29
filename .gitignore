@@ -7,4 +7,3 @@ docs/
 .claude/
 .dev.vars
 .env
-wrangler.deploy.jsonc
