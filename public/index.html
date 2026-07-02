@@ -1472,6 +1472,7 @@
       #append-sheet,
       #edit-sheet,
       #menu-sheet,
+      #integrations-sheet,
       #view-sheet {
         display: none;
         position: fixed;
@@ -1490,6 +1491,7 @@
       #append-sheet.open,
       #edit-sheet.open,
       #menu-sheet.open,
+      #integrations-sheet.open,
       #view-sheet.open {
         display: flex;
         opacity: 1;
@@ -2272,6 +2274,7 @@
         #append-sheet,
         #edit-sheet,
         #menu-sheet,
+        #integrations-sheet,
         #view-sheet {
           align-items: center;
           justify-content: center;
@@ -2702,10 +2705,6 @@
         </div>
         <div class="digest-section" id="digest-section" style="display: none"></div>
         <div class="digest-section" id="vectorize-section" style="display: none"></div>
-        <div class="digest-section" id="integrations-section">
-          <div class="digest-section-label">Integrations</div>
-          <div id="integration-notion"><p class="digest-note">Loading&hellip;</p></div>
-        </div>
         <div class="theme-row">
           <span class="theme-row-label">Appearance</span>
           <div class="theme-toggle" id="theme-toggle">
@@ -2723,9 +2722,24 @@
         >
           <i class="ti ti-clock"></i> View all memories
         </button>
+        <button class="menu-item" onclick="openIntegrations()"><i class="ti ti-plug"></i> Integrations</button>
         <button class="menu-item" onclick="exportMemories('json')"><i class="ti ti-download"></i> Export as JSON</button>
         <button class="menu-item" onclick="exportMemories('markdown')"><i class="ti ti-markdown"></i> Export as Markdown</button>
         <button class="menu-item danger" onclick="logout()"><i class="ti ti-logout"></i> Disconnect</button>
+      </div>
+    </div>
+
+    <div id="integrations-sheet">
+      <div class="menu-inner">
+        <div class="view-header">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <button class="btn-close-icon" onclick="backToMenu()" title="Back to settings"><i class="ti ti-arrow-left"></i></button>
+            <h3 style="margin-bottom: 0">Integrations</h3>
+          </div>
+          <button class="btn-close-icon" onclick="closeIntegrations()"><i class="ti ti-x"></i></button>
+        </div>
+        <p class="digest-note">Connect the tools where your context already lives. Synced content stays up to date and surfaces in recall like any other memory.</p>
+        <div id="integration-notion"><p class="digest-note">Loading&hellip;</p></div>
       </div>
     </div>
 
@@ -3368,10 +3382,22 @@
       function openMenu() {
         document.getElementById('menu-sheet').classList.add('open')
         loadMenuStats()
-        loadIntegrations()
       }
       function closeMenu() {
         document.getElementById('menu-sheet').classList.remove('open')
+      }
+
+      function openIntegrations() {
+        closeMenu()
+        document.getElementById('integrations-sheet').classList.add('open')
+        loadIntegrations()
+      }
+      function closeIntegrations() {
+        document.getElementById('integrations-sheet').classList.remove('open')
+      }
+      function backToMenu() {
+        closeIntegrations()
+        openMenu()
       }
 
       async function loadMenuStats() {
@@ -4161,6 +4187,9 @@
       })
       document.getElementById('menu-sheet').addEventListener('click', (e) => {
         if (e.target === document.getElementById('menu-sheet')) closeMenu()
+      })
+      document.getElementById('integrations-sheet').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('integrations-sheet')) closeIntegrations()
       })
       document.getElementById('view-sheet').addEventListener('click', (e) => {
         if (e.target === document.getElementById('view-sheet')) closeView()
