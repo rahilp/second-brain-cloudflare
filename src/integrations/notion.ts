@@ -1,104 +1,19 @@
 /**
- * Second Brain — external source integrations (Notion).
+ * Second Brain — Notion provider.
  *
- * Design notes:
- * - All integration state (token, workspace info, page↔entry map) lives in
- *   OAUTH_KV under `integrations:*` keys — one JSON blob per provider. KV is
- *   deliberate: the namespace is already provisioned in every deployment, so
- *   shipping this feature is a pure code deploy with no schema migration, and
- *   the access pattern (read once at sync start, write once at the end) is
- *   exactly what KV wants.
- * - Synced pages are MIRRORS: the external tool is the source of truth for its
- *   own pages. Every sync replaces a mirrored entry's content wholesale, dedupe
- *   is by page id (not similarity), and an unshared/archived page deletes its
- *   mirror. Mirrors therefore bypass captureEntry's duplicate/contradiction
- *   pipeline — the MirrorStore interface below is the narrow write surface the
- *   sync needs, wired up by index.ts.
- * - Sync work per call is bounded (Workers subrequest limits, especially on the
- *   free plan). The result reports `remaining` so callers loop until it hits 0 —
- *   same pattern as POST /vectorize-pending.
+ * Mirrors every page shared with the user's internal Notion connection into
+ * memory. Notion's sharing model IS the selection mechanism: users share pages
+ * (and their subtrees) with the connection in Notion, and the search listing
+ * returns exactly that set.
  */
 
-export interface IntegrationEnv {
-  OAUTH_KV: KVNamespace;
-}
+import type { IntegrationEnv, IntegrationProvider, ItemMapEntry, MirrorStore, SyncOutcome } from "./framework";
+import { loadIntegration, saveIntegration } from "./framework";
 
-// ─── Integration record (the KV blob) ─────────────────────────────────────────
-
-export interface PageMapEntry {
-  entryId: string;    // the mirrored entry's id in D1
-  lastEdited: string; // the page's last_edited_time at the time it was mirrored
-}
-
-export interface IntegrationRecord {
-  provider: string;
-  authKind: "token"; // "oauth2" reserved for future providers that require it
-  credentials: { token: string };
-  config: Record<string, unknown>; // escape hatch for future per-provider options
-  status: "connected" | "error";
-  workspaceName: string | null;
-  lastSyncedAt: number | null;
-  lastSyncError: string | null;
-  pageMap: Record<string, PageMapEntry>;
-  createdAt: number;
-  updatedAt: number;
-}
-
-// Prefixed so integration keys coexist with workers-oauth-provider's own
-// token:/grant:/client: keys in the same namespace.
-const INTEGRATIONS_KEY_PREFIX = "integrations:";
-
-export async function loadIntegration(env: IntegrationEnv, provider: string): Promise<IntegrationRecord | null> {
-  const raw = await env.OAUTH_KV.get(`${INTEGRATIONS_KEY_PREFIX}${provider}`);
-  if (!raw) return null;
-  try { return JSON.parse(raw) as IntegrationRecord; } catch { return null; }
-}
-
-export async function saveIntegration(env: IntegrationEnv, record: IntegrationRecord): Promise<void> {
-  await env.OAUTH_KV.put(`${INTEGRATIONS_KEY_PREFIX}${record.provider}`, JSON.stringify(record));
-}
-
-export async function deleteIntegration(env: IntegrationEnv, provider: string): Promise<void> {
-  await env.OAUTH_KV.delete(`${INTEGRATIONS_KEY_PREFIX}${provider}`);
-}
-
-// Connection status for the settings UI. Never exposes credentials — the token
-// is write-only from the dashboard's perspective.
-export function integrationStatus(record: IntegrationRecord | null) {
-  return {
-    provider: "notion",
-    name: "Notion",
-    connected: record !== null,
-    status: record?.status ?? null,
-    workspaceName: record?.workspaceName ?? null,
-    lastSyncedAt: record?.lastSyncedAt ?? null,
-    lastSyncError: record?.lastSyncError ?? null,
-    pageCount: record ? Object.keys(record.pageMap).length : 0,
-  };
-}
-
-// ─── Mirror store ─────────────────────────────────────────────────────────────
-// The write primitives the sync needs against the memory store. Implemented by
-// index.ts (which owns storeEntry/forgetEntry); injected here so this module
-// never imports from index.ts (no circular dependency).
-
-export interface MirrorStore {
-  // Insert a new entry (already-embedded content path) and return its id.
-  createEntry(content: string, tags: string[], source: string): Promise<string>;
-  // Replace an entry's content wholesale (re-embed). False if the entry no
-  // longer exists — the caller re-creates the mirror.
-  updateEntry(entryId: string, content: string): Promise<boolean>;
-  // Permanently delete an entry and its vectors.
-  deleteEntry(entryId: string): Promise<void>;
-}
-
-// ─── Notion API client ────────────────────────────────────────────────────────
+// ─── API client ───────────────────────────────────────────────────────────────
 
 const NOTION_API_BASE = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
-
-export const NOTION_SOURCE = "notion";
-export const NOTION_TAG = "notion";
 
 // Bounds tuned for the Workers free-plan budget of 50 external fetches per
 // invocation: a full sync batch costs ≤ MAX_LISTING_REQUESTS +
@@ -131,7 +46,7 @@ async function notionFetch(token: string, path: string, init?: RequestInit): Pro
   return res.json();
 }
 
-// Validate an internal-integration token and return the workspace name for the
+// Validate an internal-connection token and return the workspace name for the
 // settings UI's "Connected to …" confirmation.
 export async function notionValidateToken(token: string): Promise<string> {
   const me = await notionFetch(token, "/users/me");
@@ -146,9 +61,7 @@ export interface NotionPageMeta {
   archived: boolean;
 }
 
-// List every page the integration can access. Notion's sharing model IS the
-// selection mechanism: users share pages (and their subtrees) with the
-// integration in Notion, and this listing returns exactly that set.
+// List every page the connection can access.
 export async function notionListPages(token: string): Promise<{ pages: NotionPageMeta[]; complete: boolean }> {
   const pages: NotionPageMeta[] = [];
   let cursor: string | undefined;
@@ -273,7 +186,7 @@ export function buildPageContent(title: string, url: string, text: string): stri
 }
 
 // ─── Sync planning ────────────────────────────────────────────────────────────
-// Per-page lastEdited comparison against the pageMap (not a global cursor):
+// Per-page version comparison against the itemMap (not a global cursor):
 // robust to Notion's minute-granularity timestamps, and a partially-processed
 // batch simply leaves the unprocessed pages "changed" for the next run.
 
@@ -284,24 +197,24 @@ export interface SyncPlan {
 
 export function computeSyncPlan(
   pages: NotionPageMeta[],
-  pageMap: Record<string, PageMapEntry>,
+  itemMap: Record<string, ItemMapEntry>,
   listingComplete: boolean,
 ): SyncPlan {
   const changed = pages
-    .filter(p => !p.archived && pageMap[p.id]?.lastEdited !== p.lastEdited)
+    .filter(p => !p.archived && itemMap[p.id]?.version !== p.lastEdited)
     .sort((a, b) => (a.lastEdited < b.lastEdited ? -1 : 1));
 
   const deleted: string[] = [];
   // Archived/trashed pages are an explicit delete signal even on a truncated listing.
   for (const p of pages) {
-    if (p.archived && pageMap[p.id]) deleted.push(p.id);
+    if (p.archived && itemMap[p.id]) deleted.push(p.id);
   }
-  // Silent disappearance (page unshared or integration access revoked) is only
+  // Silent disappearance (page unshared or connection access revoked) is only
   // trustworthy when the listing was complete — a truncated listing must never
   // trigger deletions.
   if (listingComplete) {
     const listed = new Set(pages.map(p => p.id));
-    for (const id of Object.keys(pageMap)) {
+    for (const id of Object.keys(itemMap)) {
       if (!listed.has(id)) deleted.push(id);
     }
   }
@@ -310,12 +223,8 @@ export function computeSyncPlan(
 
 // ─── Sync loop ────────────────────────────────────────────────────────────────
 
-export type NotionSyncOutcome =
-  | { ok: true; created: number; updated: number; deleted: number; failed: number; remaining: number; total: number }
-  | { ok: false; error: string };
-
-export async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Promise<NotionSyncOutcome> {
-  const record = await loadIntegration(env, "notion");
+async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Promise<SyncOutcome> {
+  const record = await loadIntegration(env, notionProvider.id);
   if (!record) return { ok: false, error: "Notion is not connected" };
 
   let pages: NotionPageMeta[];
@@ -330,7 +239,7 @@ export async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Pr
     return { ok: false, error: record.lastSyncError };
   }
 
-  const plan = computeSyncPlan(pages, record.pageMap, complete);
+  const plan = computeSyncPlan(pages, record.itemMap, complete);
   const batch = plan.changed.slice(0, SYNC_PAGE_BATCH);
 
   let created = 0, updated = 0, failed = 0;
@@ -338,18 +247,18 @@ export async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Pr
     try {
       const text = await notionFetchPageText(record.credentials.token, page.id);
       const content = buildPageContent(page.title, page.url, text);
-      const existing = record.pageMap[page.id];
+      const existing = record.itemMap[page.id];
       if (existing && await store.updateEntry(existing.entryId, content)) {
-        record.pageMap[page.id] = { entryId: existing.entryId, lastEdited: page.lastEdited };
+        record.itemMap[page.id] = { entryId: existing.entryId, version: page.lastEdited };
         updated++;
       } else {
         // New page — or its mirror was deleted out-of-band; (re-)create it.
-        const entryId = await store.createEntry(content, [NOTION_TAG], NOTION_SOURCE);
-        record.pageMap[page.id] = { entryId, lastEdited: page.lastEdited };
+        const entryId = await store.createEntry(content, [notionProvider.id], notionProvider.id);
+        record.itemMap[page.id] = { entryId, version: page.lastEdited };
         created++;
       }
     } catch (e) {
-      // Per-page failure is non-fatal: the pageMap doesn't advance for this
+      // Per-page failure is non-fatal: the itemMap doesn't advance for this
       // page, so the next sync retries it.
       console.error(`Notion sync failed for page ${page.id} (non-fatal):`, e);
       failed++;
@@ -358,11 +267,11 @@ export async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Pr
 
   let deleted = 0;
   for (const pageId of plan.deleted) {
-    const mapped = record.pageMap[pageId];
+    const mapped = record.itemMap[pageId];
     if (!mapped) continue;
     try {
       await store.deleteEntry(mapped.entryId);
-      delete record.pageMap[pageId];
+      delete record.itemMap[pageId];
       deleted++;
     } catch (e) {
       console.error(`Notion mirror delete failed for page ${pageId} (non-fatal):`, e);
@@ -385,3 +294,10 @@ export async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Pr
     total: pages.filter(p => !p.archived).length,
   };
 }
+
+export const notionProvider: IntegrationProvider = {
+  id: "notion",
+  name: "Notion",
+  validateToken: notionValidateToken,
+  sync: runNotionSync,
+};

@@ -3566,7 +3566,7 @@
           return
         }
         const last = notionInfo.lastSyncedAt ? new Date(notionInfo.lastSyncedAt).toLocaleString() : 'never'
-        const pages = `${notionInfo.pageCount} page${notionInfo.pageCount === 1 ? '' : 's'} synced`
+        const pages = `${notionInfo.itemCount} page${notionInfo.itemCount === 1 ? '' : 's'} synced`
         const err = notionInfo.lastSyncError ? `<div class="integration-error">Last sync failed: ${escHtml(notionInfo.lastSyncError)}</div>` : ''
         el.innerHTML = `
           <div class="integration-row">
@@ -3652,9 +3652,9 @@
       async function disconnectNotion(btn) {
         if (!confirm('Disconnect Notion? Pages will stop syncing.')) return
         let purge = false
-        if (notionInfo && notionInfo.pageCount > 0) {
+        if (notionInfo && notionInfo.itemCount > 0) {
           purge = confirm(
-            `Also delete the ${notionInfo.pageCount} memor${notionInfo.pageCount === 1 ? 'y' : 'ies'} synced from Notion?\n\nOK = delete them\nCancel = keep them as regular memories`,
+            `Also delete the ${notionInfo.itemCount} memor${notionInfo.itemCount === 1 ? 'y' : 'ies'} synced from Notion?\n\nOK = delete them\nCancel = keep them as regular memories`,
           )
         }
         btn.disabled = true

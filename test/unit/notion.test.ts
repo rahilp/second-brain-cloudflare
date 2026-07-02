@@ -5,8 +5,12 @@ import {
   buildPageContent,
   computeSyncPlan,
   integrationStatus,
+  loadIntegration,
+  notionProvider,
+  getProvider,
 } from "../../src/integrations";
-import type { NotionPageMeta, PageMapEntry, IntegrationRecord } from "../../src/integrations";
+import type { NotionPageMeta, ItemMapEntry, IntegrationRecord } from "../../src/integrations";
+import { makeMemoryKV } from "../helpers/make-env";
 
 function page(id: string, lastEdited: string, archived = false): NotionPageMeta {
   return { id, lastEdited, title: `Page ${id}`, url: `https://notion.so/${id}`, archived };
@@ -83,8 +87,8 @@ describe("buildPageContent", () => {
 });
 
 describe("computeSyncPlan", () => {
-  const map = (entries: Record<string, string>): Record<string, PageMapEntry> =>
-    Object.fromEntries(Object.entries(entries).map(([id, lastEdited]) => [id, { entryId: `e-${id}`, lastEdited }]));
+  const map = (entries: Record<string, string>): Record<string, ItemMapEntry> =>
+    Object.fromEntries(Object.entries(entries).map(([id, version]) => [id, { entryId: `e-${id}`, version }]));
 
   it("treats unseen pages as changed", () => {
     const plan = computeSyncPlan([page("a", "2026-01-01T00:00:00Z")], {}, true);
@@ -134,7 +138,7 @@ describe("computeSyncPlan", () => {
 
 describe("integrationStatus", () => {
   it("reports a disconnected provider", () => {
-    expect(integrationStatus(null)).toEqual({
+    expect(integrationStatus(notionProvider, null)).toEqual({
       provider: "notion",
       name: "Notion",
       connected: false,
@@ -142,7 +146,7 @@ describe("integrationStatus", () => {
       workspaceName: null,
       lastSyncedAt: null,
       lastSyncError: null,
-      pageCount: 0,
+      itemCount: 0,
     });
   });
 
@@ -156,14 +160,45 @@ describe("integrationStatus", () => {
       workspaceName: "Test Workspace",
       lastSyncedAt: 123,
       lastSyncError: null,
-      pageMap: { p1: { entryId: "e1", lastEdited: "t" } },
+      itemMap: { p1: { entryId: "e1", version: "t" } },
       createdAt: 1,
       updatedAt: 2,
     };
-    const status = integrationStatus(record);
+    const status = integrationStatus(notionProvider, record);
     expect(status.connected).toBe(true);
     expect(status.workspaceName).toBe("Test Workspace");
-    expect(status.pageCount).toBe(1);
+    expect(status.itemCount).toBe(1);
     expect(JSON.stringify(status)).not.toContain("ntn_secret");
+  });
+});
+
+describe("provider registry", () => {
+  it("resolves registered providers and rejects unknown ids", () => {
+    expect(getProvider("notion")).toBe(notionProvider);
+    expect(getProvider("nope")).toBeNull();
+    expect(getProvider("hasOwnProperty")).toBeNull(); // prototype names are not providers
+  });
+});
+
+describe("loadIntegration legacy migration", () => {
+  it("migrates first-release pageMap/lastEdited blobs to itemMap/version", async () => {
+    const kv = makeMemoryKV();
+    await kv.put("integrations:notion", JSON.stringify({
+      provider: "notion",
+      authKind: "token",
+      credentials: { token: "ntn_x" },
+      config: {},
+      status: "connected",
+      workspaceName: "W",
+      lastSyncedAt: 1,
+      lastSyncError: null,
+      pageMap: { p1: { entryId: "e1", lastEdited: "2026-01-01T00:00:00.000Z" } },
+      createdAt: 1,
+      updatedAt: 1,
+    }));
+
+    const record = await loadIntegration({ OAUTH_KV: kv }, "notion");
+    expect(record?.itemMap).toEqual({ p1: { entryId: "e1", version: "2026-01-01T00:00:00.000Z" } });
+    expect((record as any).pageMap).toBeUndefined();
   });
 });

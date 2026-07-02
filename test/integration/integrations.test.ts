@@ -86,7 +86,7 @@ describe("integrations routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json() as any;
       expect(data.integrations).toEqual([
-        expect.objectContaining({ provider: "notion", connected: false, pageCount: 0 }),
+        expect.objectContaining({ provider: "notion", connected: false, itemCount: 0 }),
       ]);
     });
   });
@@ -146,7 +146,7 @@ describe("integrations routes", () => {
       expect(entry.content).toContain("Ship the beta in March");
 
       const status = await (await worker.fetch(req("GET", "/integrations"), env, ctx)).json() as any;
-      expect(status.integrations[0].pageCount).toBe(1);
+      expect(status.integrations[0].itemCount).toBe(1);
     });
 
     it("is a no-op when nothing changed", async () => {
@@ -192,7 +192,7 @@ describe("integrations routes", () => {
       expect(db.entries).toHaveLength(0);
 
       const status = await (await worker.fetch(req("GET", "/integrations"), env, ctx)).json() as any;
-      expect(status.integrations[0].pageCount).toBe(0);
+      expect(status.integrations[0].itemCount).toBe(0);
     });
 
     it("deletes the mirror when a page is archived", async () => {
@@ -249,7 +249,7 @@ describe("integrations routes", () => {
       const res = await worker.fetch(req("POST", "/update", { body: { id, content: "manual edit" } }), env, ctx);
       expect(res.status).toBe(409);
       const data = await res.json() as any;
-      expect(data.error).toContain("synced from a Notion page");
+      expect(data.error).toContain("synced from Notion");
       expect(db.entries[0].content).toContain("test");
     });
 

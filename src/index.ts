@@ -8,13 +8,12 @@ import { createMcpHandler } from "agents/mcp";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 import {
+  INTEGRATION_PROVIDERS,
+  getProvider,
   loadIntegration,
   saveIntegration,
   deleteIntegration,
   integrationStatus,
-  notionValidateToken,
-  runNotionSync,
-  NOTION_SOURCE,
 } from "./integrations";
 import type { IntegrationRecord, MirrorStore } from "./integrations";
 
@@ -2184,11 +2183,11 @@ export async function applyStatus(id: string, status: MemoryStatus, env: Env): P
 }
 
 // ─── Integration mirror store ─────────────────────────────────────────────────
-// The narrow write surface the Notion sync uses to mirror pages into the memory
-// store (see src/integrations.ts). Mirrors bypass captureEntry's duplicate/
-// contradiction pipeline on purpose: Notion is the source of truth for its own
-// pages, dedupe is by page id (the KV pageMap), and every sync replaces content
-// wholesale.
+// The narrow write surface integration syncs use to mirror external items into
+// the memory store (see src/integrations/framework.ts). Mirrors bypass
+// captureEntry's duplicate/contradiction pipeline on purpose: the external tool
+// is the source of truth for its own items, dedupe is by item id (the KV
+// itemMap), and every sync replaces content wholesale.
 
 function makeMirrorStore(env: Env): MirrorStore {
   return {
@@ -2237,28 +2236,37 @@ function makeMirrorStore(env: Env): MirrorStore {
   };
 }
 
-// Notion-mirrored entries are replaced wholesale on every sync, so a manual
-// append/update would be silently clobbered by the page's next edit. While the
-// integration is connected, redirect edits to the source page. After
-// disconnect, mirrors become ordinary editable memories.
+// Mirrored entries are replaced wholesale on every sync, so a manual
+// append/update would be silently clobbered by the item's next upstream edit.
+// While the integration is connected, redirect edits to the source tool. After
+// disconnect, mirrors become ordinary editable memories. Provider ids double
+// as entry `source` values, so the registry is the lookup.
 async function isManagedMirror(source: string, env: Env): Promise<boolean> {
-  return source === NOTION_SOURCE && (await loadIntegration(env, "notion")) !== null;
+  return getProvider(source) !== null && (await loadIntegration(env, source)) !== null;
 }
 
-const MIRROR_EDIT_ERROR =
-  "This memory is synced from a Notion page. Edit the page in Notion (the change syncs automatically), or disconnect the Notion integration to make it editable.";
+function mirrorEditError(source: string): string {
+  const name = getProvider(source)?.name ?? source;
+  return `This memory is synced from ${name}. Edit it in ${name} (the change syncs automatically), or disconnect the ${name} integration to make it editable.`;
+}
 
-// Nightly sync: loop bounded batches so a backlog converges across runs without
-// betting the whole invocation's subrequest budget on one pass.
+// Nightly sync: loop bounded batches per provider so a backlog converges
+// across runs without betting the invocation's subrequest budget on one pass.
 const CRON_SYNC_MAX_BATCHES = 5;
 
 async function runScheduledIntegrationSync(env: Env): Promise<void> {
-  if (!(await loadIntegration(env, "notion"))) return;
-  await initializeDatabase(env);
-  const store = makeMirrorStore(env);
-  for (let i = 0; i < CRON_SYNC_MAX_BATCHES; i++) {
-    const result = await runNotionSync(env, store);
-    if (!result.ok || result.remaining === 0) break;
+  let initialized = false;
+  for (const provider of Object.values(INTEGRATION_PROVIDERS)) {
+    if (!(await loadIntegration(env, provider.id))) continue;
+    if (!initialized) {
+      await initializeDatabase(env);
+      initialized = true;
+    }
+    const store = makeMirrorStore(env);
+    for (let i = 0; i < CRON_SYNC_MAX_BATCHES; i++) {
+      const result = await provider.sync(env, store);
+      if (!result.ok || result.remaining === 0) break;
+    }
   }
 }
 
@@ -2335,7 +2343,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       }
 
       if (await isManagedMirror(source, env)) {
-        return { content: [{ type: "text", text: MIRROR_EDIT_ERROR }] };
+        return { content: [{ type: "text", text: mirrorEditError(source) }] };
       }
 
       try {
@@ -2382,7 +2390,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       }
 
       if (await isManagedMirror(row.source as string, env)) {
-        return { content: [{ type: "text", text: MIRROR_EDIT_ERROR }] };
+        return { content: [{ type: "text", text: mirrorEditError(row.source as string) }] };
       }
 
       const tags: string[] = JSON.parse(row.tags ?? "[]").filter((t: string) => t !== "rolled-up");
@@ -2686,7 +2694,7 @@ const defaultHandler = {
       const source = row.source as string;
 
       if (await isManagedMirror(source, env)) {
-        return json({ ok: false, error: MIRROR_EDIT_ERROR }, 409);
+        return json({ ok: false, error: mirrorEditError(source) }, 409);
       }
 
       try {
@@ -2722,7 +2730,7 @@ const defaultHandler = {
       if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
 
       if (await isManagedMirror(row.source as string, env)) {
-        return json({ ok: false, error: MIRROR_EDIT_ERROR }, 409);
+        return json({ ok: false, error: mirrorEditError(row.source as string) }, 409);
       }
 
       const tags: string[] = JSON.parse(row.tags ?? "[]");
@@ -3060,84 +3068,89 @@ const defaultHandler = {
     }
 
     // ─── Integrations (settings UI) ─────────────────────────────────────────
-    // External sources mirrored into memory. State (token, workspace, page map)
-    // lives in OAUTH_KV under integrations:* — no schema change, and the
-    // namespace already exists in every deployment. See src/integrations.ts.
+    // External sources mirrored into memory, driven entirely by the provider
+    // registry — adding a provider requires no route changes. State (token,
+    // account, item map) lives in OAUTH_KV under integrations:* — no schema
+    // change, and the namespace already exists in every deployment. See
+    // src/integrations/.
 
     // GET /integrations — provider list + connection status (never the token)
     if (url.pathname === "/integrations" && request.method === "GET") {
       const authErr = requireAuth(request, env);
       if (authErr) return authErr;
-      const record = await loadIntegration(env, "notion");
-      return json({ ok: true, integrations: [integrationStatus(record)] });
+      const integrations = [];
+      for (const provider of Object.values(INTEGRATION_PROVIDERS)) {
+        integrations.push(integrationStatus(provider, await loadIntegration(env, provider.id)));
+      }
+      return json({ ok: true, integrations });
     }
 
-    // POST /integrations/notion/connect — validate an internal-integration
-    // token against Notion (server-side; the browser can't for CORS reasons)
-    // and store it only if it works.
-    if (url.pathname === "/integrations/notion/connect" && request.method === "POST") {
+    // POST /integrations/:provider/(connect|sync|disconnect)
+    const integrationRoute = url.pathname.match(/^\/integrations\/([a-z0-9-]+)\/(connect|sync|disconnect)$/);
+    if (integrationRoute && request.method === "POST") {
       const authErr = requireAuth(request, env);
       if (authErr) return authErr;
+      const provider = getProvider(integrationRoute[1]);
+      if (!provider) return json({ ok: false, error: `Unknown integration: ${integrationRoute[1]}` }, 404);
+      const action = integrationRoute[2];
 
-      let body: { token?: string };
-      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
-      const token = body.token?.trim();
-      if (!token) return json({ ok: false, error: "token is required" }, 400);
+      // connect — validate the pasted token against the provider's API
+      // (server-side; the browser can't for CORS reasons) and store it only if
+      // it works.
+      if (action === "connect") {
+        let body: { token?: string };
+        try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+        const token = body.token?.trim();
+        if (!token) return json({ ok: false, error: "token is required" }, 400);
 
-      let workspaceName: string;
-      try {
-        workspaceName = await notionValidateToken(token);
-      } catch (e) {
-        return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+        let workspaceName: string;
+        try {
+          workspaceName = await provider.validateToken(token);
+        } catch (e) {
+          return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+        }
+
+        // Preserve the item map across reconnects so already-mirrored items
+        // update in place instead of duplicating.
+        const existing = await loadIntegration(env, provider.id);
+        const now = Date.now();
+        const record: IntegrationRecord = {
+          provider: provider.id,
+          authKind: "token",
+          credentials: { token },
+          config: existing?.config ?? {},
+          status: "connected",
+          workspaceName,
+          lastSyncedAt: existing?.lastSyncedAt ?? null,
+          lastSyncError: null,
+          itemMap: existing?.itemMap ?? {},
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        };
+        await saveIntegration(env, record);
+        return json({ ok: true, provider: provider.id, workspaceName });
       }
 
-      // Preserve the page map across reconnects so already-mirrored pages
-      // update in place instead of duplicating.
-      const existing = await loadIntegration(env, "notion");
-      const now = Date.now();
-      const record: IntegrationRecord = {
-        provider: "notion",
-        authKind: "token",
-        credentials: { token },
-        config: existing?.config ?? {},
-        status: "connected",
-        workspaceName,
-        lastSyncedAt: existing?.lastSyncedAt ?? null,
-        lastSyncError: null,
-        pageMap: existing?.pageMap ?? {},
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      };
-      await saveIntegration(env, record);
-      return json({ ok: true, provider: "notion", workspaceName });
-    }
-
-    // POST /integrations/notion/sync — one bounded sync batch; callers loop
-    // while `remaining` > 0 (same pattern as POST /vectorize-pending).
-    if (url.pathname === "/integrations/notion/sync" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
-      if (authErr) return authErr;
-      if (!(await loadIntegration(env, "notion"))) {
-        return json({ ok: false, error: "Notion is not connected" }, 404);
+      // sync — one bounded batch; callers loop while `remaining` > 0 (same
+      // pattern as POST /vectorize-pending).
+      if (action === "sync") {
+        if (!(await loadIntegration(env, provider.id))) {
+          return json({ ok: false, error: `${provider.name} is not connected` }, 404);
+        }
+        const result = await provider.sync(env, makeMirrorStore(env));
+        return json(result, result.ok ? 200 : 502);
       }
-      const result = await runNotionSync(env, makeMirrorStore(env));
-      return json(result, result.ok ? 200 : 502);
-    }
 
-    // POST /integrations/notion/disconnect — remove the connection. Mirrored
-    // memories are kept (they're the user's data) unless purge=true.
-    if (url.pathname === "/integrations/notion/disconnect" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
-      if (authErr) return authErr;
-
+      // disconnect — remove the connection. Mirrored memories are kept
+      // (they're the user's data) unless purge=true.
       let body: { purge?: boolean } = {};
       try { body = await request.json(); } catch { /* empty body — keep memories */ }
-      const record = await loadIntegration(env, "notion");
-      if (!record) return json({ ok: false, error: "Notion is not connected" }, 404);
+      const record = await loadIntegration(env, provider.id);
+      if (!record) return json({ ok: false, error: `${provider.name} is not connected` }, 404);
 
       let purged = 0;
       if (body.purge) {
-        for (const mapped of Object.values(record.pageMap)) {
+        for (const mapped of Object.values(record.itemMap)) {
           try {
             const r = await forgetEntry(mapped.entryId, env);
             if (r.status === "deleted") purged++;
@@ -3146,8 +3159,8 @@ const defaultHandler = {
           }
         }
       }
-      await deleteIntegration(env, "notion");
-      return json({ ok: true, purged, kept: body.purge ? 0 : Object.keys(record.pageMap).length });
+      await deleteIntegration(env, provider.id);
+      return json({ ok: true, purged, kept: body.purge ? 0 : Object.keys(record.itemMap).length });
     }
 
     return new Response("Not found", { status: 404 });
