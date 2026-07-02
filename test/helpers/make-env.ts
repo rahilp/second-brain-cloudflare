@@ -41,6 +41,24 @@ export function makeKVMock(): KVNamespace {
   } as unknown as KVNamespace;
 }
 
+// Stateful in-memory KV for tests where reads must see prior writes (the
+// integrations flow) — makeKVMock above always returns null.
+export function makeMemoryKV(): KVNamespace {
+  const store = new Map<string, string>();
+  return {
+    get: async (key: string) => store.get(key) ?? null,
+    put: async (key: string, value: string) => { store.set(key, String(value)); },
+    delete: async (key: string) => { store.delete(key); },
+    list: async (opts: { prefix?: string } = {}) => ({
+      keys: [...store.keys()]
+        .filter(k => !opts.prefix || k.startsWith(opts.prefix))
+        .map(name => ({ name })),
+      list_complete: true,
+      cacheStatus: null,
+    }),
+  } as unknown as KVNamespace;
+}
+
 export function makeTestEnv(db?: D1Mock, overrides: Partial<Env> = {}): Env {
   return {
     DB: (db ?? new D1Mock()) as unknown as D1Database,

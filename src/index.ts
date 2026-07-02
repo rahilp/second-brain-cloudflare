@@ -7,6 +7,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpHandler } from "agents/mcp";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
+import {
+  loadIntegration,
+  saveIntegration,
+  deleteIntegration,
+  integrationStatus,
+  notionValidateToken,
+  runNotionSync,
+  NOTION_SOURCE,
+} from "./integrations";
+import type { IntegrationRecord, MirrorStore } from "./integrations";
 
 export interface Env {
   DB: D1Database;
@@ -2173,6 +2183,85 @@ export async function applyStatus(id: string, status: MemoryStatus, env: Env): P
   return true;
 }
 
+// ─── Integration mirror store ─────────────────────────────────────────────────
+// The narrow write surface the Notion sync uses to mirror pages into the memory
+// store (see src/integrations.ts). Mirrors bypass captureEntry's duplicate/
+// contradiction pipeline on purpose: Notion is the source of truth for its own
+// pages, dedupe is by page id (the KV pageMap), and every sync replaces content
+// wholesale.
+
+function makeMirrorStore(env: Env): MirrorStore {
+  return {
+    async createEntry(content, tags, source) {
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      await env.DB.prepare(
+        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(id, content, JSON.stringify(tags), source, now, "[]").run();
+      // Embed failure is non-fatal — the entry keeps vector_ids=[] and the
+      // vectorize-pending backstop re-embeds it later.
+      try {
+        await storeEntry(env, id, content, tags, source, now);
+      } catch (e) {
+        console.error("Vectorize insert failed (non-fatal):", e);
+      }
+      return id;
+    },
+    async updateEntry(id, content) {
+      const row = await env.DB.prepare(
+        `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+      if (!row) return false;
+
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+
+      // Same safe ordering as update/merge/replace: insert new → delete old.
+      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(content, id).run();
+      let newVectorIds: string[] = [];
+      try {
+        newVectorIds = await storeEntry(env, id, content, tags, row.source as string, Date.now());
+      } catch (e) {
+        console.error("Vectorize re-embed failed (non-fatal):", e);
+      }
+      try {
+        await deleteStaleVectors(env, oldVectorIds, newVectorIds);
+      } catch (e) {
+        console.error("Old vector cleanup failed (non-fatal):", e);
+      }
+      return true;
+    },
+    async deleteEntry(id) {
+      await forgetEntry(id, env);
+    },
+  };
+}
+
+// Notion-mirrored entries are replaced wholesale on every sync, so a manual
+// append/update would be silently clobbered by the page's next edit. While the
+// integration is connected, redirect edits to the source page. After
+// disconnect, mirrors become ordinary editable memories.
+async function isManagedMirror(source: string, env: Env): Promise<boolean> {
+  return source === NOTION_SOURCE && (await loadIntegration(env, "notion")) !== null;
+}
+
+const MIRROR_EDIT_ERROR =
+  "This memory is synced from a Notion page. Edit the page in Notion (the change syncs automatically), or disconnect the Notion integration to make it editable.";
+
+// Nightly sync: loop bounded batches so a backlog converges across runs without
+// betting the whole invocation's subrequest budget on one pass.
+const CRON_SYNC_MAX_BATCHES = 5;
+
+async function runScheduledIntegrationSync(env: Env): Promise<void> {
+  if (!(await loadIntegration(env, "notion"))) return;
+  await initializeDatabase(env);
+  const store = makeMirrorStore(env);
+  for (let i = 0; i < CRON_SYNC_MAX_BATCHES; i++) {
+    const result = await runNotionSync(env, store);
+    if (!result.ok || result.remaining === 0) break;
+  }
+}
+
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
 function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
@@ -2245,6 +2334,10 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         };
       }
 
+      if (await isManagedMirror(source, env)) {
+        return { content: [{ type: "text", text: MIRROR_EDIT_ERROR }] };
+      }
+
       try {
         await appendToEntry(env, id, existingContent, a, tags, source);
       } catch (e) {
@@ -2286,6 +2379,10 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
 
       if (!row) {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      }
+
+      if (await isManagedMirror(row.source as string, env)) {
+        return { content: [{ type: "text", text: MIRROR_EDIT_ERROR }] };
       }
 
       const tags: string[] = JSON.parse(row.tags ?? "[]").filter((t: string) => t !== "rolled-up");
@@ -2588,6 +2685,10 @@ const defaultHandler = {
       const tags: string[] = JSON.parse(row.tags ?? "[]");
       const source = row.source as string;
 
+      if (await isManagedMirror(source, env)) {
+        return json({ ok: false, error: MIRROR_EDIT_ERROR }, 409);
+      }
+
       try {
         await appendToEntry(env, id, existingContent, addition, tags, source);
       } catch (e) {
@@ -2619,6 +2720,10 @@ const defaultHandler = {
       ).bind(id).first() as Record<string, any> | null;
 
       if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+
+      if (await isManagedMirror(row.source as string, env)) {
+        return json({ ok: false, error: MIRROR_EDIT_ERROR }, 409);
+      }
 
       const tags: string[] = JSON.parse(row.tags ?? "[]");
       const { cleanContent, hashtags: newHashtags } = extractHashtags(newContent);
@@ -2954,6 +3059,97 @@ const defaultHandler = {
       return json({ processed, failed, remaining: (remaining?.count as number) ?? 0 });
     }
 
+    // ─── Integrations (settings UI) ─────────────────────────────────────────
+    // External sources mirrored into memory. State (token, workspace, page map)
+    // lives in OAUTH_KV under integrations:* — no schema change, and the
+    // namespace already exists in every deployment. See src/integrations.ts.
+
+    // GET /integrations — provider list + connection status (never the token)
+    if (url.pathname === "/integrations" && request.method === "GET") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+      const record = await loadIntegration(env, "notion");
+      return json({ ok: true, integrations: [integrationStatus(record)] });
+    }
+
+    // POST /integrations/notion/connect — validate an internal-integration
+    // token against Notion (server-side; the browser can't for CORS reasons)
+    // and store it only if it works.
+    if (url.pathname === "/integrations/notion/connect" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      let body: { token?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      const token = body.token?.trim();
+      if (!token) return json({ ok: false, error: "token is required" }, 400);
+
+      let workspaceName: string;
+      try {
+        workspaceName = await notionValidateToken(token);
+      } catch (e) {
+        return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+      }
+
+      // Preserve the page map across reconnects so already-mirrored pages
+      // update in place instead of duplicating.
+      const existing = await loadIntegration(env, "notion");
+      const now = Date.now();
+      const record: IntegrationRecord = {
+        provider: "notion",
+        authKind: "token",
+        credentials: { token },
+        config: existing?.config ?? {},
+        status: "connected",
+        workspaceName,
+        lastSyncedAt: existing?.lastSyncedAt ?? null,
+        lastSyncError: null,
+        pageMap: existing?.pageMap ?? {},
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      await saveIntegration(env, record);
+      return json({ ok: true, provider: "notion", workspaceName });
+    }
+
+    // POST /integrations/notion/sync — one bounded sync batch; callers loop
+    // while `remaining` > 0 (same pattern as POST /vectorize-pending).
+    if (url.pathname === "/integrations/notion/sync" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+      if (!(await loadIntegration(env, "notion"))) {
+        return json({ ok: false, error: "Notion is not connected" }, 404);
+      }
+      const result = await runNotionSync(env, makeMirrorStore(env));
+      return json(result, result.ok ? 200 : 502);
+    }
+
+    // POST /integrations/notion/disconnect — remove the connection. Mirrored
+    // memories are kept (they're the user's data) unless purge=true.
+    if (url.pathname === "/integrations/notion/disconnect" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      let body: { purge?: boolean } = {};
+      try { body = await request.json(); } catch { /* empty body — keep memories */ }
+      const record = await loadIntegration(env, "notion");
+      if (!record) return json({ ok: false, error: "Notion is not connected" }, 404);
+
+      let purged = 0;
+      if (body.purge) {
+        for (const mapped of Object.values(record.pageMap)) {
+          try {
+            const r = await forgetEntry(mapped.entryId, env);
+            if (r.status === "deleted") purged++;
+          } catch (e) {
+            console.error("Mirror purge failed (non-fatal):", e);
+          }
+        }
+      }
+      await deleteIntegration(env, "notion");
+      return json({ ok: true, purged, kept: body.purge ? 0 : Object.keys(record.pageMap).length });
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };
@@ -2985,5 +3181,6 @@ export default {
   scheduled: async (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
     ctx.waitUntil(runNightlyCompression(env, ctx));
     ctx.waitUntil(runGraphPass(env, ctx));
+    ctx.waitUntil(runScheduledIntegrationSync(env));
   },
 };
