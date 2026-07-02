@@ -1472,6 +1472,7 @@
       #append-sheet,
       #edit-sheet,
       #menu-sheet,
+      #integrations-sheet,
       #view-sheet {
         display: none;
         position: fixed;
@@ -1490,6 +1491,7 @@
       #append-sheet.open,
       #edit-sheet.open,
       #menu-sheet.open,
+      #integrations-sheet.open,
       #view-sheet.open {
         display: flex;
         opacity: 1;
@@ -2010,6 +2012,84 @@
         margin-bottom: 10px;
       }
 
+      .digest-note a {
+        color: var(--accent);
+        text-decoration: none;
+        border-bottom: 1px solid var(--accent-soft);
+      }
+
+      .digest-note a:hover {
+        border-bottom-color: var(--accent);
+      }
+
+      .integration-row {
+        padding: 2px 0;
+      }
+
+      .integration-head {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+        margin-bottom: 6px;
+      }
+
+      .integration-head i {
+        color: var(--accent);
+        font-size: 15px;
+      }
+
+      .integration-state {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--text-tertiary);
+      }
+
+      .integration-state.connected {
+        color: var(--good);
+      }
+
+      .integration-connect-row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      .integration-connect-row input {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 10px;
+        background: transparent;
+        border: 0.5px solid var(--border-input);
+        border-radius: 9px;
+        font-size: 13px;
+        font-family: inherit;
+        color: var(--text-primary);
+        outline: none;
+      }
+
+      .integration-connect-row input:focus {
+        border-color: var(--accent);
+      }
+
+      .integration-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .digest-btn.danger {
+        color: var(--danger);
+        background: rgba(179, 38, 30, 0.08);
+      }
+
+      .integration-error {
+        font-size: 12px;
+        color: var(--danger);
+        margin-bottom: 6px;
+      }
+
       .digest-result {
         font-size: 12px;
         color: var(--text-secondary);
@@ -2194,6 +2274,7 @@
         #append-sheet,
         #edit-sheet,
         #menu-sheet,
+        #integrations-sheet,
         #view-sheet {
           align-items: center;
           justify-content: center;
@@ -2641,9 +2722,24 @@
         >
           <i class="ti ti-clock"></i> View all memories
         </button>
+        <button class="menu-item" onclick="openIntegrations()"><i class="ti ti-plug"></i> Integrations</button>
         <button class="menu-item" onclick="exportMemories('json')"><i class="ti ti-download"></i> Export as JSON</button>
         <button class="menu-item" onclick="exportMemories('markdown')"><i class="ti ti-markdown"></i> Export as Markdown</button>
         <button class="menu-item danger" onclick="logout()"><i class="ti ti-logout"></i> Disconnect</button>
+      </div>
+    </div>
+
+    <div id="integrations-sheet">
+      <div class="menu-inner">
+        <div class="view-header">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <button class="btn-close-icon" onclick="backToMenu()" title="Back to settings"><i class="ti ti-arrow-left"></i></button>
+            <h3 style="margin-bottom: 0">Integrations</h3>
+          </div>
+          <button class="btn-close-icon" onclick="closeIntegrations()"><i class="ti ti-x"></i></button>
+        </div>
+        <p class="digest-note">Connect the tools where your context already lives. Synced content stays up to date and surfaces in recall like any other memory.</p>
+        <div id="integration-notion"><p class="digest-note">Loading&hellip;</p></div>
       </div>
     </div>
 
@@ -3291,6 +3387,19 @@
         document.getElementById('menu-sheet').classList.remove('open')
       }
 
+      function openIntegrations() {
+        closeMenu()
+        document.getElementById('integrations-sheet').classList.add('open')
+        loadIntegrations()
+      }
+      function closeIntegrations() {
+        document.getElementById('integrations-sheet').classList.remove('open')
+      }
+      function backToMenu() {
+        closeIntegrations()
+        openMenu()
+      }
+
       async function loadMenuStats() {
         try {
           const res = await fetch(`${WORKER_URL}/stats`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
@@ -3418,6 +3527,156 @@
             btn.innerHTML = 'Vectorize now →'
             btn.style.color = ''
           }, 3000)
+        }
+      }
+
+      // ── Integrations (Notion) ─────────────────────────────────────────────
+      let notionInfo = null
+
+      async function loadIntegrations() {
+        const el = document.getElementById('integration-notion')
+        try {
+          const res = await fetch(`${WORKER_URL}/integrations`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const data = await res.json()
+          notionInfo = (data.integrations || []).find((i) => i.provider === 'notion') || null
+          renderNotionCard()
+        } catch {
+          el.innerHTML = '<p class="digest-note">Could not load integrations.</p>'
+        }
+      }
+
+      function renderNotionCard() {
+        const el = document.getElementById('integration-notion')
+        if (!notionInfo || !notionInfo.connected) {
+          el.innerHTML = `
+            <div class="integration-row">
+              <div class="integration-head"><i class="ti ti-brand-notion"></i><span>Notion</span><span class="integration-state">Not connected</span></div>
+              <p class="digest-note">
+                Create an internal <b>connection</b> (not a personal access token) at
+                <a href="https://app.notion.com/developers/connections" target="_blank" rel="noopener noreferrer">app.notion.com/developers/connections</a>,
+                share the pages you want remembered with it (page menu &rarr; Connections), then paste its secret here. Shared pages
+                sync into your brain and stay updated.
+              </p>
+              <div class="integration-connect-row">
+                <input type="password" id="notion-token-input" placeholder="Integration secret (ntn_…)" autocomplete="off" />
+                <button class="digest-btn" onclick="connectNotion(this)">Connect</button>
+              </div>
+              <div class="integration-error" id="notion-error"></div>
+            </div>`
+          return
+        }
+        const last = notionInfo.lastSyncedAt ? new Date(notionInfo.lastSyncedAt).toLocaleString() : 'never'
+        const pages = `${notionInfo.itemCount} page${notionInfo.itemCount === 1 ? '' : 's'} synced`
+        const err = notionInfo.lastSyncError ? `<div class="integration-error">Last sync failed: ${escHtml(notionInfo.lastSyncError)}</div>` : ''
+        el.innerHTML = `
+          <div class="integration-row">
+            <div class="integration-head"><i class="ti ti-brand-notion"></i><span>Notion</span><span class="integration-state connected">${escHtml(notionInfo.workspaceName || 'Connected')}</span></div>
+            <p class="digest-note" id="notion-sync-note">${pages} &middot; Last sync: ${escHtml(last)}</p>
+            ${err}
+            <div class="integration-actions">
+              <button class="digest-btn" onclick="syncNotion(this)"><i class="ti ti-refresh"></i> Sync now</button>
+              <button class="digest-btn danger" onclick="disconnectNotion(this)">Disconnect</button>
+            </div>
+          </div>`
+      }
+
+      async function connectNotion(btn) {
+        const input = document.getElementById('notion-token-input')
+        const errEl = document.getElementById('notion-error')
+        const token = input.value.trim()
+        if (!token) {
+          errEl.textContent = 'Paste your integration secret first.'
+          return
+        }
+        btn.disabled = true
+        btn.textContent = 'Connecting…'
+        errEl.textContent = ''
+        try {
+          const res = await fetch(`${WORKER_URL}/integrations/notion/connect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            body: JSON.stringify({ token }),
+          })
+          const data = await res.json()
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Could not connect')
+          await loadIntegrations()
+        } catch (e) {
+          errEl.textContent = e.message || 'Could not connect.'
+          btn.disabled = false
+          btn.textContent = 'Connect'
+        }
+      }
+
+      async function syncNotion(btn) {
+        btn.disabled = true
+        btn.classList.add('digest-btn--loading')
+        btn.innerHTML = '<i class="ti ti-loader-2"></i> Syncing…'
+        const note = document.getElementById('notion-sync-note')
+        try {
+          // Each call processes a bounded batch (Workers subrequest limits) and
+          // reports what's left — loop until the backlog drains, like runVectorize.
+          let remaining = 1
+          let processed = 0
+          let guard = 0
+          while (remaining > 0 && guard < 40) {
+            guard++
+            const res = await fetch(`${WORKER_URL}/integrations/notion/sync`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+            })
+            const data = await res.json()
+            if (!res.ok || !data.ok) throw new Error(data.error || 'Sync failed')
+            processed += (data.created ?? 0) + (data.updated ?? 0)
+            remaining = data.remaining ?? 0
+            if (note) note.textContent = `Syncing… ${processed} page${processed === 1 ? '' : 's'} so far`
+            // A batch with zero progress means every page in it failed — stop looping.
+            if ((data.created ?? 0) + (data.updated ?? 0) + (data.deleted ?? 0) === 0 && remaining > 0) break
+          }
+          btn.classList.remove('digest-btn--loading')
+          btn.innerHTML = `<i class="ti ti-check"></i> ${processed} synced`
+          btn.style.color = 'var(--good)'
+          setTimeout(async () => {
+            await loadIntegrations()
+          }, 900)
+          loadRecent()
+          loadTags()
+          updateStatus()
+        } catch (e) {
+          btn.classList.remove('digest-btn--loading')
+          btn.innerHTML = '<i class="ti ti-alert-triangle"></i> Sync failed'
+          btn.style.color = 'var(--danger)'
+          setTimeout(() => loadIntegrations(), 3000)
+        }
+      }
+
+      async function disconnectNotion(btn) {
+        if (!confirm('Disconnect Notion? Pages will stop syncing.')) return
+        let purge = false
+        if (notionInfo && notionInfo.itemCount > 0) {
+          purge = confirm(
+            `Also delete the ${notionInfo.itemCount} memor${notionInfo.itemCount === 1 ? 'y' : 'ies'} synced from Notion?\n\nOK = delete them\nCancel = keep them as regular memories`,
+          )
+        }
+        btn.disabled = true
+        btn.textContent = 'Disconnecting…'
+        try {
+          const res = await fetch(`${WORKER_URL}/integrations/notion/disconnect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            body: JSON.stringify({ purge }),
+          })
+          const data = await res.json()
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Disconnect failed')
+          await loadIntegrations()
+          if (purge) {
+            loadRecent()
+            loadTags()
+            updateStatus()
+          }
+        } catch (e) {
+          btn.disabled = false
+          btn.textContent = 'Disconnect'
+          alert(e.message || 'Disconnect failed')
         }
       }
 
@@ -3928,6 +4187,9 @@
       })
       document.getElementById('menu-sheet').addEventListener('click', (e) => {
         if (e.target === document.getElementById('menu-sheet')) closeMenu()
+      })
+      document.getElementById('integrations-sheet').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('integrations-sheet')) closeIntegrations()
       })
       document.getElementById('view-sheet').addEventListener('click', (e) => {
         if (e.target === document.getElementById('view-sheet')) closeView()
