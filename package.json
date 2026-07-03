@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "tsc --noEmit"
+    "cf-typegen": "wrangler types",
+    "typecheck": "wrangler types && tsc --noEmit"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.7.0",
@@ -21,7 +22,6 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241022.0",
     "@types/node": "^25.9.1",
     "@vitest/coverage-v8": "^4.1.7",
     "typescript": "^5.5.0",
