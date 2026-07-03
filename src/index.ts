@@ -17,12 +17,10 @@ import {
 } from "./integrations";
 import type { IntegrationRecord, MirrorStore } from "./integrations";
 
-export interface Env {
-  DB: D1Database;
-  VECTORIZE: VectorizeIndex;
-  AI: Ai;
-  AUTH_TOKEN: string;
-  OAUTH_KV: KVNamespace;
+// Bindings come from the generated Cloudflare.Env (see `wrangler types`);
+// VECTORIZE_GRACE_MS is widened from its generated literal default so tests
+// and per-deploy vars can override it.
+export interface Env extends Omit<Cloudflare.Env, "VECTORIZE_GRACE_MS"> {
   VECTORIZE_GRACE_MS?: string;
 }
 

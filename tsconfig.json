@@ -8,8 +8,8 @@
     "noEmit": true,
     "allowJs": true,
     "skipLibCheck": true,
-    "types": ["@cloudflare/workers-types", "node"]
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.setup.ts"],
+  "include": ["worker-configuration.d.ts", "src/**/*.ts", "test/**/*.ts", "vitest.setup.ts"],
   "exclude": ["node_modules"]
 }

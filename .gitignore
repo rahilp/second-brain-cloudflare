@@ -7,3 +7,4 @@ docs/
 .claude/
 .dev.vars
 .env
+worker-configuration.d.ts
