@@ -151,6 +151,10 @@ export class D1Mock {
           const count = db.entries.filter((e: any) => e.vector_ids === '[]' && e.created_at < cutoff).length;
           return { count };
         }
+        if (s.includes("COUNT(*) as count") && s.includes(`tags NOT LIKE '%"status:%'`) && s.includes(`tags NOT LIKE '%"kind:%'`)) {
+          const count = db.entries.filter((e: any) => !String(e.tags).includes('"status:') && !String(e.tags).includes('"kind:')).length;
+          return { count };
+        }
         if (s.includes("COUNT(*) as count")) {
           return { count: db.entries.length };
         }
@@ -361,6 +365,16 @@ export class D1Mock {
             (JSON.parse(e.tags ?? "[]") as string[]).forEach(t => tags.add(t));
           });
           return { results: [...tags].sort().map(t => ({ value: t })) };
+        }
+        if (s.includes(`tags NOT LIKE '%"status:%'`) && s.includes(`tags NOT LIKE '%"kind:%'`) && s.includes("ORDER BY created_at ASC LIMIT")) {
+          const limitMatch = s.match(/LIMIT\s+(\d+)/i);
+          const limit = limitMatch ? parseInt(limitMatch[1], 10) : 25;
+          const rows = [...db.entries]
+            .filter((e: any) => !String(e.tags).includes('"status:') && !String(e.tags).includes('"kind:'))
+            .sort((a: any, b: any) => a.created_at - b.created_at)
+            .slice(0, limit)
+            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags }));
+          return { results: rows };
         }
         if (s.includes("vector_ids = '[]' AND created_at <") && s.includes("ORDER BY created_at DESC LIMIT")) {
           const cutoff = Number(args[0]);
