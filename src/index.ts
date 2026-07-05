@@ -2784,7 +2784,8 @@ const defaultHandler = {
       const [summary, tagRows, candidateRows] = await Promise.all([
         env.DB.prepare(
           `SELECT COUNT(*) as count, AVG(importance_score) as avg_importance,
-           SUM(CASE WHEN vector_ids = '[]' AND created_at < ? THEN 1 ELSE 0 END) as unvectorized
+           SUM(CASE WHEN vector_ids = '[]' AND created_at < ? THEN 1 ELSE 0 END) as unvectorized,
+           SUM(CASE WHEN tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%' THEN 1 ELSE 0 END) as unclassified
            FROM entries`
         ).bind(graceCutoff).first() as Promise<Record<string, any> | null>,
         env.DB.prepare(`SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags) GROUP BY value ORDER BY n DESC LIMIT 5`).all(),
@@ -2821,6 +2822,7 @@ const defaultHandler = {
         digest_candidates: digestCandidates,
         unvectorized: (summary?.unvectorized as number) ?? 0,
         vectorize_grace_ms: graceMs(env),
+        unclassified: (summary?.unclassified as number) ?? 0,
       });
     }
 

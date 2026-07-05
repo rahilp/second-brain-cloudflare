@@ -130,6 +130,34 @@ describe("GET /stats — vectorization fields", () => {
   });
 });
 
+describe("GET /stats — classification fields", () => {
+  let env: Env;
+  let db: D1Mock;
+
+  beforeEach(() => {
+    db = makeTestDb();
+    env = makeTestEnv(db);
+  });
+
+  it("returns unclassified: 0 when all entries have status/kind tags", async () => {
+    db.entries.push(entry("a", ["work", "status:canonical", "kind:semantic"], 5));
+    const res = await worker.fetch(req("GET", "/stats"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.unclassified).toBe(0);
+  });
+
+  it("counts entries missing both status: and kind: tags as unclassified", async () => {
+    db.entries.push(
+      entry("a", ["work"], 5),
+      entry("b", ["work", "kind:episodic"], 5),
+      entry("c", ["work", "status:canonical", "kind:semantic"], 5),
+    );
+    const res = await worker.fetch(req("GET", "/stats"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.unclassified).toBe(1);
+  });
+});
+
 describe("GET /stats — digest candidates", () => {
   let env: Env;
   let db: D1Mock;

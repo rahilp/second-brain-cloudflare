@@ -2705,6 +2705,7 @@
         </div>
         <div class="digest-section" id="digest-section" style="display: none"></div>
         <div class="digest-section" id="vectorize-section" style="display: none"></div>
+        <div class="digest-section" id="classify-section" style="display: none"></div>
         <div class="theme-row">
           <span class="theme-row-label">Appearance</span>
           <div class="theme-toggle" id="theme-toggle">
@@ -3413,6 +3414,7 @@
           vectorizeGraceMs = data.vectorize_grace_ms ?? vectorizeGraceMs
           renderDigestSection(data.digest_candidates ?? [])
           renderVectorizeSection(data.unvectorized ?? 0)
+          renderClassifySection(data.unclassified ?? 0)
         } catch {}
       }
 
@@ -3677,6 +3679,52 @@
           btn.disabled = false
           btn.textContent = 'Disconnect'
           alert(e.message || 'Disconnect failed')
+        }
+      }
+
+      function renderClassifySection(count) {
+        const el = document.getElementById('classify-section')
+        if (!count) { el.style.display = 'none'; return }
+        el.style.display = ''
+        el.innerHTML = `
+          <div class="digest-section-label">Not classified</div>
+          <p class="digest-note">${count} ${count === 1 ? 'memory has' : 'memories have'} no kind or status tag yet (captured before classification existed).</p>
+          <button class="digest-btn" id="classify-btn" onclick="runClassify(this)">Classify now →</button>
+        `
+      }
+
+      async function runClassify(btn) {
+        btn.disabled = true
+        btn.classList.add('digest-btn--loading')
+        btn.innerHTML = '<i class="ti ti-loader-2"></i> Working…'
+        try {
+          let remaining = 1
+          let totalProcessed = 0
+          while (remaining > 0) {
+            const res = await fetch(`${WORKER_URL}/classify-pending`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
+            })
+            if (!res.ok) throw new Error(`Server error: ${res.status}`)
+            const data = await res.json()
+            remaining = data.remaining ?? 0
+            totalProcessed += data.processed ?? 0
+            if ((data.processed ?? 0) === 0 && remaining > 0) break
+          }
+          btn.classList.remove('digest-btn--loading')
+          btn.innerHTML = `<i class="ti ti-check"></i> Done — ${totalProcessed} classified`
+          btn.style.color = 'var(--good)'
+          await loadMenuStats()
+          loadRecent()
+        } catch {
+          btn.classList.remove('digest-btn--loading')
+          btn.innerHTML = '<i class="ti ti-wifi-off"></i> Request failed'
+          btn.style.color = 'var(--danger)'
+          setTimeout(() => {
+            btn.disabled = false
+            btn.innerHTML = 'Classify now →'
+            btn.style.color = ''
+          }, 3000)
         }
       }
 
