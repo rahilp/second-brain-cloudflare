@@ -32,14 +32,6 @@
     "bindings": {
       "AUTH_TOKEN": {
         "description": "Your authentication token. Use a memorable phrase (like 'coffee-lover-2026') or generate a secure token with: openssl rand -base64 32. Save it - you'll need this for AI client connections!"
-      },
-      "VECTORIZE_DIMENSIONS": {
-        "description": "Number of dimensions for the Vectorize index = 384",
-        "default": "384"
-      },
-      "VECTORIZE_METRIC": {
-        "description": "Cosine is recommended for semantic search",
-        "default": "cosine"
       }
     }
   }
