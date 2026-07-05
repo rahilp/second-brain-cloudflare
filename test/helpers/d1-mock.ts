@@ -118,7 +118,8 @@ export class D1Mock {
           const unvectorized = cutoff !== undefined
             ? db.entries.filter((e: any) => e.vector_ids === '[]' && e.created_at < cutoff).length
             : 0;
-          return { count, avg_importance, unvectorized };
+          const unclassified = db.entries.filter((e: any) => !String(e.tags).includes('"status:') && !String(e.tags).includes('"kind:')).length;
+          return { count, avg_importance, unvectorized, unclassified };
         }
         if (s.includes("COUNT(*) as count") && s.includes("vector_ids = '[]'") && s.includes("created_at <")) {
           const cutoff = Number(args[0]);
