@@ -3406,7 +3406,7 @@
           const res = await fetch(`${WORKER_URL}/stats`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
           const data = await res.json()
           document.getElementById('stats-count').textContent = (data.count ?? 0).toLocaleString()
-          document.getElementById('stats-importance').textContent = data.avg_importance != null ? data.avg_importance.toFixed(1) + ' / 10' : '—'
+          document.getElementById('stats-importance').textContent = data.avg_importance != null ? data.avg_importance.toFixed(1) + ' / 5' : '—'
           const tagsEl = document.getElementById('stats-tags')
           tagsEl.innerHTML = data.top_tags?.length
             ? data.top_tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')
