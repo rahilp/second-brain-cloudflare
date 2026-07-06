@@ -3899,34 +3899,114 @@
         const ctx = canvas.getContext('2d')
 
         const byId = {}
-        nodes.forEach((n, i) => {
-          // Phyllotaxis spiral: near-uniform density at any node count, so the sim
-          // starts close to equilibrium instead of expanding out of a dense core.
-          const sr = 26 * Math.sqrt(i + 1)
-          const sth = i * 2.39996323 // golden angle
-          n.x = W / 2 + Math.cos(sth) * sr
-          n.y = H / 2 + Math.sin(sth) * sr
+        nodes.forEach((n) => {
           n.vx = 0
           n.vy = 0
           byId[n.id] = n
         })
         const links = edges.map((e) => ({ s: byId[e.source], t: byId[e.target], w: e.weight })).filter((l) => l.s && l.t)
 
+        // Weighted adjacency — drives spawn order, communities, and per-component forces.
+        const adj = new Map(nodes.map((n) => [n.id, []]))
+        for (const l of links) {
+          adj.get(l.s.id).push({ m: l.t, w: l.w })
+          adj.get(l.t.id).push({ m: l.s, w: l.w })
+        }
+
         // Degree-normalized springs (d3-force scheme). Springs are linear in distance
         // and sum per node, so an unnormalized hub's effective stiffness grows with its
         // degree until explicit-Euler integration diverges: strength 1/min(deg) plus a
         // bias that moves each endpoint in proportion to the OTHER end's degree, so a
-        // hub is nearly immobile and its leaves do the moving.
-        const degree = {}
+        // hub is nearly immobile and its leaves do the moving. Rest length shrinks as
+        // edge weight grows, so strongly-linked clusters visibly contract.
         for (const l of links) {
-          degree[l.s.id] = (degree[l.s.id] || 0) + 1
-          degree[l.t.id] = (degree[l.t.id] || 0) + 1
-        }
-        for (const l of links) {
-          const ds = degree[l.s.id]
-          const dt = degree[l.t.id]
+          const ds = adj.get(l.s.id).length
+          const dt = adj.get(l.t.id).length
           l.k = 1 / Math.min(ds, dt)
           l.bias = ds / (ds + dt)
+          l.rest = 130 - 85 * Math.min(1, l.w || 0.5)
+        }
+
+        // Spawn on the phyllotaxis spiral in BFS order from each component's
+        // highest-degree node: cluster members start adjacent, so the settled layout
+        // keeps them together instead of freezing mid-migration. Near-uniform density
+        // at any node count means the sim starts close to equilibrium. Also tags each
+        // node with its connected component for per-component centering.
+        let compCount = 0
+        {
+          const roots = [...nodes].sort((a, b) => adj.get(b.id).length - adj.get(a.id).length)
+          const seen = new Set()
+          let idx = 0
+          for (const root of roots) {
+            if (seen.has(root.id)) continue
+            seen.add(root.id)
+            const queue = [root]
+            while (queue.length) {
+              const n = queue.shift()
+              n.comp = compCount
+              const sr = 26 * Math.sqrt(idx + 1)
+              const sth = idx * 2.39996323 // golden angle
+              n.x = W / 2 + Math.cos(sth) * sr
+              n.y = H / 2 + Math.sin(sth) * sr
+              idx++
+              for (const { m } of adj.get(n.id)) {
+                if (!seen.has(m.id)) {
+                  seen.add(m.id)
+                  queue.push(m)
+                }
+              }
+            }
+            compCount++
+          }
+        }
+
+        // Communities via label propagation: every node repeatedly adopts the label
+        // its neighbors vote for hardest (weighted by edge weight) until stable.
+        // Cheap, dependency-free, and only used to tint the cluster halos.
+        {
+          for (const n of nodes) n.community = n.id
+          for (let pass = 0; pass < 10; pass++) {
+            let changed = 0
+            for (const n of nodes) {
+              const votes = new Map()
+              for (const { m, w } of adj.get(n.id)) votes.set(m.community, (votes.get(m.community) || 0) + w)
+              let best = n.community
+              let bestV = votes.get(n.community) || 0
+              for (const [c, v] of votes) {
+                if (v > bestV) {
+                  bestV = v
+                  best = c
+                }
+              }
+              if (best !== n.community) {
+                n.community = best
+                changed++
+              }
+            }
+            if (!changed) break
+          }
+        }
+        // Per-community index for the cluster-gravity force in tick().
+        const commIndex = new Map()
+        for (const n of nodes) {
+          if (!commIndex.has(n.community)) commIndex.set(n.community, commIndex.size)
+          n.commIdx = commIndex.get(n.community)
+        }
+        const commCount = commIndex.size
+
+        const commGroups = []
+        {
+          const byComm = new Map()
+          for (const n of nodes) {
+            if (!byComm.has(n.community)) byComm.set(n.community, [])
+            byComm.get(n.community).push(n)
+          }
+          let hue = 90
+          for (const members of byComm.values()) {
+            if (members.length < 3) continue // halos only where there's a real cluster
+            commGroups.push({ members, tint: `hsla(${hue}, 42%, 50%, 0.08)` })
+            hue = (hue + 137.5) % 360
+          }
         }
 
         // cam maps world → screen: screen = world * scale + (x, y). Node coords are in world space.
@@ -3974,7 +4054,7 @@
         }
 
         // ── camera: zoom toward a screen point, and fit-to-view ──
-        const clampScale = (s) => Math.max(0.25, Math.min(4, s))
+        const clampScale = (s) => Math.max(0.05, Math.min(4, s)) // floor low enough to fit an uncapped graph
         function zoomAround(sx, sy, factor) {
           const ns = clampScale(cam.scale * factor)
           cam.x = sx - (sx - cam.x) * (ns / cam.scale)
@@ -4201,7 +4281,7 @@
             let dx = l.t.x - l.s.x
             let dy = l.t.y - l.s.y
             const d = Math.sqrt(dx * dx + dy * dy) || 0.01
-            const f = (d - 88) * 0.02 * (0.5 + l.w) * l.k
+            const f = (d - l.rest) * 0.02 * (0.5 + l.w) * l.k
             const fx = (dx / d) * f,
               fy = (dy / d) * f
             l.s.vx += fx * (1 - l.bias)
@@ -4214,6 +4294,27 @@
           // so the sim is guaranteed to freeze even when hub oscillations or the
           // grid's force discontinuities would otherwise sustain jitter forever.
           const temp = state.dragNode ? MAX_SPEED : MAX_SPEED * Math.min(1, Math.pow(0.985, state.ticks - 150))
+          // Per-component centering: each island coheres around its own centroid (an
+          // internal force — net-zero per component) with only a weak global pull to
+          // keep everything on screen, so disconnected clusters drift apart into
+          // distinct islands instead of being packed into one disc.
+          const csx = new Float64Array(compCount)
+          const csy = new Float64Array(compCount)
+          const cn = new Float64Array(compCount)
+          // Cluster gravity: each node is also pulled toward its community's centroid,
+          // so communities contract into tight balls and repulsion pushes the balls
+          // apart — this is what makes clusters legible inside one big component.
+          const qsx = new Float64Array(commCount)
+          const qsy = new Float64Array(commCount)
+          const qn = new Float64Array(commCount)
+          for (const n of nodes) {
+            csx[n.comp] += n.x
+            csy[n.comp] += n.y
+            cn[n.comp]++
+            qsx[n.commIdx] += n.x
+            qsy[n.commIdx] += n.y
+            qn[n.commIdx]++
+          }
           let energy = 0
           for (const n of nodes) {
             if (n === state.dragNode) {
@@ -4221,8 +4322,8 @@
               n.vy = 0
               continue
             } // pinned under the cursor
-            n.vx += (W / 2 - n.x) * 0.002
-            n.vy += (H / 2 - n.y) * 0.002
+            n.vx += (csx[n.comp] / cn[n.comp] - n.x) * 0.0015 + (W / 2 - n.x) * 0.0004 + (qsx[n.commIdx] / qn[n.commIdx] - n.x) * 0.004
+            n.vy += (csy[n.comp] / cn[n.comp] - n.y) * 0.0015 + (H / 2 - n.y) * 0.0004 + (qsy[n.commIdx] / qn[n.commIdx] - n.y) * 0.004
             n.vx *= 0.85
             n.vy *= 0.85
             const sp = Math.hypot(n.vx, n.vy)
@@ -4259,11 +4360,49 @@
           if (!state.running) draw()
         }
 
+        // Andrew's monotone-chain convex hull; pts must be sorted by (x, y).
+        function hull(pts) {
+          if (pts.length < 3) return pts
+          const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+          const lower = []
+          for (const p of pts) {
+            while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop()
+            lower.push(p)
+          }
+          const upper = []
+          for (let i = pts.length - 1; i >= 0; i--) {
+            const p = pts[i]
+            while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop()
+            upper.push(p)
+          }
+          lower.pop()
+          upper.pop()
+          return lower.concat(upper)
+        }
+
         function draw() {
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
           ctx.clearRect(0, 0, W, H)
           ctx.setTransform(dpr * cam.scale, 0, 0, dpr * cam.scale, dpr * cam.x, dpr * cam.y)
           const hover = state.hover
+          // Soft tinted halo behind each detected community — draws the clusters the
+          // layout alone can only hint at. Thick round-joined stroke + fill = a
+          // rounded, padded hull around the members.
+          for (const g of commGroups) {
+            const h = hull([...g.members].sort((a, b) => a.x - b.x || a.y - b.y))
+            if (!h.length) continue
+            ctx.beginPath()
+            ctx.moveTo(h[0].x, h[0].y)
+            for (let i = 1; i < h.length; i++) ctx.lineTo(h[i].x, h[i].y)
+            ctx.closePath()
+            ctx.fillStyle = g.tint
+            ctx.strokeStyle = g.tint
+            ctx.lineWidth = 56
+            ctx.lineJoin = 'round'
+            ctx.lineCap = 'round'
+            ctx.stroke()
+            ctx.fill()
+          }
           for (const l of links) {
             const dim = l.s.status === 'deprecated' || l.t.status === 'deprecated'
             const lit = hover && (l.s === hover || l.t === hover)
