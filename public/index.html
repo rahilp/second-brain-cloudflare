@@ -3900,13 +3900,34 @@
 
         const byId = {}
         nodes.forEach((n, i) => {
-          n.x = W / 2 + Math.cos(i) * (60 + (i % 6) * 18)
-          n.y = H / 2 + Math.sin(i) * (60 + (i % 5) * 18)
+          // Phyllotaxis spiral: near-uniform density at any node count, so the sim
+          // starts close to equilibrium instead of expanding out of a dense core.
+          const sr = 26 * Math.sqrt(i + 1)
+          const sth = i * 2.39996323 // golden angle
+          n.x = W / 2 + Math.cos(sth) * sr
+          n.y = H / 2 + Math.sin(sth) * sr
           n.vx = 0
           n.vy = 0
           byId[n.id] = n
         })
         const links = edges.map((e) => ({ s: byId[e.source], t: byId[e.target], w: e.weight })).filter((l) => l.s && l.t)
+
+        // Degree-normalized springs (d3-force scheme). Springs are linear in distance
+        // and sum per node, so an unnormalized hub's effective stiffness grows with its
+        // degree until explicit-Euler integration diverges: strength 1/min(deg) plus a
+        // bias that moves each endpoint in proportion to the OTHER end's degree, so a
+        // hub is nearly immobile and its leaves do the moving.
+        const degree = {}
+        for (const l of links) {
+          degree[l.s.id] = (degree[l.s.id] || 0) + 1
+          degree[l.t.id] = (degree[l.t.id] || 0) + 1
+        }
+        for (const l of links) {
+          const ds = degree[l.s.id]
+          const dt = degree[l.t.id]
+          l.k = 1 / Math.min(ds, dt)
+          l.bias = ds / (ds + dt)
+        }
 
         // cam maps world → screen: screen = world * scale + (x, y). Node coords are in world space.
         const cam = { x: 0, y: 0, scale: 1 }
@@ -3922,6 +3943,7 @@
           downId: null,
           pinch: null,
           didFit: false,
+          ticks: 0,
           cam,
         }
         graphState = state
@@ -4108,45 +4130,70 @@
         }
 
         const GRID_CELL = 176 // 2× link rest length — radius of exact near-field repulsion
+        const EXACT_MAX = 300 // ≤ this many nodes: exact all-pairs repulsion (continuous forces settle naturally)
+        const MAX_SPEED = 40 // px/frame velocity cap — keeps the integrator unconditionally stable
+        const MAX_TICKS = 800 // hard stop so the animation loop always terminates
 
         function tick() {
-          // Repulsion via a spatial grid: exact pair forces inside the 3×3 cell
-          // neighborhood, one aggregated force per far cell (centroid × node count).
-          // Replaces the all-pairs O(n²) loop so big graphs stay smooth.
-          const grid = new Map()
-          for (const n of nodes) {
-            n.gx = Math.floor(n.x / GRID_CELL)
-            n.gy = Math.floor(n.y / GRID_CELL)
-            const key = n.gx + ':' + n.gy
-            let c = grid.get(key)
-            if (!c) grid.set(key, (c = { gx: n.gx, gy: n.gy, sx: 0, sy: 0, members: [] }))
-            c.sx += n.x
-            c.sy += n.y
-            c.members.push(n)
-          }
-          const cells = [...grid.values()]
-          for (const a of nodes) {
-            for (const c of cells) {
-              if (Math.abs(c.gx - a.gx) <= 1 && Math.abs(c.gy - a.gy) <= 1) {
-                for (const b of c.members) {
-                  if (b === a) continue
-                  let dx = a.x - b.x
-                  let dy = a.y - b.y
+          if (nodes.length <= EXACT_MAX) {
+            // Exact all-pairs repulsion: O(n²) but trivial at this size, and its
+            // continuous forces let small graphs settle naturally and fast.
+            for (let i = 0; i < nodes.length; i++) {
+              const a = nodes[i]
+              for (let j = i + 1; j < nodes.length; j++) {
+                const b = nodes[j]
+                let dx = a.x - b.x
+                let dy = a.y - b.y
+                let d2 = dx * dx + dy * dy || 0.01
+                const d = Math.sqrt(d2)
+                const f = 2000 / d2
+                const fx = (dx / d) * f,
+                  fy = (dy / d) * f
+                a.vx += fx
+                a.vy += fy
+                b.vx -= fx
+                b.vy -= fy
+              }
+            }
+          } else {
+            // Big graphs: repulsion via a spatial grid — exact pair forces inside the
+            // 3×3 cell neighborhood, one aggregated force per far cell (centroid ×
+            // node count). O(n × cells) per frame instead of all-pairs O(n²).
+            const grid = new Map()
+            for (const n of nodes) {
+              n.gx = Math.floor(n.x / GRID_CELL)
+              n.gy = Math.floor(n.y / GRID_CELL)
+              const key = n.gx + ':' + n.gy
+              let c = grid.get(key)
+              if (!c) grid.set(key, (c = { gx: n.gx, gy: n.gy, sx: 0, sy: 0, members: [] }))
+              c.sx += n.x
+              c.sy += n.y
+              c.members.push(n)
+            }
+            const cells = [...grid.values()]
+            for (const a of nodes) {
+              for (const c of cells) {
+                if (Math.abs(c.gx - a.gx) <= 1 && Math.abs(c.gy - a.gy) <= 1) {
+                  for (const b of c.members) {
+                    if (b === a) continue
+                    let dx = a.x - b.x
+                    let dy = a.y - b.y
+                    let d2 = dx * dx + dy * dy || 0.01
+                    const d = Math.sqrt(d2)
+                    const f = 2000 / d2
+                    a.vx += (dx / d) * f
+                    a.vy += (dy / d) * f
+                  }
+                } else {
+                  const m = c.members.length
+                  let dx = a.x - c.sx / m
+                  let dy = a.y - c.sy / m
                   let d2 = dx * dx + dy * dy || 0.01
                   const d = Math.sqrt(d2)
-                  const f = 2000 / d2
+                  const f = (2000 * m) / d2
                   a.vx += (dx / d) * f
                   a.vy += (dy / d) * f
                 }
-              } else {
-                const m = c.members.length
-                let dx = a.x - c.sx / m
-                let dy = a.y - c.sy / m
-                let d2 = dx * dx + dy * dy || 0.01
-                const d = Math.sqrt(d2)
-                const f = (2000 * m) / d2
-                a.vx += (dx / d) * f
-                a.vy += (dy / d) * f
               }
             }
           }
@@ -4154,14 +4201,19 @@
             let dx = l.t.x - l.s.x
             let dy = l.t.y - l.s.y
             const d = Math.sqrt(dx * dx + dy * dy) || 0.01
-            const f = (d - 88) * 0.02 * (0.5 + l.w)
+            const f = (d - 88) * 0.02 * (0.5 + l.w) * l.k
             const fx = (dx / d) * f,
               fy = (dy / d) * f
-            l.s.vx += fx
-            l.s.vy += fy
-            l.t.vx -= fx
-            l.t.vy -= fy
+            l.s.vx += fx * (1 - l.bias)
+            l.s.vy += fy * (1 - l.bias)
+            l.t.vx -= fx * l.bias
+            l.t.vy -= fy * l.bias
           }
+          // Cooling (Fruchterman–Reingold): full speed for the first 150 ticks, then
+          // the speed cap decays 1.5%/tick — below the settle threshold by ~tick 680,
+          // so the sim is guaranteed to freeze even when hub oscillations or the
+          // grid's force discontinuities would otherwise sustain jitter forever.
+          const temp = state.dragNode ? MAX_SPEED : MAX_SPEED * Math.min(1, Math.pow(0.985, state.ticks - 150))
           let energy = 0
           for (const n of nodes) {
             if (n === state.dragNode) {
@@ -4173,12 +4225,20 @@
             n.vy += (H / 2 - n.y) * 0.002
             n.vx *= 0.85
             n.vy *= 0.85
+            const sp = Math.hypot(n.vx, n.vy)
+            if (sp > temp) {
+              n.vx *= temp / sp
+              n.vy *= temp / sp
+            }
             n.x += n.vx
             n.y += n.vy
             energy += n.vx * n.vx + n.vy * n.vy
           }
           draw()
-          if (state.dragNode || energy > 0.04) {
+          if (!state.dragNode) state.ticks++
+          // Settle threshold scales with node count past the old 200-node design point
+          // (0.04 total ≈ 0.0002/node); the tick cap ends the loop no matter what.
+          if (state.dragNode || (energy > Math.max(0.04, 0.0002 * nodes.length) && state.ticks < MAX_TICKS)) {
             state.raf = requestAnimationFrame(tick)
           } else {
             state.running = false
@@ -4189,6 +4249,7 @@
           }
         }
         function energize() {
+          state.ticks = 0 // reheat: back to full temperature with a fresh settle budget
           if (!state.running) {
             state.running = true
             state.raf = requestAnimationFrame(tick)
