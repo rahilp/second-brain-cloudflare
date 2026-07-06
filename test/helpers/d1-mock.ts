@@ -388,6 +388,25 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results: rows };
         }
+        if (s.startsWith("SELECT id, content, tags, source, created_at, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC")) {
+          // GET /export: every entry, newest first, no LIMIT.
+          const results = [...db.entries]
+            .sort((a: any, b: any) => b.created_at - a.created_at)
+            .map((e: any) => ({
+              id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at,
+              recall_count: e.recall_count ?? 0, importance_score: e.importance_score ?? 0,
+              contradiction_wins: e.contradiction_wins ?? 0, contradiction_losses: e.contradiction_losses ?? 0,
+            }));
+          return { results };
+        }
+        if (s.startsWith("SELECT source_id, target_id, type, weight, provenance, created_at FROM edges")) {
+          // GET /export: the whole edges table.
+          const results = db.edges.map((e: any) => ({
+            source_id: e.source_id, target_id: e.target_id, type: e.type,
+            weight: e.weight, provenance: e.provenance, created_at: e.created_at,
+          }));
+          return { results };
+        }
         if (s.includes("ORDER BY created_at DESC LIMIT")) {
           const limit = Number(args[args.length - 1]);
           const filterArgs = args.slice(0, -1);

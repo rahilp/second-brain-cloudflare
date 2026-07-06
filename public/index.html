@@ -3733,24 +3733,25 @@
       async function exportMemories(format) {
         closeMenu()
         try {
-          const res = await fetch(`${WORKER_URL}/list?n=9999`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          // /export returns everything — entries AND edges — in one shot; /list caps
+          // at 100 rows, which used to silently truncate bigger brains
+          const res = await fetch(`${WORKER_URL}/export`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
-          const entries = await res.json()
+          const data = await res.json()
+          const entries = data.entries || []
+          const edges = data.edges || []
 
           let content, filename, mime
           const ts = new Date().toISOString().slice(0, 10)
 
           if (format === 'json') {
-            content = JSON.stringify(entries, null, 2)
+            content = JSON.stringify(data, null, 2)
             filename = `second-brain-export-${ts}.json`
             mime = 'application/json'
           } else {
             const lines = [`# Second Brain Export`, `Exported: ${ts}`, '']
             entries.forEach((e, i) => {
-              let tags = []
-              try {
-                tags = JSON.parse(e.tags || '[]')
-              } catch {}
+              const tags = e.tags || []
               const date = new Date(e.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
               lines.push(`## Memory ${i + 1}`)
               lines.push(`**Date:** ${date}`)
@@ -3762,6 +3763,17 @@
               lines.push('---')
               lines.push('')
             })
+            if (edges.length) {
+              const labelById = new Map(entries.map((e) => [e.id, (e.content || '').slice(0, 60)]))
+              lines.push(`## Relationships`)
+              lines.push('')
+              edges.forEach((e) => {
+                const src = labelById.get(e.source_id) || e.source_id
+                const tgt = labelById.get(e.target_id) || e.target_id
+                lines.push(`- [${e.type}] ${src} -> ${tgt} (${e.weight})`)
+              })
+              lines.push('')
+            }
             content = lines.join('\n')
             filename = `second-brain-export-${ts}.md`
             mime = 'text/markdown'
