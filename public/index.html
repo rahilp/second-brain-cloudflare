@@ -2643,19 +2643,40 @@
         margin-bottom: 8px;
       }
       .related-item {
-        display: block;
+        display: flex;
+        align-items: stretch;
         width: 100%;
-        text-align: left;
         background: var(--accent-soft);
-        border: none;
         border-radius: 8px;
-        padding: 8px 10px;
         margin-bottom: 6px;
-        cursor: pointer;
         font-size: 13px;
         line-height: 1.35;
         color: var(--text-primary);
+      }
+      .related-open {
+        flex: 1;
+        min-width: 0;
+        text-align: left;
+        background: none;
+        border: none;
+        padding: 8px 10px;
+        cursor: pointer;
+        font-size: inherit;
+        line-height: inherit;
+        color: inherit;
         font-family: inherit;
+      }
+      .related-unlink {
+        flex-shrink: 0;
+        background: none;
+        border: none;
+        padding: 0 10px;
+        cursor: pointer;
+        color: var(--text-tertiary);
+        font-size: 14px;
+      }
+      .related-unlink:hover {
+        color: var(--danger);
       }
       .related-item:hover {
         background: rgba(178, 102, 65, 0.16);
@@ -3851,20 +3872,36 @@
             headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
           })
           const data = await res.json()
-          if (!data.ok || !data.connections || !data.connections.length) return
+          if (!data.ok || !data.connections || !data.connections.length) {
+            // also handles the refresh after the last link is removed
+            el.style.display = 'none'
+            el.innerHTML = ''
+            return
+          }
           el.innerHTML =
             `<div class="view-related-label">Related</div>` +
             data.connections
               .map(
                 (c) =>
-                  `<button class="related-item" data-id="${escHtml(c.id)}"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button>`,
+                  `<div class="related-item" data-id="${escHtml(c.id)}" data-type="${escHtml(c.type)}"><button class="related-open"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button><button class="related-unlink" title="Remove link"><i class="ti ti-unlink"></i></button></div>`,
               )
               .join('')
           el.style.display = 'block'
-          el.querySelectorAll('.related-item').forEach((btn) => {
-            btn.onclick = () => {
-              const c = data.connections.find((x) => x.id === btn.dataset.id)
+          el.querySelectorAll('.related-item').forEach((row) => {
+            row.querySelector('.related-open').onclick = () => {
+              const c = data.connections.find((x) => x.id === row.dataset.id)
               if (c) openView({ id: c.id, content: c.content, tags: c.tags }, null)
+            }
+            row.querySelector('.related-unlink').onclick = async () => {
+              if (!confirm('Remove this link? The memories stay; only the connection is deleted.')) return
+              try {
+                await fetch(`${WORKER_URL}/unlink`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+                  body: JSON.stringify({ source_id: id, target_id: row.dataset.id, type: row.dataset.type }),
+                })
+              } catch {}
+              loadRelated(id, el)
             }
           })
         } catch {}

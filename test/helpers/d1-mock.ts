@@ -113,6 +113,18 @@ export class D1Mock {
           }
           return { meta: { changes: 1 } };
         }
+        if (s.startsWith("DELETE FROM edges WHERE ((source_id")) {
+          // deleteEdge: order-agnostic pair delete, optional trailing type filter.
+          const [a, b, c, d, type] = args;
+          const before = db.edges.length;
+          db.edges = db.edges.filter((e: any) => {
+            const pairMatch = (e.source_id === a && e.target_id === b) || (e.source_id === c && e.target_id === d);
+            if (!pairMatch) return true;
+            if (type && e.type !== type) return true;
+            return false;
+          });
+          return { meta: { changes: before - db.edges.length } };
+        }
         if (s.startsWith("DELETE FROM edges WHERE source_id")) {
           // Cascade delete on forget: source_id = ? OR target_id = ? (both bound to the same id).
           const [sid, tid] = args;

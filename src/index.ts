@@ -220,6 +220,28 @@ export async function createEdge(
   return { source_id: source, target_id: target, type };
 }
 
+// The single remover for edges. The WHERE is order-agnostic — it matches directed
+// edges stated in either direction AND symmetric pairs regardless of the smaller-id-
+// first normalization createEdge applied — so callers never re-derive that rule.
+// Optional type narrows the delete to one relationship type; omitted removes every
+// edge between the pair. Returns rows removed: 0 is not an error (idempotent delete,
+// the mirror of createEdge's idempotent upsert).
+export async function deleteEdge(
+  sourceId: string,
+  targetId: string,
+  type: string | undefined,
+  env: Env,
+): Promise<number> {
+  let sql = `DELETE FROM edges WHERE ((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))`;
+  const bindings: string[] = [sourceId, targetId, targetId, sourceId];
+  if (type) {
+    sql += ` AND type = ?`;
+    bindings.push(type);
+  }
+  const result = await env.DB.prepare(sql).bind(...bindings).run();
+  return result.meta.changes ?? 0;
+}
+
 // ─── Graph traversal ────────────────────────────────────────────────────────────
 
 const GRAPH_MAX_HOPS = 3;
@@ -2536,6 +2558,24 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
     }
   );
 
+  // ── unlink ───────────────────────────────────────────────────────────────
+  server.registerTool(
+    "unlink",
+    {
+      description: "Remove a relationship link between two memories by ID. Use when a link is incorrect or no longer relevant. Get the IDs from recall or connections first.",
+      inputSchema: {
+        source_id: z.string().describe("Source entry ID"),
+        target_id: z.string().describe("Target entry ID"),
+        type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).optional().describe("Only remove this relationship type; omit to remove all links between the pair"),
+      },
+    },
+    async ({ source_id, target_id, type }) => {
+      const deleted = await deleteEdge(source_id, target_id, type, env);
+      if (!deleted) return { content: [{ type: "text", text: "No link found between those entries." }] };
+      return { content: [{ type: "text", text: `Removed ${deleted} link(s) between ${source_id} and ${target_id}.` }] };
+    }
+  );
+
   // ── connections ──────────────────────────────────────────────────────────
   server.registerTool(
     "connections",
@@ -2972,6 +3012,27 @@ const defaultHandler = {
       const edge = await createEdge(sourceId, targetId, type, { provenance: "explicit", weight: 1.0 }, env);
       if (!edge) return json({ ok: false, error: "Cannot link an entry to itself" }, 400);
       return json({ ok: true, source_id: edge.source_id, target_id: edge.target_id, type: edge.type });
+    }
+
+    // POST /unlink — remove a relationship link, mirrors the MCP `unlink` tool.
+    // POST rather than DELETE /link: CORS_HEADERS allow only GET/POST/OPTIONS and
+    // every sibling mutation route is POST.
+    if (url.pathname === "/unlink" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      let body: { source_id?: string; target_id?: string; type?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      const sourceId = body.source_id?.trim();
+      const targetId = body.target_id?.trim();
+      if (!sourceId || !targetId) return json({ ok: false, error: "source_id and target_id are required" }, 400);
+      const type = body.type?.trim() || undefined;
+      if (type && !isValidEdgeType(type)) {
+        return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
+      }
+
+      const deleted = await deleteEdge(sourceId, targetId, type, env);
+      return json({ ok: true, deleted });
     }
 
     // GET /connections — 1-hop neighbors of an entry, mirrors the MCP `connections` tool
