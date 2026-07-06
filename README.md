@@ -92,9 +92,9 @@ Enter the following values during setup:
 
 | FIELD      | VALUE                           |
 | ---------- | ------------------------------- |
+| Dimensions | `384`                           |
+| Metric     | `cosine`                        |
 | AUTH_TOKEN | The token you created in step 1 |
-| DIMENSION  | `384`                           |
-| METRIC     | `cosine`                        |
 
 Cloudflare will provision the required resources and deploy your Worker automatically.
 

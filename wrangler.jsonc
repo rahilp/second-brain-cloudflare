@@ -15,9 +15,7 @@
 	"vectorize": [
 		{
 			"binding": "VECTORIZE",
-			"index_name": "second-brain-vectors",
-			"dimensions": "${VECTORIZE_DIMENSIONS}",
-			"metric": "${VECTORIZE_METRIC}"
+			"index_name": "second-brain-vectors"
 		}
 	],
 	"ai": {
