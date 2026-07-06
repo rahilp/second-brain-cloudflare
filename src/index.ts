@@ -220,6 +220,28 @@ export async function createEdge(
   return { source_id: source, target_id: target, type };
 }
 
+// The single remover for edges. The WHERE is order-agnostic — it matches directed
+// edges stated in either direction AND symmetric pairs regardless of the smaller-id-
+// first normalization createEdge applied — so callers never re-derive that rule.
+// Optional type narrows the delete to one relationship type; omitted removes every
+// edge between the pair. Returns rows removed: 0 is not an error (idempotent delete,
+// the mirror of createEdge's idempotent upsert).
+export async function deleteEdge(
+  sourceId: string,
+  targetId: string,
+  type: string | undefined,
+  env: Env,
+): Promise<number> {
+  let sql = `DELETE FROM edges WHERE ((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))`;
+  const bindings: string[] = [sourceId, targetId, targetId, sourceId];
+  if (type) {
+    sql += ` AND type = ?`;
+    bindings.push(type);
+  }
+  const result = await env.DB.prepare(sql).bind(...bindings).run();
+  return result.meta.changes ?? 0;
+}
+
 // ─── Graph traversal ────────────────────────────────────────────────────────────
 
 const GRAPH_MAX_HOPS = 3;
@@ -2536,6 +2558,24 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
     }
   );
 
+  // ── unlink ───────────────────────────────────────────────────────────────
+  server.registerTool(
+    "unlink",
+    {
+      description: "Remove a relationship link between two memories by ID. Use when a link is incorrect or no longer relevant. Get the IDs from recall or connections first.",
+      inputSchema: {
+        source_id: z.string().describe("Source entry ID"),
+        target_id: z.string().describe("Target entry ID"),
+        type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).optional().describe("Only remove this relationship type; omit to remove all links between the pair"),
+      },
+    },
+    async ({ source_id, target_id, type }) => {
+      const deleted = await deleteEdge(source_id, target_id, type, env);
+      if (!deleted) return { content: [{ type: "text", text: "No link found between those entries." }] };
+      return { content: [{ type: "text", text: `Removed ${deleted} link(s) between ${source_id} and ${target_id}.` }] };
+    }
+  );
+
   // ── connections ──────────────────────────────────────────────────────────
   server.registerTool(
     "connections",
@@ -2850,6 +2890,45 @@ const defaultHandler = {
       return json(results);
     }
 
+    // GET /export — complete backup: every entry plus the edges table. Single
+    // unbounded SELECTs are acceptable here: D1 handles tens of thousands of rows in
+    // one read and this route runs on explicit user action only. If response size
+    // ever becomes a problem, add ?after= cursor support then, not now.
+    if (url.pathname === "/export" && request.method === "GET") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      const { results: entryRows } = await env.DB.prepare(
+        `SELECT id, content, tags, source, created_at, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC`
+      ).all() as { results: Record<string, any>[] };
+      const { results: edgeRows } = await env.DB.prepare(
+        `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges`
+      ).all() as { results: Record<string, any>[] };
+
+      // vector_ids are deliberately excluded — they're deployment-specific and an
+      // import tool re-embeds anyway. Tags are parsed so the file holds real arrays.
+      const entries = entryRows.map(r => ({
+        id: r.id,
+        content: r.content,
+        tags: JSON.parse(r.tags ?? "[]"),
+        source: r.source,
+        created_at: r.created_at,
+        recall_count: r.recall_count ?? 0,
+        importance_score: r.importance_score ?? 0,
+        contradiction_wins: r.contradiction_wins ?? 0,
+        contradiction_losses: r.contradiction_losses ?? 0,
+      }));
+      const edges = edgeRows.map(r => ({
+        source_id: r.source_id,
+        target_id: r.target_id,
+        type: r.type,
+        weight: r.weight,
+        provenance: r.provenance,
+        created_at: r.created_at,
+      }));
+      return json({ ok: true, exported_at: Date.now(), version: 2, entries, edges });
+    }
+
     // GET /recall — semantic search, mirrors the MCP `recall` tool
     if (url.pathname === "/recall" && request.method === "GET") {
       const authErr = requireAuth(request, env);
@@ -2935,6 +3014,27 @@ const defaultHandler = {
       return json({ ok: true, source_id: edge.source_id, target_id: edge.target_id, type: edge.type });
     }
 
+    // POST /unlink — remove a relationship link, mirrors the MCP `unlink` tool.
+    // POST rather than DELETE /link: CORS_HEADERS allow only GET/POST/OPTIONS and
+    // every sibling mutation route is POST.
+    if (url.pathname === "/unlink" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      let body: { source_id?: string; target_id?: string; type?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      const sourceId = body.source_id?.trim();
+      const targetId = body.target_id?.trim();
+      if (!sourceId || !targetId) return json({ ok: false, error: "source_id and target_id are required" }, 400);
+      const type = body.type?.trim() || undefined;
+      if (type && !isValidEdgeType(type)) {
+        return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
+      }
+
+      const deleted = await deleteEdge(sourceId, targetId, type, env);
+      return json({ ok: true, deleted });
+    }
+
     // GET /connections — 1-hop neighbors of an entry, mirrors the MCP `connections` tool
     if (url.pathname === "/connections" && request.method === "GET") {
       const authErr = requireAuth(request, env);
@@ -2946,6 +3046,33 @@ const defaultHandler = {
 
       const connections = await getConnections(id, type, env);
       return json({ ok: true, id, connections });
+    }
+
+    // GET /entry — one full row by id, for the dashboard graph view's tap-to-open
+    // (/graph ships 80-char labels only; fattening it with full content would bloat
+    // every graph load to serve a per-tap need). Dashboard-only, no MCP twin.
+    if (url.pathname === "/entry" && request.method === "GET") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      const id = url.searchParams.get("id")?.trim();
+      if (!id) return json({ ok: false, error: "id is required" }, 400);
+
+      const row = await env.DB.prepare(
+        `SELECT id, content, tags, source, created_at FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+      if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+
+      return json({
+        ok: true,
+        entry: {
+          id: row.id,
+          content: row.content,
+          tags: JSON.parse(row.tags ?? "[]"),
+          source: row.source,
+          created_at: row.created_at,
+        },
+      });
     }
 
     // GET /graph — node+edge subgraph for the dashboard graph view (dashboard-only;
@@ -2983,6 +3110,43 @@ const defaultHandler = {
       }
 
       return json({ ok: true, id, status });
+    }
+
+    // POST /patterns/resolve — confirm or dismiss an auto-derived pattern.
+    // Dashboard-only, no MCP twin: pattern review is a human curation act, not an
+    // agent capability. Confirm promotes the pattern into a real recallable memory;
+    // dismiss deprecates it (audit row kept, vectors removed).
+    if (url.pathname === "/patterns/resolve" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      let body: { id?: string; action?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      const id = body.id?.trim();
+      if (!id) return json({ ok: false, error: "id is required" }, 400);
+      const action = body.action;
+      if (action !== "confirm" && action !== "dismiss") {
+        return json({ ok: false, error: `action must be "confirm" or "dismiss"` }, 400);
+      }
+
+      const row = await env.DB.prepare(`SELECT id, tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
+      if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      if (!tags.includes("auto-pattern")) {
+        return json({ ok: false, error: "Entry is not an auto-derived pattern" }, 400);
+      }
+
+      if (action === "confirm") {
+        // Losing the auto-pattern tag is what exits the recall exclusion — it's
+        // enforced at D1 hydration, not vector metadata, so this tag update alone
+        // makes the entry recallable. No re-embed: content is unchanged and vectors
+        // already exist (the stale auto-pattern flag in vector metadata is harmless).
+        const promoted = withStatus(withKind(tags.filter(t => t !== "auto-pattern"), "semantic"), "canonical");
+        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(promoted), id).run();
+      } else {
+        await deprecateEntry(id, env);
+      }
+      return json({ ok: true, id, action });
     }
 
     // POST /chat

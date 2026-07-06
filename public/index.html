@@ -2643,19 +2643,40 @@
         margin-bottom: 8px;
       }
       .related-item {
-        display: block;
+        display: flex;
+        align-items: stretch;
         width: 100%;
-        text-align: left;
         background: var(--accent-soft);
-        border: none;
         border-radius: 8px;
-        padding: 8px 10px;
         margin-bottom: 6px;
-        cursor: pointer;
         font-size: 13px;
         line-height: 1.35;
         color: var(--text-primary);
+      }
+      .related-open {
+        flex: 1;
+        min-width: 0;
+        text-align: left;
+        background: none;
+        border: none;
+        padding: 8px 10px;
+        cursor: pointer;
+        font-size: inherit;
+        line-height: inherit;
+        color: inherit;
         font-family: inherit;
+      }
+      .related-unlink {
+        flex-shrink: 0;
+        background: none;
+        border: none;
+        padding: 0 10px;
+        cursor: pointer;
+        color: var(--text-tertiary);
+        font-size: 14px;
+      }
+      .related-unlink:hover {
+        color: var(--danger);
       }
       .related-item:hover {
         background: rgba(178, 102, 65, 0.16);
@@ -2703,6 +2724,7 @@
             <div class="stats-tags" id="stats-tags"></div>
           </div>
         </div>
+        <div class="digest-section" id="patterns-section" style="display: none"></div>
         <div class="digest-section" id="digest-section" style="display: none"></div>
         <div class="digest-section" id="vectorize-section" style="display: none"></div>
         <div class="digest-section" id="classify-section" style="display: none"></div>
@@ -2983,7 +3005,9 @@
         try {
           // Use the REST endpoint for structured results — parsing the MCP tool's
           // formatted text miscounts sources when memory content contains list items
-          const params = new URLSearchParams({ query, topK: '5' })
+          // hops=1 lets recall follow relationship edges one step out; direct matches
+          // always outrank expanded ones (worker applies a graph-distance penalty)
+          const params = new URLSearchParams({ query, topK: '5', hops: '1' })
           if (selectedTag) params.set('tag', selectedTag)
           const recallRes = await fetch(`${WORKER_URL}/recall?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
           const data = await recallRes.json()
@@ -2995,7 +3019,7 @@
           } else {
             // REST scores are already 0–100 (one decimal); map directly rather than via
             // normalizeEntry, whose 0–1 rescale heuristic would turn a 0.8% match into 80%
-            const entries = data.results.map((m) => ({ id: m.id, content: m.content, tags: m.tags || [], score: Math.min(100, Math.round(m.score)) }))
+            const entries = data.results.map((m) => ({ id: m.id, content: m.content, tags: m.tags || [], score: Math.min(100, Math.round(m.score)), hop: m.hop || 0 }))
             const answerBubble = document.createElement('div')
             answerBubble.className = 'ex-a-row'
             const answerEl = document.createElement('div')
@@ -3012,7 +3036,8 @@
                   const date = new Date(m.created_at).toLocaleDateString()
                   const tagList = m.tags && m.tags.length ? ` [${m.tags.join(', ')}]` : ''
                   const src = m.source ? ` · ${m.source}` : ''
-                  return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}\n${m.content}`
+                  const related = m.hop > 0 ? ` [related, ${m.hop} hop${m.hop > 1 ? 's' : ''}]` : ''
+                  return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}${related}\n${m.content}`
                 })
                 .join('\n\n')
             const res = await fetch(`${WORKER_URL}/chat`, {
@@ -3077,6 +3102,7 @@
         card.innerHTML = `
     <div class="match-line">
       <span class="match-pct">${entry.score}%</span>
+      ${entry.hop > 0 ? `<span class="tag-chip" style="background:var(--accent-soft);color:var(--accent);flex-shrink:0">related · ${entry.hop} hop${entry.hop > 1 ? 's' : ''}</span>` : ''}
       <div class="match-bar-bg"><div class="match-bar-fill" style="width:${entry.score}%"></div></div>
     </div>
     <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
@@ -3406,7 +3432,7 @@
           const res = await fetch(`${WORKER_URL}/stats`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
           const data = await res.json()
           document.getElementById('stats-count').textContent = (data.count ?? 0).toLocaleString()
-          document.getElementById('stats-importance').textContent = data.avg_importance != null ? data.avg_importance.toFixed(1) + ' / 10' : '—'
+          document.getElementById('stats-importance').textContent = data.avg_importance != null ? data.avg_importance.toFixed(1) + ' / 5' : '—'
           const tagsEl = document.getElementById('stats-tags')
           tagsEl.innerHTML = data.top_tags?.length
             ? data.top_tags.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')
@@ -3415,7 +3441,83 @@
           renderDigestSection(data.digest_candidates ?? [])
           renderVectorizeSection(data.unvectorized ?? 0)
           renderClassifySection(data.unclassified ?? 0)
+          loadPatterns()
         } catch {}
+      }
+
+      // ── Patterns panel: system proposes, human ratifies ───────────────────────
+      // Auto-derived patterns are excluded from recall until confirmed; confirming
+      // strips the auto-pattern tag (which is the exclusion), dismissing deprecates.
+      async function loadPatterns() {
+        const el = document.getElementById('patterns-section')
+        try {
+          const res = await fetch(`${WORKER_URL}/list?n=20&tag=auto-pattern`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const rows = await res.json()
+          const patterns = (Array.isArray(rows) ? rows : []).filter((e) => {
+            let tags = []
+            try {
+              tags = JSON.parse(e.tags || '[]')
+            } catch {}
+            return !tags.includes('status:deprecated') // dismissed patterns linger in /list
+          })
+          if (!patterns.length) {
+            el.style.display = 'none'
+            el.innerHTML = ''
+            return
+          }
+          el.style.display = ''
+          el.innerHTML = `
+            <div class="digest-section-label">Patterns noticed</div>
+            <p class="digest-note">Your brain spotted these across multiple memories. Confirm to make one a trusted, recallable fact; dismiss to discard it.</p>
+            ${patterns
+              .map(
+                (p) => `
+              <div class="digest-result" id="pattern-row-${escAttr(p.id)}">
+                ${escHtml(p.content)}
+                <div style="display: flex; gap: 8px; margin-top: 10px">
+                  <button class="digest-btn" onclick="resolvePattern('${escAttr(p.id)}', 'confirm', this)">Confirm</button>
+                  <button class="digest-btn danger" onclick="resolvePattern('${escAttr(p.id)}', 'dismiss', this)">Dismiss</button>
+                </div>
+              </div>`,
+              )
+              .join('')}
+          `
+        } catch {}
+      }
+
+      async function resolvePattern(id, action, btn) {
+        const row = document.getElementById('pattern-row-' + id)
+        row.querySelectorAll('button').forEach((b) => (b.disabled = true))
+        btn.classList.add('digest-btn--loading')
+        btn.innerHTML = '<i class="ti ti-loader-2"></i> Working…'
+        try {
+          const res = await fetch(`${WORKER_URL}/patterns/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            body: JSON.stringify({ id, action }),
+          })
+          const data = await res.json()
+          if (!data.ok) throw new Error(data.error || 'failed')
+          if (action === 'dismiss') {
+            row.classList.add('explode-out')
+            setTimeout(() => {
+              row.innerHTML = `<div class="digest-result-meta">Dismissed</div>`
+              row.classList.remove('explode-out')
+              row.style.opacity = '1'
+            }, 400)
+          } else {
+            row.style.transition = 'opacity 0.4s'
+            row.style.opacity = '0'
+            setTimeout(() => {
+              row.innerHTML = `<div class="digest-result-meta"><i class="ti ti-check"></i> Saved as a trusted memory</div>`
+              row.style.opacity = '1'
+            }, 400)
+          }
+        } catch {
+          btn.classList.remove('digest-btn--loading')
+          btn.innerHTML = '<i class="ti ti-alert-triangle"></i> Failed'
+          setTimeout(() => loadPatterns(), 2000)
+        }
       }
 
       function renderDigestSection(candidates) {
@@ -3733,24 +3835,25 @@
       async function exportMemories(format) {
         closeMenu()
         try {
-          const res = await fetch(`${WORKER_URL}/list?n=9999`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          // /export returns everything — entries AND edges — in one shot; /list caps
+          // at 100 rows, which used to silently truncate bigger brains
+          const res = await fetch(`${WORKER_URL}/export`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
-          const entries = await res.json()
+          const data = await res.json()
+          const entries = data.entries || []
+          const edges = data.edges || []
 
           let content, filename, mime
           const ts = new Date().toISOString().slice(0, 10)
 
           if (format === 'json') {
-            content = JSON.stringify(entries, null, 2)
+            content = JSON.stringify(data, null, 2)
             filename = `second-brain-export-${ts}.json`
             mime = 'application/json'
           } else {
             const lines = [`# Second Brain Export`, `Exported: ${ts}`, '']
             entries.forEach((e, i) => {
-              let tags = []
-              try {
-                tags = JSON.parse(e.tags || '[]')
-              } catch {}
+              const tags = e.tags || []
               const date = new Date(e.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
               lines.push(`## Memory ${i + 1}`)
               lines.push(`**Date:** ${date}`)
@@ -3762,6 +3865,17 @@
               lines.push('---')
               lines.push('')
             })
+            if (edges.length) {
+              const labelById = new Map(entries.map((e) => [e.id, (e.content || '').slice(0, 60)]))
+              lines.push(`## Relationships`)
+              lines.push('')
+              edges.forEach((e) => {
+                const src = labelById.get(e.source_id) || e.source_id
+                const tgt = labelById.get(e.target_id) || e.target_id
+                lines.push(`- [${e.type}] ${src} -> ${tgt} (${e.weight})`)
+              })
+              lines.push('')
+            }
             content = lines.join('\n')
             filename = `second-brain-export-${ts}.md`
             mime = 'text/markdown'
@@ -3835,20 +3949,36 @@
             headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
           })
           const data = await res.json()
-          if (!data.ok || !data.connections || !data.connections.length) return
+          if (!data.ok || !data.connections || !data.connections.length) {
+            // also handles the refresh after the last link is removed
+            el.style.display = 'none'
+            el.innerHTML = ''
+            return
+          }
           el.innerHTML =
             `<div class="view-related-label">Related</div>` +
             data.connections
               .map(
                 (c) =>
-                  `<button class="related-item" data-id="${escHtml(c.id)}"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button>`,
+                  `<div class="related-item" data-id="${escHtml(c.id)}" data-type="${escHtml(c.type)}"><button class="related-open"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button><button class="related-unlink" title="Remove link"><i class="ti ti-unlink"></i></button></div>`,
               )
               .join('')
           el.style.display = 'block'
-          el.querySelectorAll('.related-item').forEach((btn) => {
-            btn.onclick = () => {
-              const c = data.connections.find((x) => x.id === btn.dataset.id)
+          el.querySelectorAll('.related-item').forEach((row) => {
+            row.querySelector('.related-open').onclick = () => {
+              const c = data.connections.find((x) => x.id === row.dataset.id)
               if (c) openView({ id: c.id, content: c.content, tags: c.tags }, null)
+            }
+            row.querySelector('.related-unlink').onclick = async () => {
+              if (!confirm('Remove this link? The memories stay; only the connection is deleted.')) return
+              try {
+                await fetch(`${WORKER_URL}/unlink`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+                  body: JSON.stringify({ source_id: id, target_id: row.dataset.id, type: row.dataset.type }),
+                })
+              } catch {}
+              loadRelated(id, el)
             }
           })
         } catch {}
@@ -3856,6 +3986,23 @@
 
       // ── Force-directed graph view (issue #16) ─────────────────────────────────
       let graphState = null
+
+      // Graph nodes only carry an 80-char label; fetch the full memory on tap so the
+      // view sheet shows the whole thing. Falls back to the label if the fetch fails
+      // (offline etc.) so the graph never dead-ends.
+      async function openNodeView(node) {
+        try {
+          const res = await fetch(`${WORKER_URL}/entry?id=${encodeURIComponent(node.id)}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const data = await res.json()
+          if (data.ok && data.entry) {
+            openView({ id: data.entry.id, content: data.entry.content, tags: data.entry.tags }, null)
+            return
+          }
+          throw new Error('entry fetch failed')
+        } catch {
+          openView({ id: node.id, content: node.label, tags: node.tags }, null)
+        }
+      }
 
       async function loadGraph() {
         const canvas = document.getElementById('graph-canvas')
@@ -4163,7 +4310,7 @@
           } catch (e) {}
           if (state.pinch && pointers.size < 2) state.pinch = null
           if (ev.pointerId === state.downId) {
-            if (state.dragNode && !state.moved) openView({ id: state.dragNode.id, content: state.dragNode.label, tags: state.dragNode.tags }, null)
+            if (state.dragNode && !state.moved) openNodeView(state.dragNode)
             state.dragNode = null
             state.panning = false
             state.downId = null

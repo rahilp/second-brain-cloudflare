@@ -113,6 +113,18 @@ export class D1Mock {
           }
           return { meta: { changes: 1 } };
         }
+        if (s.startsWith("DELETE FROM edges WHERE ((source_id")) {
+          // deleteEdge: order-agnostic pair delete, optional trailing type filter.
+          const [a, b, c, d, type] = args;
+          const before = db.edges.length;
+          db.edges = db.edges.filter((e: any) => {
+            const pairMatch = (e.source_id === a && e.target_id === b) || (e.source_id === c && e.target_id === d);
+            if (!pairMatch) return true;
+            if (type && e.type !== type) return true;
+            return false;
+          });
+          return { meta: { changes: before - db.edges.length } };
+        }
         if (s.startsWith("DELETE FROM edges WHERE source_id")) {
           // Cascade delete on forget: source_id = ? OR target_id = ? (both bound to the same id).
           const [sid, tid] = args;
@@ -387,6 +399,25 @@ export class D1Mock {
             .slice(0, limit)
             .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results: rows };
+        }
+        if (s.startsWith("SELECT id, content, tags, source, created_at, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC")) {
+          // GET /export: every entry, newest first, no LIMIT.
+          const results = [...db.entries]
+            .sort((a: any, b: any) => b.created_at - a.created_at)
+            .map((e: any) => ({
+              id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at,
+              recall_count: e.recall_count ?? 0, importance_score: e.importance_score ?? 0,
+              contradiction_wins: e.contradiction_wins ?? 0, contradiction_losses: e.contradiction_losses ?? 0,
+            }));
+          return { results };
+        }
+        if (s.startsWith("SELECT source_id, target_id, type, weight, provenance, created_at FROM edges")) {
+          // GET /export: the whole edges table.
+          const results = db.edges.map((e: any) => ({
+            source_id: e.source_id, target_id: e.target_id, type: e.type,
+            weight: e.weight, provenance: e.provenance, created_at: e.created_at,
+          }));
+          return { results };
         }
         if (s.includes("ORDER BY created_at DESC LIMIT")) {
           const limit = Number(args[args.length - 1]);
