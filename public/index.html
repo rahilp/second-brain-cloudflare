@@ -2983,7 +2983,9 @@
         try {
           // Use the REST endpoint for structured results — parsing the MCP tool's
           // formatted text miscounts sources when memory content contains list items
-          const params = new URLSearchParams({ query, topK: '5' })
+          // hops=1 lets recall follow relationship edges one step out; direct matches
+          // always outrank expanded ones (worker applies a graph-distance penalty)
+          const params = new URLSearchParams({ query, topK: '5', hops: '1' })
           if (selectedTag) params.set('tag', selectedTag)
           const recallRes = await fetch(`${WORKER_URL}/recall?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
           const data = await recallRes.json()
@@ -2995,7 +2997,7 @@
           } else {
             // REST scores are already 0–100 (one decimal); map directly rather than via
             // normalizeEntry, whose 0–1 rescale heuristic would turn a 0.8% match into 80%
-            const entries = data.results.map((m) => ({ id: m.id, content: m.content, tags: m.tags || [], score: Math.min(100, Math.round(m.score)) }))
+            const entries = data.results.map((m) => ({ id: m.id, content: m.content, tags: m.tags || [], score: Math.min(100, Math.round(m.score)), hop: m.hop || 0 }))
             const answerBubble = document.createElement('div')
             answerBubble.className = 'ex-a-row'
             const answerEl = document.createElement('div')
@@ -3012,7 +3014,8 @@
                   const date = new Date(m.created_at).toLocaleDateString()
                   const tagList = m.tags && m.tags.length ? ` [${m.tags.join(', ')}]` : ''
                   const src = m.source ? ` · ${m.source}` : ''
-                  return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}\n${m.content}`
+                  const related = m.hop > 0 ? ` [related, ${m.hop} hop${m.hop > 1 ? 's' : ''}]` : ''
+                  return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}${related}\n${m.content}`
                 })
                 .join('\n\n')
             const res = await fetch(`${WORKER_URL}/chat`, {
@@ -3077,6 +3080,7 @@
         card.innerHTML = `
     <div class="match-line">
       <span class="match-pct">${entry.score}%</span>
+      ${entry.hop > 0 ? `<span class="tag-chip" style="background:var(--accent-soft);color:var(--accent);flex-shrink:0">related · ${entry.hop} hop${entry.hop > 1 ? 's' : ''}</span>` : ''}
       <div class="match-bar-bg"><div class="match-bar-fill" style="width:${entry.score}%"></div></div>
     </div>
     <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
