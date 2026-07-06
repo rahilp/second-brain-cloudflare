@@ -3112,6 +3112,43 @@ const defaultHandler = {
       return json({ ok: true, id, status });
     }
 
+    // POST /patterns/resolve — confirm or dismiss an auto-derived pattern.
+    // Dashboard-only, no MCP twin: pattern review is a human curation act, not an
+    // agent capability. Confirm promotes the pattern into a real recallable memory;
+    // dismiss deprecates it (audit row kept, vectors removed).
+    if (url.pathname === "/patterns/resolve" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      let body: { id?: string; action?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      const id = body.id?.trim();
+      if (!id) return json({ ok: false, error: "id is required" }, 400);
+      const action = body.action;
+      if (action !== "confirm" && action !== "dismiss") {
+        return json({ ok: false, error: `action must be "confirm" or "dismiss"` }, 400);
+      }
+
+      const row = await env.DB.prepare(`SELECT id, tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
+      if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      if (!tags.includes("auto-pattern")) {
+        return json({ ok: false, error: "Entry is not an auto-derived pattern" }, 400);
+      }
+
+      if (action === "confirm") {
+        // Losing the auto-pattern tag is what exits the recall exclusion — it's
+        // enforced at D1 hydration, not vector metadata, so this tag update alone
+        // makes the entry recallable. No re-embed: content is unchanged and vectors
+        // already exist (the stale auto-pattern flag in vector metadata is harmless).
+        const promoted = withStatus(withKind(tags.filter(t => t !== "auto-pattern"), "semantic"), "canonical");
+        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(promoted), id).run();
+      } else {
+        await deprecateEntry(id, env);
+      }
+      return json({ ok: true, id, action });
+    }
+
     // POST /chat
     if (url.pathname === "/chat" && request.method === "POST") {
       const authErr = requireAuth(request, env);
