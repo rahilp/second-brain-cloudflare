@@ -3699,6 +3699,7 @@
         btn.innerHTML = '<i class="ti ti-loader-2"></i> Working…'
         try {
           let remaining = 1
+          let prevRemaining = Infinity
           let totalProcessed = 0
           while (remaining > 0) {
             const res = await fetch(`${WORKER_URL}/classify-pending`, {
@@ -3709,7 +3710,8 @@
             const data = await res.json()
             remaining = data.remaining ?? 0
             totalProcessed += data.processed ?? 0
-            if ((data.processed ?? 0) === 0 && remaining > 0) break
+            if (remaining >= prevRemaining) break
+            prevRemaining = remaining
           }
           btn.classList.remove('digest-btn--loading')
           btn.innerHTML = `<i class="ti ti-check"></i> Done — ${totalProcessed} classified`
