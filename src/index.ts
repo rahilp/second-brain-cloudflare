@@ -2987,6 +2987,33 @@ const defaultHandler = {
       return json({ ok: true, id, connections });
     }
 
+    // GET /entry — one full row by id, for the dashboard graph view's tap-to-open
+    // (/graph ships 80-char labels only; fattening it with full content would bloat
+    // every graph load to serve a per-tap need). Dashboard-only, no MCP twin.
+    if (url.pathname === "/entry" && request.method === "GET") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      const id = url.searchParams.get("id")?.trim();
+      if (!id) return json({ ok: false, error: "id is required" }, 400);
+
+      const row = await env.DB.prepare(
+        `SELECT id, content, tags, source, created_at FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+      if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+
+      return json({
+        ok: true,
+        entry: {
+          id: row.id,
+          content: row.content,
+          tags: JSON.parse(row.tags ?? "[]"),
+          source: row.source,
+          created_at: row.created_at,
+        },
+      });
+    }
+
     // GET /graph — node+edge subgraph for the dashboard graph view (dashboard-only;
     // no MCP twin — this is visualization data, not an agent capability)
     if (url.pathname === "/graph" && request.method === "GET") {

@@ -3869,6 +3869,23 @@
       // ── Force-directed graph view (issue #16) ─────────────────────────────────
       let graphState = null
 
+      // Graph nodes only carry an 80-char label; fetch the full memory on tap so the
+      // view sheet shows the whole thing. Falls back to the label if the fetch fails
+      // (offline etc.) so the graph never dead-ends.
+      async function openNodeView(node) {
+        try {
+          const res = await fetch(`${WORKER_URL}/entry?id=${encodeURIComponent(node.id)}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const data = await res.json()
+          if (data.ok && data.entry) {
+            openView({ id: data.entry.id, content: data.entry.content, tags: data.entry.tags }, null)
+            return
+          }
+          throw new Error('entry fetch failed')
+        } catch {
+          openView({ id: node.id, content: node.label, tags: node.tags }, null)
+        }
+      }
+
       async function loadGraph() {
         const canvas = document.getElementById('graph-canvas')
         const emptyEl = document.getElementById('graph-empty')
@@ -4175,7 +4192,7 @@
           } catch (e) {}
           if (state.pinch && pointers.size < 2) state.pinch = null
           if (ev.pointerId === state.downId) {
-            if (state.dragNode && !state.moved) openView({ id: state.dragNode.id, content: state.dragNode.label, tags: state.dragNode.tags }, null)
+            if (state.dragNode && !state.moved) openNodeView(state.dragNode)
             state.dragNode = null
             state.panning = false
             state.downId = null
