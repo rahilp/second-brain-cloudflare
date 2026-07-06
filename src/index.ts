@@ -2784,7 +2784,8 @@ const defaultHandler = {
       const [summary, tagRows, candidateRows] = await Promise.all([
         env.DB.prepare(
           `SELECT COUNT(*) as count, AVG(importance_score) as avg_importance,
-           SUM(CASE WHEN vector_ids = '[]' AND created_at < ? THEN 1 ELSE 0 END) as unvectorized
+           SUM(CASE WHEN vector_ids = '[]' AND created_at < ? THEN 1 ELSE 0 END) as unvectorized,
+           SUM(CASE WHEN tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%' THEN 1 ELSE 0 END) as unclassified
            FROM entries`
         ).bind(graceCutoff).first() as Promise<Record<string, any> | null>,
         env.DB.prepare(`SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags) GROUP BY value ORDER BY n DESC LIMIT 5`).all(),
@@ -2821,6 +2822,7 @@ const defaultHandler = {
         digest_candidates: digestCandidates,
         unvectorized: (summary?.unvectorized as number) ?? 0,
         vectorize_grace_ms: graceMs(env),
+        unclassified: (summary?.unclassified as number) ?? 0,
       });
     }
 
@@ -3159,6 +3161,47 @@ const defaultHandler = {
       }
       await deleteIntegration(env, provider.id);
       return json({ ok: true, purged, kept: body.purge ? 0 : Object.keys(record.itemMap).length });
+    }
+
+    // POST /classify-pending
+    // One-time, opt-in backfill: runs classifyEntry over entries that predate the
+    // status (#119) and kind (#12) features and writes status:/kind: tags. Bounded
+    // batch per call, idempotent (skips entries that already carry either tag), and
+    // resumable (safe to stop/restart). No schema migration — only writes tags.
+    if (url.pathname === "/classify-pending" && request.method === "POST") {
+      const authErr = requireAuth(request, env);
+      if (authErr) return authErr;
+
+      const UNCLASSIFIED_WHERE = `tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%'`;
+
+      const { results: toProcess } = await env.DB.prepare(
+        `SELECT id, content, tags FROM entries
+         WHERE ${UNCLASSIFIED_WHERE}
+         ORDER BY created_at ASC LIMIT 25`
+      ).all();
+
+      let processed = 0;
+      let failed = 0;
+
+      for (const row of toProcess as Record<string, any>[]) {
+        try {
+          const { canonical, kind } = await classifyEntry(row.content as string, env);
+          let tags: string[] = JSON.parse(row.tags as string);
+          if (kind) tags = withKind(tags, kind);
+          if (canonical && getStatus(tags) === null) tags = withStatus(tags, "canonical");
+          await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(tags), row.id).run();
+          processed++;
+        } catch (e) {
+          console.error("Classification backfill failed for entry", row.id, e);
+          failed++;
+        }
+      }
+
+      const remaining = await env.DB.prepare(
+        `SELECT COUNT(*) as count FROM entries WHERE ${UNCLASSIFIED_WHERE}`
+      ).first() as Record<string, any> | null;
+
+      return json({ processed, failed, remaining: (remaining?.count as number) ?? 0 });
     }
 
     return new Response("Not found", { status: 404 });
