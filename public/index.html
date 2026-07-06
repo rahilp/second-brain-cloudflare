@@ -4107,22 +4107,47 @@
           ctx.globalAlpha = 1
         }
 
+        const GRID_CELL = 176 // 2× link rest length — radius of exact near-field repulsion
+
         function tick() {
-          for (let i = 0; i < nodes.length; i++) {
-            const a = nodes[i]
-            for (let j = i + 1; j < nodes.length; j++) {
-              const b = nodes[j]
-              let dx = a.x - b.x
-              let dy = a.y - b.y
-              let d2 = dx * dx + dy * dy || 0.01
-              const d = Math.sqrt(d2)
-              const f = 2000 / d2
-              const fx = (dx / d) * f,
-                fy = (dy / d) * f
-              a.vx += fx
-              a.vy += fy
-              b.vx -= fx
-              b.vy -= fy
+          // Repulsion via a spatial grid: exact pair forces inside the 3×3 cell
+          // neighborhood, one aggregated force per far cell (centroid × node count).
+          // Replaces the all-pairs O(n²) loop so big graphs stay smooth.
+          const grid = new Map()
+          for (const n of nodes) {
+            n.gx = Math.floor(n.x / GRID_CELL)
+            n.gy = Math.floor(n.y / GRID_CELL)
+            const key = n.gx + ':' + n.gy
+            let c = grid.get(key)
+            if (!c) grid.set(key, (c = { gx: n.gx, gy: n.gy, sx: 0, sy: 0, members: [] }))
+            c.sx += n.x
+            c.sy += n.y
+            c.members.push(n)
+          }
+          const cells = [...grid.values()]
+          for (const a of nodes) {
+            for (const c of cells) {
+              if (Math.abs(c.gx - a.gx) <= 1 && Math.abs(c.gy - a.gy) <= 1) {
+                for (const b of c.members) {
+                  if (b === a) continue
+                  let dx = a.x - b.x
+                  let dy = a.y - b.y
+                  let d2 = dx * dx + dy * dy || 0.01
+                  const d = Math.sqrt(d2)
+                  const f = 2000 / d2
+                  a.vx += (dx / d) * f
+                  a.vy += (dy / d) * f
+                }
+              } else {
+                const m = c.members.length
+                let dx = a.x - c.sx / m
+                let dy = a.y - c.sy / m
+                let d2 = dx * dx + dy * dy || 0.01
+                const d = Math.sqrt(d2)
+                const f = (2000 * m) / d2
+                a.vx += (dx / d) * f
+                a.vy += (dy / d) * f
+              }
             }
           }
           for (const l of links) {

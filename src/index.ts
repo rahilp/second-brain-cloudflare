@@ -387,14 +387,13 @@ export interface GraphView {
   edges: { source: string; target: string; type: string; weight: number }[];
 }
 
-const GRAPH_VIEW_MAX_NODES = 200;
-
 // Assemble a node+edge subgraph for the dashboard graph view. Either the 2-hop
 // neighborhood of a seed entry, or (default) the most strongly-connected slice of the
-// whole graph. Only edges whose BOTH endpoints are in the returned node set are
-// included, so the client never has to handle dangling edges.
+// whole graph — uncapped unless the caller passes an explicit limit. Only edges whose
+// BOTH endpoints are in the returned node set are included, so the client never has
+// to handle dangling edges.
 export async function buildGraph(opts: { seed?: string; limit?: number }, env: Env): Promise<GraphView> {
-  const limit = Math.min(Math.max(opts.limit ?? GRAPH_VIEW_MAX_NODES, 1), GRAPH_VIEW_MAX_NODES);
+  const limit = opts.limit && opts.limit > 0 ? opts.limit : Infinity;
 
   // 1. Determine the candidate node id set.
   let nodeIds: string[];
@@ -402,9 +401,11 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true }, env);
     nodeIds = [opts.seed, ...neighbors.map(n => n.id)].slice(0, limit);
   } else {
-    const { results } = await env.DB.prepare(
-      `SELECT source_id, target_id FROM edges ORDER BY weight DESC LIMIT ${limit * 4}`
-    ).all() as { results: { source_id: string; target_id: string }[] };
+    const sql = Number.isFinite(limit)
+      ? `SELECT source_id, target_id FROM edges ORDER BY weight DESC LIMIT ${limit * 4}`
+      : `SELECT source_id, target_id FROM edges ORDER BY weight DESC`;
+    const { results } = await env.DB.prepare(sql)
+      .all() as { results: { source_id: string; target_id: string }[] };
     const ids: string[] = [];
     const seenIds = new Set<string>();
     for (const r of results) {

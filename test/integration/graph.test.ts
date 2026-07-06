@@ -72,4 +72,23 @@ describe("GET /graph", () => {
     expect(data.nodes.map((n: any) => n.id).sort()).toEqual(["n1", "n2", "seed"]);
     expect(data.nodes.map((n: any) => n.id)).not.toContain("far");
   });
+
+  it("returns the whole graph by default — no node cap", async () => {
+    for (let i = 0; i < 250; i++) seedEntry(db, `n${i}`, `Memory ${i}`);
+    for (let i = 0; i < 249; i++) pushEdge(db, `n${i}`, `n${i + 1}`);
+
+    const res = await worker.fetch(req("GET", "/graph"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.nodes).toHaveLength(250);
+    expect(data.edges).toHaveLength(249);
+  });
+
+  it("still honors an explicit ?limit=", async () => {
+    for (let i = 0; i < 10; i++) seedEntry(db, `n${i}`, `Memory ${i}`);
+    for (let i = 0; i < 9; i++) pushEdge(db, `n${i}`, `n${i + 1}`);
+
+    const res = await worker.fetch(req("GET", "/graph?limit=4"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.nodes).toHaveLength(4);
+  });
 });
