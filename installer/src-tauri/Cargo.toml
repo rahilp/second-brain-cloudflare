@@ -1,6 +1,6 @@
 [package]
 name = "second-brain-desktop"
-version = "0.1.1"
+version = "0.2.0"
 description = "Second Brain desktop app — one-click setup and a native shell for your own memory dashboard"
 edition = "2021"
 rust-version = "1.82"
