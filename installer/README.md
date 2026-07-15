@@ -120,6 +120,37 @@ The Windows job imports the `.pfx`, points Tauri at its thumbprint, timestamps a
 
 For the EV/cloud route: skip those two secrets, store the provider's API credentials as secrets instead, and replace the "Enable Windows signing" step with the provider's CLI plus a `signCommand` config (e.g. `"signCommand": "artifact-signing-cli -e https://…azure.net -a Account -c Profile -d SecondBrain %1"`). Document which route is active here when you set it up.
 
+### In-app updates — updater signing key (one-time)
+
+The app updates itself via `tauri-plugin-updater`. Updates are verified against a **minisign key** that is separate from the Apple/Windows code-signing certs above. Until you set this up, releases build without update artifacts and the in-app updater simply finds nothing — everything else still works.
+
+1. Generate the keypair once (from `installer/`):
+
+   ```bash
+   npm run tauri signer generate -- -w ~/.tauri/second-brain-updater.key
+   ```
+
+   Choose a password when prompted (it protects the private key). This writes:
+   - `~/.tauri/second-brain-updater.key` — **private key**, never commit or share.
+   - `~/.tauri/second-brain-updater.key.pub` — **public key**, safe to commit.
+
+2. Replace the `pubkey` value in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`) with the **full contents** of `second-brain-updater.key.pub`. The repo currently ships a development placeholder; CI **fails on purpose** if you enable updates without replacing it.
+
+   ```bash
+   cat ~/.tauri/second-brain-updater.key.pub
+   ```
+
+3. Add two GitHub Secrets:
+
+   | Secret | Value |
+   | --- | --- |
+   | `TAURI_SIGNING_PRIVATE_KEY` | the full contents of `second-brain-updater.key` |
+   | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the password from step 1 |
+
+4. Back up the private key + password (a password manager). **If you lose them, you can never ship another auto-update** — users would have to re-download manually.
+
+The release workflow enables `createUpdaterArtifacts` and uploads `latest.json` automatically whenever `TAURI_SIGNING_PRIVATE_KEY` is present. The app's update endpoint is the repo's `releases/latest/download/latest.json`. In-app updates become functional starting from the **first release built with the key in place** — users on an earlier build download that one manually once, and every release after updates in-app.
+
 ### Cut a release
 
 The version does **not** auto-increment. Bump it first in `src-tauri/tauri.conf.json` (`"version"`) — that value names the artifacts (`Second Brain_X.Y.Z_….dmg`) and fills the release title. Keep `src-tauri/Cargo.toml` and `package.json` in step with it for tidiness (they don't drive the release, but drift is confusing). Then commit, and tag **matching that version** — the tag itself is what triggers the workflow, and a tag that disagrees with the config produces a release whose title and filenames don't match its tag:
