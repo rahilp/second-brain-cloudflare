@@ -5,6 +5,7 @@
 //!   * afterwards → a native shell around the user's own Worker dashboard
 //! Mode is decided by whether OS-secure storage holds a completed setup.
 
+mod app_update;
 mod cf;
 mod commands;
 mod mcp_config;
@@ -62,6 +63,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(SetupSession::new(dry_run))
         .invoke_handler(tauri::generate_handler![
             commands::get_app_state,
@@ -90,11 +92,14 @@ pub fn run() {
                 true,
                 Some("CmdOrCtrl+D"),
             )?;
+            let update_item =
+                MenuItem::with_id(app, "menu-update", "Check for updates…", true, None::<&str>)?;
             let logout_item =
                 MenuItem::with_id(app, "menu-logout", "Log out…", true, None::<&str>)?;
             let menu = Menu::default(&handle)?;
             let connections = SubmenuBuilder::new(app, "Connections")
                 .item(&details_item)
+                .item(&update_item)
                 .separator()
                 .item(&logout_item)
                 .build()?;
@@ -102,6 +107,7 @@ pub fn run() {
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| match event.id().as_ref() {
                 "menu-details" => windows::open_details_window(app),
+                "menu-update" => app_update::check_for_updates(app, false),
                 "menu-logout" => confirm_logout(app),
                 _ => {}
             });
@@ -139,6 +145,12 @@ pub fn run() {
                     windows::open_wrapper_window(&handle, &info.worker_url, &info.auth_token)?
                 }
                 _ => windows::open_setup_window(&handle)?,
+            }
+
+            // Quiet check for an app update on launch (says nothing unless one
+            // exists). Skipped in dry-run so demos don't hit the network.
+            if !dry_run {
+                app_update::check_for_updates(&handle, true);
             }
             Ok(())
         })

@@ -110,10 +110,33 @@ jobs:
             Write-Host "::notice::WINDOWS_CERTIFICATE not configured - producing an UNSIGNED Windows build (testing only)."
           }
 
+      # ── Updater artifacts (skipped cleanly when the signing key is absent) ──
+      # When TAURI_SIGNING_PRIVATE_KEY is set, enable createUpdaterArtifacts so
+      # the build emits the signed update package + latest.json (uploaded to the
+      # release by tauri-action). Guards against shipping the placeholder pubkey.
+      - name: Enable updater artifacts
+        shell: bash
+        env:
+          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$UPDATER_KEY" ]; then
+            if grep -q "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJFNjgxMENBRTVCRENEOTQK" src-tauri/tauri.conf.json; then
+              echo "::error::The updater pubkey in tauri.conf.json is still the development placeholder. Generate your own key and replace plugins.updater.pubkey before shipping updates (see installer/README.md)."
+              exit 1
+            fi
+            node -e "const f='src-tauri/tauri.conf.json';const fs=require('fs');const c=JSON.parse(fs.readFileSync(f));c.bundle.createUpdaterArtifacts=true;fs.writeFileSync(f,JSON.stringify(c,null,2))"
+            echo "UPDATER_ENABLED=1" >> "$GITHUB_ENV"
+            echo "Updater artifacts enabled."
+          else
+            echo "::notice::TAURI_SIGNING_PRIVATE_KEY not set — building without in-app updates."
+          fi
+
       - name: Build (and release on tag)
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: installer
           args: ${{ matrix.args }}
