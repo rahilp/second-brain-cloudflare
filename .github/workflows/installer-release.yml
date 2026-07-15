@@ -125,6 +125,22 @@ jobs:
           releaseDraft: true
           uploadWorkflowArtifacts: ${{ !startsWith(github.ref, 'refs/tags/installer-v') }}
 
+      # tauri-action notarizes and staples the .app but not the .dmg that wraps
+      # it — a signed-but-un-notarized DMG still trips Gatekeeper on download.
+      # Notarize + staple the DMG itself so the downloaded file is clean too.
+      - name: Notarize macOS DMG
+        if: matrix.platform == 'macos-latest' && env.MAC_SIGNED == '1'
+        shell: bash
+        run: |
+          DMG=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" | head -1)
+          echo "Notarizing $DMG"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+
       # ── Post-build signature verification (signed builds fail CI if bad) ───
       - name: Verify macOS signature
         if: matrix.platform == 'macos-latest' && env.MAC_SIGNED == '1'
@@ -133,7 +149,12 @@ jobs:
           APP=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -name "*.app" | head -1)
           DMG=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" | head -1)
           echo "Verifying $APP and $DMG"
+          # App: valid Developer ID signature + notarized & stapled
           codesign --verify --deep --strict --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          spctl -a -t exec -vv "$APP"
+          # DMG: notarized & stapled (the artifact users actually download)
+          xcrun stapler validate "$DMG"
           spctl -a -t open --context context:primary-signature -v "$DMG"
 
       - name: Verify Windows signature
