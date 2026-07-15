@@ -92,6 +92,9 @@ pub trait Backend {
     async fn enable_script_subdomain(&self, script: &str) -> Result<(), CfApiError>;
     async fn health_ok(&self, worker_url: &str, auth_token: &str) -> Result<bool, CfApiError>;
     async fn capture_ok(&self, worker_url: &str, auth_token: &str) -> Result<bool, CfApiError>;
+    /// The deployed script's current bindings (for a preserve-everything update).
+    async fn get_script_bindings(&self, script: &str)
+        -> Result<Vec<serde_json::Value>, CfApiError>;
     async fn sleep(&self, duration: Duration);
 }
 
@@ -144,6 +147,56 @@ pub fn build_worker_metadata(
         "compatibility_date": manifest.compatibility_date,
         "compatibility_flags": manifest.compatibility_flags,
         "bindings": bindings,
+        "assets": {
+            "jwt": assets_jwt,
+            "config": {
+                "html_handling": "auto-trailing-slash",
+                "not_found_handling": "none",
+                "run_worker_first": false
+            }
+        },
+        "observability": { "enabled": true }
+    })
+}
+
+/// Pulls a binding's id/name field out of a deployed script's bindings array
+/// (as returned by the settings endpoint), matched by binding type + field.
+pub fn binding_field<'a>(
+    bindings: &'a [serde_json::Value],
+    binding_type: &str,
+    field: &str,
+) -> Option<&'a str> {
+    bindings
+        .iter()
+        .find(|b| b.get("type").and_then(|t| t.as_str()) == Some(binding_type))
+        .and_then(|b| b.get(field))
+        .and_then(|v| v.as_str())
+}
+
+/// Update metadata: same bindings as a fresh deploy, but the `AUTH_TOKEN`
+/// secret is *preserved* from the previous deployment via `keep_bindings`
+/// rather than re-sent (the app never knows the password on an update).
+pub fn build_update_metadata(
+    manifest: &WorkerManifest,
+    d1_id: &str,
+    kv_id: &str,
+    assets_jwt: &str,
+) -> serde_json::Value {
+    let mut bindings = vec![
+        serde_json::json!({ "type": "d1", "name": manifest.d1_binding, "database_id": d1_id }),
+        serde_json::json!({ "type": "vectorize", "name": manifest.vectorize_binding, "index_name": manifest.vectorize_name }),
+        serde_json::json!({ "type": "kv_namespace", "name": manifest.kv_binding, "namespace_id": kv_id }),
+        serde_json::json!({ "type": "ai", "name": manifest.ai_binding }),
+    ];
+    for (name, value) in &manifest.vars {
+        bindings.push(serde_json::json!({ "type": "plain_text", "name": name, "text": value }));
+    }
+    serde_json::json!({
+        "main_module": "worker.js",
+        "compatibility_date": manifest.compatibility_date,
+        "compatibility_flags": manifest.compatibility_flags,
+        "bindings": bindings,
+        "keep_bindings": ["secret_text", "secret_key"],
         "assets": {
             "jwt": assets_jwt,
             "config": {
@@ -280,6 +333,105 @@ pub async fn provision<B: Backend>(
     })
 }
 
+/// Redeploys the bundled (newer) Worker over an existing one, preserving the
+/// user's data, password, and connections. Reuses the deployed script's real
+/// binding IDs; the password rides along via `keep_bindings`. Idempotent and
+/// safe to retry. Reports progress through the Memory/Recall/Finish steps
+/// (Space is skipped — the account already has its address).
+pub async fn update_worker<B: Backend>(
+    backend: &B,
+    manifest: &WorkerManifest,
+    worker_url: &str,
+    auth_token: &str,
+    progress: impl Fn(StepEvent),
+) -> Result<(), ProvisionError> {
+    let emit = |step: Step, status: StepStatus| progress(StepEvent { step, status });
+    let script = manifest.script_name.as_str();
+
+    macro_rules! step {
+        ($step:expr, $body:expr) => {{
+            emit($step, StepStatus::Running);
+            match $body.await {
+                Ok(value) => {
+                    emit($step, StepStatus::Done);
+                    value
+                }
+                Err(e) => {
+                    emit($step, StepStatus::Error);
+                    return Err(e);
+                }
+            }
+        }};
+    }
+
+    // Memory — reuse the database + key-value namespace already bound to the
+    // deployed script; fall back to find-or-create only if a binding is absent.
+    let (d1_id, kv_id) = step!(Step::Memory, async {
+        let bindings = backend.get_script_bindings(script).await?;
+        let d1_id = match binding_field(&bindings, "d1", "database_id") {
+            Some(id) => id.to_string(),
+            None => match backend.find_d1(&manifest.d1_name).await? {
+                Some(id) => id,
+                None => backend.create_d1(&manifest.d1_name).await?,
+            },
+        };
+        let kv_id = match binding_field(&bindings, "kv_namespace", "namespace_id") {
+            Some(id) => id.to_string(),
+            None => match backend.find_kv(KV_TITLE).await? {
+                Some(id) => id,
+                None => backend.create_kv(KV_TITLE).await?,
+            },
+        };
+        Ok::<_, ProvisionError>((d1_id, kv_id))
+    });
+
+    // Recall — make sure the vector index exists (unchanged across updates).
+    step!(Step::Recall, async {
+        if !backend.vectorize_exists(&manifest.vectorize_name).await? {
+            backend
+                .create_vectorize(
+                    &manifest.vectorize_name,
+                    manifest.vectorize_dimensions,
+                    &manifest.vectorize_metric,
+                )
+                .await?;
+        }
+        Ok::<_, ProvisionError>(())
+    });
+
+    // Finish — upload the newer assets + Worker (password preserved), then verify.
+    step!(Step::Finish, async {
+        let assets_jwt = backend.upload_assets(script).await?;
+        let metadata = build_update_metadata(manifest, &d1_id, &kv_id, &assets_jwt);
+        backend.deploy_worker(script, &metadata).await?;
+        backend.set_cron(script, &manifest.cron).await?;
+        backend.enable_script_subdomain(script).await?;
+
+        let mut healthy = false;
+        for attempt in 0..HEALTH_ATTEMPTS {
+            match backend.health_ok(worker_url, auth_token).await {
+                Ok(true) => {
+                    healthy = true;
+                    break;
+                }
+                // A wrong token here means the secret was NOT preserved — fail
+                // rather than silently locking the user out.
+                Err(CfApiError::Unauthorized) => return Err(ProvisionError::HealthCheckFailed),
+                Ok(false) | Err(_) => {}
+            }
+            if attempt + 1 < HEALTH_ATTEMPTS {
+                backend.sleep(HEALTH_WAIT).await;
+            }
+        }
+        if !healthy {
+            return Err(ProvisionError::HealthCheckFailed);
+        }
+        Ok::<_, ProvisionError>(())
+    });
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +440,7 @@ mod tests {
     fn test_manifest() -> WorkerManifest {
         serde_json::from_value(serde_json::json!({
             "scriptName": "second-brain",
+            "workerVersion": "2.0.0",
             "compatibilityDate": "2026-06-17",
             "compatibilityFlags": ["nodejs_compat"],
             "vars": { "VECTORIZE_GRACE_MS": "300000" },
@@ -313,6 +466,8 @@ mod tests {
         existing_vectorize: bool,
         subdomain_rejections: Mutex<u32>,
         health_failures: Mutex<u32>,
+        script_bindings: Vec<serde_json::Value>,
+        last_deploy_metadata: Mutex<Option<serde_json::Value>>,
     }
 
     impl Fake {
@@ -381,7 +536,15 @@ mod tests {
                 "deploy:{script}:{}",
                 metadata["bindings"].as_array().unwrap().len()
             ));
+            *self.last_deploy_metadata.lock().unwrap() = Some(metadata.clone());
             Ok(())
+        }
+        async fn get_script_bindings(
+            &self,
+            _script: &str,
+        ) -> Result<Vec<serde_json::Value>, CfApiError> {
+            self.log("get_script_bindings");
+            Ok(self.script_bindings.clone())
         }
         async fn set_cron(&self, _script: &str, crons: &[String]) -> Result<(), CfApiError> {
             self.log(format!("set_cron:{}", crons.join(",")));
@@ -513,6 +676,64 @@ mod tests {
         assert_eq!(find("secret_text")["text"], "secret-pw");
         assert_eq!(find("plain_text")["name"], "VECTORIZE_GRACE_MS");
         assert_eq!(meta["assets"]["jwt"], "jwt-1");
+    }
+
+    #[tokio::test]
+    async fn update_reuses_deployed_bindings_and_preserves_secret() {
+        let fake = Fake {
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "real-d1-id" }),
+                serde_json::json!({ "type": "kv_namespace", "name": "OAUTH_KV", "namespace_id": "real-kv-id" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors" }),
+                serde_json::json!({ "type": "secret_text", "name": "AUTH_TOKEN" }),
+            ],
+            existing_vectorize: true,
+            ..Default::default()
+        };
+        update_worker(
+            &&fake,
+            &test_manifest(),
+            "https://second-brain.acme.workers.dev",
+            "stored-token",
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        let log = fake.entries();
+        assert!(log.contains(&"get_script_bindings".to_string()));
+        // Never re-created the resources that already exist.
+        assert!(!log.iter().any(|l| l.starts_with("create_")));
+
+        let meta = fake.last_deploy_metadata.lock().unwrap().clone().unwrap();
+        // Reused the real binding IDs from the deployed script.
+        let bindings = meta["bindings"].as_array().unwrap();
+        let find = |ty: &str| bindings.iter().find(|b| b["type"] == ty).unwrap();
+        assert_eq!(find("d1")["database_id"], "real-d1-id");
+        assert_eq!(find("kv_namespace")["namespace_id"], "real-kv-id");
+        // Password preserved, not re-sent.
+        assert!(!bindings.iter().any(|b| b["type"] == "secret_text"));
+        assert_eq!(meta["keep_bindings"], serde_json::json!(["secret_text", "secret_key"]));
+    }
+
+    #[tokio::test]
+    async fn update_falls_back_when_bindings_absent() {
+        // An older deployment whose settings don't expose the ids → find-or-create.
+        let fake = Fake {
+            script_bindings: vec![],
+            existing_d1: Some("found-d1".into()),
+            existing_kv: Some("found-kv".into()),
+            existing_vectorize: true,
+            ..Default::default()
+        };
+        update_worker(&&fake, &test_manifest(), "https://x.acme.workers.dev", "tok", |_| {})
+            .await
+            .unwrap();
+        let meta = fake.last_deploy_metadata.lock().unwrap().clone().unwrap();
+        let bindings = meta["bindings"].as_array().unwrap();
+        let find = |ty: &str| bindings.iter().find(|b| b["type"] == ty).unwrap();
+        assert_eq!(find("d1")["database_id"], "found-d1");
+        assert_eq!(find("kv_namespace")["namespace_id"], "found-kv");
     }
 
     #[test]

@@ -357,12 +357,142 @@ function detailsScreen() {
   );
 }
 
+// ── Worker update flow (main window in "worker-update" mode) ──────────────────
+
+interface WorkerUpdateInfo {
+  deployedVersion: string | null;
+  availableVersion: string;
+}
+
+const UPDATE_STEPS: { id: StepId; label: string }[] = [
+  { id: "memory", label: "Updating your memory store" },
+  { id: "recall", label: "Refreshing smart recall" },
+  { id: "finish", label: "Finishing up" },
+];
+
+async function workerUpdateScreen() {
+  const info = await invoke<WorkerUpdateInfo | null>("worker_update_available").catch(() => null);
+  const versionLine = info
+    ? `A newer version of your Second Brain (version ${info.availableVersion}) is ready to install.`
+    : "A newer version of your Second Brain is ready to install.";
+  const start = h("button", { class: "btn-primary" }, ["Sign in and update"]);
+  start.addEventListener("click", () => void runWorkerUpdate());
+  const notNow = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    "Not now",
+  ]);
+  notNow.addEventListener("click", () => void invoke("open_dashboard"));
+  show(
+    brand(),
+    h("h1", {}, ["Update your Second Brain"]),
+    h("p", { class: "lede" }, [
+      versionLine +
+        " Your memories, password, and connected tools are all kept — nothing is reset.",
+    ]),
+    h("div", { class: "notice" }, [
+      "🔒",
+      h("span", {}, [
+        "You'll sign in to Cloudflare once to authorize the update. It takes about a minute.",
+      ]),
+    ]),
+    start,
+    notNow,
+  );
+}
+
+async function runWorkerUpdate(errorMsg?: string) {
+  if (errorMsg) {
+    const retry = h("button", { class: "btn-primary" }, ["Try again"]);
+    retry.addEventListener("click", () => void runWorkerUpdate());
+    const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+      "Not now",
+    ]);
+    back.addEventListener("click", () => void invoke("open_dashboard"));
+    show(
+      brand(),
+      h("h1", {}, ["Update your Second Brain"]),
+      h("div", { class: "notice error" }, ["⚠️", h("span", {}, [errorMsg])]),
+      retry,
+      back,
+    );
+    return;
+  }
+
+  // Sign in to Cloudflare (the app doesn't keep that login after setup).
+  show(
+    brand(),
+    h("h1", {}, ["Waiting for your browser…"]),
+    h("p", { class: "lede" }, [
+      "Finish signing in to Cloudflare in the browser window that just opened, then come back here.",
+    ]),
+    h("div", { class: "checklist" }, [
+      h("li", { class: "running" }, [
+        h("span", { class: "check-icon" }, [h("span", { class: "spinner" })]),
+        "Watching for you to finish signing in",
+      ]),
+    ]),
+  );
+  try {
+    await invoke<Account[]>("connect_cloudflare");
+  } catch (e) {
+    return void runWorkerUpdate(String(e));
+  }
+
+  // Redeploy with a progress checklist.
+  const rows = new Map<StepId, HTMLLIElement>();
+  const list = h("ul", { class: "checklist" });
+  for (const step of UPDATE_STEPS) {
+    const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label]);
+    rows.set(step.id, li);
+    list.append(li);
+  }
+  show(
+    brand(),
+    h("h1", {}, ["Updating your Second Brain"]),
+    h("p", { class: "lede" }, ["This usually takes a minute. Your memories are safe."]),
+    h("div", { class: "card" }, [list]),
+  );
+  const unlisten = await listen<StepEvent>("setup-progress", (e) => {
+    const li = rows.get(e.payload.step);
+    if (!li) return;
+    li.className = e.payload.status;
+    const icon = li.querySelector<HTMLSpanElement>(".check-icon")!;
+    if (e.payload.status === "running") icon.replaceChildren(h("span", { class: "spinner" }));
+    if (e.payload.status === "done") icon.replaceChildren("✓");
+    if (e.payload.status === "error") icon.replaceChildren("!");
+  });
+  try {
+    details = await invoke<ConnectionDetails>("start_worker_update");
+    unlisten();
+    workerUpdateDoneScreen();
+  } catch (e) {
+    unlisten();
+    runWorkerUpdate(String(e));
+  }
+}
+
+function workerUpdateDoneScreen() {
+  const done = h("button", { class: "btn-primary" }, ["Open my Second Brain"]);
+  done.addEventListener("click", () => void invoke("open_dashboard"));
+  show(
+    brand(),
+    h("h1", {}, ["Your Second Brain is up to date"]),
+    h("p", { class: "lede" }, [
+      "Everything's on the latest version — your memories, password, and connected tools are unchanged.",
+    ]),
+    done,
+  );
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function boot() {
   const state = await invoke<{ mode: string; dryRun: boolean }>("get_app_state");
   if (state.dryRun) {
     document.body.append(h("div", { class: "dry-run-badge" }, ["Demo mode"]));
+  }
+  if (state.mode === "worker-update") {
+    void workerUpdateScreen();
+    return;
   }
   welcomeScreen();
 }

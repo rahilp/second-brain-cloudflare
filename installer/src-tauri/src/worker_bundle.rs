@@ -18,6 +18,8 @@ static WORKER_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/worker-dist");
 #[serde(rename_all = "camelCase")]
 pub struct WorkerManifest {
     pub script_name: String,
+    /// Version of the bundled Worker (its `SB_VERSION`), for update detection.
+    pub worker_version: String,
     pub compatibility_date: String,
     pub compatibility_flags: Vec<String>,
     pub vars: BTreeMap<String, String>,
@@ -132,6 +134,11 @@ mod tests {
     fn manifest_matches_worker_expectations() {
         let m = manifest();
         assert_eq!(m.script_name, "second-brain");
+        assert!(
+            m.worker_version.chars().next().is_some_and(|c| c.is_ascii_digit()),
+            "worker_version should be a semver string, got {:?}",
+            m.worker_version
+        );
         assert_eq!(m.d1_binding, "DB");
         assert_eq!(m.vectorize_binding, "VECTORIZE");
         assert_eq!(m.vectorize_name, "second-brain-vectors");

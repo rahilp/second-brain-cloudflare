@@ -67,6 +67,12 @@ impl Backend for LiveBackend {
     async fn capture_ok(&self, worker_url: &str, auth_token: &str) -> Result<bool, CfApiError> {
         api::worker_capture_ok(worker_url, auth_token).await
     }
+    async fn get_script_bindings(
+        &self,
+        script: &str,
+    ) -> Result<Vec<serde_json::Value>, CfApiError> {
+        self.client.get_script_bindings(script).await
+    }
     async fn sleep(&self, duration: Duration) {
         tokio::time::sleep(duration).await;
     }
@@ -143,6 +149,16 @@ impl Backend for DryRunBackend {
     }
     async fn capture_ok(&self, _worker_url: &str, _auth_token: &str) -> Result<bool, CfApiError> {
         Ok(true)
+    }
+    async fn get_script_bindings(
+        &self,
+        _script: &str,
+    ) -> Result<Vec<serde_json::Value>, CfApiError> {
+        self.pause().await;
+        Ok(vec![
+            serde_json::json!({ "type": "d1", "name": "DB", "database_id": "dryrun-d1" }),
+            serde_json::json!({ "type": "kv_namespace", "name": "OAUTH_KV", "namespace_id": "dryrun-kv" }),
+        ])
     }
     async fn sleep(&self, _duration: Duration) {}
 }

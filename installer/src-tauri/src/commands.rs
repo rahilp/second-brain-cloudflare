@@ -12,6 +12,7 @@ use crate::{mcp_config, secure_store, windows, worker_bundle};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 /// In-memory state for the setup flow. Dropped when the process exits;
@@ -22,6 +23,9 @@ pub struct SetupSession {
     tokens: Mutex<Option<Tokens>>,
     accounts: Mutex<Vec<Account>>,
     outcome: Mutex<Option<ProvisionOutcome>>,
+    /// Set when the main window should boot straight into the Worker-update
+    /// flow instead of the normal setup flow.
+    pending_worker_update: Mutex<bool>,
 }
 
 impl SetupSession {
@@ -32,6 +36,7 @@ impl SetupSession {
             tokens: Mutex::new(None),
             accounts: Mutex::new(Vec::new()),
             outcome: Mutex::new(None),
+            pending_worker_update: Mutex::new(false),
         }
     }
 
@@ -40,6 +45,7 @@ impl SetupSession {
         *self.tokens.lock().unwrap() = None;
         self.accounts.lock().unwrap().clear();
         *self.outcome.lock().unwrap() = None;
+        *self.pending_worker_update.lock().unwrap() = false;
     }
 }
 
@@ -56,7 +62,9 @@ pub struct AppState {
 
 #[tauri::command]
 pub fn get_app_state(session: State<'_, SetupSession>) -> AppState {
-    let mode = if secure_store::load_setup().is_some() && !session.dry_run {
+    let mode = if *session.pending_worker_update.lock().unwrap() {
+        "worker-update"
+    } else if secure_store::load_setup().is_some() && !session.dry_run {
         "wrapper"
     } else {
         "setup"
@@ -379,6 +387,173 @@ pub fn open_dashboard(app: AppHandle, session: State<'_, SetupSession>) -> Resul
 #[tauri::command]
 pub fn open_details_window(app: AppHandle) {
     windows::open_details_window(&app);
+}
+
+// ── Worker update ────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerUpdateInfo {
+    pub deployed_version: Option<String>,
+    pub available_version: String,
+}
+
+/// The workers.dev subdomain in a Worker URL is the second dotted label:
+/// `second-brain.acme.workers.dev` → `acme`.
+fn subdomain_of(worker_url: &str) -> Option<String> {
+    let host = url::Url::parse(worker_url).ok()?.host_str()?.to_string();
+    if !host.ends_with(".workers.dev") {
+        return None; // custom domain — can't auto-resolve the account
+    }
+    host.split('.').nth(1).map(|s| s.to_string())
+}
+
+/// Core check, usable outside a command context (the launch-time offer). None
+/// when up to date, unknown, on a custom domain, in dry-run, or not set up.
+async fn compute_worker_update(dry_run: bool) -> Option<WorkerUpdateInfo> {
+    if dry_run {
+        return None;
+    }
+    let info = secure_store::load_setup()?;
+    subdomain_of(&info.worker_url)?;
+    let bundled = worker_bundle::manifest().worker_version.clone();
+    let deployed = crate::cf::api::worker_version(&info.worker_url, &info.auth_token)
+        .await
+        .unwrap_or(None);
+    crate::version::is_behind(deployed.as_deref(), &bundled).then_some(WorkerUpdateInfo {
+        deployed_version: deployed,
+        available_version: bundled,
+    })
+}
+
+/// Checks whether the deployed Worker is behind the version this app bundles.
+#[tauri::command]
+pub async fn worker_update_available(
+    session: State<'_, SetupSession>,
+) -> Result<Option<WorkerUpdateInfo>, String> {
+    Ok(compute_worker_update(session.dry_run).await)
+}
+
+/// Launch-time offer: quietly check, and if the Worker is behind, ask with a
+/// native dialog. On accept, drop into the Worker-update flow.
+pub fn maybe_offer_worker_update(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let dry_run = app.state::<SetupSession>().dry_run;
+        let Some(update) = compute_worker_update(dry_run).await else {
+            return;
+        };
+        let message = format!(
+            "A newer version of your Second Brain is available (version {}).\n\n\
+             Update now? You'll sign in to Cloudflare once. Your memories, password, \
+             and connected tools are kept.",
+            update.available_version
+        );
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog()
+            .message(message)
+            .title("Update your Second Brain")
+            .kind(tauri_plugin_dialog::MessageDialogKind::Info)
+            .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancelCustom(
+                "Update now".to_string(),
+                "Later".to_string(),
+            ))
+            .show(move |accepted| {
+                let _ = tx.send(accepted);
+            });
+        if rx.await.unwrap_or(false) {
+            *app.state::<SetupSession>().pending_worker_update.lock().unwrap() = true;
+            let _ = windows::open_setup_window(&app);
+        }
+    });
+}
+
+/// Puts the main window into Worker-update mode and shows it. Called from the
+/// launch-time prompt and the Connection details button.
+#[tauri::command]
+pub fn begin_worker_update(app: AppHandle, session: State<'_, SetupSession>) -> Result<(), String> {
+    *session.pending_worker_update.lock().unwrap() = true;
+    windows::open_setup_window(&app).map_err(|_| "Couldn't open the update window.".to_string())
+}
+
+/// Runs the preserve-everything redeploy. Requires a prior `connect_cloudflare`
+/// (so the session holds a Cloudflare token + account list). Resolves the
+/// account that hosts the Worker by matching its workers.dev subdomain.
+#[tauri::command]
+pub async fn start_worker_update(
+    app: AppHandle,
+    session: State<'_, SetupSession>,
+) -> Result<ProvisionOutcome, String> {
+    let manifest = worker_bundle::manifest();
+
+    let progress_app = app.clone();
+    let progress = move |event: provision::StepEvent| {
+        let _ = progress_app.emit("setup-progress", &event);
+    };
+
+    if session.dry_run {
+        let outcome = ProvisionOutcome {
+            worker_url: "https://second-brain.demo.workers.dev".into(),
+            mcp_url: "https://second-brain.demo.workers.dev/mcp".into(),
+        };
+        provision::update_worker(&DryRunBackend, manifest, &outcome.worker_url, "demo", progress)
+            .await
+            .map_err(|e| {
+                log::warn!("dry-run worker update failed: {e}");
+                FRIENDLY_RETRY.to_string()
+            })?;
+        *session.pending_worker_update.lock().unwrap() = false;
+        return Ok(outcome);
+    }
+
+    let info = secure_store::load_setup().ok_or("This computer isn't set up yet.")?;
+    let expected_sub = subdomain_of(&info.worker_url)
+        .ok_or("Your Second Brain is on a custom address — update it from your dashboard.")?;
+    let mut tokens = session
+        .tokens
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("Please sign in to Cloudflare first.")?;
+    if tokens.expires_at <= std::time::Instant::now() {
+        tokens = oauth::refresh(&tokens).await.map_err(|e| {
+            log::warn!("token refresh failed: {e}");
+            "Your Cloudflare sign-in expired. Please sign in again.".to_string()
+        })?;
+        *session.tokens.lock().unwrap() = Some(tokens.clone());
+    }
+    let accounts = session.accounts.lock().unwrap().clone();
+
+    // Find the account whose workers.dev subdomain matches the Worker's URL.
+    let mut matched: Option<String> = None;
+    for account in &accounts {
+        let client = CfClient::new(tokens.access_token.clone(), account.id.clone());
+        if let Ok(Some(sub)) = client.get_account_subdomain().await {
+            if sub == expected_sub {
+                matched = Some(account.id.clone());
+                break;
+            }
+        }
+    }
+    let account_id = matched.ok_or(
+        "That Cloudflare account doesn't host this Second Brain. Sign in with the account you set it up in.",
+    )?;
+
+    let backend = LiveBackend {
+        client: CfClient::new(tokens.access_token.clone(), account_id),
+    };
+    provision::update_worker(&backend, manifest, &info.worker_url, &info.auth_token, progress)
+        .await
+        .map_err(|e| {
+            log::warn!("worker update failed: {e}");
+            FRIENDLY_RETRY.to_string()
+        })?;
+
+    *session.pending_worker_update.lock().unwrap() = false;
+    Ok(ProvisionOutcome {
+        mcp_url: format!("{}/mcp", info.worker_url.trim_end_matches('/')),
+        worker_url: info.worker_url,
+    })
 }
 
 /// Signs this computer out: forgets the saved address + password and returns

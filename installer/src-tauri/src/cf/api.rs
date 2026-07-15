@@ -279,6 +279,21 @@ impl CfClient {
         Ok(())
     }
 
+    /// Reads a deployed script's current bindings (from its settings), so an
+    /// update can reuse the *actual* database/namespace/index IDs already
+    /// bound rather than guessing by name.
+    pub async fn get_script_bindings(
+        &self,
+        script: &str,
+    ) -> Result<Vec<serde_json::Value>, CfApiError> {
+        let url = self.url(&self.account_path(&format!("/workers/scripts/{script}/settings")));
+        let settings: Option<serde_json::Value> = self.send(|h| h.get(&url)).await?;
+        Ok(settings
+            .and_then(|s| s.get("bindings").cloned())
+            .and_then(|b| b.as_array().cloned())
+            .unwrap_or_default())
+    }
+
     pub async fn set_cron(&self, script: &str, crons: &[String]) -> Result<(), CfApiError> {
         let url = self.url(&self.account_path(&format!("/workers/scripts/{script}/schedules")));
         // Body is a bare array, not an object.
@@ -384,6 +399,32 @@ pub async fn worker_health_ok(worker_url: &str, auth_token: &str) -> Result<bool
     }
     let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
     Ok(body["ok"] == true && body["vectorize"]["ok"] == true)
+}
+
+/// GET /health and return the Worker's reported `version` (None if the field
+/// is absent — e.g. a deployment predating the version echo).
+pub async fn worker_version(
+    worker_url: &str,
+    auth_token: &str,
+) -> Result<Option<String>, CfApiError> {
+    let http = reqwest::Client::new();
+    let resp = http
+        .get(format!("{worker_url}/health"))
+        .bearer_auth(auth_token)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await?;
+    if resp.status().as_u16() == 401 {
+        return Err(CfApiError::Unauthorized);
+    }
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    Ok(body
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
 }
 
 /// POST /capture — end-to-end write test. A `duplicate` response counts as a

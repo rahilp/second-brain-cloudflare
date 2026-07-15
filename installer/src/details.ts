@@ -31,11 +31,15 @@ async function boot() {
     return;
   }
   const tools = await invoke<ToolStatus>("detect_tools");
+  const update = await invoke<{ availableVersion: string } | null>(
+    "worker_update_available",
+  ).catch(() => null);
 
   app.replaceChildren(
     h("div", { class: "screen" }, [
       h("h1", {}, ["Connection details"]),
       h("p", { class: "lede" }, ["Everything you need to connect a tool or another computer."]),
+      ...(update ? [updateCard(update.availableVersion)] : []),
       ...detailCards(details),
       h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
       h("div", { style: "height:18px" }),
@@ -49,6 +53,18 @@ async function boot() {
       logoutSection(),
     ]),
   );
+}
+
+function updateCard(availableVersion: string): HTMLElement {
+  const button = h("button", { class: "btn-primary" }, ["Update my Second Brain"]);
+  button.addEventListener("click", () => void invoke("begin_worker_update"));
+  return h("div", { class: "card", style: "border-color: var(--accent);" }, [
+    h("div", { class: "url-label" }, [`A newer Second Brain is available (${availableVersion})`]),
+    h("div", { class: "url-desc" }, [
+      "Update to get the latest improvements. Your memories, password, and connected tools are kept.",
+    ]),
+    button,
+  ]);
 }
 
 function logoutSection(): HTMLElement {

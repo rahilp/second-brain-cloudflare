@@ -86,8 +86,21 @@ if (!d1 || !vectorize || !kv || !wrangler.ai?.binding) {
   throw new Error("wrangler.jsonc is missing an expected binding (d1/vectorize/kv/ai)");
 }
 
+// The bundled Worker's version — the app compares this against a deployed
+// Worker's /health version to offer updates. Read from the same SB_VERSION
+// constant the Worker echoes, so both sides always agree.
+const workerSource = readFileSync(resolve(repoRoot, wrangler.main), "utf8");
+const versionMatch = workerSource.match(
+  /export\s+const\s+SB_VERSION\s*=\s*["']([^"']+)["']/,
+);
+if (!versionMatch) {
+  throw new Error("could not find `export const SB_VERSION = \"...\"` in the Worker source");
+}
+const workerVersion = versionMatch[1];
+
 const manifest = {
   scriptName: wrangler.name,
+  workerVersion,
   compatibilityDate: wrangler.compatibility_date,
   compatibilityFlags: wrangler.compatibility_flags ?? [],
   vars: wrangler.vars ?? {},

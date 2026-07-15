@@ -9,6 +9,7 @@ mod cf;
 mod commands;
 mod mcp_config;
 mod secure_store;
+mod version;
 mod windows;
 mod worker_bundle;
 
@@ -77,6 +78,9 @@ pub fn run() {
             commands::open_dashboard,
             commands::open_details_window,
             commands::logout,
+            commands::worker_update_available,
+            commands::begin_worker_update,
+            commands::start_worker_update,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -136,7 +140,10 @@ pub fn run() {
             // demoed even on a machine that already has a Second Brain.
             match secure_store::load_setup() {
                 Some(info) if !dry_run => {
-                    windows::open_wrapper_window(&handle, &info.worker_url, &info.auth_token)?
+                    windows::open_wrapper_window(&handle, &info.worker_url, &info.auth_token)?;
+                    // In wrapper mode, quietly check whether the deployed Worker
+                    // is behind what this app bundles and offer to update it.
+                    commands::maybe_offer_worker_update(&handle);
                 }
                 _ => windows::open_setup_window(&handle)?,
             }

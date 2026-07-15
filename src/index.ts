@@ -26,6 +26,11 @@ export interface Env extends Omit<Cloudflare.Env, "VECTORIZE_GRACE_MS"> {
 
 const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 
+// Worker version, echoed by GET /health. The desktop app compares this against
+// the version it bundles to offer a one-click "update your Second Brain".
+// Bump (semver) when the Worker changes; see installer/README "Worker versioning".
+export const SB_VERSION = "2.0.0";
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
 const CORS_HEADERS = {
@@ -2960,7 +2965,7 @@ const defaultHandler = {
       const authErr = requireAuth(request, env);
       if (authErr) return authErr;
       const vectorize = await checkVectorizeHealth(env);
-      return json({ ok: vectorize.ok, vectorize });
+      return json({ ok: vectorize.ok, version: SB_VERSION, vectorize });
     }
 
     // GET /list
