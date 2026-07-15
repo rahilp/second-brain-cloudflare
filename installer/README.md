@@ -166,6 +166,23 @@ Two jobs build in parallel (macOS universal binary; Windows NSIS installer), eac
 
 ---
 
+## Releasing
+
+npm scripts (run from the repo root) automate the mechanical parts of a release — version bumps, the PR, and the tag that triggers CI. They never auto-merge: you write the change, commit + push your branch, and click Merge yourself.
+
+First: make your change on a feature branch, commit, and push it. Then:
+
+| Command | For |
+| --- | --- |
+| `npm run deploy:worker -- <version\|patch\|minor\|major>` | A Worker-only change. Bumps `SB_VERSION`, commits, pushes, opens a PR. Merge it and Cloudflare-button/manual deployers get it. (App users get it in the next app release.) |
+| `npm run deploy:app -- <version\|patch\|minor\|major>` | An app change (or to ship a Worker change to app users). Bumps the installer version, commits, pushes, opens a PR — then **waits for you to merge**, and once merged tags `installer-v…` so CI builds, signs, and publishes. |
+| `npm run deploy:all -- <app-version> <worker-version>` | Both at once, in one PR. |
+| `npm run deploy:tag -- <version>` | Finisher: tag `installer-v<version>` on the current `origin/main`. Use it if you Ctrl-C'd the wait and merged later. |
+
+The scripts require a clean working tree (commit first), tag `origin/main`'s exact commit after fetching (never local `main`), and verify the merged version matches before tagging. Version args accept an explicit `x.y.z` or a `patch`/`minor`/`major` keyword. Prefix any command with `DRY_RUN=1` to preview without touching git or GitHub.
+
+For a Worker change meant for everyone, `deploy:all` is the one-shot; the [Worker versioning](#worker-versioning) section below explains why app users need the app release to receive it.
+
 ## Worker versioning
 
 The app can update a user's deployed Worker in place (preserving their memories, password, and connections). It decides whether an update is available by comparing the version the deployed Worker reports at `GET /health` against the version this app bundles.

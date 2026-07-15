@@ -5,6 +5,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:worker": "node scripts/release.mjs worker",
+    "deploy:app": "node scripts/release.mjs app",
+    "deploy:all": "node scripts/release.mjs all",
+    "deploy:tag": "node scripts/release.mjs tag",
     "db:create": "wrangler d1 create second-brain-db",
     "db:migrate": "wrangler d1 execute second-brain-db --file=db/schema.sql",
     "db:migrate:remote": "wrangler d1 execute second-brain-db --remote --file=db/schema.sql",
