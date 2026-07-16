@@ -45,7 +45,10 @@ function run(cmd, opts = {}) {
     console.log(`  [dry-run] ${cmd}`);
     return "";
   }
-  return execSync(cmd, { cwd: ROOT, stdio: opts.stdio ?? "pipe", encoding: "utf8" }).trim();
+  // With stdio "inherit" execSync returns null (output isn't captured), so
+  // guard before trimming — otherwise a successful push/PR still throws.
+  const out = execSync(cmd, { cwd: ROOT, stdio: opts.stdio ?? "pipe", encoding: "utf8" });
+  return out ? out.trim() : "";
 }
 
 function step(msg) {
