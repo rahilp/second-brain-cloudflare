@@ -144,8 +144,18 @@ jobs:
           # action just builds and uploads workflow artifacts below.
           tagName: ${{ startsWith(github.ref, 'refs/tags/installer-v') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/installer-v') && 'Second Brain Desktop __VERSION__' || '' }}
-          releaseBody: "${{ startsWith(github.ref, 'refs/tags/installer-v') && 'Download the installer for your computer below — the `.dmg` for Mac, the `.exe` for Windows.' || '' }}"
+          # Only used on tag builds (a release is created only when tagName is set).
+          # Names the two real downloads and explains the auto-update plumbing.
+          releaseBody: |
+            **Download for your computer:**
+
+            - **Mac** — the `.dmg` (works on Apple Silicon and Intel)
+            - **Windows** — the `.exe`
+
+            The other files (`latest.json`, `.app.tar.gz`, and the `.sig` files) are how the app updates itself — you can ignore them.
           releaseDraft: true
+          # Windows updates use the NSIS .exe (we no longer build the .msi).
+          updaterJsonPreferNsis: true
           uploadWorkflowArtifacts: ${{ !startsWith(github.ref, 'refs/tags/installer-v') }}
 
       # tauri-action notarizes and staples the .app but not the .dmg that wraps
