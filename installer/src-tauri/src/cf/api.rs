@@ -44,19 +44,40 @@ impl CfClient {
 
     /// Sends a request (rebuilt per attempt so multipart bodies can retry) and
     /// parses the Cloudflare envelope. Returns the envelope `result`, which
-    /// some endpoints legitimately leave null.
+    /// some endpoints legitimately leave null. The account token is attached as
+    /// the bearer.
     async fn send<T: DeserializeOwned>(
         &self,
         build: impl Fn(&reqwest::Client) -> reqwest::RequestBuilder,
     ) -> Result<Option<T>, CfApiError> {
+        self.send_impl(build, true).await
+    }
+
+    /// Like [`send`], but does not attach the account token — the closure must
+    /// supply its own `Authorization`. Used for the asset upload, which
+    /// authenticates with the upload-session JWT; attaching the account token
+    /// too would send two `Authorization` headers and Cloudflare's edge rejects
+    /// that with a 400.
+    async fn send_no_auth<T: DeserializeOwned>(
+        &self,
+        build: impl Fn(&reqwest::Client) -> reqwest::RequestBuilder,
+    ) -> Result<Option<T>, CfApiError> {
+        self.send_impl(build, false).await
+    }
+
+    async fn send_impl<T: DeserializeOwned>(
+        &self,
+        build: impl Fn(&reqwest::Client) -> reqwest::RequestBuilder,
+        account_auth: bool,
+    ) -> Result<Option<T>, CfApiError> {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            let sent = build(&self.http)
-                .bearer_auth(&self.token)
-                .timeout(Duration::from_secs(60))
-                .send()
-                .await;
+            let mut req = build(&self.http);
+            if account_auth {
+                req = req.bearer_auth(&self.token);
+            }
+            let sent = req.timeout(Duration::from_secs(60)).send().await;
             let retry_wait = Duration::from_millis(800 * (attempt as u64) * (attempt as u64));
             match sent {
                 Err(e) => {
@@ -233,7 +254,7 @@ impl CfClient {
             let jwt = session_jwt.clone();
             let upload_url = upload_url.clone();
             let uploaded: Option<UploadedBucket> = self
-                .send(move |h| {
+                .send_no_auth(move |h| {
                     let mut form = Form::new();
                     for (hash, b64, mime) in &parts {
                         let part = Part::text(b64.clone())
