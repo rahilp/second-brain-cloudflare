@@ -509,6 +509,16 @@ mod tests {
             serde_json::from_str(r#"{"result":{"jwt":"cfwau_done"}}"#).unwrap();
         assert!(done.success);
         assert!(done.result.unwrap().buckets.is_empty());
+
+        // Cloudflare sends `null` (not `[]` or missing) for empty collections;
+        // both `errors: null` and `buckets: null` must be tolerated.
+        let nulls: Envelope<UploadSession> = serde_json::from_str(
+            r#"{"result":{"jwt":"cfwau_x","buckets":null},"success":true,"errors":null,"messages":null}"#,
+        )
+        .unwrap();
+        assert!(nulls.success);
+        assert!(nulls.errors.is_empty());
+        assert!(nulls.result.unwrap().buckets.is_empty());
     }
 
     #[tokio::test]
