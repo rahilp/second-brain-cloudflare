@@ -72,17 +72,24 @@ impl CfClient {
                     let retryable = status == 429 || status >= 500;
                     let body = resp.text().await.unwrap_or_default();
                     match serde_json::from_str::<Envelope<T>>(&body) {
-                        Ok(env) if env.success => return Ok(env.result),
+                        // Success = no errors reported. `success` defaults true
+                        // for endpoints that omit it (Workers assets).
+                        Ok(env) if env.success && env.errors.is_empty() => {
+                            return Ok(env.result)
+                        }
                         Ok(env) => {
                             if !retryable || attempt >= MAX_ATTEMPTS {
                                 return Err(CfApiError::from_errors(&env.errors));
                             }
                         }
-                        Err(_) => {
+                        Err(parse_err) => {
                             if !retryable || attempt >= MAX_ATTEMPTS {
                                 let mut short = body;
-                                short.truncate(300);
-                                return Err(CfApiError::Http { status, body: short });
+                                short.truncate(600);
+                                return Err(CfApiError::Http {
+                                    status,
+                                    body: format!("[unparseable response: {parse_err}] {short}"),
+                                });
                             }
                         }
                     }
@@ -482,6 +489,26 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn envelope_parses_assets_response_without_success_field() {
+        // The Workers assets-upload-session endpoint returns `{ "result": … }`
+        // with no top-level `success` — this used to fail parsing and abort the
+        // whole deploy. It must now parse and be treated as a success.
+        let body = r#"{"result":{"jwt":"cfwau_abc","buckets":[["hash1","hash2"]],"manifest_id":"m-1"}}"#;
+        let env: Envelope<UploadSession> = serde_json::from_str(body).unwrap();
+        assert!(env.success, "missing `success` must default to true");
+        assert!(env.errors.is_empty());
+        let session = env.result.unwrap();
+        assert_eq!(session.jwt.as_deref(), Some("cfwau_abc"));
+        assert_eq!(session.buckets, vec![vec!["hash1".to_string(), "hash2".to_string()]]);
+
+        // The completion response (no buckets) must also parse.
+        let done: Envelope<UploadSession> =
+            serde_json::from_str(r#"{"result":{"jwt":"cfwau_done"}}"#).unwrap();
+        assert!(done.success);
+        assert!(done.result.unwrap().buckets.is_empty());
     }
 
     #[tokio::test]

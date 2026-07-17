@@ -5,10 +5,19 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Envelope<T> {
+    // The classic v4 envelope always includes `success`, but some newer
+    // endpoints (Workers assets: assets-upload-session, /assets/upload) return
+    // `{ "result": … }` with no `success`. Default to true when absent — a real
+    // error still carries `success: false` and/or a non-empty `errors` array.
+    #[serde(default = "default_true")]
     pub success: bool,
     #[serde(default)]
     pub errors: Vec<CfError>,
     pub result: Option<T>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
