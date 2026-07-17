@@ -258,6 +258,12 @@ impl CfClient {
     ) -> Result<(), CfApiError> {
         let url = self.url(&self.account_path(&format!("/workers/scripts/{script}")));
         let metadata_str = metadata.to_string();
+        log::info!(
+            "deploy_worker: {} bytes of code, {} bytes of metadata, {} bindings",
+            worker_js.len(),
+            metadata_str.len(),
+            metadata.get("bindings").and_then(|b| b.as_array()).map_or(0, |a| a.len()),
+        );
         self.send::<serde_json::Value>(move |h| {
             let form = Form::new()
                 .part(

@@ -203,7 +203,7 @@ pub async fn start_provisioning(
                 }
                 Err(e) => {
                     log::warn!("provisioning failed: {e}");
-                    return Err(FRIENDLY_RETRY.to_string());
+                    return Err(format!("{FRIENDLY_RETRY}\n\nWhat went wrong: {e}"));
                 }
             }
         }

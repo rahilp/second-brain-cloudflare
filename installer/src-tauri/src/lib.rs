@@ -48,6 +48,13 @@ fn confirm_logout(app: &AppHandle) {
 }
 
 pub fn run() {
+    // Errors from provisioning etc. print to stderr (visible under `tauri dev`
+    // or when launched from a terminal). Override with RUST_LOG.
+    let _ = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,second_brain_desktop_lib=debug"),
+    )
+    .try_init();
+
     let dry_run = std::env::var("SECOND_BRAIN_DRY_RUN").is_ok();
 
     tauri::Builder::default()
