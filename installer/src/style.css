@@ -221,6 +221,35 @@ input:focus {
   margin-bottom: 14px;
 }
 
+/* A text input with a small action button tucked into its right edge. */
+.input-wrap {
+  position: relative;
+}
+
+.input-wrap input {
+  padding-right: 48px;
+}
+
+.input-action {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  padding: 7px;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.input-action:hover {
+  background: var(--accent-soft);
+}
+
 .hint {
   font-size: 13px;
   color: var(--text-secondary);

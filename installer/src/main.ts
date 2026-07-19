@@ -147,7 +147,17 @@ function passwordScreen() {
   const fill = h("div", { class: "strength-fill" });
   const label = h("span", { class: "strength-label" });
   const hint = h("p", { class: "hint" }, [""]);
-  const generate = h("button", { class: "btn-secondary" }, ["Generate a strong password for me"]);
+  const generate = h("button", {
+    class: "input-action",
+    title: "Generate a strong password for me",
+    "aria-label": "Generate a strong password for me",
+  });
+  // Flat sparkle mark, drawn inline so it picks up the accent color.
+  generate.innerHTML =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+    '<path d="M11 2 C11.7 6.8 13.2 8.3 18 9 C13.2 9.7 11.7 11.2 11 16 C10.3 11.2 8.8 9.7 4 9 C8.8 8.3 10.3 6.8 11 2 Z"/>' +
+    '<path d="M18 13 C18.35 15.4 19.1 16.15 21.5 16.5 C19.1 16.85 18.35 17.6 18 20 C17.65 17.6 16.9 16.85 14.5 16.5 C16.9 16.15 17.65 15.4 18 13 Z"/>' +
+    "</svg>";
   const next = h("button", { class: "btn-primary", disabled: "" }, ["Continue"]);
 
   // Latest completed check for the current password value (null = pending).
@@ -237,12 +247,11 @@ function passwordScreen() {
         "new tools and to sign in from other computers.",
     ]),
     h("div", { class: "field-stack" }, [
-      pw,
+      h("div", { class: "input-wrap" }, [pw, generate]),
       h("div", { class: "strength" }, [h("div", { class: "strength-track" }, [fill]), label]),
       confirm,
       hint,
     ]),
-    generate,
     h("div", { class: "notice" }, [
       "🔑",
       h("span", {}, [
@@ -250,12 +259,12 @@ function passwordScreen() {
           "You'll need it to connect new tools later, and it can't be recovered for you.",
       ]),
     ]),
+    next,
     h("p", { class: "footnote" }, [
       "We check new passwords against known data breaches without ever " +
         "sending your password anywhere — only a fragment of a fingerprint " +
         "leaves this computer.",
     ]),
-    next,
   );
   pw.focus();
 }
@@ -557,13 +566,18 @@ function workerUpdateDoneScreen() {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function boot() {
-  const state = await invoke<{ mode: string; dryRun: boolean }>("get_app_state");
-  if (state.dryRun) {
-    document.body.append(h("div", { class: "dry-run-badge" }, ["Demo mode"]));
-  }
-  if (state.mode === "worker-update") {
-    void workerUpdateScreen();
-    return;
+  try {
+    const state = await invoke<{ mode: string; dryRun: boolean }>("get_app_state");
+    if (state.dryRun) {
+      document.body.append(h("div", { class: "dry-run-badge" }, ["Demo mode"]));
+    }
+    if (state.mode === "worker-update") {
+      void workerUpdateScreen();
+      return;
+    }
+  } catch {
+    // If state can't be read the safe default is the welcome screen —
+    // never leave the window blank.
   }
   welcomeScreen();
 }

@@ -62,9 +62,12 @@ pub struct AppState {
 
 #[tauri::command]
 pub fn get_app_state(session: State<'_, SetupSession>) -> AppState {
+    // Dry-run is checked before the keychain read so demo mode never touches
+    // secure storage (each read can raise a macOS permission prompt for
+    // unsigned dev builds, which would block the setup UI's first paint).
     let mode = if *session.pending_worker_update.lock().unwrap() {
         "worker-update"
-    } else if secure_store::load_setup().is_some() && !session.dry_run {
+    } else if !session.dry_run && secure_store::load_setup().is_some() {
         "wrapper"
     } else {
         "setup"
@@ -79,11 +82,8 @@ pub fn get_app_state(session: State<'_, SetupSession>) -> AppState {
 /// the password only crosses the IPC boundary the same way submit does; the
 /// breach lookup sends a 5-character hash prefix and nothing else.
 #[tauri::command]
-pub async fn check_password(
-    password: String,
-    session: State<'_, SetupSession>,
-) -> Result<password_check::PasswordCheck, String> {
-    Ok(password_check::check(password.trim(), session.dry_run).await)
+pub async fn check_password(password: String) -> Result<password_check::PasswordCheck, String> {
+    Ok(password_check::check(password.trim()).await)
 }
 
 /// A fresh strong password for the "generate one for me" button.

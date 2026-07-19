@@ -80,15 +80,12 @@ async fn pwned_count(password: &str) -> Option<u64> {
     Some(count_in_range_response(&body, suffix))
 }
 
-/// Full check: offline strength always; breach lookup unless `skip_network`
-/// (dry-run mode makes no network calls).
-pub async fn check(password: &str, skip_network: bool) -> PasswordCheck {
+/// Full check: offline strength estimate plus the breach lookup. Runs the
+/// lookup in dry-run too — it's anonymous and touches no account — and fails
+/// open when the network is unavailable.
+pub async fn check(password: &str) -> PasswordCheck {
     let score = strength_score(password);
-    let looked_up = if skip_network {
-        None
-    } else {
-        pwned_count(password).await
-    };
+    let looked_up = pwned_count(password).await;
     let count = looked_up.unwrap_or(0);
     PasswordCheck {
         breached: count > 0,
@@ -162,12 +159,12 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_breach_check_flags_password_and_passes_generated() {
-        let bad = check("password", false).await;
+        let bad = check("password").await;
         assert!(bad.online, "HIBP should be reachable");
         assert!(bad.breached);
         assert!(bad.count > 1_000_000);
 
-        let good = check(&generate(), false).await;
+        let good = check(&generate()).await;
         assert!(good.online);
         assert!(!good.breached);
         assert!(good.score >= 3);
