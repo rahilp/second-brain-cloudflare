@@ -117,18 +117,28 @@ function connectExistingScreen(errorMsg?: string, prefillAddress?: string) {
 
 // ── Screen 2: Password ────────────────────────────────────────────────────────
 
-function strengthOf(pw: string): { pct: number; label: string; color: string } {
+interface PasswordCheck {
+  breached: boolean;
+  count: number;
+  score: number; // zxcvbn 0 (guessable) ..= 4 (strong)
+  online: boolean;
+}
+
+/** Meter position + label for a checked password. Breached always wins. */
+function meterFor(pw: string, check: PasswordCheck | null): {
+  pct: number;
+  label: string;
+  color: string;
+} {
   if (pw.length === 0) return { pct: 0, label: "", color: "var(--danger)" };
-  if (pw.length < 12) return { pct: 20, label: "Too short", color: "var(--danger)" };
-  let variety = 0;
-  if (/[a-z]/.test(pw)) variety++;
-  if (/[A-Z]/.test(pw)) variety++;
-  if (/[0-9]/.test(pw)) variety++;
-  if (/[^a-zA-Z0-9]/.test(pw)) variety++;
-  const score = pw.length + variety * 4;
-  if (score >= 32) return { pct: 100, label: "Strong", color: "var(--ok)" };
-  if (score >= 24) return { pct: 70, label: "Good", color: "var(--ok)" };
-  return { pct: 45, label: "Okay", color: "var(--accent)" };
+  if (pw.trim().length < 12)
+    return { pct: 20, label: "Too short", color: "var(--danger)" };
+  if (check === null) return { pct: 45, label: "Checking…", color: "var(--accent)" };
+  if (check.breached)
+    return { pct: 30, label: "Found in breaches", color: "var(--danger)" };
+  if (check.score >= 4) return { pct: 100, label: "Strong", color: "var(--ok)" };
+  if (check.score === 3) return { pct: 70, label: "Good", color: "var(--ok)" };
+  return { pct: 45, label: "Easy to guess", color: "var(--accent)" };
 }
 
 function passwordScreen() {
@@ -137,23 +147,77 @@ function passwordScreen() {
   const fill = h("div", { class: "strength-fill" });
   const label = h("span", { class: "strength-label" });
   const hint = h("p", { class: "hint" }, [""]);
+  const generate = h("button", { class: "btn-secondary" }, ["Generate a strong password for me"]);
   const next = h("button", { class: "btn-primary", disabled: "" }, ["Continue"]);
 
-  const update = () => {
-    const s = strengthOf(pw.value);
+  // Latest completed check for the current password value (null = pending).
+  let check: PasswordCheck | null = null;
+  let debounce: number | undefined;
+
+  const render = () => {
+    const s = meterFor(pw.value, check);
     fill.style.width = `${s.pct}%`;
     fill.style.background = s.color;
     label.textContent = s.label;
     const longEnough = pw.value.trim().length >= 12;
     const match = pw.value === confirm.value;
-    hint.textContent =
-      pw.value && confirm.value && !match ? "Those don't match yet." : "";
-    hint.className = "hint error";
-    if (longEnough && match) next.removeAttribute("disabled");
-    else next.setAttribute("disabled", "");
+    const breached = check?.breached ?? false;
+    if (breached) {
+      hint.textContent =
+        "This password has appeared in data breaches, so it isn't safe " +
+        "to use here. Try another, or let us generate one.";
+      hint.className = "hint error";
+    } else if (pw.value && confirm.value && !match) {
+      hint.textContent = "Those don't match yet.";
+      hint.className = "hint error";
+    } else {
+      hint.textContent = "";
+      hint.className = "hint";
+    }
+    // Blocked: too short, mismatch, known-breached, or check still pending.
+    // Merely-weak is allowed — the meter warns but doesn't stop you.
+    if (longEnough && match && check !== null && !breached) {
+      next.removeAttribute("disabled");
+    } else {
+      next.setAttribute("disabled", "");
+    }
   };
-  pw.addEventListener("input", update);
-  confirm.addEventListener("input", update);
+
+  const runCheck = () => {
+    const value = pw.value.trim();
+    if (value.length < 12) return; // nothing to check yet
+    invoke<PasswordCheck>("check_password", { password: pw.value })
+      .then((result) => {
+        if (pw.value.trim() !== value) return; // stale — user kept typing
+        check = result;
+        render();
+      })
+      .catch(() => {
+        // Treat a failed check like an offline one: don't block setup.
+        check = { breached: false, count: 0, score: 3, online: false };
+        render();
+      });
+  };
+
+  pw.addEventListener("input", () => {
+    check = null;
+    render();
+    window.clearTimeout(debounce);
+    debounce = window.setTimeout(runCheck, 450);
+  });
+  confirm.addEventListener("input", render);
+
+  generate.addEventListener("click", async () => {
+    const generated = await invoke<string>("generate_password");
+    pw.value = generated;
+    confirm.value = generated;
+    // Show what they got — they need to save it somewhere.
+    pw.setAttribute("type", "text");
+    confirm.setAttribute("type", "text");
+    check = null;
+    render();
+    runCheck();
+  });
 
   next.addEventListener("click", async () => {
     try {
@@ -161,6 +225,7 @@ function passwordScreen() {
       connectScreen();
     } catch (e) {
       hint.textContent = String(e);
+      hint.className = "hint error";
     }
   });
 
@@ -177,12 +242,18 @@ function passwordScreen() {
       confirm,
       hint,
     ]),
+    generate,
     h("div", { class: "notice" }, [
       "🔑",
       h("span", {}, [
         "Save this somewhere safe — a password manager is perfect. " +
           "You'll need it to connect new tools later, and it can't be recovered for you.",
       ]),
+    ]),
+    h("p", { class: "footnote" }, [
+      "We check new passwords against known data breaches without ever " +
+        "sending your password anywhere — only a fragment of a fingerprint " +
+        "leaves this computer.",
     ]),
     next,
   );

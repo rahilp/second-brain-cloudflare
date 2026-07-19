@@ -9,6 +9,7 @@ mod app_update;
 mod cf;
 mod commands;
 mod mcp_config;
+mod password_check;
 mod secure_store;
 mod version;
 mod windows;
@@ -75,6 +76,8 @@ pub fn run() {
         .manage(SetupSession::new(dry_run))
         .invoke_handler(tauri::generate_handler![
             commands::get_app_state,
+            commands::check_password,
+            commands::generate_password,
             commands::submit_password,
             commands::connect_cloudflare,
             commands::connect_existing,

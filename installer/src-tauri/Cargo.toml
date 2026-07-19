@@ -27,9 +27,11 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
 tokio = { version = "1", features = ["macros", "time"] }
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+sha1 = "0.10"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
+zxcvbn = "3"
 tiny_http = "0.12"
 include_dir = "0.7"
 url = "2"
