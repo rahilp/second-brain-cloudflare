@@ -108,6 +108,36 @@ describe("POST /capture", () => {
     expect(tags).toEqual(["work"]);
   });
 
+  it("embeds an entry whose tag contains '.' or '\"' — metadata keys are sanitized (regression #210)", async () => {
+    // Cloudflare Vectorize rejects metadata property names containing '.' or '"'.
+    // Model that: the write throws if any tag_ key is left unsanitized, which is
+    // how a tag like "v3.9 notes" silently prevented the entry from embedding.
+    const upsertMock = vi.fn(async (vectors: any[]): Promise<any> => {
+      for (const v of vectors)
+        for (const key of Object.keys(v.metadata ?? {}))
+          if (/[."]/.test(key)) throw new Error(`invalid Vectorize metadata key: ${key}`);
+      return { mutationId: "m" };
+    });
+    const { ctx, drain } = makeCtx();
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ upsert: upsertMock }) });
+
+    const res = await worker.fetch(
+      req("POST", "/capture", { body: { content: "Django compat notes", tags: ['v3.9 notes', 'a"b'] } }),
+      env, ctx
+    );
+    await drain();
+
+    expect(res.status).toBe(200);
+    // The write succeeded rather than being swallowed: a vector was upserted...
+    expect(upsertMock).toHaveBeenCalledOnce();
+    const vector = upsertMock.mock.calls[0][0][0];
+    // ...with every metadata key free of '.' and '"'...
+    expect(Object.keys(vector.metadata).some(k => /[."]/.test(k))).toBe(false);
+    expect(vector.metadata["tag_v3_9 notes"]).toBe(true);
+    // ...while the canonical tags array keeps the originals verbatim.
+    expect(vector.metadata.tags).toEqual(['v3.9 notes', 'a"b']);
+  });
+
   it("falls back to original content when input is only hashtags", async () => {
     const { ctx, drain } = makeCtx();
     const res = await worker.fetch(req("POST", "/capture", { body: { content: "#task" } }), env, ctx);
