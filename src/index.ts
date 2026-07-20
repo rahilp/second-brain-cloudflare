@@ -29,7 +29,7 @@ const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 // Worker version, echoed by GET /health. The desktop app compares this against
 // the version it bundles to offer a one-click "update your Second Brain".
 // Bump (semver) when the Worker changes; see installer/README "Worker versioning".
-export const SB_VERSION = "2.0.0";
+export const SB_VERSION = "2.0.1";
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -1210,7 +1210,10 @@ async function storeEntry(
     })
   );
 
-  await env.VECTORIZE.insert(vectors);
+  // upsert (not insert): on update the re-embed of a single-chunk entry reuses
+  // the entry id, and Vectorize insert() silently skips ids that already exist —
+  // so insert would leave the stale embedding in place. upsert overwrites it.
+  await env.VECTORIZE.upsert(vectors);
 
   const vectorIds = vectors.map(v => v.id);
 
