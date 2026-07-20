@@ -29,7 +29,7 @@ const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 // Worker version, echoed by GET /health. The desktop app compares this against
 // the version it bundles to offer a one-click "update your Second Brain".
 // Bump (semver) when the Worker changes; see installer/README "Worker versioning".
-export const SB_VERSION = "2.0.1";
+export const SB_VERSION = "2.0.2";
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -1199,7 +1199,7 @@ async function storeEntry(
       };
 
       tags.forEach(t => {
-        metadata[`tag_${t}`] = true;
+        metadata[`tag_${t.replace(/[."]/g, "_")}`] = true;
       });
 
       return {
@@ -1310,7 +1310,7 @@ async function appendToEntry(
   };
 
   tags.forEach(t => {
-    metadata[`tag_${t}`] = true;
+    metadata[`tag_${t.replace(/[."]/g, "_")}`] = true;
   });
 
   await env.VECTORIZE.insert([{
