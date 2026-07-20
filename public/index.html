@@ -6,14 +6,15 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Second Brain" />
-    <meta name="theme-color" content="#F4F1EA" />
+    <meta name="theme-color" content="#ffffff" />
     <title>Second Brain</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Geist:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css" />
+    <link rel="icon" type="image/svg+xml" href="/sb-mark-square.svg" />
     <link rel="manifest" href="/manifest.json" />
     <style>
       /* ============================================================
@@ -33,41 +34,41 @@
 
       :root {
         /* surfaces */
-        --bg: #f4f1ea;
+        --bg: #ffffff;
         --bg-card: #fcfbf7;
         --bg-tag: #ece8dd;
         --bg-secondary: #fcfbf7;
-        --bg-confirm: rgba(178, 102, 65, 0.1);
-        --bg-tag-confirmed: #b26641;
-        --surface-2: #ece8dd;
-        --surface-3: #e2ddd0;
+        --bg-confirm: rgba(253, 84, 10, 0.1);
+        --bg-tag-confirmed: #fd540a;
+        --surface-2: #f2efec;
+        --surface-3: #e8e3df;
 
         /* ink */
-        --text-primary: #26241f;
-        --text-secondary: #6e6b62;
-        --text-tertiary: #a8a498;
-        --text-tag: #6e6b62;
-        --text-tag-confirmed: #fcfbf7;
+        --text-primary: #161616;
+        --text-secondary: #68635f;
+        --text-tertiary: #96908b;
+        --text-tag: #68635f;
+        --text-tag-confirmed: #161616;
 
         /* lines */
-        --border: rgba(38, 36, 31, 0.09);
-        --border-card: rgba(38, 36, 31, 0.075);
-        --border-input: rgba(38, 36, 31, 0.11);
-        --line-soft: rgba(38, 36, 31, 0.06);
+        --border: rgba(22, 22, 22, 0.09);
+        --border-card: rgba(22, 22, 22, 0.075);
+        --border-input: rgba(22, 22, 22, 0.11);
+        --line-soft: rgba(22, 22, 22, 0.06);
 
-        /* accent — terracotta */
-        --accent: #b26641;
-        --accent-press: #9c522f;
-        --accent-soft: rgba(178, 102, 65, 0.11);
-        --accent-ink: #8a4e2f;
-        --good: #5b8a6b;
-        --danger: #b0503c;
-        --danger-soft: rgba(176, 80, 60, 0.1);
-        --on-accent: #fcfbf7;
+        /* accent — brand orange */
+        --accent: #fd540a;
+        --accent-press: #a83200;
+        --accent-soft: rgba(253, 84, 10, 0.09);
+        --accent-ink: #c43d00;
+        --good: #18794e;
+        --danger: #b42318;
+        --danger-soft: rgba(180, 35, 24, 0.08);
+        --on-accent: #161616;
 
         /* type */
         --font-serif: 'Lora', Georgia, serif;
-        --font-sans: 'DM Sans', system-ui, sans-serif;
+        --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
 
         /* radii */
         --radius-card: 14px;
@@ -76,9 +77,12 @@
         --radius-bubble: 18px;
 
         /* elevation */
-        --shadow-card: 0 1px 2px rgba(38, 36, 31, 0.04), 0 4px 14px rgba(38, 36, 31, 0.05);
-        --shadow-float: 0 2px 6px rgba(38, 36, 31, 0.06), 0 14px 34px rgba(38, 36, 31, 0.11);
-        --shadow-sheet: 0 -10px 44px rgba(38, 36, 31, 0.16);
+        --shadow-card: 0 1px 2px rgba(22, 22, 22, 0.05), 0 4px 14px rgba(22, 22, 22, 0.06);
+        --shadow-float: 0 2px 6px rgba(22, 22, 22, 0.07), 0 14px 34px rgba(22, 22, 22, 0.12);
+        --shadow-sheet: 0 -10px 44px rgba(22, 22, 22, 0.16);
+
+        /* brand mark (S-ribbon), used to replace the brain glyph in identity spots */
+        --sb-mark: url('data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAtNTMuMzUgMjcwLjI3IDI3MC4yNyI+PGRlZnM+PHN0eWxlPi5jbHMtMXtmaWxsOiNmZDU0MGE7fS5jbHMtMntmaWxsOiNmZDZmMTI7fTwvc3R5bGU+PC9kZWZzPjxnPjxwYXRoIGNsYXNzPSJjbHMtMSIgZD0iTS4wNCwxMDUuODNjLS4wMi40MS0uMDQuODQtLjA0LDEuMjZsLjAyLTEuMjZoLjAyWiIvPjxwYXRoIGNsYXNzPSJjbHMtMSIgZD0iTTI2OC43NCwxNjMuNThsLTIxNS44Ny0zLjI0Yy0yOS4xNi0uNDMtNTIuNTYtMjQuMTYtNTIuODctNTMuMjJ2LS4wMmw5NS4wMywxLjQyLDE0Mi45NSw1LjY5YzUuODcsMi43MiwxMS4xMyw2LjUxLDE1LjU4LDExLjE1LDkuNiw5Ljg1LDE1LjQsMjMuMzcsMTUuMTcsMzguMjFaIi8+PHBhdGggY2xhc3M9ImNscy0xIiBkPSJNMjcwLjI2LDU3LjVsLTExOS4yNS0xLjc5LTExNC41MS00LjUxQzE1Ljg1LDQzLjQ1LDEuMjYsMjMuMzksMS42MSwwbDIxNS44MSwzLjI0YzE0Ljg0LjIzLDI4LjE3LDYuNDEsMzcuNzIsMTYuMyw5LjUsOS43OSwxNS4yOSwyMy4yNSwxNS4xMywzNy45NloiLz48cGF0aCBjbGFzcz0iY2xzLTIiIGQ9Ik0yNzAuMjYsNTcuNXYuMjVjLS4yOSwxNC43LTYuNDcsMjcuOTctMTYuMjQsMzcuNDctNS40LDUuMjMtMTEuOTMsOS4zNi0xOS4xMSwxMS45M2gtLjA2bC04Ny44Ljg5aC0uMzFsLTUxLjU5LjQ5aC0uMTJMMCwxMDcuMTF2LS4wMmMwLS40MS4wMi0uODQuMDQtMS4yNi44Ny0yMi40NCwxNS41Mi00MS4zNiwzNS42NC00OC40OGwxMjUuMjEtMS4yNi05Ljg3LS4zOSwxMTkuMjUsMS43OVoiLz48L2c+PC9zdmc+Cg==');
 
         /* motion */
         --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -86,34 +90,34 @@
       }
 
       html[data-theme='dark'] {
-        --bg: #18160f;
+        --bg: #161616;
         --bg-card: #221f17;
         --bg-tag: #2c2820;
         --bg-secondary: #221f17;
-        --bg-confirm: rgba(211, 138, 94, 0.15);
-        --bg-tag-confirmed: #d38a5e;
+        --bg-confirm: rgba(253, 111, 18, 0.15);
+        --bg-tag-confirmed: #fd6f12;
         --surface-2: #2c2820;
         --surface-3: #38332a;
 
-        --text-primary: #ece7dc;
-        --text-secondary: #a39c8c;
-        --text-tertiary: #6e685b;
-        --text-tag: #a39c8c;
-        --text-tag-confirmed: #1a1611;
+        --text-primary: #f2efec;
+        --text-secondary: #c9c5c1;
+        --text-tertiary: #8a857f;
+        --text-tag: #c9c5c1;
+        --text-tag-confirmed: #161616;
 
         --border: rgba(255, 255, 255, 0.085);
         --border-card: rgba(255, 255, 255, 0.075);
         --border-input: rgba(255, 255, 255, 0.11);
         --line-soft: rgba(255, 255, 255, 0.055);
 
-        --accent: #d38a5e;
-        --accent-press: #e29a6e;
-        --accent-soft: rgba(211, 138, 94, 0.16);
-        --accent-ink: #e0a079;
+        --accent: #fd6f12;
+        --accent-press: #ff8a3d;
+        --accent-soft: rgba(253, 111, 18, 0.16);
+        --accent-ink: #ffab6e;
         --good: #7bae8a;
         --danger: #d9806b;
         --danger-soft: rgba(217, 128, 107, 0.14);
-        --on-accent: #1a1611;
+        --on-accent: #161616;
 
         --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 6px 18px rgba(0, 0, 0, 0.28);
         --shadow-float: 0 2px 8px rgba(0, 0, 0, 0.4), 0 16px 36px rgba(0, 0, 0, 0.5);
@@ -331,6 +335,21 @@
 
       .brain-avatar i {
         font-size: 20px;
+      }
+
+      /* identity spots render the brand mark instead of the icon-font glyph */
+      .brain-avatar i.ti-brain,
+      #auth-overlay .brain-logo i.ti-brain {
+        font-size: 0;
+        width: 62%;
+        height: 62%;
+        background-color: var(--accent);
+        mask: var(--sb-mark) center / contain no-repeat;
+        -webkit-mask: var(--sb-mark) center / contain no-repeat;
+      }
+      .brain-avatar i.ti-brain::before,
+      #auth-overlay .brain-logo i.ti-brain::before {
+        content: none;
       }
 
       .topbar-info {
@@ -1233,7 +1252,7 @@
       }
 
       select.filter-field option {
-        color: #26241f;
+        color: #161616;
         background: #fcfbf7;
       }
 
@@ -1992,7 +2011,7 @@
       }
 
       .digest-btn:hover {
-        background: rgba(178, 102, 65, 0.18);
+        background: rgba(253, 84, 10, 0.14);
       }
 
       .digest-btn:disabled {
@@ -2490,7 +2509,7 @@
           <div class="screen" id="screen-graph">
             <div class="graph-toolbar">
               <div class="graph-legend">
-                <span><i class="gl-dot" style="background: #b26641"></i>Knowledge</span>
+                <span><i class="gl-dot" style="background: #fd540a"></i>Knowledge</span>
                 <span><i class="gl-dot" style="background: #4a7c8c"></i>Events</span>
                 <span><i class="gl-dot" style="background: #9a958a"></i>Unsorted</span>
               </div>
@@ -2679,7 +2698,7 @@
         color: var(--danger);
       }
       .related-item:hover {
-        background: rgba(178, 102, 65, 0.16);
+        background: rgba(253, 84, 10, 0.12);
       }
       .related-type {
         font-weight: 600;
@@ -4055,7 +4074,7 @@
         assignGraphClusters(nodes)
 
         // Order clusters (largest first, sentinels last), assign palette colors + dense index.
-        const CLUSTER_PALETTE = ['#b26641', '#4a7c8c', '#7a9a5b', '#a9739e', '#c99a3f', '#5b8a8f', '#8c6f5b', '#6a7bb0', '#b0685f', '#5f8c6a', '#9a7bb0', '#7d8c4f']
+        const CLUSTER_PALETTE = ['#fd540a', '#4a7c8c', '#7a9a5b', '#a9739e', '#c99a3f', '#5b8a8f', '#8c6f5b', '#6a7bb0', '#b0685f', '#5f8c6a', '#9a7bb0', '#7d8c4f']
         const SENTINEL_COLOR = { __other__: '#9a958a', __untagged__: '#b8b3a8', __autopattern__: '#9aa7ad' }
         const SENTINEL_CLUSTER = new Set(['__other__', '__untagged__', '__autopattern__'])
         const clusterLabelOf = (id) =>
@@ -4331,7 +4350,7 @@
         }
         // A rounded label pill centered horizontally at cx, with its top at topY (world coords).
         function labelPill(text, cx, topY, emphasize, alpha) {
-          ctx.font = (emphasize ? '600 ' : '') + '11px "DM Sans", system-ui, sans-serif'
+          ctx.font = (emphasize ? '600 ' : '') + '11px "Geist", system-ui, sans-serif'
           const tw = ctx.measureText(text).width
           const padX = 5,
             h = 16,
@@ -4347,7 +4366,7 @@
           ctx.arcTo(x, topY + h, x, topY, rr)
           ctx.arcTo(x, topY, x + w, topY, rr)
           ctx.fill()
-          ctx.fillStyle = emphasize ? '#26241f' : '#6e6b62'
+          ctx.fillStyle = emphasize ? '#161616' : '#68635f'
           ctx.textAlign = 'center'
           ctx.textBaseline = 'middle'
           ctx.fillText(text, cx, topY + h / 2)
@@ -4367,8 +4386,8 @@
           // so edges and the hover ring stay visible in both. Slightly more alpha in dark mode
           // since light lines read fainter on a dark background.
           const darkTheme = document.documentElement.getAttribute('data-theme') === 'dark'
-          const inkRGB = darkTheme ? '224,221,213' : '38,36,31'
-          const inkHex = darkTheme ? '#e0ddd5' : '#26241f'
+          const inkRGB = darkTheme ? '242,239,236' : '22,22,22'
+          const inkHex = darkTheme ? '#f2efec' : '#161616'
           const edgeA = darkTheme ? 0.15 : 0.06
           const edgeDimA = darkTheme ? 0.07 : 0.03
           // Outer category rings: a barely-there fill plus a screen-constant stroke (a boundary,
@@ -4436,7 +4455,7 @@
             for (const c of clusterList) {
               const cx = c.cx
               const cy = c.cy - c.R - 16
-              ctx.font = '700 13px "DM Sans", system-ui, sans-serif'
+              ctx.font = '700 13px "Geist", system-ui, sans-serif'
               const tw = ctx.measureText(c.label).width
               const padX = 7
               const h = 20
@@ -4465,7 +4484,7 @@
             for (const s of subList) {
               const cx = s.cx
               const cy = s.cy - s.R - 9
-              ctx.font = '600 10px "DM Sans", system-ui, sans-serif'
+              ctx.font = '600 10px "Geist", system-ui, sans-serif'
               const tw = ctx.measureText(s.label).width
               const padX = 5
               const h = 15
@@ -4500,7 +4519,7 @@
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
           if (clusterLegend.length) {
             const rows = clusterLegend.slice(0, 10)
-            ctx.font = '600 11px "DM Sans", system-ui, sans-serif'
+            ctx.font = '600 11px "Geist", system-ui, sans-serif'
             let maxW = 0
             for (const r of rows) maxW = Math.max(maxW, ctx.measureText(r.label).width + ctx.measureText(String(r.count)).width)
             const padX = 8
@@ -4523,10 +4542,10 @@
               ctx.arc(10 + padX + sw / 2, y, sw / 2, 0, Math.PI * 2)
               ctx.fill()
               ctx.textAlign = 'left'
-              ctx.fillStyle = '#26241f'
+              ctx.fillStyle = '#161616'
               ctx.fillText(r.label, 10 + padX + sw + 6, y)
               ctx.textAlign = 'right'
-              ctx.fillStyle = '#6e6b62'
+              ctx.fillStyle = '#68635f'
               ctx.fillText(String(r.count), 10 + boxW - padX, y)
             })
           }
@@ -4669,7 +4688,7 @@
         const dark = mode === 'dark' || (mode === 'auto' && _prefersDark.matches)
         document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light')
         const tc = document.querySelector('meta[name="theme-color"]')
-        if (tc) tc.setAttribute('content', dark ? '#18160F' : '#F4F1EA')
+        if (tc) tc.setAttribute('content', dark ? '#161616' : '#ffffff')
         document.querySelectorAll('#theme-toggle [data-theme-val]').forEach((b) => b.classList.toggle('active', b.dataset.themeVal === mode))
         if (graphState && graphState.api) graphState.api.redraw() // repaint the graph in the new theme's ink
       }

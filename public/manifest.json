@@ -3,8 +3,8 @@
     "short_name": "Second Brain",
     "start_url": "/",
     "display": "standalone",
-    "background_color": "#F5F4EF",
-    "theme_color": "#F5F4EF",
+    "background_color": "#ffffff",
+    "theme_color": "#ffffff",
     "icons": [
         {
             "src": "/icon.png",
