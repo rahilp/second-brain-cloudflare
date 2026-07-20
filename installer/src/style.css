@@ -9,18 +9,18 @@
 }
 
 :root {
-  --bg: #f4f1ea;
+  --bg: #ffffff;
   --bg-card: #fcfbf7;
-  --accent: #b26641;
-  --accent-press: #9c522f;
-  --accent-soft: rgba(178, 102, 65, 0.1);
-  --on-accent: #fcfbf7;
-  --text-primary: #26241f;
-  --text-secondary: #6e6b62;
-  --text-tertiary: #a8a498;
-  --border: rgba(38, 36, 31, 0.11);
-  --danger: #b3261e;
-  --ok: #3d7a44;
+  --accent: #fd540a;
+  --accent-press: #a83200;
+  --accent-soft: rgba(253, 84, 10, 0.09);
+  --on-accent: #161616;
+  --text-primary: #161616;
+  --text-secondary: #68635f;
+  --text-tertiary: #96908b;
+  --border: rgba(22, 22, 22, 0.11);
+  --danger: #b42318;
+  --ok: #18794e;
   --font-serif: Georgia, "Times New Roman", serif;
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -90,6 +90,7 @@ body {
 .brand img {
   width: 40px;
   height: 40px;
+  object-fit: contain;
 }
 
 h1 {
@@ -155,7 +156,7 @@ button:disabled {
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: rgba(178, 102, 65, 0.18);
+  background: rgba(253, 84, 10, 0.14);
 }
 
 .btn-ghost {
@@ -168,13 +169,13 @@ button:disabled {
 
 .btn-danger {
   padding: 9px 16px;
-  background: rgba(179, 38, 30, 0.08);
+  background: rgba(180, 35, 24, 0.08);
   color: var(--danger);
   font-size: 13.5px;
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: rgba(179, 38, 30, 0.16);
+  background: rgba(180, 35, 24, 0.16);
 }
 
 .logout-section {
@@ -301,7 +302,7 @@ input:focus {
 }
 
 .notice.error {
-  background: rgba(179, 38, 30, 0.08);
+  background: rgba(180, 35, 24, 0.08);
   color: var(--danger);
 }
 
