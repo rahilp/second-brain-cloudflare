@@ -365,21 +365,21 @@ describe("captureEntry()", () => {
       id: "existing", content: "I prefer dark mode", tags: "[]", source: "api",
       created_at: Date.now(), vector_ids: '["existing"]', recall_count: 0, importance_score: 0,
     });
-    const insertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    const upsertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing", score: 0.88, metadata: { parentId: "existing" } }],
         }),
-        insert: insertMock,
+        upsert: upsertMock,
       }),
       AI: makeContradictionAI('{"action":"merge","target_id":"existing","merged_content":"Combined merged memory"}'),
     });
     const { ctx } = makeCtx();
     await captureEntry("I like dark mode at night", [], "api", env, ctx);
-    // The inserted vector metadata should contain the merged content
-    const insertedVectors = insertMock.mock.calls[0][0] as any[];
-    expect(insertedVectors[0].metadata.content).toBe("Combined merged memory");
+    // The re-embedded vector metadata should contain the merged content
+    const upsertedVectors = upsertMock.mock.calls[0][0] as any[];
+    expect(upsertedVectors[0].metadata.content).toBe("Combined merged memory");
   });
 
   it("merge: deletes old vectors after re-embedding", async () => {
@@ -613,10 +613,10 @@ describe("captureEntry()", () => {
 
   // ── Non-fatal error handling ────────────────────────────────────────────────
 
-  it("stores to D1 and returns stored even when Vectorize insert throws", async () => {
+  it("stores to D1 and returns stored even when the Vectorize re-embed throws", async () => {
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        insert: vi.fn().mockRejectedValue(new Error("Vectorize unavailable")),
+        upsert: vi.fn().mockRejectedValue(new Error("Vectorize unavailable")),
       }),
     });
     const { ctx } = makeCtx();

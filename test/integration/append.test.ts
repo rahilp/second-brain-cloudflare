@@ -158,11 +158,11 @@ describe("POST /append", () => {
     expect(deleteByIdsMock).toHaveBeenCalledWith(["entry-1", "entry-1-update-111"]);
   });
 
-  it("oversized append: new vectors inserted before old ones are deleted (safe ordering)", async () => {
+  it("oversized append: new vectors written before old ones are deleted (safe ordering)", async () => {
     const callOrder: string[] = [];
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        insert: vi.fn().mockImplementation(async () => { callOrder.push("insert"); return { mutationId: "m" }; }),
+        upsert: vi.fn().mockImplementation(async () => { callOrder.push("upsert"); return { mutationId: "m" }; }),
         deleteByIds: vi.fn().mockImplementation(async () => { callOrder.push("delete"); return { mutationId: "m" }; }),
       }),
     });
@@ -181,13 +181,13 @@ describe("POST /append", () => {
       ctx
     );
 
-    expect(callOrder.indexOf("insert")).toBeLessThan(callOrder.indexOf("delete"));
+    expect(callOrder.indexOf("upsert")).toBeLessThan(callOrder.indexOf("delete"));
   });
 
   it("oversized append: Vectorize re-embed failure is non-fatal — D1 still updated", async () => {
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        insert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
+        upsert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
       }),
     });
     db.entries.push({

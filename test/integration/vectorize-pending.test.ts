@@ -98,7 +98,7 @@ describe("POST /vectorize-pending", () => {
     let callCount = 0;
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        insert: vi.fn().mockImplementation(() => {
+        upsert: vi.fn().mockImplementation(() => {
           callCount++;
           if (callCount === 1) throw new Error("Vectorize error");
           return Promise.resolve({ mutationId: "m" });

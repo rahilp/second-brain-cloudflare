@@ -122,7 +122,7 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
         }),
-        insert: insertMock,
+        upsert: insertMock,
         deleteByIds: deleteByIdsMock,
       }),
       AI: makeMergeAI('{"action":"replace","target_id":"existing-id"}'),
@@ -146,14 +146,14 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
         }),
-        insert: vi.fn().mockImplementation(async () => { callOrder.push("insert"); return { mutationId: "m" }; }),
+        upsert: vi.fn().mockImplementation(async () => { callOrder.push("upsert"); return { mutationId: "m" }; }),
         deleteByIds: vi.fn().mockImplementation(async () => { callOrder.push("delete"); return { mutationId: "m" }; }),
       }),
       AI: makeMergeAI('{"action":"replace","target_id":"existing-id"}'),
     });
 
     await worker.fetch(req("POST", "/capture", { body: { content: "Cursor IDE" } }), env, ctx);
-    expect(callOrder.indexOf("insert")).toBeLessThan(callOrder.indexOf("delete"));
+    expect(callOrder.indexOf("upsert")).toBeLessThan(callOrder.indexOf("delete"));
   });
 
   // ── Merge ───────────────────────────────────────────────────────────────────
@@ -192,7 +192,7 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
         }),
-        insert: insertMock,
+        upsert: insertMock,
       }),
       AI: makeMergeAI('{"action":"merge","target_id":"existing-id","merged_content":"THE MERGED RESULT"}'),
     });
@@ -298,7 +298,7 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
         }),
-        insert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
+        upsert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
       }),
       AI: makeMergeAI('{"action":"replace","target_id":"existing-id"}'),
     });

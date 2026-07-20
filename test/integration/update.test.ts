@@ -7,6 +7,33 @@ import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
+// A stateful Vectorize mock that faithfully models Cloudflare's semantics:
+// insert() SKIPS ids that already exist, upsert() OVERWRITES them. The default
+// mock's insert/upsert are indistinguishable no-op spies, which is exactly why
+// the stale-vector bug (#208) went unnoticed — this reproduces it behaviorally.
+function makeStatefulVectorize(seed: any[] = []) {
+  const store = new Map<string, any>();
+  for (const v of seed) store.set(v.id, v);
+  const mock = makeVectorizeMock({
+    insert: vi.fn(async (vectors: any[]): Promise<any> => {
+      for (const v of vectors) if (!store.has(v.id)) store.set(v.id, v);
+      return { mutationId: "m" };
+    }),
+    upsert: vi.fn(async (vectors: any[]): Promise<any> => {
+      for (const v of vectors) store.set(v.id, v);
+      return { mutationId: "m" };
+    }),
+    deleteByIds: vi.fn(async (ids: string[]): Promise<any> => {
+      for (const id of ids) store.delete(id);
+      return { mutationId: "m" };
+    }),
+    getByIds: vi.fn(async (ids: string[]): Promise<any> =>
+      ids.map(id => store.get(id)).filter(Boolean)),
+    query: vi.fn(async (): Promise<any> => ({ matches: [] })),
+  });
+  return { store, mock };
+}
+
 function seedEntry(db: D1Mock, overrides: Partial<ReturnType<typeof makeEntry>> = {}) {
   const entry = makeEntry(overrides);
   db.entries.push(entry);
@@ -142,19 +169,49 @@ describe("POST /update", () => {
     expect(tags.filter((t: string) => t === "work")).toHaveLength(1);
   });
 
-  it("calls Vectorize insert (re-embed) with new content", async () => {
+  it("re-embeds on update via upsert (overwrites the reused vector id)", async () => {
+    // The re-embed must use upsert, not insert: a single-chunk entry's vector
+    // id equals the entry id, and Vectorize insert() skips ids that already
+    // exist, so insert would leave the old embedding in place.
+    const upsertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     const insertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
-      VECTORIZE: makeVectorizeMock({ insert: insertMock }),
+      VECTORIZE: makeVectorizeMock({ upsert: upsertMock, insert: insertMock }),
     });
     seedEntry(db);
     await worker.fetch(
       req("POST", "/update", { body: { id: "entry-abc", content: "Brand new content" } }),
       env, ctx
     );
-    expect(insertMock).toHaveBeenCalledOnce();
-    const insertedVectors = insertMock.mock.calls[0][0] as any[];
-    expect(insertedVectors[0].id).toBe("entry-abc");
+    expect(upsertMock).toHaveBeenCalledOnce();
+    const upsertedVectors = upsertMock.mock.calls[0][0] as any[];
+    expect(upsertedVectors[0].id).toBe("entry-abc");
+    expect(upsertedVectors[0].metadata.content).toBe("Brand new content");
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the stored single-chunk vector on update (regression #208)", async () => {
+    // Reproduces the reported bug end-to-end against a store with real
+    // insert/upsert semantics. The entry already has a vector keyed by its id
+    // (as `remember` would have created); updating must overwrite it. With the
+    // old insert() call the write is skipped and the stale content survives.
+    const { store, mock } = makeStatefulVectorize([
+      {
+        id: "entry-abc",
+        values: new Array(384).fill(0.1),
+        metadata: { content: "Original content", parentId: "entry-abc", chunkIndex: 0, totalChunks: 1 },
+      },
+    ]);
+    env = makeTestEnv(db, { VECTORIZE: mock });
+    seedEntry(db, { content: "Original content", vector_ids: '["entry-abc"]' });
+
+    await worker.fetch(
+      req("POST", "/update", { body: { id: "entry-abc", content: "Brand new content" } }),
+      env, ctx
+    );
+
+    // The vector the entry is keyed by must now hold the new content.
+    expect(store.get("entry-abc")?.metadata.content).toBe("Brand new content");
   });
 
   // ── Vector orphan prevention ────────────────────────────────────────────────
@@ -212,10 +269,10 @@ describe("POST /update", () => {
 
   // ── Non-fatal error handling ────────────────────────────────────────────────
 
-  it("returns ok:true even when Vectorize insert throws", async () => {
+  it("returns ok:true even when the Vectorize re-embed throws", async () => {
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        insert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
+        upsert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
       }),
     });
     seedEntry(db);
@@ -257,13 +314,13 @@ describe("POST /update", () => {
       callOrder.push(`delete:${ids.join(",")}`);
       return { mutationId: "m" };
     });
-    const insertMock = vi.fn().mockImplementation(async () => {
-      callOrder.push("insert");
+    const upsertMock = vi.fn().mockImplementation(async () => {
+      callOrder.push("upsert");
       return { mutationId: "m" };
     });
 
     env = makeTestEnv(db, {
-      VECTORIZE: makeVectorizeMock({ insert: insertMock, deleteByIds: deleteByIdsMock }),
+      VECTORIZE: makeVectorizeMock({ upsert: upsertMock, deleteByIds: deleteByIdsMock }),
     });
 
     await worker.fetch(
@@ -271,8 +328,8 @@ describe("POST /update", () => {
       env, ctx
     );
 
-    // insert must happen before delete — new vectors before old ones removed
-    const insertIdx = callOrder.indexOf("insert");
+    // re-embed must happen before delete — new vectors before old ones removed
+    const insertIdx = callOrder.indexOf("upsert");
     const deleteIdx = callOrder.findIndex(s => s.startsWith("delete:"));
     expect(insertIdx).toBeLessThan(deleteIdx);
     expect(callOrder[deleteIdx]).toContain("old-vec-1");
