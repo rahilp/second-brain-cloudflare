@@ -1,4 +1,6 @@
-# Second Brain
+<p align="center">
+  <a href="https://www.thesecondbrain.dev"><img src="https://www.thesecondbrain.dev/logos/sb-lockup.svg" alt="Second Brain" width="400"></a>
+</p>
 
 **One shared memory for Claude, ChatGPT, Cursor, Codex, and every other AI tool you use.**
 
