@@ -29,7 +29,7 @@ const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 // Worker version, echoed by GET /health. The desktop app compares this against
 // the version it bundles to offer a one-click "update your Second Brain".
 // Bump (semver) when the Worker changes; see installer/README "Worker versioning".
-export const SB_VERSION = "2.0.3";
+export const SB_VERSION = "2.0.4";
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -1293,8 +1293,23 @@ async function storeEntry(
 // id, so the re-embedded vector reuses the old id. Deleting the full old set
 // would remove the vector we just inserted, leaving the entry unsearchable.
 async function deleteStaleVectors(env: Env, oldIds: string[], newIds: string[]): Promise<void> {
+  // Guard (#212): an empty newIds means the re-embed produced nothing — it failed.
+  // Deleting every old vector would leave the entry unsearchable, so keep them instead.
+  // storeEntry always yields >= 1 vector for non-empty content, so this never fires on success.
+  if (!newIds.length) return;
   const stale = oldIds.filter(v => !newIds.includes(v));
   if (stale.length) await env.VECTORIZE.deleteByIds(stale);
+}
+
+// Re-embed BEFORE mutating the entry so a failed embed can never leave it
+// updated-but-unsearchable (#212). storeEntry writes the new vectors and updates
+// vector_ids; on throw or an empty result the caller must NOT touch D1 content or
+// delete old vectors — the entry stays intact and searchable. Callers surface the
+// failure to the user instead of reporting success.
+async function reembedOrThrow(env: Env, id: string, content: string, tags: string[], source: string): Promise<string[]> {
+  const ids = await storeEntry(env, id, content, tags, source, Date.now());
+  if (!ids.length) throw new Error("re-embed produced no vectors");
+  return ids;
 }
 
 // ─── Append to existing entry ─────────────────────────────────────────────────
@@ -1328,17 +1343,14 @@ async function appendToEntry(
     // Combined content is too large for a single vector — re-chunk everything.
     // Same safe ordering as update/merge/replace: insert new → delete old.
 
-    // Step 1: Persist full combined content to D1
+    // Step 1: Re-embed FIRST (#212). If it fails this throws, and the /append handler
+    // surfaces a 500 with the entry's content and vectors left intact — instead of
+    // committing new content and then deleting every vector (silently unsearchable).
+    const newVectorIds = await reembedOrThrow(env, id, newContent, tags, source);
+
+    // Step 2: Embed succeeded → persist the full combined content to D1.
     await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`)
       .bind(newContent, id).run();
-
-    // Step 2: Re-chunk + re-embed full content (also updates vector_ids in D1)
-    let newVectorIds: string[] = [];
-    try {
-      newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
-    } catch (e) {
-      console.error("Vectorize re-embed failed (non-fatal):", e);
-    }
 
     // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
     try {
@@ -2155,26 +2167,32 @@ export async function captureEntry(
         return { status: "flagged", id: crypto.randomUUID(), matchId: targetId, score: dup.score };
       }
 
-      // Step 1: Update D1 content
-      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, targetId).run();
-
-      // Step 2: Re-embed new content — inserts new vectors, updates vector_ids in D1
-      let newVectorIds: string[] = [];
+      // Re-embed FIRST (#212): if it fails, leave the merge target completely
+      // untouched and fall through to a normal insert (keep_both, recoverable) —
+      // instead of overwriting its content and then deleting its vectors, which
+      // would silently destroy the target's searchability.
+      let newVectorIds: string[] | null = null;
       try {
-        newVectorIds = await storeEntry(env, targetId, newContent, existingTags, existingSource, Date.now());
-      } catch (e) { console.error("Vectorize re-embed failed (non-fatal):", e); }
+        newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource);
+      } catch (e) {
+        console.error("Merge re-embed failed — keeping both, target untouched:", e);
+      }
 
-      // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
-      try {
-        await deleteStaleVectors(env, oldVectorIds, newVectorIds);
-      } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
+      if (newVectorIds) {
+        // Embed succeeded → commit the merge onto the target.
+        await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, targetId).run();
+        try {
+          await deleteStaleVectors(env, oldVectorIds, newVectorIds);
+        } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
 
-      // Re-classify the merged/replaced content — updates importance_score + kind (and canonical if warranted) on the target.
-      scheduleClassifyAndTag(targetId, newContent, env, ctx);
+        // Re-classify the merged/replaced content — updates importance_score + kind (and canonical if warranted) on the target.
+        scheduleClassifyAndTag(targetId, newContent, env, ctx);
 
-      return mergeAction.action === "merge"
-        ? { status: "merged", id: targetId }
-        : { status: "replaced", id: targetId };
+        return mergeAction.action === "merge"
+          ? { status: "merged", id: targetId }
+          : { status: "replaced", id: targetId };
+      }
+      // Re-embed failed → fall through to the normal insert below (keep_both).
     }
     // target not found in DB — fall through to normal insert
   }
@@ -2992,16 +3010,20 @@ const defaultHandler = {
       const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
       const finalContent = cleanContent || newContent;
 
+      // Re-embed FIRST (#212): if it fails, leave the entry's content and vectors
+      // untouched and surface an error, instead of committing new content and then
+      // deleting every vector — which would leave the entry silently unsearchable.
+      let newVectorIds: string[];
+      try {
+        newVectorIds = await reembedOrThrow(env, id, finalContent, mergedTags, source);
+      } catch (e) {
+        console.error("Re-embed failed — entry left unchanged:", e);
+        return json({ ok: false, error: "Couldn't update: search re-index failed. Your memory is unchanged — please try again." }, 500);
+      }
+
+      // Embed succeeded → safe to commit the new content and retire stale vectors.
       await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
         .bind(finalContent, JSON.stringify(mergedTags), id).run();
-
-      let newVectorIds: string[] = [];
-      try {
-        newVectorIds = await storeEntry(env, id, finalContent, mergedTags, source, Date.now());
-      } catch (e) {
-        console.error("Vectorize re-embed failed (non-fatal):", e);
-      }
-      const newVectorCount = newVectorIds.length;
 
       try {
         await deleteStaleVectors(env, oldVectorIds, newVectorIds);
@@ -3009,7 +3031,7 @@ const defaultHandler = {
         console.error("Old vector cleanup failed (non-fatal):", e);
       }
 
-      return json({ ok: true, id, vectors: newVectorCount });
+      return json({ ok: true, id, vectors: newVectorIds.length });
     }
 
     // GET /count

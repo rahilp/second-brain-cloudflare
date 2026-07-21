@@ -184,10 +184,15 @@ describe("POST /append", () => {
     expect(callOrder.indexOf("upsert")).toBeLessThan(callOrder.indexOf("delete"));
   });
 
-  it("oversized append: Vectorize re-embed failure is non-fatal — D1 still updated", async () => {
+  it("oversized append: re-embed failure fails loud, D1 unchanged, old vectors kept (regression #212)", async () => {
+    // The oversized-append re-embed must run before D1 is mutated. On failure the
+    // handler returns an error and leaves content + vectors intact — never commits
+    // the new content and then deletes every vector.
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         upsert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
+        deleteByIds: deleteByIdsMock,
       }),
     });
     db.entries.push({
@@ -205,11 +210,11 @@ describe("POST /append", () => {
       ctx
     );
 
-    expect(res.status).toBe(200);
-    const data = await res.json() as any;
-    expect(data.ok).toBe(true);
-    // D1 content still updated even if Vectorize failed
-    expect(db.entries[0].content).toContain("More info");
+    expect(res.status).toBe(500);
+    // D1 content unchanged — the append did not commit.
+    expect(db.entries[0].content).toBe(LONG_CONTENT);
+    // Old vectors never deleted.
+    expect(deleteByIdsMock).not.toHaveBeenCalled();
   });
 
   it("oversized append: old vector deletion failure is non-fatal", async () => {

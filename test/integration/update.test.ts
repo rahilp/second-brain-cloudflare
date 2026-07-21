@@ -269,22 +269,29 @@ describe("POST /update", () => {
 
   // ── Non-fatal error handling ────────────────────────────────────────────────
 
-  it("returns ok:true even when the Vectorize re-embed throws", async () => {
+  it("fails loud and leaves the entry untouched when the re-embed throws (regression #212)", async () => {
+    // A failed re-embed must NOT commit new content and then delete every vector,
+    // which would leave the entry silently unsearchable. Embed-first: on failure the
+    // caller gets a 500 and D1 content + vectors are unchanged.
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         upsert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
+        deleteByIds: deleteByIdsMock,
       }),
     });
-    seedEntry(db);
+    seedEntry(db); // content: "Original content", vector_ids: ["entry-abc"]
     const res = await worker.fetch(
       req("POST", "/update", { body: { id: "entry-abc", content: "Updated content" } }),
       env, ctx
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
     const data = await res.json() as any;
-    expect(data.ok).toBe(true);
-    // D1 content should still be updated
-    expect(db.entries[0].content).toBe("Updated content");
+    expect(data.ok).toBe(false);
+    // D1 content stays as it was — the update did not commit.
+    expect(db.entries[0].content).toBe("Original content");
+    // The old vectors were never deleted.
+    expect(deleteByIdsMock).not.toHaveBeenCalled();
   });
 
   it("returns ok:true even when deleteByIds throws", async () => {

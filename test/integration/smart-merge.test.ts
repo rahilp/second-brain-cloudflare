@@ -291,14 +291,19 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
 
   // ── Non-fatal error handling ──────────────────────────────────────────────────
 
-  it("replace: returns ok:true even when Vectorize re-embed throws", async () => {
-    seedEntry(db);
+  it("replace: re-embed failure degrades to keep_both, target untouched (regression #212)", async () => {
+    // On a failed re-embed the merge target must not be overwritten and then have its
+    // vectors deleted. Instead we keep both: the target is untouched and the new content
+    // is stored as its own (recoverable) entry.
+    const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    seedEntry(db); // target "existing-id", content "I use VSCode"
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
         }),
         upsert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
+        deleteByIds: deleteByIdsMock,
       }),
       AI: makeMergeAI('{"action":"replace","target_id":"existing-id"}'),
     });
@@ -309,10 +314,12 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
     );
 
     expect(res.status).toBe(200);
-    const data = await res.json() as any;
-    expect(data.ok).toBe(true);
-    // D1 content still updated even if Vectorize failed
-    expect(db.entries[0].content).toBe("I switched to Cursor");
+    // Target is untouched — its content did not change.
+    expect(db.entries.find(e => e.id === "existing-id")?.content).toBe("I use VSCode");
+    // The new content was stored as its own entry (keep_both).
+    expect(db.entries.some(e => e.content === "I switched to Cursor")).toBe(true);
+    // The target's vectors were never deleted.
+    expect(deleteByIdsMock).not.toHaveBeenCalled();
   });
 
   it("merge: returns ok:true even when deleteByIds throws", async () => {
