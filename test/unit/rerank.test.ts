@@ -197,4 +197,31 @@ describe("rerankWithTimeDecay", () => {
     );
     expect(withDefault[0].score).toBeCloseTo(withEmpty[0].score, 6);
   });
+
+  // ── Recency floor: decay bottoms out instead of exp()-ing to zero ────────────
+
+  it("a clearly-stronger old match beats a weak fresh one (recency floor)", () => {
+    // Without the floor the year-old entry's recency multiplier ~ exp(-12) ≈ 0 and
+    // it could never outrank the fresh weak match. The floor keeps it in contention.
+    const result = rerankWithTimeDecay([
+      match("old-strong", 0.85, NOW - 365 * MS_DAY),
+      match("fresh-weak", 0.45, NOW - 2 * MS_DAY),
+    ], new Map());
+    expect(result[0].id).toBe("old-strong");
+  });
+
+  it("an old match retains at least the ordinary recency floor of its relevance", () => {
+    const [old] = rerankWithTimeDecay([match("old", 1.0, NOW - 5 * 365 * MS_DAY)], new Map());
+    // 5 years at the default half-life → recency multiplier bottoms out at the floor (0.6),
+    // so the score stays well above zero rather than being annihilated.
+    expect(old.score).toBeGreaterThan(0.5);
+  });
+
+  it("canonical old memory barely decays (durable floor) and beats an ordinary old one", () => {
+    const result = rerankWithTimeDecay([
+      match("ordinary", 0.8, NOW - 365 * MS_DAY),
+      match("canonical", 0.8, NOW - 365 * MS_DAY, ["status:canonical"]),
+    ], new Map());
+    expect(result[0].id).toBe("canonical");
+  });
 });
