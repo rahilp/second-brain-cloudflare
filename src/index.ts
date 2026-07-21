@@ -29,7 +29,7 @@ const LLM_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 // Worker version, echoed by GET /health. The desktop app compares this against
 // the version it bundles to offer a one-click "update your Second Brain".
 // Bump (semver) when the Worker changes; see installer/README "Worker versioning".
-export const SB_VERSION = "2.0.4";
+export const SB_VERSION = "2.0.5";
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -1855,11 +1855,12 @@ function fuseDenseAndKeyword(
 }
 
 export async function recallEntries(
-  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number },
+  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number; synthesize?: boolean },
   env: Env,
   ctx: ExecutionContext
 ): Promise<RecallSearchResult> {
   const { query, topK } = params;
+  const synthesize = params.synthesize ?? true;
   let { tag, after, before, kind } = params;
   const hops = Math.max(0, Math.min(GRAPH_MAX_HOPS, params.hops ?? 0));
   const now = Date.now();
@@ -2083,8 +2084,10 @@ export async function recallEntries(
   if (maxScore > 0) for (const m of matches) m.score = m.score / maxScore;
 
   // Synthesize over exactly what's shown (seeds + any surfaced neighbors) so the
-  // insight stays grounded in the returned results.
-  const insight = matches.length > 1
+  // insight stays grounded in the returned results. Skipped when the caller opts
+  // out (synthesize=false): MCP clients re-synthesize the returned memories with
+  // their own model, so a server-side insight there is a redundant LLM call.
+  const insight = synthesize && matches.length > 1
     ? await synthesizeInsight(embedQuery, matches.map(m => ({ id: m.id, content: m.content })), env)
     : "";
 
@@ -2437,7 +2440,7 @@ async function runScheduledIntegrationSync(env: Env): Promise<void> {
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
-function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
+export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
 
   // ── remember ────────────────────────────────────────────────────────────
@@ -2621,7 +2624,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ query, topK, tag, after, before, kind, hops }) => {
-      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops }, env, ctx);
+      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx);
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
