@@ -141,7 +141,7 @@ button:disabled {
   width: 100%;
   padding: 15px;
   background: var(--accent);
-  color: var(--on-accent);
+  color: #ffffff;
 }
 
 .btn-primary:hover:not(:disabled) {
