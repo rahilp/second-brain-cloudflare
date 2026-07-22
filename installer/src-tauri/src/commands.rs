@@ -8,7 +8,7 @@ use crate::cf::backend::{DryRunBackend, LiveBackend};
 use crate::cf::oauth::{self, Tokens};
 use crate::cf::provision::{self, ProvisionError, ProvisionOutcome};
 use crate::cf::types::{Account, CfApiError};
-use crate::{mcp_config, password_check, secure_store, windows, worker_bundle};
+use crate::{cli_config, mcp_config, password_check, secure_store, windows, worker_bundle};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -358,6 +358,61 @@ pub fn connect_tool(tool: String, session: State<'_, SetupSession>) -> Result<St
             .to_string()
     })?;
     Ok(path.display().to_string())
+}
+
+// ── CLI setup ────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliStatus {
+    /// The `brain` command already resolves in the user's shell.
+    pub installed: bool,
+    /// npm resolves, so we can offer to install the CLI for them.
+    pub npm_available: bool,
+}
+
+/// Resolved through the user's login shell so a GUI-app PATH doesn't hide npm.
+#[tauri::command]
+pub async fn detect_cli() -> CliStatus {
+    // Shelling out can take a beat; keep it off the main thread.
+    tauri::async_runtime::spawn_blocking(|| CliStatus {
+        installed: cli_config::cli_installed(),
+        npm_available: cli_config::npm_available(),
+    })
+    .await
+    .unwrap_or(CliStatus {
+        installed: false,
+        npm_available: false,
+    })
+}
+
+/// Writes the CLI's config file so `brain` uses this Second Brain immediately.
+/// Reads the Worker URL + token straight from secure storage — they never reach
+/// the webview.
+#[tauri::command]
+pub fn connect_cli(session: State<'_, SetupSession>) -> Result<String, String> {
+    if session.dry_run {
+        return Ok("(demo) no changes written".into());
+    }
+    let info = secure_store::load_setup().ok_or("Setup hasn't finished yet.")?;
+    let home = dirs::home_dir().ok_or("Couldn't find your home folder.")?;
+    let path = cli_config::write_config(&home, &info.worker_url, &info.auth_token).map_err(|e| {
+        log::warn!("cli config write failed: {e}");
+        "We couldn't write the CLI config. You can run `brain setup` yourself instead.".to_string()
+    })?;
+    Ok(path.display().to_string())
+}
+
+/// Installs the CLI globally via npm through the user's login shell. Best-effort:
+/// on failure the config is already written, so the user can install by hand.
+#[tauri::command]
+pub async fn install_cli(app: AppHandle) -> Result<String, String> {
+    if app.state::<SetupSession>().dry_run {
+        return Ok("(demo) skipped install".into());
+    }
+    tauri::async_runtime::spawn_blocking(cli_config::install)
+        .await
+        .map_err(|_| "The install was interrupted.".to_string())?
 }
 
 #[tauri::command]

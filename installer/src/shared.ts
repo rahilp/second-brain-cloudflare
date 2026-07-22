@@ -13,6 +13,11 @@ export interface ToolStatus {
   cursor: boolean;
 }
 
+export interface CliStatus {
+  installed: boolean;
+  npmAvailable: boolean;
+}
+
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs: Record<string, string> = {},
@@ -125,6 +130,76 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
     ]);
   };
 
+  // The CLI joins the one-click tier. Detection runs through the user's login
+  // shell (async), so the row renders immediately and wires itself up once the
+  // status arrives. "Set up CLI" always writes the config; the install path is
+  // offered only when npm is present.
+  const cliRow = () => {
+    const sub = h("div", { class: "row-sub" }, ["Use your Second Brain from the terminal."]);
+    const actions = h("div", { class: "row-actions" });
+    const setupBtn = h("button", { class: "btn-secondary" }, ["Set up CLI"]);
+    actions.append(setupBtn);
+
+    void (async () => {
+      let status: CliStatus;
+      try {
+        status = await invoke<CliStatus>("detect_cli");
+      } catch {
+        status = { installed: false, npmAvailable: false };
+      }
+
+      setupBtn.addEventListener("click", async () => {
+        setupBtn.disabled = true;
+        setupBtn.textContent = "Setting up…";
+        try {
+          await invoke("connect_cli");
+        } catch (e) {
+          setupBtn.disabled = false;
+          setupBtn.textContent = "Set up CLI";
+          sub.textContent = String(e);
+          return;
+        }
+
+        if (status.installed) {
+          setupBtn.textContent = "Connected ✓";
+          sub.textContent = "Done. The brain command is ready in your terminal.";
+          return;
+        }
+
+        if (status.npmAvailable) {
+          setupBtn.textContent = "Installing…";
+          try {
+            await invoke("install_cli");
+            setupBtn.textContent = "Installed ✓";
+            sub.textContent = "The brain command is ready. Reopen your terminal if it isn't found yet.";
+          } catch {
+            setupBtn.textContent = "Config saved";
+            sub.replaceChildren(
+              "Config saved, but the install didn't finish. Run it yourself: ",
+              h("code", {}, ["npm i -g second-brain-cli"]),
+            );
+          }
+          return;
+        }
+
+        // No npm on this computer — save the config and hand over the command.
+        setupBtn.textContent = "Config saved ✓";
+        sub.replaceChildren(
+          "Config saved. Install Node.js, then run: ",
+          h("code", {}, ["npm i -g second-brain-cli"]),
+        );
+        const copy = h("button", { class: "btn-ghost" }, ["Copy command"]);
+        copy.addEventListener("click", () => void copyText("npm i -g second-brain-cli", copy));
+        actions.replaceChildren(copy);
+      });
+    })();
+
+    return h("div", { class: "row" }, [
+      h("div", {}, [h("div", { class: "row-title" }, ["Second Brain CLI"]), sub]),
+      actions,
+    ]);
+  };
+
   const webTool = (title: string, settingsUrl: string) => {
     const copy = h("button", { class: "btn-secondary" }, ["Copy link"]);
     copy.addEventListener("click", () => void copyText(details.mcpUrl, copy));
@@ -142,6 +217,7 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
   container.append(
     localTool("Claude Code", "claude-code", tools.claudeCode),
     localTool("Cursor", "cursor", tools.cursor),
+    cliRow(),
     webTool("ChatGPT", "https://chatgpt.com/#settings/Connectors"),
     webTool("Claude (web & desktop)", "https://claude.ai/settings/connectors"),
   );

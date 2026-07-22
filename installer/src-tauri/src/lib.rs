@@ -7,6 +7,7 @@
 
 mod app_update;
 mod cf;
+mod cli_config;
 mod commands;
 mod mcp_config;
 mod password_check;
@@ -85,6 +86,9 @@ pub fn run() {
             commands::get_connection_details,
             commands::detect_tools,
             commands::connect_tool,
+            commands::detect_cli,
+            commands::connect_cli,
+            commands::install_cli,
             commands::copy_text,
             commands::open_external,
             commands::open_dashboard,
