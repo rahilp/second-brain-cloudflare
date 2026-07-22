@@ -87,6 +87,8 @@ Pick the option that fits you. They all deploy the same Second Brain into your o
 
 The lowest-friction way to get started. **[Download the Second Brain desktop app](../../releases/latest)** for Mac or Windows, open it, and it walks you through setup in about two minutes: you pick a password, sign in to (or create) a free Cloudflare account, and it builds your Second Brain in your own private space and connects your AI tools for you. After setup it becomes the app you open your dashboard with every day.
 
+It also sets up the rest of the ecosystem from one place: one click to configure the [CLI](https://github.com/rahilp/second-brain-cli), and guided setup for the [browser extension](https://github.com/rahilp/second-brain-browser-extension), the [Obsidian plugin](https://community.obsidian.md/plugins/second-brain-sync), and Notion. The menu bar keeps every connection and integration a click away.
+
 Nothing to install beyond the app itself — no terminal, no git, no configuration values to copy. Developers: see [`installer/`](installer/) for how it works and how to build it.
 
 > The Mac build is signed and notarized by Apple. The Windows build is not yet code-signed, so Windows may show a SmartScreen "unrecognized app" notice on first launch — click **More info → Run anyway**. (Code signing for Windows is in progress.)
