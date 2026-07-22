@@ -223,3 +223,111 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
   );
   return container;
 }
+
+interface IntegrationStatus {
+  provider: string;
+  name: string;
+  connected: boolean;
+  workspaceName: string | null;
+}
+
+/// Guided integration cards: browser extension, Obsidian, and Notion. Unlike
+/// the one-click AI tools these can't be silently configured — their settings
+/// live in the browser, a vault, or the Notion portal — so each card links out,
+/// and Notion shows live connection status read from the user's own Worker.
+export function integrationRows(details: ConnectionDetails): HTMLElement {
+  const container = h("div", { class: "card" });
+
+  // Browser extension. The extension's token is the user's password, which the
+  // webview never sees, so we hand over the address and let them type it.
+  const extGet = h("button", { class: "btn-secondary" }, ["Get the extension"]);
+  extGet.addEventListener("click", () =>
+    void invoke("open_external", {
+      url: "https://github.com/rahilp/second-brain-browser-extension",
+    }),
+  );
+  const extCopy = h("button", { class: "btn-ghost" }, ["Copy address"]);
+  extCopy.addEventListener("click", () => void copyText(details.workerUrl, extCopy));
+  const extension = h("div", { class: "row" }, [
+    h("div", {}, [
+      h("div", { class: "row-title" }, ["Browser extension"]),
+      h("div", { class: "row-sub" }, [
+        "Capture any page or highlight. Paste your address and password into its setup.",
+      ]),
+    ]),
+    h("div", { class: "row-actions" }, [extGet, extCopy]),
+  ]);
+
+  // Obsidian — deep-link into the app when it's installed, else the web page.
+  const obsidianActions = h("div", { class: "row-actions" });
+  const obsidian = h("div", { class: "row" }, [
+    h("div", {}, [
+      h("div", { class: "row-title" }, ["Obsidian sync"]),
+      h("div", { class: "row-sub" }, ["Keep your vault notes and your Second Brain in sync."]),
+    ]),
+    obsidianActions,
+  ]);
+  void (async () => {
+    const installed = await invoke<boolean>("detect_obsidian").catch(() => false);
+    const open = h("button", { class: "btn-secondary" }, [
+      installed ? "Open in Obsidian" : "Get the plugin",
+    ]);
+    open.addEventListener("click", () =>
+      void invoke("open_external", {
+        url: installed
+          ? "obsidian://show-plugin?id=second-brain-sync"
+          : "https://community.obsidian.md/plugins/second-brain-sync",
+      }),
+    );
+    const copy = h("button", { class: "btn-ghost" }, ["Copy address"]);
+    copy.addEventListener("click", () => void copyText(details.workerUrl, copy));
+    obsidianActions.append(open, copy);
+  })();
+
+  // Notion — configured in the dashboard; show live status + sync.
+  const notionSub = h("div", { class: "row-sub" }, ["Sync Notion pages into your memory."]);
+  const notionActions = h("div", { class: "row-actions" });
+  const notion = h("div", { class: "row" }, [
+    h("div", {}, [h("div", { class: "row-title" }, ["Notion"]), notionSub]),
+    notionActions,
+  ]);
+  void (async () => {
+    let connected = false;
+    let workspace: string | null = null;
+    try {
+      const list = await invoke<IntegrationStatus[]>("integration_status");
+      const n = list.find((i) => i.provider === "notion");
+      connected = !!n?.connected;
+      workspace = n?.workspaceName ?? null;
+    } catch {
+      // Offline or unreachable — fall through to the setup CTA.
+    }
+
+    if (connected) {
+      notionSub.textContent = workspace ? `Connected to ${workspace}.` : "Connected.";
+      const sync = h("button", { class: "btn-secondary" }, ["Sync now"]);
+      sync.addEventListener("click", async () => {
+        sync.disabled = true;
+        sync.textContent = "Syncing…";
+        try {
+          notionSub.textContent = await invoke<string>("sync_notion");
+        } catch (e) {
+          notionSub.textContent = String(e);
+        } finally {
+          sync.disabled = false;
+          sync.textContent = "Sync now";
+        }
+      });
+      const manage = h("button", { class: "btn-ghost" }, ["Manage"]);
+      manage.addEventListener("click", () => void invoke("open_dashboard_integrations"));
+      notionActions.replaceChildren(sync, manage);
+    } else {
+      const setup = h("button", { class: "btn-secondary" }, ["Set up Notion"]);
+      setup.addEventListener("click", () => void invoke("open_dashboard_integrations"));
+      notionActions.replaceChildren(setup);
+    }
+  })();
+
+  container.append(extension, obsidian, notion);
+  return container;
+}

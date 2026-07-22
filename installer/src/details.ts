@@ -10,7 +10,7 @@ import {
   emailButton,
   h,
 } from "./shared";
-import { toolRows } from "./shared";
+import { integrationRows, toolRows } from "./shared";
 import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -50,6 +50,12 @@ async function boot() {
           "it will ask for your password the first time.",
       ]),
       toolRows(details, tools),
+      h("div", { style: "height:18px" }),
+      h("div", { class: "url-label" }, ["Integrations"]),
+      h("div", { class: "url-desc" }, [
+        "Bring in notes and pages from the tools you already use.",
+      ]),
+      integrationRows(details),
       logoutSection(),
     ]),
   );

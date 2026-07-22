@@ -422,12 +422,16 @@ pub fn copy_text(text: String, app: AppHandle) -> Result<(), String> {
         .map_err(|_| "Couldn't copy to the clipboard.".to_string())
 }
 
-/// Opens a URL in the default browser. Restricted to the destinations the UI
-/// legitimately links to — the webview cannot use this to open anything else.
+/// Opens a URL in the default browser (or the Obsidian app for `obsidian://`).
+/// Restricted to the destinations the UI legitimately links to — the webview
+/// cannot use this to open anything else.
 #[tauri::command]
 pub fn open_external(url: String, app: AppHandle) -> Result<(), String> {
     let allowed = url.starts_with("https://chatgpt.com/")
         || url.starts_with("https://claude.ai/")
+        || url.starts_with("https://github.com/rahilp/")
+        || url.starts_with("https://community.obsidian.md/")
+        || url.starts_with("obsidian://")
         || url.starts_with("mailto:");
     if !allowed {
         return Err("That link can't be opened from here.".into());
@@ -435,6 +439,155 @@ pub fn open_external(url: String, app: AppHandle) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|_| "Couldn't open your browser.".to_string())
+}
+
+// ── Guided integrations (extension / Obsidian / Notion) ───────────────────────
+
+/// Obsidian's per-user config lists the user's vaults; its presence (or the
+/// installed app on macOS) means Obsidian has run here. Best-effort only.
+#[tauri::command]
+pub fn detect_obsidian() -> bool {
+    let home = dirs::home_dir().unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    let candidates = [
+        home.join("Library/Application Support/obsidian/obsidian.json"),
+        std::path::PathBuf::from("/Applications/Obsidian.app"),
+    ];
+    #[cfg(target_os = "windows")]
+    let candidates = [dirs::config_dir()
+        .unwrap_or_default()
+        .join("obsidian")
+        .join("obsidian.json")];
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let candidates = [home.join(".config/obsidian/obsidian.json")];
+    candidates.iter().any(|p| p.exists())
+}
+
+/// Mirrors the worker's `GET /integrations` entry shape. The token is never
+/// part of it — status only.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationStatus {
+    pub provider: String,
+    pub name: String,
+    pub connected: bool,
+    #[serde(default)]
+    pub workspace_name: Option<String>,
+    #[serde(default)]
+    pub last_synced_at: Option<i64>,
+    #[serde(default)]
+    pub item_count: Option<i64>,
+}
+
+/// Reads connection status for every integration from the user's own Worker.
+#[tauri::command]
+pub async fn integration_status(app: AppHandle) -> Result<Vec<IntegrationStatus>, String> {
+    if app.state::<SetupSession>().dry_run {
+        return Ok(vec![IntegrationStatus {
+            provider: "notion".into(),
+            name: "Notion".into(),
+            connected: false,
+            workspace_name: None,
+            last_synced_at: None,
+            item_count: None,
+        }]);
+    }
+    let info = secure_store::load_setup().ok_or("Setup hasn't finished yet.")?;
+    let worker = info.worker_url.trim_end_matches('/');
+    let resp = reqwest::Client::new()
+        .get(format!("{worker}/integrations"))
+        .bearer_auth(&info.auth_token)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| {
+            log::warn!("integrations fetch failed: {e}");
+            "Couldn't reach your Second Brain.".to_string()
+        })?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "Your Second Brain returned {}.",
+            resp.status().as_u16()
+        ));
+    }
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        integrations: Vec<IntegrationStatus>,
+    }
+    let body: Wrapper = resp
+        .json()
+        .await
+        .map_err(|_| "Unexpected response from your Second Brain.".to_string())?;
+    Ok(body.integrations)
+}
+
+/// Runs Notion sync to completion. The endpoint syncs one bounded batch per
+/// call and reports `remaining`, so this loops until it drains (capped so a
+/// runaway can't spin forever).
+#[tauri::command]
+pub async fn sync_notion(app: AppHandle) -> Result<String, String> {
+    if app.state::<SetupSession>().dry_run {
+        return Ok("(demo) Notion is up to date.".into());
+    }
+    let info = secure_store::load_setup().ok_or("Setup hasn't finished yet.")?;
+    let worker = info.worker_url.trim_end_matches('/');
+    let client = reqwest::Client::new();
+    let mut changed = 0i64;
+    for _ in 0..30 {
+        let resp = client
+            .post(format!("{worker}/integrations/notion/sync"))
+            .bearer_auth(&info.auth_token)
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|e| {
+                log::warn!("notion sync failed: {e}");
+                "Couldn't reach your Second Brain.".to_string()
+            })?;
+        let ok_status = resp.status().is_success();
+        let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+        if !ok_status || body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            let err = body
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("The sync didn't finish. Please try again from the dashboard.");
+            return Err(err.to_string());
+        }
+        let field = |k: &str| body.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
+        changed += field("created") + field("updated") + field("deleted");
+        if field("remaining") <= 0 {
+            break;
+        }
+    }
+    Ok(if changed > 0 {
+        format!("Synced {changed} change(s) from Notion.")
+    } else {
+        "Notion is already up to date.".to_string()
+    })
+}
+
+/// Opens the dashboard and drops the user straight into the Integrations panel.
+/// If the dashboard is already open, just opens the panel there.
+#[tauri::command]
+pub fn open_dashboard_integrations(
+    app: AppHandle,
+    session: State<'_, SetupSession>,
+) -> Result<(), String> {
+    let (worker_url, token) = if session.dry_run {
+        let outcome = details_from_anywhere(&session).ok_or("Setup hasn't finished yet.")?;
+        (outcome.worker_url, "demo".to_string())
+    } else {
+        let info = secure_store::load_setup().ok_or("Setup hasn't finished yet.")?;
+        (info.worker_url, info.auth_token)
+    };
+    windows::open_wrapper_window_integrations(&app, &worker_url, &token)
+        .map_err(|_| "Couldn't open your Second Brain window.".to_string())?;
+    for label in ["main", "details"] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.close();
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
