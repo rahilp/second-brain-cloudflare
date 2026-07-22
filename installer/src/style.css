@@ -384,6 +384,24 @@ li.error .check-icon {
   font-size: 14.5px;
 }
 
+.badge {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(22, 22, 22, 0.06);
+  color: var(--text-secondary);
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
+.badge.on {
+  background: rgba(24, 121, 78, 0.12);
+  color: var(--ok);
+}
+
 .row-sub {
   font-size: 12.5px;
   color: var(--text-secondary);

@@ -44,6 +44,11 @@ export async function copyText(text: string, button?: HTMLButtonElement) {
   }
 }
 
+/// A small status pill shown next to a row title. `on` renders it green.
+export function badge(text: string, on = false): HTMLElement {
+  return h("span", { class: on ? "badge on" : "badge" }, [text]);
+}
+
 export function urlCard(label: string, desc: string, value: string): HTMLElement {
   const copyBtn = h("button", { class: "btn-secondary" }, ["Copy"]);
   copyBtn.addEventListener("click", () => void copyText(value, copyBtn));
@@ -125,7 +130,10 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
       actions.append(copy);
     }
     return h("div", { class: "row" }, [
-      h("div", {}, [h("div", { class: "row-title" }, [title]), sub]),
+      h("div", {}, [
+        h("div", { class: "row-title" }, [title, badge(installed ? "Ready" : "Not found", installed)]),
+        sub,
+      ]),
       actions,
     ]);
   };
@@ -287,8 +295,9 @@ export function integrationRows(details: ConnectionDetails): HTMLElement {
   // Notion — configured in the dashboard; show live status + sync.
   const notionSub = h("div", { class: "row-sub" }, ["Sync Notion pages into your memory."]);
   const notionActions = h("div", { class: "row-actions" });
+  const notionTitle = h("div", { class: "row-title" }, ["Notion"]);
   const notion = h("div", { class: "row" }, [
-    h("div", {}, [h("div", { class: "row-title" }, ["Notion"]), notionSub]),
+    h("div", {}, [notionTitle, notionSub]),
     notionActions,
   ]);
   void (async () => {
@@ -304,6 +313,7 @@ export function integrationRows(details: ConnectionDetails): HTMLElement {
     }
 
     if (connected) {
+      notionTitle.append(badge("Connected", true));
       notionSub.textContent = workspace ? `Connected to ${workspace}.` : "Connected.";
       const sync = h("button", { class: "btn-secondary" }, ["Sync now"]);
       sync.addEventListener("click", async () => {

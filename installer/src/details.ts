@@ -43,7 +43,7 @@ async function boot() {
       ...detailCards(details),
       h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
       h("div", { style: "height:18px" }),
-      h("div", { class: "url-label" }, ["Connect a new tool"]),
+      h("div", { class: "url-label" }, ["Connect your AI tools"]),
       h("div", { class: "url-desc" }, [
         "Tools on this computer connect with one click. For anything else, " +
           "paste your connection link into the tool's connector settings — " +
