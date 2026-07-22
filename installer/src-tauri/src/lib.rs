@@ -22,6 +22,42 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+/// Opens the user's dashboard from a menu action (no `State` handle). Falls
+/// back to setup when this computer isn't connected yet.
+fn open_dashboard_from_menu(app: &AppHandle) {
+    if let Some(info) = secure_store::load_setup() {
+        let _ = windows::open_wrapper_window(app, &info.worker_url, &info.auth_token);
+        for label in ["main", "details"] {
+            if let Some(w) = app.get_webview_window(label) {
+                let _ = w.close();
+            }
+        }
+    } else {
+        let _ = windows::open_setup_window(app);
+    }
+}
+
+/// Menu-bar "Sync Notion now": runs the sync in the background and reports the
+/// outcome with a native dialog. Silent no-op target when not set up.
+fn sync_notion_from_menu(app: &AppHandle) {
+    let Some(info) = secure_store::load_setup() else {
+        let _ = windows::open_setup_window(app);
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let message = match commands::notion_sync(&info.worker_url, &info.auth_token).await {
+            Ok(msg) => msg,
+            Err(e) => e,
+        };
+        app.dialog()
+            .message(message)
+            .title("Notion sync")
+            .kind(MessageDialogKind::Info)
+            .show(|_| {});
+    });
+}
+
 /// Menu-bar Logout: confirm natively, then clear this computer's connection.
 /// (The details window has its own inline confirm and calls the command.)
 fn confirm_logout(app: &AppHandle) {
@@ -106,21 +142,30 @@ pub fn run() {
             let handle = app.handle().clone();
 
             // App menu: platform defaults (gives Edit/copy/paste, needed for
-            // the password field on macOS) plus our own entry.
-            let details_item = MenuItem::with_id(
+            // the password field on macOS) plus a coherent control center. The
+            // old submenu mixed updates and logout under "Connections"; this
+            // groups actions by what they do — open, manage, maintain.
+            let open_item =
+                MenuItem::with_id(app, "menu-open", "Open Dashboard", true, Some("CmdOrCtrl+O"))?;
+            let hub_item = MenuItem::with_id(
                 app,
-                "menu-details",
-                "Connection details…",
+                "menu-hub",
+                "Connections & Integrations…",
                 true,
                 Some("CmdOrCtrl+D"),
             )?;
+            let sync_item =
+                MenuItem::with_id(app, "menu-sync-notion", "Sync Notion now", true, None::<&str>)?;
             let update_item =
                 MenuItem::with_id(app, "menu-update", "Check for updates…", true, None::<&str>)?;
             let logout_item =
                 MenuItem::with_id(app, "menu-logout", "Log out…", true, None::<&str>)?;
             let menu = Menu::default(&handle)?;
             let connections = SubmenuBuilder::new(app, "Connections")
-                .item(&details_item)
+                .item(&open_item)
+                .item(&hub_item)
+                .item(&sync_item)
+                .separator()
                 .item(&update_item)
                 .separator()
                 .item(&logout_item)
@@ -128,33 +173,49 @@ pub fn run() {
             menu.append(&connections)?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| match event.id().as_ref() {
-                "menu-details" => windows::open_details_window(app),
+                "menu-open" => open_dashboard_from_menu(app),
+                "menu-hub" => windows::open_details_window(app),
+                "menu-sync-notion" => sync_notion_from_menu(app),
                 "menu-update" => app_update::check_for_updates(app, false),
                 "menu-logout" => confirm_logout(app),
                 _ => {}
             });
 
-            // Tray: quick access to the dashboard and connection details.
-            let tray_open = MenuItem::with_id(app, "tray-open", "Open Second Brain", true, None::<&str>)?;
-            let tray_details =
-                MenuItem::with_id(app, "tray-details", "Connection details…", true, None::<&str>)?;
+            // Tray: the always-available control center — open the dashboard,
+            // manage every connection and integration, sync, update, log out.
+            let tray_open =
+                MenuItem::with_id(app, "tray-open", "Open Second Brain", true, None::<&str>)?;
+            let tray_hub = MenuItem::with_id(
+                app,
+                "tray-hub",
+                "Connections & Integrations…",
+                true,
+                None::<&str>,
+            )?;
+            let tray_sync =
+                MenuItem::with_id(app, "tray-sync-notion", "Sync Notion now", true, None::<&str>)?;
+            let tray_update =
+                MenuItem::with_id(app, "tray-update", "Check for updates…", true, None::<&str>)?;
+            let tray_logout =
+                MenuItem::with_id(app, "tray-logout", "Log out…", true, None::<&str>)?;
             let tray_quit = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
             let tray_menu = MenuBuilder::new(app)
-                .items(&[&tray_open, &tray_details, &tray_quit])
+                .items(&[&tray_open, &tray_hub, &tray_sync])
+                .separator()
+                .items(&[&tray_update, &tray_logout])
+                .separator()
+                .item(&tray_quit)
                 .build()?;
             TrayIconBuilder::with_id("second-brain-tray")
                 .icon(app.default_window_icon().expect("bundled icon").clone())
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "tray-open" => {
-                        if let Some(info) = secure_store::load_setup() {
-                            let _ = windows::open_wrapper_window(app, &info.worker_url, &info.auth_token);
-                        } else {
-                            let _ = windows::open_setup_window(app);
-                        }
-                    }
-                    "tray-details" => windows::open_details_window(app),
+                    "tray-open" => open_dashboard_from_menu(app),
+                    "tray-hub" => windows::open_details_window(app),
+                    "tray-sync-notion" => sync_notion_from_menu(app),
+                    "tray-update" => app_update::check_for_updates(app, false),
+                    "tray-logout" => confirm_logout(app),
                     "tray-quit" => app.exit(0),
                     _ => {}
                 })

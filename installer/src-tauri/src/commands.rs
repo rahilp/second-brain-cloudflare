@@ -521,22 +521,18 @@ pub async fn integration_status(app: AppHandle) -> Result<Vec<IntegrationStatus>
     Ok(body.integrations)
 }
 
-/// Runs Notion sync to completion. The endpoint syncs one bounded batch per
-/// call and reports `remaining`, so this loops until it drains (capped so a
-/// runaway can't spin forever).
-#[tauri::command]
-pub async fn sync_notion(app: AppHandle) -> Result<String, String> {
-    if app.state::<SetupSession>().dry_run {
-        return Ok("(demo) Notion is up to date.".into());
-    }
-    let info = secure_store::load_setup().ok_or("Setup hasn't finished yet.")?;
-    let worker = info.worker_url.trim_end_matches('/');
+/// Runs Notion sync to completion against a Worker. The endpoint syncs one
+/// bounded batch per call and reports `remaining`, so this loops until it drains
+/// (capped so a runaway can't spin forever). Reusable by the command and the
+/// menu-bar action.
+pub async fn notion_sync(worker_url: &str, auth_token: &str) -> Result<String, String> {
+    let worker = worker_url.trim_end_matches('/');
     let client = reqwest::Client::new();
     let mut changed = 0i64;
     for _ in 0..30 {
         let resp = client
             .post(format!("{worker}/integrations/notion/sync"))
-            .bearer_auth(&info.auth_token)
+            .bearer_auth(auth_token)
             .timeout(std::time::Duration::from_secs(60))
             .send()
             .await
@@ -564,6 +560,16 @@ pub async fn sync_notion(app: AppHandle) -> Result<String, String> {
     } else {
         "Notion is already up to date.".to_string()
     })
+}
+
+/// Runs Notion sync to completion.
+#[tauri::command]
+pub async fn sync_notion(app: AppHandle) -> Result<String, String> {
+    if app.state::<SetupSession>().dry_run {
+        return Ok("(demo) Notion is up to date.".into());
+    }
+    let info = secure_store::load_setup().ok_or("Setup hasn't finished yet.")?;
+    notion_sync(&info.worker_url, &info.auth_token).await
 }
 
 /// Opens the dashboard and drops the user straight into the Integrations panel.
