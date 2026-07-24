@@ -85,9 +85,14 @@ describe("integrations routes", () => {
       const res = await worker.fetch(req("GET", "/integrations"), env, ctx);
       expect(res.status).toBe(200);
       const data = await res.json() as any;
-      expect(data.integrations).toEqual([
+      expect(data.integrations).toContainEqual(
         expect.objectContaining({ provider: "notion", connected: false, itemCount: 0 }),
-      ]);
+      );
+      // The registry also carries the calendar providers (email lands later);
+      // assert presence without pinning the exact set.
+      expect(data.integrations.map((i: any) => i.provider)).toEqual(
+        expect.arrayContaining(["notion", "calendar-google", "calendar-outlook", "calendar-icloud"]),
+      );
     });
   });
 

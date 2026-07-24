@@ -10,9 +10,40 @@
 
 import type { IntegrationProvider } from "./framework";
 import { notionProvider } from "./notion";
+import { makeCalendarProvider } from "./calendar";
+
+export const calendarGoogle = makeCalendarProvider({
+  id: "calendar-google",
+  name: "Google Calendar",
+  connectLabel: "Paste your Google Calendar secret iCal URL",
+  connectPlaceholder: "https://calendar.google.com/calendar/ical/…/basic.ics",
+  connectHint:
+    'In Google Calendar (web): Settings → your calendar → <b>Integrate calendar</b> → copy the <b>"Secret address in iCal format"</b>. Keep it private — anyone with it can read the calendar.',
+});
+
+export const calendarOutlook = makeCalendarProvider({
+  id: "calendar-outlook",
+  name: "Outlook Calendar",
+  connectLabel: "Paste your Outlook published ICS URL",
+  connectPlaceholder: "https://outlook.live.com/owa/calendar/…/calendar.ics",
+  connectHint:
+    "In Outlook.com: Settings → Calendar → <b>Shared calendars</b> → Publish a calendar → publish, then copy the <b>ICS</b> link. (Work/school accounts may have publishing disabled.)",
+});
+
+export const calendarIcloud = makeCalendarProvider({
+  id: "calendar-icloud",
+  name: "iCloud Calendar",
+  connectLabel: "Paste your iCloud shared calendar URL",
+  connectPlaceholder: "webcal://p…-caldav.icloud.com/published/…",
+  connectHint:
+    "In Calendar (Mac or iCloud.com): right-click the calendar → <b>Share Calendar</b> → enable <b>Public Calendar</b> → copy the webcal link.",
+});
 
 export const INTEGRATION_PROVIDERS: Record<string, IntegrationProvider> = {
   [notionProvider.id]: notionProvider,
+  [calendarGoogle.id]: calendarGoogle,
+  [calendarOutlook.id]: calendarOutlook,
+  [calendarIcloud.id]: calendarIcloud,
 };
 
 export function getProvider(id: string): IntegrationProvider | null {
@@ -34,3 +65,12 @@ export {
   SYNC_PAGE_BATCH,
 } from "./notion";
 export type { NotionPageMeta, SyncPlan } from "./notion";
+export {
+  makeCalendarProvider,
+  parseAndExpand,
+  buildEventContent,
+  computeCalendarPlan,
+  computeRetentionPrune,
+  validateCalendarUrl,
+} from "./calendar";
+export type { Occurrence, CalendarService, CalendarMetaEntry, CalendarPlan } from "./calendar";

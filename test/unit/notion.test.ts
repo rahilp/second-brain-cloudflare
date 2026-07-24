@@ -147,6 +147,7 @@ describe("integrationStatus", () => {
       lastSyncedAt: null,
       lastSyncError: null,
       itemCount: 0,
+      category: "knowledge",
     });
   });
 

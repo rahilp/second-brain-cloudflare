@@ -298,6 +298,7 @@ async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Promise<S
 export const notionProvider: IntegrationProvider = {
   id: "notion",
   name: "Notion",
+  category: "knowledge",
   validateToken: notionValidateToken,
   sync: runNotionSync,
 };

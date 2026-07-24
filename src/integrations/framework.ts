@@ -39,6 +39,11 @@ export interface IntegrationEnv {
 export interface IntegrationProvider {
   id: string;   // registry key, entry `source` value, and URL segment (/integrations/<id>/…)
   name: string; // display name for the settings UI
+  // Optional presentational hints for the settings UI (registry-driven cards).
+  connectLabel?: string;       // input label, e.g. "Paste your secret iCal URL"
+  connectPlaceholder?: string; // input placeholder
+  connectHint?: string;        // where to find the secret (may contain safe HTML)
+  category?: string;           // settings-UI grouping id: "knowledge" | "calendar" | "email"
   // Validate a pasted token against the provider's API; returns an account /
   // workspace label for the UI's "Connected to …" confirmation. Throws with a
   // user-presentable message when the token is rejected.
@@ -109,8 +114,12 @@ export async function deleteIntegration(env: IntegrationEnv, provider: string): 
 }
 
 // Connection status for the settings UI. Never exposes credentials — the token
-// is write-only from the dashboard's perspective.
-export function integrationStatus(provider: Pick<IntegrationProvider, "id" | "name">, record: IntegrationRecord | null) {
+// is write-only from the dashboard's perspective. Presentational hints pass
+// through only when set, so providers that omit them (Notion) are unchanged.
+export function integrationStatus(
+  provider: Pick<IntegrationProvider, "id" | "name" | "connectLabel" | "connectPlaceholder" | "connectHint" | "category">,
+  record: IntegrationRecord | null,
+) {
   return {
     provider: provider.id,
     name: provider.name,
@@ -120,6 +129,10 @@ export function integrationStatus(provider: Pick<IntegrationProvider, "id" | "na
     lastSyncedAt: record?.lastSyncedAt ?? null,
     lastSyncError: record?.lastSyncError ?? null,
     itemCount: record ? Object.keys(record.itemMap).length : 0,
+    ...(provider.connectLabel ? { connectLabel: provider.connectLabel } : {}),
+    ...(provider.connectPlaceholder ? { connectPlaceholder: provider.connectPlaceholder } : {}),
+    ...(provider.connectHint ? { connectHint: provider.connectHint } : {}),
+    ...(provider.category ? { category: provider.category } : {}),
   };
 }
 
