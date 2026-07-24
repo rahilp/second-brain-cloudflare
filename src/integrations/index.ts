@@ -11,6 +11,7 @@
 import type { IntegrationProvider } from "./framework";
 import { notionProvider } from "./notion";
 import { makeCalendarProvider } from "./calendar";
+import { makeEmailProvider } from "./email";
 
 export const calendarGoogle = makeCalendarProvider({
   id: "calendar-google",
@@ -39,11 +40,33 @@ export const calendarIcloud = makeCalendarProvider({
     "In Calendar (Mac or iCloud.com): right-click the calendar → <b>Share Calendar</b> → enable <b>Public Calendar</b> → copy the webcal link.",
 });
 
+export const emailGmail = makeEmailProvider({
+  id: "email-gmail",
+  name: "Gmail",
+  host: "imap.gmail.com",
+  connectLabel: "Connect your Gmail inbox",
+  connectPlaceholder: "16-character app password",
+  connectHint:
+    "In your Google Account → Security → 2-Step Verification → <b>App passwords</b>, create one for Mail, then enter your Gmail address and that password. (Requires 2-Step Verification; IMAP must be enabled in Gmail settings.)",
+});
+
+export const emailIcloud = makeEmailProvider({
+  id: "email-icloud",
+  name: "iCloud Mail",
+  host: "imap.mail.me.com",
+  connectLabel: "Connect your iCloud inbox",
+  connectPlaceholder: "app-specific password",
+  connectHint:
+    "At appleid.apple.com → Sign-In and Security → <b>App-Specific Passwords</b>, generate one, then enter your iCloud email and that password.",
+});
+
 export const INTEGRATION_PROVIDERS: Record<string, IntegrationProvider> = {
   [notionProvider.id]: notionProvider,
   [calendarGoogle.id]: calendarGoogle,
   [calendarOutlook.id]: calendarOutlook,
   [calendarIcloud.id]: calendarIcloud,
+  [emailGmail.id]: emailGmail,
+  [emailIcloud.id]: emailIcloud,
 };
 
 export function getProvider(id: string): IntegrationProvider | null {
@@ -74,3 +97,16 @@ export {
   validateCalendarUrl,
 } from "./calendar";
 export type { Occurrence, CalendarService, CalendarMetaEntry, CalendarPlan } from "./calendar";
+export {
+  makeEmailProvider,
+  parseEmailToken,
+  isNoiseSender,
+  looksBulk,
+  computeEmailPlan,
+  cleanEmailBody,
+  buildEmailContent,
+  validateEmailToken,
+} from "./email";
+export type { EmailService, EmailHeaderInfo, EmailCreds } from "./email";
+export { ImapClient, parseHeaders, imapDate } from "./imap";
+export type { FetchedMessage } from "./imap";

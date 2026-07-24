@@ -2118,6 +2118,11 @@
         margin-bottom: 6px;
       }
 
+      .integration-connect-col {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
       .integration-connect-row input {
         flex: 1;
         min-width: 0;
@@ -3814,21 +3819,31 @@
         const icon = INTEGRATION_ICONS[p] || 'ti-plug'
         if (!info.connected) {
           const hint = p === 'notion' ? NOTION_HINT : (info.connectHint || '')
-          const placeholder = escHtml(info.connectPlaceholder || (p === 'notion' ? 'Integration secret (ntn_…)' : 'https://…'))
           const label = escHtml(info.connectLabel || 'Paste your secret')
+          const isEmail = p.startsWith('email')
+          let inputs
+          if (isEmail) {
+            // Email needs two fields; connectIntegration packs them into the token.
+            inputs =
+              `<input type="email" id="email-${p}" placeholder="you@example.com" aria-label="Email address" autocomplete="off" />` +
+              `<input type="password" id="tok-${p}" placeholder="${escHtml(info.connectPlaceholder || 'app password')}" aria-label="App password" autocomplete="off" />`
+          } else {
+            const placeholder = escHtml(info.connectPlaceholder || (p === 'notion' ? 'Integration secret (ntn_…)' : 'https://…'))
+            inputs = `<input type="password" id="tok-${p}" placeholder="${placeholder}" aria-label="${label}" autocomplete="off" />`
+          }
           return `
             <div class="integration-row">
               <div class="integration-head"><i class="ti ${icon}"></i><span>${escHtml(info.name)}</span><span class="integration-state">Not connected</span></div>
               <p class="digest-note">${hint}</p>
-              <div class="integration-connect-row">
-                <input type="password" id="tok-${p}" placeholder="${placeholder}" aria-label="${label}" autocomplete="off" />
+              <div class="integration-connect-row${isEmail ? ' integration-connect-col' : ''}">
+                ${inputs}
                 <button class="digest-btn" onclick="connectIntegration('${p}', this)">Connect</button>
               </div>
               <div class="integration-error" id="err-${p}"></div>
             </div>`
         }
         const last = info.lastSyncedAt ? new Date(info.lastSyncedAt).toLocaleString() : 'never'
-        const noun = p.startsWith('calendar') ? 'event' : 'item'
+        const noun = p.startsWith('calendar') ? 'event' : p.startsWith('email') ? 'email' : 'item'
         const count = `${info.itemCount} ${noun}${info.itemCount === 1 ? '' : 's'} synced`
         const err = info.lastSyncError ? `<div class="integration-error">Last sync failed: ${escHtml(info.lastSyncError)}</div>` : ''
         return `
@@ -3844,10 +3859,17 @@
       }
 
       async function connectIntegration(provider, btn) {
-        const input = document.getElementById(`tok-${provider}`)
         const errEl = document.getElementById(`err-${provider}`)
-        const token = input.value.trim()
-        if (!token) { errEl.textContent = 'Paste your secret first.'; return }
+        let token
+        if (provider.startsWith('email')) {
+          const email = (document.getElementById(`email-${provider}`).value || '').trim()
+          const pw = (document.getElementById(`tok-${provider}`).value || '').trim()
+          if (!email || !pw) { errEl.textContent = 'Enter your email and app password.'; return }
+          token = JSON.stringify({ email: email, appPassword: pw })
+        } else {
+          token = (document.getElementById(`tok-${provider}`).value || '').trim()
+          if (!token) { errEl.textContent = 'Paste your secret first.'; return }
+        }
         btn.disabled = true
         btn.textContent = 'Connecting…'
         errEl.textContent = ''
@@ -3875,7 +3897,7 @@
         btn.classList.add('digest-btn--loading')
         btn.innerHTML = '<i class="ti ti-loader-2"></i> Syncing…'
         const note = document.getElementById(`note-${provider}`)
-        const noun = provider.startsWith('calendar') ? 'event' : 'item'
+        const noun = provider.startsWith('calendar') ? 'event' : provider.startsWith('email') ? 'email' : 'item'
         try {
           // Each call processes a bounded batch and reports what's left — loop
           // until the backlog drains (same pattern as runVectorize).

@@ -2362,13 +2362,26 @@ function makeMirrorStore(env: Env): MirrorStore {
     async createEntry(content, tags, source) {
       const id = crypto.randomUUID();
       const now = Date.now();
+      // Classify like a normal capture so mirror entries (email, calendar,
+      // Notion) get a kind/importance and don't sit in the "not classified"
+      // bucket. Non-fatal — a failure just leaves it for the backfill to pick up.
+      let finalTags = tags;
+      let importance = 0;
+      try {
+        const c = await classifyEntry(content, env);
+        importance = c.importance;
+        if (c.kind) finalTags = withKind(finalTags, c.kind);
+        if (c.canonical) finalTags = withStatus(finalTags, "canonical");
+      } catch (e) {
+        console.error("Mirror classify failed (non-fatal):", e);
+      }
       await env.DB.prepare(
-        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind(id, content, JSON.stringify(tags), source, now, "[]").run();
+        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, importance_score) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, content, JSON.stringify(finalTags), source, now, "[]", importance).run();
       // Embed failure is non-fatal — the entry keeps vector_ids=[] and the
       // vectorize-pending backstop re-embeds it later.
       try {
-        await storeEntry(env, id, content, tags, source, now);
+        await storeEntry(env, id, content, finalTags, source, now);
       } catch (e) {
         console.error("Vectorize insert failed (non-fatal):", e);
       }

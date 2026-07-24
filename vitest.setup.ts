@@ -4,6 +4,15 @@ vi.mock("agents/mcp", () => ({
   createMcpHandler: vi.fn().mockReturnValue(() => new Response("mcp")),
 }));
 
+// The IMAP client imports `cloudflare:sockets` (connect()), which the node test
+// loader can't resolve. Stub it so modules that transitively import imap.ts
+// load; the email tests inject a fake socket rather than calling connect().
+vi.mock("cloudflare:sockets", () => ({
+  connect: vi.fn(() => {
+    throw new Error("cloudflare:sockets connect() is not available in tests");
+  }),
+}));
+
 // workers-oauth-provider imports `cloudflare:workers`, which the node test
 // loader can't resolve. Stub it with a minimal router that mirrors the real
 // provider's behaviour for tests: delegate non-apiRoute requests to the

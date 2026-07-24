@@ -24,6 +24,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "agents": "^0.12.4",
     "ical.js": "^2.2.1",
+    "postal-mime": "^2.7.5",
     "zod": "^4.0.0"
   },
   "devDependencies": {
