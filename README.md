@@ -24,6 +24,14 @@ Prefer to run it yourself? Use the one-click **[Deploy to Cloudflare](https://de
 >
 > <a href="https://www.producthunt.com/products/second-brain-cloudflare?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_campaign=badge-second-brain-for-ai" target="_blank" rel="noopener noreferrer"><img alt="Second Brain for AI: Persistent memory for Claude, ChatGPT, and Cursor" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1151393&theme=light&period=daily&t=1780357463637"></a>
 
+## What's new in v2.1
+
+* **Calendar sync.** Connect Google, Outlook, or iCloud calendars from **Settings → Integrations** by pasting your calendar's private iCal (`.ics`) link — no OAuth, no developer setup. Upcoming events sync into memory and stay current, so recall knows what's on your plate; past events are kept as a bounded history.
+
+* **Email capture.** Connect Gmail or iCloud with an app password from **Settings → Integrations**, and Second Brain captures the meaningful mail from your inbox — automatically filtering out newsletters, marketing, receipts, and other automated noise — so real correspondence surfaces in recall.
+
+* **Integrations, organized.** The Integrations screen now groups connections into **Knowledge**, **Calendars**, and **Email**, so it stays easy to navigate as more are added. Synced items are classified like anything else you save.
+
 ## What's new in v2
 
 * **Memory graph.** Memories now connect to each other — automatically as you save, or explicitly with the new `link` and `connections` tools. Recall can follow those connections (the `hops` option) to surface related context that a plain search would miss, and the dashboard has a new **Graph** tab to explore your memory visually.
@@ -70,6 +78,10 @@ Memory is most useful when capturing information is easy. Second Brain connects 
   ```
 
 * **Notion:** Connect your Notion workspace from **Settings → Integrations** in the web dashboard. Create an internal **connection** in the [Notion developer portal](https://app.notion.com/developers/connections) (a connection, not a personal access token — only connections appear in a page's Connections menu), share the pages you want remembered with it, and paste its secret — shared pages sync into memory automatically (nightly, or on demand with **Sync now**) and stay updated as they change in Notion.
+
+* **Calendar:** Connect Google, Outlook, or iCloud from **Settings → Integrations** and paste your calendar's private **iCal (`.ics`) link** (Google: *your calendar → Integrate calendar → "Secret address in iCal format"*; Outlook: *Calendar → Shared calendars → Publish*; iCloud: *Share Calendar → Public Calendar*). Read-only — upcoming events sync into memory automatically (nightly, or on demand with **Sync now**), and past events are kept as a bounded history.
+
+* **Email:** Connect Gmail or iCloud from **Settings → Integrations** with an **app password** (Google: *Account → Security → App passwords*; iCloud: *appleid.apple.com → App-Specific Passwords*). Read-only — meaningful messages are captured into memory, while newsletters, marketing, receipts, and other automated mail are filtered out.
 
 * **Obsidian:** Automatically sync notes using the [Second Brain Sync plugin](https://github.com/rahilp/second-brain-obsidian-plugin), also available through [Obsidian Community Plugins](https://community.obsidian.md/plugins/second-brain-sync).
 
