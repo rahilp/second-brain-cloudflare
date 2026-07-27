@@ -53,9 +53,9 @@ export function oauthPageHtml(title: string, body: string): string {
 export function loginHtml(error?: string): string {
   return oauthPageHtml("Second Brain", `
     <h1>Second Brain</h1>
-    <p>Enter your Bearer token to connect to your personal memory layer.</p>
+    <p>Enter your Bearer token to connect to your personal memory layer. This is the password you chose when you set up Second Brain.</p>
     <form method="POST">
-      <input type="password" name="password" placeholder="Bearer token" autofocus autocomplete="current-password" />
+      <input type="password" name="password" placeholder="Bearer token (your setup password)" autofocus autocomplete="current-password" />
       <button type="submit">Connect</button>
     </form>
     <div class="auth-error">${error ? error : ""}</div>
