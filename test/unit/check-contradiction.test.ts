@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { checkDuplicateAndContradiction } from "../../src/index";
-import type { MergeAction } from "../../src/index";
+import { checkDuplicateAndContradiction } from "../../src/capture/duplicate";
+import type { MergeAction } from "../../src/capture/duplicate";
 import { makeTestDb, makeVectorizeMock, makeKVMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 
 function makeEnv(aiResponse: string, vectorMatches: any[] = [], dbEntries: any[] = []): Env {
   const db = makeTestDb();

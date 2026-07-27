@@ -215,6 +215,29 @@ input:focus {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+select.locale-select {
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 0.5px solid var(--border);
+  border-radius: 13px;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+}
+
+select.locale-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.settings-card {
+  margin-bottom: 14px;
+}
+
 .field-stack {
   display: flex;
   flex-direction: column;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { checkVectorizeHealth } from "../../src/index";
+import { checkVectorizeHealth } from "../../src/vectorize/health";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 
 describe("checkVectorizeHealth", () => {

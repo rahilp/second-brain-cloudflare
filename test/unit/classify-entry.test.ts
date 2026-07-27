@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { classifyEntry } from "../../src/index";
+import { classifyEntry } from "../../src/capture/classify";
 import { makeTestDb, makeTestEnv } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 
 function makeSseStream(response: string) {
   return new ReadableStream({

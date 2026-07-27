@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { recallEntries } from "../../src/index";
+import { recallEntries } from "../../src/recall/search";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
 
 function makeCtx() {

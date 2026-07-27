@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { distillToRareTerms } from "../../src/index";
+import { distillToRareTerms } from "../../src/recall/distill";
 
 // A minimal env whose D1 aggregation returns crafted document-frequencies. The columns
 // d0..dN map to the query's unique content tokens in order (as distillToRareTerms builds

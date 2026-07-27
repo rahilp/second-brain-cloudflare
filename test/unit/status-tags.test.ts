@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getStatus, withStatus, STATUS_VALUES } from "../../src/index";
+import { getStatus, withStatus, STATUS_VALUES } from "../../src/memory/status";
 
 describe("status tags", () => {
   describe("getStatus", () => {

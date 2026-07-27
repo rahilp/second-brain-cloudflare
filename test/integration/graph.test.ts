@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import worker from "../../src/index";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;

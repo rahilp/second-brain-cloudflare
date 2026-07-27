@@ -225,6 +225,7 @@ The following clients support this flow:
 * Claude.ai
 * Claude Code
 * Codex CLI
+* Cursor
 
 You can also configure supported command-line clients manually:
 
@@ -243,6 +244,48 @@ Authorization: Bearer YOUR-AUTH-TOKEN
 ```
 
 OAuth requires the `OAUTH_KV` namespace for client registrations and tokens. The Deploy to Cloudflare button provisions it automatically.
+
+</details>
+
+<details>
+<summary><strong>MCP OAuth troubleshooting</strong></summary>
+
+### Opera shows “Did you mean gmail.com?” during Authenticate
+
+Some browsers flag a **false phishing warning** when your Cloudflare account subdomain contains `gmail-com`. Cloudflare auto-generates that label for accounts linked to a Gmail address, so your Worker URL can look like:
+
+```text
+https://second-brain.your-name-gmail-com-s-account.workers.dev
+```
+
+Opera may treat `gmail-com` in the hostname as a fake Gmail site and block the OAuth login page before it loads.
+
+**Quick workarounds**
+
+* Click **Ignore** on Opera’s warning page, then enter your `AUTH_TOKEN` on the Second Brain sign-in page.
+* Use another browser (Chrome, Edge, Firefox) as your system default, or open the auth link there.
+* In Cursor: remove the MCP server, add it again, then click **Connect**.
+
+**Permanent fix — change your `workers.dev` subdomain**
+
+1. Open [Workers subdomain settings](https://dash.cloudflare.com/?to=/:account/workers/subdomain) in the Cloudflare dashboard.
+2. Click **Change** next to your current subdomain.
+3. Pick a name **without** `gmail` (for example `vincenzofabiano` instead of `vincenzofabiano92-gmail-com-s-account`).
+4. Update every client config to the new URL:
+
+   ```text
+   https://second-brain.YOUR-NEW-SUBDOMAIN.workers.dev/mcp
+   ```
+
+5. Remove and re-add the MCP connector in Cursor (or other clients), then authenticate again.
+
+**Alternative — custom domain**
+
+Attach a domain you control under **Worker → Settings → Domains & Routes**. Browsers will not confuse a custom hostname with Gmail.
+
+### Stale OAuth registration in Cursor
+
+If the browser opens a plain error instead of the sign-in form (“invalid authorization request” or similar), Cursor may be using an old OAuth `client_id`. Remove the Second Brain MCP entry, add it again with the correct Worker URL, then authenticate once more.
 
 </details>
 

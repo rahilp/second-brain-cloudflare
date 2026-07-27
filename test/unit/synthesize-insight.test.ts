@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { synthesizeInsight } from "../../src/index";
+import { synthesizeInsight } from "../../src/recall/insight";
 import { makeTestEnv } from "../helpers/make-env";
 
 function makeSseStream(response: string) {

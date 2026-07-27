@@ -2,6 +2,7 @@
 // Opened from the app menu or tray. Also lets the user connect a new tool
 // later without re-running setup.
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ConnectionDetails,
   ToolStatus,
@@ -11,23 +12,31 @@ import {
   h,
 } from "./shared";
 import { integrationRows, toolRows } from "./shared";
+import { initI18n, settingsSection, t } from "./i18n";
 import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 async function boot() {
+  initI18n();
+  document.title = t("details.title");
+
   let details: ConnectionDetails;
   try {
     details = await invoke<ConnectionDetails>("get_connection_details");
   } catch {
-    app.replaceChildren(
-      h("div", { class: "screen" }, [
-        h("h1", {}, ["Not set up yet"]),
-        h("p", { class: "lede" }, [
-          "Finish setting up your Second Brain first — these details appear here afterwards.",
+    const renderNotSetup = () => {
+      document.title = t("details.title");
+      void getCurrentWindow().setTitle(t("details.title"));
+      app.replaceChildren(
+        h("div", { class: "screen" }, [
+          settingsSection(() => renderNotSetup()),
+          h("h1", {}, [t("details.notSetupTitle")]),
+          h("p", { class: "lede" }, [t("details.notSetupLede")]),
         ]),
-      ]),
-    );
+      );
+    };
+    renderNotSetup();
     return;
   }
   const tools = await invoke<ToolStatus>("detect_tools");
@@ -35,40 +44,39 @@ async function boot() {
     "worker_update_available",
   ).catch(() => null);
 
-  app.replaceChildren(
-    h("div", { class: "screen" }, [
-      h("h1", {}, ["Connection details"]),
-      h("p", { class: "lede" }, ["Everything you need to connect a tool or another computer."]),
-      ...(update ? [updateCard(update.availableVersion)] : []),
-      ...detailCards(details),
-      h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
-      h("div", { style: "height:18px" }),
-      h("div", { class: "url-label" }, ["Connect your AI tools"]),
-      h("div", { class: "url-desc" }, [
-        "Tools on this computer connect with one click. For anything else, " +
-          "paste your connection link into the tool's connector settings — " +
-          "it will ask for your password the first time.",
+  const render = () => {
+    document.title = t("details.title");
+    void getCurrentWindow().setTitle(t("details.title"));
+    app.replaceChildren(
+      h("div", { class: "screen" }, [
+        h("h1", {}, [t("details.title")]),
+        settingsSection(() => render()),
+        h("p", { class: "lede" }, [t("details.lede")]),
+        ...(update ? [updateCard(update.availableVersion)] : []),
+        ...detailCards(details),
+        h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
+        h("div", { style: "height:18px" }),
+        h("div", { class: "url-label" }, [t("details.connectToolsTitle")]),
+        h("div", { class: "url-desc" }, [t("details.connectToolsDesc")]),
+        toolRows(details, tools),
+        h("div", { style: "height:18px" }),
+        h("div", { class: "url-label" }, [t("details.integrationsTitle")]),
+        h("div", { class: "url-desc" }, [t("details.integrationsDesc")]),
+        integrationRows(details),
+        logoutSection(),
       ]),
-      toolRows(details, tools),
-      h("div", { style: "height:18px" }),
-      h("div", { class: "url-label" }, ["Integrations"]),
-      h("div", { class: "url-desc" }, [
-        "Bring in notes and pages from the tools you already use.",
-      ]),
-      integrationRows(details),
-      logoutSection(),
-    ]),
-  );
+    );
+  };
+
+  render();
 }
 
 function updateCard(availableVersion: string): HTMLElement {
-  const button = h("button", { class: "btn-primary" }, ["Update my Second Brain"]);
+  const button = h("button", { class: "btn-primary" }, [t("details.updateButton")]);
   button.addEventListener("click", () => void invoke("begin_worker_update"));
   return h("div", { class: "card", style: "border-color: var(--accent);" }, [
-    h("div", { class: "url-label" }, [`A newer Second Brain is available (${availableVersion})`]),
-    h("div", { class: "url-desc" }, [
-      "Update to get the latest improvements. Your memories, password, and connected tools are kept.",
-    ]),
+    h("div", { class: "url-label" }, [t("details.updateLabel", { version: availableVersion })]),
+    h("div", { class: "url-desc" }, [t("details.updateDesc")]),
     button,
   ]);
 }
@@ -77,21 +85,17 @@ function logoutSection(): HTMLElement {
   const container = h("div", { class: "logout-section" });
   const render = (confirming: boolean) => {
     if (!confirming) {
-      const logout = h("button", { class: "btn-danger" }, ["Log out of this computer"]);
+      const logout = h("button", { class: "btn-danger" }, [t("logout.button")]);
       logout.addEventListener("click", () => render(true));
       container.replaceChildren(logout);
       return;
     }
-    const confirm = h("button", { class: "btn-danger" }, ["Yes, log out"]);
+    const confirm = h("button", { class: "btn-danger" }, [t("logout.confirm")]);
     confirm.addEventListener("click", () => void invoke("logout"));
-    const keep = h("button", { class: "btn-ghost" }, ["Keep me signed in"]);
+    const keep = h("button", { class: "btn-ghost" }, [t("logout.keep")]);
     keep.addEventListener("click", () => render(false));
     container.replaceChildren(
-      h("div", { class: "url-desc" }, [
-        "Your Second Brain and all its memories stay safe — this only forgets " +
-          "the connection on this computer. You can reconnect anytime with " +
-          "your address and password.",
-      ]),
+      h("div", { class: "url-desc" }, [t("logout.desc")]),
       h("div", { class: "row-actions" }, [confirm, keep]),
     );
   };

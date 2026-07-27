@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mmrRerank } from "../../src/index";
+import { mmrRerank } from "../../src/recall/math";
 
 function m(id: string, score: number, values: number[]) {
   return { id, score, metadata: { parentId: id }, values };

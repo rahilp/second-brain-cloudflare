@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { captureEntry } from "../../src/index";
+import { captureEntry } from "../../src/capture/entry";
 import { makeTestDb, makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
 
 // Collects waitUntil promises so we can await the fire-and-forget auto-link.

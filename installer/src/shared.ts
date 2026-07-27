@@ -2,6 +2,7 @@
 // window (details.ts). The webview only ever handles URLs and booleans —
 // tokens stay in the Rust core.
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "./i18n";
 
 export interface ConnectionDetails {
   workerUrl: string;
@@ -35,7 +36,7 @@ export async function copyText(text: string, button?: HTMLButtonElement) {
   await invoke("copy_text", { text });
   if (button) {
     const original = button.textContent;
-    button.textContent = "Copied ✓";
+    button.textContent = t("common.copied");
     button.disabled = true;
     setTimeout(() => {
       button.textContent = original;
@@ -50,7 +51,7 @@ export function badge(text: string, on = false): HTMLElement {
 }
 
 export function urlCard(label: string, desc: string, value: string): HTMLElement {
-  const copyBtn = h("button", { class: "btn-secondary" }, ["Copy"]);
+  const copyBtn = h("button", { class: "btn-secondary" }, [t("common.copy")]);
   copyBtn.addEventListener("click", () => void copyText(value, copyBtn));
   return h("div", { class: "card url-card" }, [
     h("div", { class: "url-label" }, [label]),
@@ -62,24 +63,16 @@ export function urlCard(label: string, desc: string, value: string): HTMLElement
 /// The two URL cards used on the final setup screen AND in Connection details.
 export function detailCards(details: ConnectionDetails): HTMLElement[] {
   return [
-    urlCard(
-      "Your Second Brain address",
-      "Your private web dashboard, and where you connect new tools. Save it somewhere safe.",
-      details.workerUrl,
-    ),
-    urlCard(
-      "Your connection link (for AI tools)",
-      "Paste this into any AI tool that supports connectors.",
-      details.mcpUrl,
-    ),
+    urlCard(t("details.addressLabel"), t("details.addressDesc"), details.workerUrl),
+    urlCard(t("details.mcpLabel"), t("details.mcpDesc"), details.mcpUrl),
   ];
 }
 
 export function copyBothButton(details: ConnectionDetails): HTMLButtonElement {
-  const btn = h("button", { class: "btn-ghost" }, ["Copy both"]);
+  const btn = h("button", { class: "btn-ghost" }, [t("common.copyBoth")]);
   btn.addEventListener("click", () =>
     void copyText(
-      `Your Second Brain address: ${details.workerUrl}\nYour connection link (for AI tools): ${details.mcpUrl}`,
+      `${t("details.addressLabel")}: ${details.workerUrl}\n${t("details.mcpLabel")}: ${details.mcpUrl}`,
       btn,
     ),
   );
@@ -87,12 +80,11 @@ export function copyBothButton(details: ConnectionDetails): HTMLButtonElement {
 }
 
 export function emailButton(details: ConnectionDetails): HTMLButtonElement {
-  const btn = h("button", { class: "btn-ghost" }, ["Email these to myself"]);
+  const btn = h("button", { class: "btn-ghost" }, [t("common.emailDetails")]);
   btn.addEventListener("click", () => {
-    const subject = encodeURIComponent("Your Second Brain details");
+    const subject = encodeURIComponent(t("email.subject"));
     const body = encodeURIComponent(
-      `Your Second Brain address (your private dashboard):\n${details.workerUrl}\n\n` +
-        `Your connection link (paste into AI tools that support connectors):\n${details.mcpUrl}\n`,
+      `${t("email.bodyAddress")}\n${details.workerUrl}\n\n${t("email.bodyMcp")}\n${details.mcpUrl}\n`,
     );
     void invoke("open_external", { url: `mailto:?subject=${subject}&body=${body}` });
   });
@@ -105,47 +97,46 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
 
   const localTool = (title: string, id: string, installed: boolean) => {
     const sub = h("div", { class: "row-sub" }, [
-      installed ? "Sets it up for you automatically." : "Not found on this computer.",
+      installed ? t("tools.autoSetup") : t("tools.notOnComputer"),
     ]);
     const actions = h("div", { class: "row-actions" });
     if (installed) {
-      const btn = h("button", { class: "btn-secondary" }, ["Connect"]);
+      const btn = h("button", { class: "btn-secondary" }, [t("common.connect")]);
       btn.addEventListener("click", async () => {
         btn.disabled = true;
-        btn.textContent = "Connecting…";
+        btn.textContent = t("common.connecting");
         try {
           await invoke("connect_tool", { tool: id });
-          btn.textContent = "Connected ✓";
-          sub.textContent = "Done — restart the tool to start using your Second Brain.";
+          btn.textContent = t("common.connected");
+          sub.textContent = t("tools.doneRestart");
         } catch (e) {
-          btn.textContent = "Connect";
+          btn.textContent = t("common.connect");
           btn.disabled = false;
           sub.textContent = String(e);
         }
       });
       actions.append(btn);
     } else {
-      const copy = h("button", { class: "btn-ghost" }, ["Copy link"]);
+      const copy = h("button", { class: "btn-ghost" }, [t("common.copyLink")]);
       copy.addEventListener("click", () => void copyText(details.mcpUrl, copy));
       actions.append(copy);
     }
     return h("div", { class: "row" }, [
       h("div", {}, [
-        h("div", { class: "row-title" }, [title, badge(installed ? "Ready" : "Not found", installed)]),
+        h("div", { class: "row-title" }, [
+          title,
+          badge(installed ? t("common.ready") : t("common.notFound"), installed),
+        ]),
         sub,
       ]),
       actions,
     ]);
   };
 
-  // The CLI joins the one-click tier. Detection runs through the user's login
-  // shell (async), so the row renders immediately and wires itself up once the
-  // status arrives. "Set up CLI" always writes the config; the install path is
-  // offered only when npm is present.
   const cliRow = () => {
-    const sub = h("div", { class: "row-sub" }, ["Use your Second Brain from the terminal."]);
+    const sub = h("div", { class: "row-sub" }, [t("tools.cliSub")]);
     const actions = h("div", { class: "row-actions" });
-    const setupBtn = h("button", { class: "btn-secondary" }, ["Set up CLI"]);
+    const setupBtn = h("button", { class: "btn-secondary" }, [t("tools.setupCli")]);
     actions.append(setupBtn);
 
     void (async () => {
@@ -158,76 +149,75 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
 
       setupBtn.addEventListener("click", async () => {
         setupBtn.disabled = true;
-        setupBtn.textContent = "Setting up…";
+        setupBtn.textContent = t("tools.settingUp");
         try {
           await invoke("connect_cli");
         } catch (e) {
           setupBtn.disabled = false;
-          setupBtn.textContent = "Set up CLI";
+          setupBtn.textContent = t("tools.setupCli");
           sub.textContent = String(e);
           return;
         }
 
         if (status.installed) {
-          setupBtn.textContent = "Connected ✓";
-          sub.textContent = "Done. The brain command is ready in your terminal.";
+          setupBtn.textContent = t("common.connected");
+          sub.textContent = t("tools.cliDone");
           return;
         }
 
         if (status.npmAvailable) {
-          setupBtn.textContent = "Installing…";
+          setupBtn.textContent = t("tools.installing");
           try {
             await invoke("install_cli");
-            setupBtn.textContent = "Installed ✓";
-            sub.textContent = "The brain command is ready. Reopen your terminal if it isn't found yet.";
+            setupBtn.textContent = t("tools.installed");
+            sub.textContent = t("tools.reopenTerminal");
           } catch {
-            setupBtn.textContent = "Config saved";
+            setupBtn.textContent = t("tools.configSaved");
             sub.replaceChildren(
-              "Config saved, but the install didn't finish. Run it yourself: ",
+              t("tools.configSavedInstallFailed"),
               h("code", {}, ["npm i -g second-brain-cli"]),
             );
           }
           return;
         }
 
-        // No npm on this computer — save the config and hand over the command.
-        setupBtn.textContent = "Config saved ✓";
+        setupBtn.textContent = t("tools.configSaved");
         sub.replaceChildren(
-          "Config saved. Install Node.js, then run: ",
+          t("tools.configSavedNoNpm"),
           h("code", {}, ["npm i -g second-brain-cli"]),
         );
-        const copy = h("button", { class: "btn-ghost" }, ["Copy command"]);
+        const copy = h("button", { class: "btn-ghost" }, [t("common.copyCommand")]);
         copy.addEventListener("click", () => void copyText("npm i -g second-brain-cli", copy));
         actions.replaceChildren(copy);
       });
     })();
 
     return h("div", { class: "row" }, [
-      h("div", {}, [h("div", { class: "row-title" }, ["Second Brain CLI"]), sub]),
+      h("div", {}, [h("div", { class: "row-title" }, [t("tools.cliTitle")]), sub]),
       actions,
     ]);
   };
 
   const webTool = (title: string, settingsUrl: string) => {
-    const copy = h("button", { class: "btn-secondary" }, ["Copy link"]);
+    const copy = h("button", { class: "btn-secondary" }, [t("common.copyLink")]);
     copy.addEventListener("click", () => void copyText(details.mcpUrl, copy));
-    const open = h("button", { class: "btn-ghost" }, ["Open settings"]);
+    const open = h("button", { class: "btn-ghost" }, [t("common.openSettings")]);
     open.addEventListener("click", () => void invoke("open_external", { url: settingsUrl }));
     return h("div", { class: "row" }, [
       h("div", {}, [
         h("div", { class: "row-title" }, [title]),
-        h("div", { class: "row-sub" }, ["Copy the link, then paste it under connectors in settings."]),
+        h("div", { class: "row-sub" }, [t("tools.pasteInSettings")]),
       ]),
       h("div", { class: "row-actions" }, [copy, open]),
     ]);
   };
 
   container.append(
-    localTool("Claude Code", "claude-code", tools.claudeCode),
-    localTool("Cursor", "cursor", tools.cursor),
+    localTool(t("tools.claudeCode"), "claude-code", tools.claudeCode),
+    localTool(t("tools.cursor"), "cursor", tools.cursor),
     cliRow(),
-    webTool("ChatGPT", "https://chatgpt.com/#settings/Connectors"),
-    webTool("Claude (web & desktop)", "https://claude.ai/settings/connectors"),
+    webTool(t("tools.chatgpt"), "https://chatgpt.com/#settings/Connectors"),
+    webTool(t("tools.claudeWeb"), "https://claude.ai/settings/connectors"),
   );
   return container;
 }
@@ -239,46 +229,37 @@ interface IntegrationStatus {
   workspaceName: string | null;
 }
 
-/// Guided integration cards: browser extension, Obsidian, and Notion. Unlike
-/// the one-click AI tools these can't be silently configured — their settings
-/// live in the browser, a vault, or the Notion portal — so each card links out,
-/// and Notion shows live connection status read from the user's own Worker.
 export function integrationRows(details: ConnectionDetails): HTMLElement {
   const container = h("div", { class: "card" });
 
-  // Browser extension. The extension's token is the user's password, which the
-  // webview never sees, so we hand over the address and let them type it.
-  const extGet = h("button", { class: "btn-secondary" }, ["Get the extension"]);
+  const extGet = h("button", { class: "btn-secondary" }, [t("integrations.getExtension")]);
   extGet.addEventListener("click", () =>
     void invoke("open_external", {
       url: "https://github.com/rahilp/second-brain-browser-extension",
     }),
   );
-  const extCopy = h("button", { class: "btn-ghost" }, ["Copy address"]);
+  const extCopy = h("button", { class: "btn-ghost" }, [t("common.copyAddress")]);
   extCopy.addEventListener("click", () => void copyText(details.workerUrl, extCopy));
   const extension = h("div", { class: "row" }, [
     h("div", {}, [
-      h("div", { class: "row-title" }, ["Browser extension"]),
-      h("div", { class: "row-sub" }, [
-        "Capture any page or highlight. Paste your address and password into its setup.",
-      ]),
+      h("div", { class: "row-title" }, [t("integrations.extensionTitle")]),
+      h("div", { class: "row-sub" }, [t("integrations.extensionSub")]),
     ]),
     h("div", { class: "row-actions" }, [extGet, extCopy]),
   ]);
 
-  // Obsidian — deep-link into the app when it's installed, else the web page.
   const obsidianActions = h("div", { class: "row-actions" });
   const obsidian = h("div", { class: "row" }, [
     h("div", {}, [
-      h("div", { class: "row-title" }, ["Obsidian sync"]),
-      h("div", { class: "row-sub" }, ["Keep your vault notes and your Second Brain in sync."]),
+      h("div", { class: "row-title" }, [t("integrations.obsidianTitle")]),
+      h("div", { class: "row-sub" }, [t("integrations.obsidianSub")]),
     ]),
     obsidianActions,
   ]);
   void (async () => {
     const installed = await invoke<boolean>("detect_obsidian").catch(() => false);
     const open = h("button", { class: "btn-secondary" }, [
-      installed ? "Open in Obsidian" : "Get the plugin",
+      installed ? t("integrations.openObsidian") : t("integrations.getPlugin"),
     ]);
     open.addEventListener("click", () =>
       void invoke("open_external", {
@@ -287,15 +268,14 @@ export function integrationRows(details: ConnectionDetails): HTMLElement {
           : "https://community.obsidian.md/plugins/second-brain-sync",
       }),
     );
-    const copy = h("button", { class: "btn-ghost" }, ["Copy address"]);
+    const copy = h("button", { class: "btn-ghost" }, [t("common.copyAddress")]);
     copy.addEventListener("click", () => void copyText(details.workerUrl, copy));
     obsidianActions.append(open, copy);
   })();
 
-  // Notion — configured in the dashboard; show live status + sync.
-  const notionSub = h("div", { class: "row-sub" }, ["Sync Notion pages into your memory."]);
+  const notionSub = h("div", { class: "row-sub" }, [t("integrations.notionSub")]);
   const notionActions = h("div", { class: "row-actions" });
-  const notionTitle = h("div", { class: "row-title" }, ["Notion"]);
+  const notionTitle = h("div", { class: "row-title" }, [t("integrations.notionTitle")]);
   const notion = h("div", { class: "row" }, [
     h("div", {}, [notionTitle, notionSub]),
     notionActions,
@@ -309,30 +289,32 @@ export function integrationRows(details: ConnectionDetails): HTMLElement {
       connected = !!n?.connected;
       workspace = n?.workspaceName ?? null;
     } catch {
-      // Offline or unreachable — fall through to the setup CTA.
+      /* offline */
     }
 
     if (connected) {
-      notionTitle.append(badge("Connected", true));
-      notionSub.textContent = workspace ? `Connected to ${workspace}.` : "Connected.";
-      const sync = h("button", { class: "btn-secondary" }, ["Sync now"]);
+      notionTitle.append(badge(t("common.connected"), true));
+      notionSub.textContent = workspace
+        ? t("integrations.notionConnectedTo", { workspace })
+        : t("integrations.notionConnected");
+      const sync = h("button", { class: "btn-secondary" }, [t("integrations.syncNow")]);
       sync.addEventListener("click", async () => {
         sync.disabled = true;
-        sync.textContent = "Syncing…";
+        sync.textContent = t("integrations.syncing");
         try {
           notionSub.textContent = await invoke<string>("sync_notion");
         } catch (e) {
           notionSub.textContent = String(e);
         } finally {
           sync.disabled = false;
-          sync.textContent = "Sync now";
+          sync.textContent = t("integrations.syncNow");
         }
       });
-      const manage = h("button", { class: "btn-ghost" }, ["Manage"]);
+      const manage = h("button", { class: "btn-ghost" }, [t("integrations.manage")]);
       manage.addEventListener("click", () => void invoke("open_dashboard_integrations"));
       notionActions.replaceChildren(sync, manage);
     } else {
-      const setup = h("button", { class: "btn-secondary" }, ["Set up Notion"]);
+      const setup = h("button", { class: "btn-secondary" }, [t("integrations.setupNotion")]);
       setup.addEventListener("click", () => void invoke("open_dashboard_integrations"));
       notionActions.replaceChildren(setup);
     }

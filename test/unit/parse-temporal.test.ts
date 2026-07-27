@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseTimePhrase } from "../../src/index";
+import { parseTimePhrase } from "../../src/text/temporal";
 
 const NOW = new Date("2026-05-20T12:00:00.000Z").getTime();
 const DAY = 86400000;

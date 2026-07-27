@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createEdge, expandGraph, inferEdgesOnWrite, isValidEdgeType, isSymmetric } from "../../src/index";
+import { createEdge, inferEdgesOnWrite, isValidEdgeType, isSymmetric } from "../../src/graph/edges";
+import { expandGraph } from "../../src/graph/traverse";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
 
 function edge(source_id: string, target_id: string, weight = 0.5, type = "relates_to") {

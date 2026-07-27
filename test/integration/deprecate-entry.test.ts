@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { deprecateEntry } from "../../src/index";
+import { deprecateEntry } from "../../src/capture/lifecycle";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
 
 describe("deprecateEntry()", () => {

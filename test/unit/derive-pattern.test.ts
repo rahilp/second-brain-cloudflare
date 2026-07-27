@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { derivePattern } from "../../src/index";
+import { derivePattern } from "../../src/compression/pattern";
 import { makeTestDb, makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 
 // SSE stream helper — used by classifyEntry (streaming) inside captureEntry
 function makeSseStream(response: string) {

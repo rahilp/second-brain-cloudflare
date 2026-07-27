@@ -3,6 +3,7 @@ assets/*.gif
 node_modules/
 coverage/
 .wrangler/
+.wrangler-dry-run/
 docs/
 .claude/
 .dev.vars

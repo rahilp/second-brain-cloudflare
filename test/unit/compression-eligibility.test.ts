@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compressionEligibilitySql, COMPRESSION_MIN_RECALL } from "../../src/index";
+import { compressionEligibilitySql, COMPRESSION_MIN_RECALL } from "../../src/compression/eligibility";
 
 describe("compressionEligibilitySql", () => {
   it("includes the importance, recall+age, and contradiction-win clauses", () => {

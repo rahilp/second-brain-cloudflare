@@ -1,4 +1,4 @@
-import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL } from "../../src/index";
+import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL } from "../../src/compression/eligibility";
 
 export class D1Mock {
   entries: any[] = [];

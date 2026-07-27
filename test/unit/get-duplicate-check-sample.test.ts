@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getDuplicateCheckSample } from "../../src/index";
+import { getDuplicateCheckSample } from "../../src/capture/duplicate";
 
 describe("getDuplicateCheckSample", () => {
   it("returns content unchanged when at or under 1500 chars", () => {

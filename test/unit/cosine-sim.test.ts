@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cosineSim } from "../../src/index";
+import { cosineSim } from "../../src/recall/math";
 
 describe("cosineSim", () => {
   it("returns 1 for identical vectors", () => {

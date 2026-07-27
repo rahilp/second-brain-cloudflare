@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import { D1Mock } from "./d1-mock";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 
 export function makeVectorizeMock(overrides: Partial<VectorizeIndex> = {}): VectorizeIndex {
   return {

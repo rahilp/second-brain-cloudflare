@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker, { captureEntry } from "../../src/index";
+import worker from "../../src/index"; import { captureEntry } from "../../src/capture/entry";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
 
 // Returns an AI mock that always resolves a contradiction verdict (for captureEntry).

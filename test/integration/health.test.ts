@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker, { SB_VERSION } from "../../src/index";
+import worker from "../../src/index"; import { SB_VERSION } from "../../src/env";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 import { D1Mock } from "../helpers/d1-mock";

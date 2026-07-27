@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import worker, { runGraphPass } from "../../src/index";
+import worker from "../../src/index"; import { runGraphPass } from "../../src/graph/pass";
 import { makeTestDb, makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
 
 function makeCtx() {

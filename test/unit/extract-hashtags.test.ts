@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractHashtags } from "../../src/index";
+import { extractHashtags } from "../../src/text/hashtags";
 
 describe("extractHashtags", () => {
   it("returns empty hashtags and unchanged content when no hashtags present", () => {
