@@ -22,6 +22,11 @@ jobs:
       - run: npm ci --legacy-peer-deps
       - run: npm run typecheck
       - run: npm run test:coverage
+      # Bundles the Worker without deploying (no auth/network). Catches build
+      # or config errors that typecheck and tests miss. A fresh checkout has no
+      # .wrangler/ redirect, so this reads wrangler.jsonc directly.
+      - name: Build check (wrangler dry-run)
+        run: npx wrangler deploy --dry-run
       - name: Post coverage comment on PR
         if: github.event_name == 'pull_request'
         uses: davelosert/vitest-coverage-report-action@v2
