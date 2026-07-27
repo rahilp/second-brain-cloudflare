@@ -48,6 +48,8 @@ Prefer to run it yourself? Use the one-click **[Deploy to Cloudflare](https://de
 
 Connect Second Brain to the AI tools you already use, then save information as it comes up.
 
+Your Second Brain runs as a single Worker in your own Cloudflare account. Every install (the desktop app, CLI, browser extension, Obsidian, and each AI client) is a client pointed at that one Worker. There is nothing to sync between devices; they all read and write the same memory.
+
 Second Brain retrieves memories by meaning rather than exact wording. Asking:
 
 > What did I decide about the pricing model?
@@ -111,7 +113,7 @@ Prefer to deploy the Worker yourself without the app? Set it up in three steps.
 
 ### 1. Choose an authentication token
 
-Your `AUTH_TOKEN` is the password used to access your Second Brain.
+Your `AUTH_TOKEN` is the password used to access your Second Brain. It is the same value every client asks for. Whether a surface calls it your "auth token", "bearer token", or "password", they all mean this one token, sent in the `Authorization: Bearer` header.
 
 Use either:
 

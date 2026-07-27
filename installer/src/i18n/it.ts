@@ -33,6 +33,8 @@ export const it: Messages = {
     title: "Configura il tuo Second Brain",
     lede:
       "Una memoria privata condivisa tra tutti gli strumenti AI che usi. " +
+      "Ogni app e dispositivo che colleghi è una porta sulla stessa memoria, " +
+      "quindi non c'è nulla da sincronizzare tra loro. " +
       "Ci vogliono circa due minuti, tutto nel tuo spazio privato, " +
       "senza competenze tecniche.",
     getStarted: "Inizia",

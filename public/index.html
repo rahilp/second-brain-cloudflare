@@ -2411,7 +2411,7 @@
           <i class="ti ti-brain"></i>
         </div>
         <h1>Second Brain</h1>
-        <p>Enter your Bearer token to connect to your personal memory layer.</p>
+        <p>Enter your Bearer token to connect to your personal memory layer. This is the password you chose when you set up Second Brain.</p>
         <form
           class="field-group"
           onsubmit="
@@ -2421,7 +2421,7 @@
         >
           <input type="text" name="username" value="user" autocomplete="username" style="display: none" />
           <input type="url" id="auth-url" autocomplete="off" autocapitalize="none" />
-          <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="current-password" />
+          <input type="password" id="auth-token" placeholder="Bearer token (your setup password)" autocomplete="current-password" />
           <button id="auth-connect" type="submit">Connect</button>
         </form>
         <div id="auth-error"></div>
