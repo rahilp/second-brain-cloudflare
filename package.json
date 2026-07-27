@@ -20,17 +20,17 @@
     "typecheck": "wrangler types && tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.7.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "agents": "^0.12.4",
-    "zod": "^4.0.0"
+    "@cloudflare/workers-oauth-provider": "^0.8.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.19.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
-    "@vitest/coverage-v8": "^4.1.7",
-    "typescript": "^5.5.0",
-    "vitest": "^4.1.7",
-    "wrangler": "^4.101.0"
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.114.0"
   },
   "cloudflare": {
     "bindings": {
