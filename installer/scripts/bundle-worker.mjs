@@ -9,6 +9,7 @@ import { build } from "esbuild";
 import {
   cpSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -89,14 +90,32 @@ if (!d1 || !vectorize || !kv || !wrangler.ai?.binding) {
 // The bundled Worker's version — the app compares this against a deployed
 // Worker's /health version to offer updates. Read from the same SB_VERSION
 // constant the Worker echoes, so both sides always agree.
-const workerSource = readFileSync(resolve(repoRoot, wrangler.main), "utf8");
-const versionMatch = workerSource.match(
-  /export\s+const\s+SB_VERSION\s*=\s*["']([^"']+)["']/,
-);
-if (!versionMatch) {
-  throw new Error("could not find `export const SB_VERSION = \"...\"` in the Worker source");
+// SB_VERSION does not have to live in the entry file: splitting the Worker into
+// modules moved it to src/env.ts. Check the entry first, then walk the source
+// tree, so moving it again does not break the desktop build.
+const SB_VERSION_RE = /export\s+const\s+SB_VERSION\s*=\s*["']([^"']+)["']/;
+
+function findWorkerVersion(entryFile) {
+  const entryMatch = readFileSync(entryFile, "utf8").match(SB_VERSION_RE);
+  if (entryMatch) return entryMatch[1];
+  const stack = [resolve(repoRoot, "src")];
+  while (stack.length) {
+    for (const entry of readdirSync(stack.pop(), { withFileTypes: true })) {
+      const path = resolve(entry.parentPath, entry.name);
+      if (entry.isDirectory()) stack.push(path);
+      else if (entry.name.endsWith(".ts")) {
+        const match = readFileSync(path, "utf8").match(SB_VERSION_RE);
+        if (match) return match[1];
+      }
+    }
+  }
+  return null;
 }
-const workerVersion = versionMatch[1];
+
+const workerVersion = findWorkerVersion(resolve(repoRoot, wrangler.main));
+if (!workerVersion) {
+  throw new Error("could not find `export const SB_VERSION = \"...\"` anywhere under src/");
+}
 
 const manifest = {
   scriptName: wrangler.name,
