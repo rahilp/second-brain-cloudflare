@@ -2,7 +2,6 @@ export type Locale = "en" | "it";
 
 export type Messages = {
   common: {
-    back: string;
     continue: string;
     copy: string;
     copied: string;
@@ -116,6 +115,10 @@ export type Messages = {
     connectToolsDesc: string;
     integrationsTitle: string;
     integrationsDesc: string;
+    navConnection: string;
+    navTools: string;
+    navIntegrations: string;
+    navComputer: string;
     updateLabel: string;
     updateDesc: string;
     updateButton: string;
@@ -137,8 +140,8 @@ export type Messages = {
     syncing: string;
     manage: string;
     setUp: string;
+    appsTitle: string;
     back: string;
-    connectedCount: string;
     categoryKnowledge: string;
     categoryCalendar: string;
     categoryEmail: string;

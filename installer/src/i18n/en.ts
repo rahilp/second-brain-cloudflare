@@ -2,7 +2,6 @@ import type { Messages } from "./types";
 
 export const en: Messages = {
   common: {
-    back: "Back",
     continue: "Continue",
     copy: "Copy",
     copied: "Copied ✓",
@@ -142,6 +141,10 @@ export const en: Messages = {
       "it will ask for your password the first time.",
     integrationsTitle: "Integrations",
     integrationsDesc: "Bring in notes and pages from the tools you already use.",
+    navConnection: "Connection",
+    navTools: "AI tools",
+    navIntegrations: "Integrations",
+    navComputer: "This computer",
     updateLabel: "A newer Second Brain is available ({version})",
     updateDesc:
       "Update to get the latest improvements. Your memories, password, and connected tools are kept.",
@@ -164,8 +167,8 @@ export const en: Messages = {
     syncing: "Syncing…",
     manage: "Manage",
     setUp: "Set up",
+    appsTitle: "Apps",
     back: "All integrations",
-    connectedCount: "{connected} of {total} connected",
     categoryKnowledge: "Knowledge",
     categoryCalendar: "Calendars",
     categoryEmail: "Email",

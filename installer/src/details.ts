@@ -44,41 +44,69 @@ async function boot() {
     "worker_update_available",
   ).catch(() => null);
 
+  // One pane at a time, chosen from a rail. Everything used to be stacked in a
+  // single column, so most of it was below the fold and the only way to find
+  // anything was to scroll and read. Each pane now answers one question.
+  type SectionId = "connection" | "tools" | "integrations" | "computer";
+  let active: SectionId = "connection";
+
+  const paneFor = (id: SectionId): HTMLElement[] => {
+    if (id === "connection") {
+      return [
+        h("h2", { class: "pane-title" }, [t("details.navConnection")]),
+        h("p", { class: "pane-desc" }, [t("details.lede")]),
+        ...detailCards(details),
+        h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
+      ];
+    }
+    if (id === "tools") {
+      return [
+        h("h2", { class: "pane-title" }, [t("details.connectToolsTitle")]),
+        h("p", { class: "pane-desc" }, [t("details.connectToolsDesc")]),
+        toolRows(details, tools),
+      ];
+    }
+    if (id === "integrations") {
+      return [
+        h("h2", { class: "pane-title" }, [t("details.integrationsTitle")]),
+        h("p", { class: "pane-desc" }, [t("details.integrationsDesc")]),
+        integrationRows(details),
+      ];
+    }
+    return [
+      h("h2", { class: "pane-title" }, [t("details.navComputer")]),
+      ...(update ? [updateCard(update.availableVersion)] : []),
+      settingsSection(() => render()),
+      logoutSection(),
+    ];
+  };
+
   const render = () => {
     document.title = t("details.title");
     void getCurrentWindow().setTitle(t("details.title"));
-    // Two columns: what this computer needs on the left, what the Worker is
-    // connected to on the right. As one column everything below the first
-    // screenful was reachable only by scrolling.
+
+    const rail = h("nav", { class: "rail" });
+    const sections: { id: SectionId; label: string }[] = [
+      { id: "connection", label: t("details.navConnection") },
+      { id: "tools", label: t("details.navTools") },
+      { id: "integrations", label: t("details.navIntegrations") },
+      { id: "computer", label: t("details.navComputer") },
+    ];
+    for (const section of sections) {
+      const button = h(
+        "button",
+        { class: section.id === active ? "rail-btn on" : "rail-btn" },
+        [section.label],
+      );
+      button.addEventListener("click", () => {
+        active = section.id;
+        render();
+      });
+      rail.append(button);
+    }
+
     app.replaceChildren(
-      h("div", { class: "screen screen-wide" }, [
-        h("h1", {}, [t("details.title")]),
-        settingsSection(() => render()),
-        h("p", { class: "lede" }, [t("details.lede")]),
-        ...(update ? [updateCard(update.availableVersion)] : []),
-        h("div", { class: "details-grid" }, [
-          h("div", { class: "details-col" }, [
-            ...detailCards(details),
-            h("div", { class: "actions-spread" }, [
-              copyBothButton(details),
-              emailButton(details),
-            ]),
-            h("div", { class: "section-head" }, [
-              h("div", { class: "url-label" }, [t("details.connectToolsTitle")]),
-              h("div", { class: "url-desc" }, [t("details.connectToolsDesc")]),
-            ]),
-            toolRows(details, tools),
-          ]),
-          h("div", { class: "details-col" }, [
-            h("div", { class: "section-head" }, [
-              h("div", { class: "url-label" }, [t("details.integrationsTitle")]),
-              h("div", { class: "url-desc" }, [t("details.integrationsDesc")]),
-            ]),
-            integrationRows(details),
-            logoutSection(),
-          ]),
-        ]),
-      ]),
+      h("div", { class: "panel" }, [rail, h("section", { class: "pane" }, paneFor(active))]),
     );
   };
 

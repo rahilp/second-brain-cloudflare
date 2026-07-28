@@ -535,55 +535,95 @@ li.error .check-icon {
   opacity: 0.75;
 }
 
-/* The Connection details window is a reference panel rather than a setup step,
-   so it gets a wider two-column layout instead of the narrow single column the
-   setup flow uses. It collapses back to one column on a small window. */
-.screen.screen-wide {
-  max-width: 940px;
-}
 
-.details-grid {
+/* The Connection details window is a reference panel, not a setup step. It uses
+   a rail plus one pane so each screen answers a single question, instead of the
+   single tall column the setup flow uses. */
+.panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0 28px;
+  grid-template-columns: 188px minmax(0, 1fr);
+  gap: 28px;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 26px 30px 34px;
   align-items: start;
 }
 
-@media (max-width: 780px) {
-  .details-grid {
+@media (max-width: 720px) {
+  .panel {
     grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
   }
 }
 
-.details-col {
-  min-width: 0;
-}
-
-.section-head {
-  margin: 24px 0 10px;
-}
-
-.details-col > .section-head:first-child {
-  margin-top: 0;
-}
-
-/* Header of a drilled-into category: what you are looking at, and the way out. */
-.drill-head {
+.rail {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 10px;
-  margin-bottom: 4px;
-  border-bottom: 0.5px solid var(--border);
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 26px;
 }
 
-.drill-title {
+@media (max-width: 720px) {
+  .rail {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+.rail-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.rail-btn:hover {
+  background: var(--bg-card);
+}
+
+.rail-btn.on {
+  background: var(--bg-card);
+  border: 0.5px solid var(--border);
   font-weight: 600;
 }
 
-.back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.pane {
+  min-width: 0;
+}
+
+.pane-title {
+  margin: 0 0 4px;
+  font-size: 21px;
+  font-weight: 650;
+}
+
+.pane-desc {
+  margin: 0 0 16px;
+  color: var(--text-dim);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+/* Category heading inside the integrations pane. Everything sits on one screen
+   under its heading, so there is no second level to get lost in. */
+.group-head {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 18px 0 2px;
+}
+
+.card > .group-head:first-child {
+  margin-top: 0;
 }

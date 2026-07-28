@@ -242,13 +242,6 @@ function categoryLabel(id: string): string {
   return t("integrations.categoryOther");
 }
 
-function categoryIcon(id: string): string {
-  if (id === "knowledge") return "ti-book";
-  if (id === "calendar") return "ti-calendar";
-  if (id === "email") return "ti-mail";
-  return "ti-plug";
-}
-
 /// One provider inside a category: status on the left, what you can do on the
 /// right. Connecting happens in the dashboard (it needs a secret pasted), so the
 /// desktop app deep-links there rather than duplicating those forms.
@@ -309,50 +302,15 @@ function renderIntegrationBrowser(host: HTMLElement, all: IntegrationStatus[]): 
     return (ai < 0 ? CATEGORY_ORDER.length : ai) - (bi < 0 ? CATEGORY_ORDER.length : bi);
   });
 
-  const showCategories = () => {
-    const rows = ordered.map((id) => {
-      const items = groups.get(id) ?? [];
-      const connected = items.filter((i) => i.connected).length;
-      const row = h("div", { class: "row row-tappable" }, [
-        h("div", {}, [
-          h("div", { class: "row-title" }, [
-            h("i", { class: `ti ${categoryIcon(id)}` }),
-            categoryLabel(id),
-          ]),
-          h("div", { class: "row-sub" }, [
-            t("integrations.connectedCount", {
-              connected: String(connected),
-              total: String(items.length),
-            }),
-          ]),
-        ]),
-        h("div", { class: "row-actions" }, [h("i", { class: "ti ti-chevron-right" })]),
-      ]);
-      row.addEventListener("click", () => showCategory(id));
-      return row;
-    });
-    host.replaceChildren(...rows);
-  };
-
-  const showCategory = (id: string) => {
-    const back = h("button", { class: "btn-ghost back-btn" }, [
-      h("i", { class: "ti ti-chevron-left" }),
-      t("integrations.back"),
-    ]);
-    back.addEventListener("click", showCategories);
-    host.replaceChildren(
-      h("div", { class: "drill-head" }, [
-        h("div", { class: "drill-title" }, [
-          h("i", { class: `ti ${categoryIcon(id)}` }),
-          ` ${categoryLabel(id)}`,
-        ]),
-        back,
-      ]),
-      ...(groups.get(id) ?? []).map(providerRow),
-    );
-  };
-
-  showCategories();
+  // Everything is on screen at once under its category heading. An earlier
+  // version made each category a tappable row you drilled into, which meant a
+  // hidden second level with nothing on screen to say how to get back out.
+  const blocks: HTMLElement[] = [];
+  for (const id of ordered) {
+    blocks.push(h("div", { class: "group-head" }, [categoryLabel(id)]));
+    blocks.push(...(groups.get(id) ?? []).map(providerRow));
+  }
+  host.replaceChildren(...blocks);
 }
 
 export function integrationRows(details: ConnectionDetails): HTMLElement {
@@ -413,6 +371,13 @@ export function integrationRows(details: ConnectionDetails): HTMLElement {
     }
   })();
 
-  container.append(extension, obsidian, integrations);
+  // Apps are installed on this computer; everything below is connected to the
+  // Worker. Both get a heading so neither looks like a loose row.
+  container.append(
+    h("div", { class: "group-head" }, [t("integrations.appsTitle")]),
+    extension,
+    obsidian,
+    integrations,
+  );
   return container;
 }
