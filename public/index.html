@@ -4134,8 +4134,11 @@
             `<div class="view-related-label">Related</div>` +
             data.connections
               .map(
-                (c) =>
-                  `<div class="related-item" data-id="${escHtml(c.id)}" data-type="${escHtml(c.type)}"><button class="related-open"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button><button class="related-unlink" title="Remove link"><i class="ti ti-unlink"></i></button></div>`,
+                (c) => {
+                  const who = c.provenance === 'explicit' ? 'you linked' : c.provenance === 'system' ? 'system-linked' : 'auto-linked'
+                  const when = c.linkedAt ? ' · ' + new Date(c.linkedAt).toLocaleDateString() : ''
+                  return `<div class="related-item" data-id="${escHtml(c.id)}" data-type="${escHtml(c.type)}"><button class="related-open"><span class="related-type">${escHtml(c.label)} · ${who}${when}</span>${escHtml((c.content || '').slice(0, 80))}</button><button class="related-unlink" title="Remove link"><i class="ti ti-unlink"></i></button></div>`
+                },
               )
               .join('')
           el.style.display = 'block'
@@ -4218,7 +4221,7 @@
         nodes.forEach((n) => {
           byId[n.id] = n
         })
-        const links = edges.map((e) => ({ s: byId[e.source], t: byId[e.target], w: e.weight })).filter((l) => l.s && l.t)
+        const links = edges.map((e) => ({ s: byId[e.source], t: byId[e.target], w: e.weight, p: e.provenance })).filter((l) => l.s && l.t)
 
         // No physics: node positions are computed deterministically below (static packed
         // clusters), after topic clustering.
@@ -4575,6 +4578,12 @@
           for (const l of links) {
             const dim = l.s.status === 'deprecated' || l.t.status === 'deprecated'
             const lit = hover && (l.s === hover || l.t === hover)
+            // Edge dash encodes provenance: solid = you linked, dashed = auto-inferred, dotted = system.
+            ctx.setLineDash(
+              l.p === 'explicit' ? [] :
+              l.p === 'system' ? [1 / cam.scale, 2 / cam.scale] :
+              [3 / cam.scale, 3 / cam.scale],
+            )
             ctx.strokeStyle = lit ? 'rgba(178,102,65,0.55)' : dim ? `rgba(${inkRGB}, ${edgeDimA})` : `rgba(${inkRGB}, ${edgeA})`
             ctx.lineWidth = lit ? Math.max(1.5, l.w * 2.5) : Math.max(0.4, l.w * 1.5)
             ctx.beginPath()
@@ -4582,6 +4591,7 @@
             ctx.lineTo(l.t.x, l.t.y)
             ctx.stroke()
           }
+          ctx.setLineDash([])
           for (const n of nodes) {
             const r = nodeRadius(n)
             ctx.globalAlpha = n.status === 'deprecated' ? 0.4 : 1

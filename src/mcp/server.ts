@@ -313,7 +313,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: `No connections found for ${id}.` }] };
       }
       const text = connections
-        .map(c => `- (${c.label}) ${c.id}: ${c.content.slice(0, 120)}`)
+        .map(c => {
+          const who = c.provenance === "explicit" ? "you linked" : c.provenance === "system" ? "system-linked" : "auto-linked";
+          const when = c.linkedAt ? ` · ${new Date(c.linkedAt).toLocaleDateString()}` : "";
+          return `- (${c.label} · ${who}${when}) ${c.id}: ${c.content.slice(0, 120)}`;
+        })
         .join("\n");
       return { content: [{ type: "text", text }] };
     }

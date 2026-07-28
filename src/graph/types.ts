@@ -21,6 +21,9 @@ export interface GraphNeighbor {
   hop: number;
   viaWeight: number;
   viaType: EdgeType;
+  viaProvenance: EdgeProvenance; // how the traversed edge was created: explicit (you) / inferred (auto) / system
+  viaLinkedAt: number;           // when the traversed edge was formed (edge created_at)
+  viaFrom: string;               // id of the node this neighbor was reached from
 }
 
 export interface Connection {
@@ -32,6 +35,8 @@ export interface Connection {
   type: EdgeType;
   label: string;
   weight: number;
+  provenance: EdgeProvenance; // explicit (you linked) / inferred (auto) / system
+  linkedAt: number;           // when the edge was formed (edge created_at)
 }
 
 export interface GraphNode {
@@ -46,5 +51,5 @@ export interface GraphNode {
 
 export interface GraphView {
   nodes: GraphNode[];
-  edges: { source: string; target: string; type: string; weight: number }[];
+  edges: { source: string; target: string; type: string; weight: number; provenance: EdgeProvenance }[];
 }

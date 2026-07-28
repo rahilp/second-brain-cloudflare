@@ -3,7 +3,7 @@ import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { getKind } from "../memory/kind";
 import { getStatus } from "../memory/status";
 import { edgeLabel } from "./edges";
-import type { Connection, GraphNeighbor, GraphView } from "./types";
+import type { Connection, EdgeProvenance, GraphNeighbor, GraphView } from "./types";
 
 export const GRAPH_MAX_HOPS = 3;
 const GRAPH_FANOUT_CAP = 8;
@@ -41,12 +41,12 @@ export async function expandGraph(
   let frontier = [...seedIds];
 
   for (let hop = 1; hop <= hops && frontier.length && out.length < maxNodes; hop++) {
-    const edgeRows: { source_id: string; target_id: string; type: string; weight: number }[] = [];
+    const edgeRows: { source_id: string; target_id: string; type: string; weight: number; provenance: EdgeProvenance; created_at: number }[] = [];
     for (let i = 0; i < frontier.length; i += EDGE_QUERY_BATCH) {
       const batch = frontier.slice(i, i + EDGE_QUERY_BATCH);
       const ph = batch.map(() => "?").join(", ");
       const { results } = await env.DB.prepare(
-        `SELECT source_id, target_id, type, weight FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
+        `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
       ).bind(...batch, ...batch).all() as { results: any[] };
       edgeRows.push(...results);
     }
@@ -63,7 +63,7 @@ export async function expandGraph(
       const n = perNodeCount.get(from) ?? 0;
       if (n >= fanoutCap) continue;
       perNodeCount.set(from, n + 1);
-      candidates.push({ id: to, hop, viaWeight: e.weight, viaType: e.type as GraphNeighbor["viaType"] });
+      candidates.push({ id: to, hop, viaWeight: e.weight, viaType: e.type as GraphNeighbor["viaType"], viaProvenance: e.provenance, viaLinkedAt: e.created_at, viaFrom: from });
     }
 
     let allowed = candidates;
@@ -118,6 +118,8 @@ export async function getConnections(id: string, type: string | undefined, env: 
       type: n.viaType,
       label: edgeLabel(n.viaType),
       weight: n.viaWeight,
+      provenance: n.viaProvenance,
+      linkedAt: n.viaLinkedAt,
     });
   }
   return out;
@@ -184,14 +186,14 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     const batch = presentIds.slice(i, i + EDGE_QUERY_BATCH);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT source_id, target_id, type, weight FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
+      `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
     ).bind(...batch, ...batch).all() as { results: any[] };
     for (const e of results) {
       if (!nodeIdSet.has(e.source_id) || !nodeIdSet.has(e.target_id)) continue;
       const key = `${e.source_id}|${e.target_id}|${e.type}`;
       if (edgeSeen.has(key)) continue;
       edgeSeen.add(key);
-      edges.push({ source: e.source_id, target: e.target_id, type: e.type, weight: e.weight });
+      edges.push({ source: e.source_id, target: e.target_id, type: e.type, weight: e.weight, provenance: e.provenance });
     }
   }
 

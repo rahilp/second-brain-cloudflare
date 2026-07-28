@@ -59,6 +59,22 @@ describe("multi-hop recall (issue #16)", () => {
     expect(res.matches[1].hop).toBe(1);
   });
 
+  it("carries edge provenance, timestamp, and parent onto a graph-expanded match (#225)", async () => {
+    seed(db, "seed", "Direct match");
+    seed(db, "neighbor", "Related context");
+    pushEdge(db, "seed", "neighbor"); // pushEdge sets provenance "inferred", created_at 1
+    const env = denseEnv(db, [{ id: "seed", score: 0.9 }]);
+    const { ctx } = makeCtx();
+
+    const res = await recallEntries({ query: "direct", topK: 5, hops: 1 }, env, ctx);
+    const hop = res.matches.find(m => m.id === "neighbor")!;
+    expect(hop.viaProvenance).toBe("inferred");
+    expect(hop.viaFrom).toBe("seed");
+    expect(hop.viaLinkedAt).toBe(1);
+    // a direct seed match carries no via* fields
+    expect(res.matches.find(m => m.id === "seed")!.viaProvenance).toBeUndefined();
+  });
+
   it("does not traverse into a status:deprecated neighbor", async () => {
     seed(db, "seed", "Direct match");
     seed(db, "neighbor", "Related context", ["status:deprecated"]);

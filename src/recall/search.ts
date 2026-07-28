@@ -8,6 +8,7 @@ import {
 } from "../constants";
 import { embed } from "../lib/ai";
 import { expandGraph, GRAPH_HOP_DECAY, GRAPH_MAX_HOPS } from "../graph/traverse";
+import type { EdgeProvenance, EdgeType } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { derivePattern } from "../compression/pattern";
 import { parseTimePhrase } from "../text/temporal";
@@ -181,7 +182,7 @@ export async function recallEntries(
 
   const seedParentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
 
-  let expandedScored: { parentId: string; score: number; hop: number }[] = [];
+  let expandedScored: { parentId: string; score: number; hop: number; viaProvenance: EdgeProvenance; viaType: EdgeType; viaLinkedAt: number; viaFrom: string }[] = [];
   if (hops > 0) {
     const minSeedScore = deduped.reduce((mn, m) => Math.min(mn, m.score), Infinity);
     const expanded = await expandGraph(seedParentIds, { hops }, env);
@@ -189,6 +190,10 @@ export async function recallEntries(
       parentId: n.id,
       hop: n.hop,
       score: minSeedScore * Math.pow(GRAPH_HOP_DECAY, n.hop) * n.viaWeight,
+      viaProvenance: n.viaProvenance,
+      viaType: n.viaType,
+      viaLinkedAt: n.viaLinkedAt,
+      viaFrom: n.viaFrom,
     }));
   }
 
@@ -243,6 +248,10 @@ export async function recallEntries(
       source: row.source as string,
       isUpdate: false,
       hop: e.hop,
+      viaProvenance: e.viaProvenance,
+      viaType: e.viaType,
+      viaLinkedAt: e.viaLinkedAt,
+      viaFrom: e.viaFrom,
     }];
   });
 
