@@ -335,12 +335,18 @@ function renderIntegrationBrowser(host: HTMLElement, all: IntegrationStatus[]): 
   };
 
   const showCategory = (id: string) => {
-    const back = h("button", { class: "btn-ghost" }, [t("integrations.back")]);
+    const back = h("button", { class: "btn-ghost back-btn" }, [
+      h("i", { class: "ti ti-chevron-left" }),
+      t("integrations.back"),
+    ]);
     back.addEventListener("click", showCategories);
     host.replaceChildren(
-      h("div", { class: "row" }, [
-        h("div", { class: "row-title" }, [categoryLabel(id)]),
-        h("div", { class: "row-actions" }, [back]),
+      h("div", { class: "drill-head" }, [
+        h("div", { class: "drill-title" }, [
+          h("i", { class: `ti ${categoryIcon(id)}` }),
+          ` ${categoryLabel(id)}`,
+        ]),
+        back,
       ]),
       ...(groups.get(id) ?? []).map(providerRow),
     );

@@ -47,23 +47,37 @@ async function boot() {
   const render = () => {
     document.title = t("details.title");
     void getCurrentWindow().setTitle(t("details.title"));
+    // Two columns: what this computer needs on the left, what the Worker is
+    // connected to on the right. As one column everything below the first
+    // screenful was reachable only by scrolling.
     app.replaceChildren(
-      h("div", { class: "screen" }, [
+      h("div", { class: "screen screen-wide" }, [
         h("h1", {}, [t("details.title")]),
         settingsSection(() => render()),
         h("p", { class: "lede" }, [t("details.lede")]),
         ...(update ? [updateCard(update.availableVersion)] : []),
-        ...detailCards(details),
-        h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
-        h("div", { style: "height:18px" }),
-        h("div", { class: "url-label" }, [t("details.connectToolsTitle")]),
-        h("div", { class: "url-desc" }, [t("details.connectToolsDesc")]),
-        toolRows(details, tools),
-        h("div", { style: "height:18px" }),
-        h("div", { class: "url-label" }, [t("details.integrationsTitle")]),
-        h("div", { class: "url-desc" }, [t("details.integrationsDesc")]),
-        integrationRows(details),
-        logoutSection(),
+        h("div", { class: "details-grid" }, [
+          h("div", { class: "details-col" }, [
+            ...detailCards(details),
+            h("div", { class: "actions-spread" }, [
+              copyBothButton(details),
+              emailButton(details),
+            ]),
+            h("div", { class: "section-head" }, [
+              h("div", { class: "url-label" }, [t("details.connectToolsTitle")]),
+              h("div", { class: "url-desc" }, [t("details.connectToolsDesc")]),
+            ]),
+            toolRows(details, tools),
+          ]),
+          h("div", { class: "details-col" }, [
+            h("div", { class: "section-head" }, [
+              h("div", { class: "url-label" }, [t("details.integrationsTitle")]),
+              h("div", { class: "url-desc" }, [t("details.integrationsDesc")]),
+            ]),
+            integrationRows(details),
+            logoutSection(),
+          ]),
+        ]),
       ]),
     );
   };

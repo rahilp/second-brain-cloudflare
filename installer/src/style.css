@@ -534,3 +534,56 @@ li.error .check-icon {
   margin-right: 8px;
   opacity: 0.75;
 }
+
+/* The Connection details window is a reference panel rather than a setup step,
+   so it gets a wider two-column layout instead of the narrow single column the
+   setup flow uses. It collapses back to one column on a small window. */
+.screen.screen-wide {
+  max-width: 940px;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 28px;
+  align-items: start;
+}
+
+@media (max-width: 780px) {
+  .details-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.details-col {
+  min-width: 0;
+}
+
+.section-head {
+  margin: 24px 0 10px;
+}
+
+.details-col > .section-head:first-child {
+  margin-top: 0;
+}
+
+/* Header of a drilled-into category: what you are looking at, and the way out. */
+.drill-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+  border-bottom: 0.5px solid var(--border);
+}
+
+.drill-title {
+  font-weight: 600;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

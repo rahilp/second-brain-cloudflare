@@ -154,7 +154,7 @@ pub fn open_details_window(app: &AppHandle) {
     }
     let _ = WebviewWindowBuilder::new(app, "details", WebviewUrl::App("details.html".into()))
         .title("Connection details")
-        .inner_size(540.0, 700.0)
-        .min_inner_size(460.0, 520.0)
+        .inner_size(960.0, 680.0)
+        .min_inner_size(820.0, 560.0)
         .build();
 }
