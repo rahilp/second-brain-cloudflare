@@ -52,16 +52,13 @@ async function boot() {
 
   const paneFor = (id: SectionId): HTMLElement[] => {
     if (id === "connection") {
-      // The dashboard is a separate window, and which window does what is not
-      // obvious, so say it here and give a way straight there.
-      const openDashboard = h("button", { class: "btn-secondary" }, [
-        t("details.openDashboardHere"),
-      ]);
-      openDashboard.addEventListener("click", () => void invoke("open_dashboard"));
+      // No "open the dashboard" button here on purpose: this window is reached
+      // from the dashboard, which stays open behind it, so the button only sent
+      // this window to the back. The menu bar still has one for the case where
+      // no dashboard window is open.
       return [
         h("h2", { class: "pane-title" }, [t("details.navConnection")]),
         h("p", { class: "pane-desc" }, [t("details.lede")]),
-        h("div", { class: "pane-action" }, [openDashboard]),
         ...detailCards(details),
         h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
       ];

@@ -152,7 +152,6 @@ export const it: Messages = {
     allSetTitle: "Tutto pronto",
     allSetLede: "Due link da conservare. Li trovi sempre qui in Dettagli connessione.",
     openDashboard: "Apri il mio Second Brain",
-    openDashboardHere: "Apri la dashboard",
   },
   integrations: {
     extensionTitle: "Estensione browser",

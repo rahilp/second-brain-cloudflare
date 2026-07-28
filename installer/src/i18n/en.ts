@@ -154,7 +154,6 @@ export const en: Messages = {
     allSetTitle: "You're all set",
     allSetLede: "Two links to keep. You can always find them again in this app under Connection details.",
     openDashboard: "Open my Second Brain",
-    openDashboardHere: "Open the dashboard",
   },
   integrations: {
     extensionTitle: "Browser extension",
