@@ -1486,6 +1486,22 @@
         color: var(--text-tertiary);
       }
 
+      .first-run-steps {
+        margin: 14px 0 0;
+        padding-left: 20px;
+        text-align: left;
+        font-family: var(--font-sans);
+        font-style: normal;
+        font-size: 14px;
+        line-height: 1.65;
+        color: var(--text-secondary);
+        max-width: 460px;
+      }
+
+      .first-run-steps li {
+        margin-bottom: 8px;
+      }
+
       /* ============ BOTTOM SHEETS ============ */
       #confirm-dialog,
       #append-sheet,
@@ -3197,6 +3213,7 @@
         try {
           allEntries = await apiList(50)
           renderRecent(allEntries)
+          showFirstRunIfEmpty(allEntries.length === 0)
           updateStatus()
           loadTags()
         } catch {
@@ -3222,10 +3239,34 @@
         )
       }
 
+      // A brand-new brain has nothing to recall, so the usual prompt and its
+      // suggestions would all come back empty. Say where things live instead.
+      function showFirstRunIfEmpty(isEmpty) {
+        const welcome = document.getElementById('recall-welcome')
+        const suggestions = document.querySelector('.suggestions-row')
+        if (!welcome) return
+        if (!isEmpty) {
+          if (suggestions) suggestions.style.display = ''
+          welcome.classList.remove('first-run')
+          return
+        }
+        if (suggestions) suggestions.style.display = 'none'
+        welcome.classList.add('first-run')
+        welcome.innerHTML =
+          `<div class="eyebrow">Getting started</div>` +
+          `<div class="hero-line">Your Second Brain is empty. Here is where everything lives.</div>` +
+          `<ol class="first-run-steps">` +
+          `<li><b>Remember</b> saves something. Try it with a decision you made this week.</li>` +
+          `<li><b>Recall</b> finds it later by meaning, so you do not need the words you used.</li>` +
+          `<li><b>Settings</b> is where you connect Claude, ChatGPT, Cursor, your email and calendar, ` +
+          `so they read from and add to this same memory.</li>` +
+          `</ol>`
+      }
+
       function renderRecent(entries) {
         const list = document.getElementById('recent-list')
         if (!entries.length) {
-          list.innerHTML = `<div class="empty-state"><i class="ti ti-brain"></i><span>No memories yet.<br>Use Remember to add some.</span></div>`
+          list.innerHTML = `<div class="empty-state"><i class="ti ti-brain"></i><span>No memories yet.<br>Use Remember to save your first one.</span></div>`
           return
         }
         const groups = {},

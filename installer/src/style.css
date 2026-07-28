@@ -627,3 +627,7 @@ li.error .check-icon {
 .card > .group-head:first-child {
   margin-top: 0;
 }
+
+.pane-action {
+  margin-bottom: 16px;
+}

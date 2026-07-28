@@ -52,9 +52,16 @@ async function boot() {
 
   const paneFor = (id: SectionId): HTMLElement[] => {
     if (id === "connection") {
+      // The dashboard is a separate window, and which window does what is not
+      // obvious, so say it here and give a way straight there.
+      const openDashboard = h("button", { class: "btn-secondary" }, [
+        t("details.openDashboardHere"),
+      ]);
+      openDashboard.addEventListener("click", () => void invoke("open_dashboard"));
       return [
         h("h2", { class: "pane-title" }, [t("details.navConnection")]),
         h("p", { class: "pane-desc" }, [t("details.lede")]),
+        h("div", { class: "pane-action" }, [openDashboard]),
         ...detailCards(details),
         h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
       ];

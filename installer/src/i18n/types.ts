@@ -125,6 +125,7 @@ export type Messages = {
     allSetTitle: string;
     allSetLede: string;
     openDashboard: string;
+    openDashboardHere: string;
   };
   integrations: {
     extensionTitle: string;

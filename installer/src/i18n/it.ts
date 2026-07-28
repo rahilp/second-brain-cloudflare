@@ -124,8 +124,10 @@ export const it: Messages = {
     claudeWeb: "Claude (web e desktop)",
   },
   details: {
-    title: "Dettagli connessione",
-    lede: "Tutto ciò che serve per collegare uno strumento o un altro computer.",
+    title: "Connessioni",
+    lede:
+      "Da qui colleghi le cose al tuo Second Brain. " +
+      "Le memorie vivono nella dashboard, che si apre in una finestra dedicata.",
     notSetupTitle: "Non ancora configurato",
     notSetupLede: "Completa prima la configurazione — i dettagli appariranno qui.",
     addressLabel: "Indirizzo del Second Brain",
@@ -150,6 +152,7 @@ export const it: Messages = {
     allSetTitle: "Tutto pronto",
     allSetLede: "Due link da conservare. Li trovi sempre qui in Dettagli connessione.",
     openDashboard: "Apri il mio Second Brain",
+    openDashboardHere: "Apri la dashboard",
   },
   integrations: {
     extensionTitle: "Estensione browser",

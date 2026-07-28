@@ -156,7 +156,7 @@ pub fn run() {
             let hub_item = MenuItem::with_id(
                 app,
                 "menu-hub",
-                "Connections & Integrations…",
+                "Connections…",
                 true,
                 Some("CmdOrCtrl+D"),
             )?;
@@ -194,7 +194,7 @@ pub fn run() {
             let tray_hub = MenuItem::with_id(
                 app,
                 "tray-hub",
-                "Connections & Integrations…",
+                "Connections…",
                 true,
                 None::<&str>,
             )?;
