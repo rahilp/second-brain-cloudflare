@@ -27,6 +27,14 @@ jobs:
       # .wrangler/ redirect, so this reads wrangler.jsonc directly.
       - name: Build check (wrangler dry-run)
         run: npx wrangler deploy --dry-run
+      # The desktop app bundles the Worker with its own esbuild script, which
+      # otherwise only runs on a release tag. It reads the Worker source
+      # directly, so a source move can break the desktop build while the tests
+      # and the wrangler dry-run above stay green. Catch that here instead of at
+      # tag time.
+      - name: Build check (desktop worker bundle)
+        working-directory: installer
+        run: npm ci && npm run bundle-worker
       - name: Post coverage comment on PR
         if: github.event_name == 'pull_request'
         uses: davelosert/vitest-coverage-report-action@v2
