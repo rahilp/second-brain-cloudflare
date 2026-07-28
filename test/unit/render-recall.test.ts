@@ -54,4 +54,37 @@ describe("renderRecallText", () => {
       expect(renderRecallText([m({ hop: 0 })], "")).not.toContain("[related");
     });
   });
+
+  describe("bounded output (#238)", () => {
+    it("marks a truncated result with the id needed to fetch the rest", () => {
+      const out = renderRecallText([m({ id: "big-1", content: "x".repeat(9000) })], "");
+      expect(out).toContain("[truncated");
+      expect(out).toContain('get("big-1")');
+    });
+
+    it("leaves a short memory whole and unmarked", () => {
+      const out = renderRecallText([m({ content: "Short enough." })], "");
+      expect(out).toContain("Short enough.");
+      expect(out).not.toContain("[truncated");
+    });
+
+    it("stops once the budget is spent and says how many were dropped", () => {
+      const many = Array.from({ length: 40 }, (_, i) => m({ id: `e${i}`, content: "y".repeat(3000) }));
+      const out = renderRecallText(many, "");
+      expect(out).toMatch(/more matches omitted to bound the response size/);
+      expect(out.length).toBeLessThan(20000);
+    });
+
+    it("always returns at least one match even when that match alone is huge", () => {
+      const out = renderRecallText([m({ id: "only", content: "z".repeat(80000) })], "");
+      expect(out).toContain("ID: only");
+    });
+
+    it("full:true returns whole content with no truncation", () => {
+      const content = "w".repeat(9000);
+      const out = renderRecallText([m({ id: "big-2", content })], "", { full: true });
+      expect(out).toContain(content);
+      expect(out).not.toContain("[truncated");
+    });
+  });
 });

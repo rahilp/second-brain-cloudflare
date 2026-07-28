@@ -273,5 +273,5 @@ export async function recallEntries(
     );
   }
 
-  return { matches, insight, semanticUnavailable, queryUsed: embedQuery };
+  return { matches, insight, semanticUnavailable, queryUsed: embedQuery, queryTokens: tokens };
 }

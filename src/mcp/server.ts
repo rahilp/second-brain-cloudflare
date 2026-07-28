@@ -13,6 +13,7 @@ import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
 import { recallEntries } from "../recall/search";
 import { renderRecallText } from "../recall/render";
+import { RECALL_OUTPUT_BUDGET, SNIPPET_MAX_CHARS, snippetOf, truncationNote } from "../recall/snippet";
 
 export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
@@ -186,7 +187,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   server.registerTool(
     "recall",
     {
-      description: "Recall: semantically search your second brain for relevant notes and context. Call recall automatically at the start of every conversation and every 3-4 messages.",
+      description: "Recall: semantically search your second brain for relevant notes and context. Call recall automatically at the start of every conversation and every 3-4 messages. Long memories come back shortened to keep the response small: any result ending in a [truncated …] marker is PARTIAL, so call get(id) before relying on its details or quoting it. Results without that marker are complete.",
       inputSchema: {
         query: z.string().describe("Natural language search query"),
         topK: z.number().int().min(1).max(20).default(5).describe("Number of results"),
@@ -198,7 +199,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ query, topK, tag, after, before, kind, hops }) => {
-      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx);
+      const { matches, insight, semanticUnavailable, queryTokens } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx);
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
@@ -208,7 +209,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: notice + "Nothing found matching that query." }] };
       }
 
-      return { content: [{ type: "text", text: notice + renderRecallText(matches, insight) }] };
+      return { content: [{ type: "text", text: notice + renderRecallText(matches, insight, { queryTokens }) }] };
     }
   );
 
@@ -216,7 +217,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   server.registerTool(
     "list_recent",
     {
-      description: "list_recent: List the most recent entries by date from your second brain. Use when you need to browse recent entries or find an entry ID. Not the same as recall — returns entries by time, not by meaning.",
+      description: "list_recent: List the most recent entries by date from your second brain. Use when you need to browse recent entries or find an entry ID. Not the same as recall — returns entries by time, not by meaning. Long entries are shortened: a result ending in a [truncated …] marker is PARTIAL, so call get(id) for its full text.",
       inputSchema: {
         n: z.number().int().min(1).max(50).default(10),
         tag: z.string().optional(),
@@ -232,14 +233,58 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: "No entries found." }] };
       }
 
-      const text = (results as Record<string, any>[]).map((row, i) => {
+      // Same size discipline as recall: browsing should not dump every entry in
+      // full. Oversized rows are cut and marked so the caller can fetch them.
+      const blocks: string[] = [];
+      let used = 0;
+      let omitted = 0;
+      const rows = results as Record<string, any>[];
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
         const date = new Date(row.created_at as number).toLocaleDateString();
         const tags: string[] = JSON.parse(row.tags ?? "[]");
         const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
-        return `${i + 1}. [${date} · ${row.source}${tagStr}]\nID: ${row.id as string}\n${row.content}`;
-      }).join("\n\n");
+        const s = snippetOf(row.content as string, SNIPPET_MAX_CHARS);
+        const body = s.truncated ? `${s.text}${truncationNote(row.id as string, s)}` : s.text;
+        const block = `${i + 1}. [${date} · ${row.source}${tagStr}]\nID: ${row.id as string}\n${body}`;
+        if (blocks.length && used + block.length > RECALL_OUTPUT_BUDGET) {
+          omitted = rows.length - i;
+          break;
+        }
+        used += block.length;
+        blocks.push(block);
+      }
+      let text = blocks.join("\n\n");
+      if (omitted > 0) text += `\n\n${omitted} more entr${omitted > 1 ? "ies" : "y"} omitted to bound the response size. Lower n, or call get("<id>").`;
 
       return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // ── get ──────────────────────────────────────────────────────────────────
+  // The fetch half of snippet-first recall: recall/list_recent return bounded
+  // previews, and this returns one memory in full on demand.
+  server.registerTool(
+    "get",
+    {
+      description: "Get one memory in full by ID. Use when a recall or list_recent result was marked [truncated] and you need its complete text before answering, quoting, or acting on it. Get the ID from recall or list_recent.",
+      inputSchema: {
+        id: z.string().describe("Entry ID from recall or list_recent"),
+      },
+    },
+    async ({ id }) => {
+      const row = await env.DB.prepare(
+        `SELECT id, content, tags, source, created_at FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+      if (!row) {
+        return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      }
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
+      const date = new Date(row.created_at as number).toLocaleDateString();
+      return {
+        content: [{ type: "text", text: `[${date} · ${row.source}${tagStr}]\nID: ${row.id}\n${row.content}` }],
+      };
     }
   );
 

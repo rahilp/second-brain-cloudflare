@@ -91,6 +91,45 @@ describe("GET /recall", () => {
     expect(data.results[1].score).toBeLessThanOrEqual(data.results[0].score);
     expect(data.results[1]).toMatchObject({ id: "entry-2", content: "Second memory" });
     expect(typeof data.insight === "string" || data.insight === null).toBe(true);
+    // Short memories come back whole and are reported as complete.
+    expect(data.results[0].truncated).toBe(false);
+    expect(data.results[0].full_length).toBe("First memory".length);
+  });
+
+  it("shortens an oversized memory and reports its true stored size (#238)", async () => {
+    const big = "x".repeat(9000);
+    db.entries.push(
+      { id: "big-1", content: big, tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 },
+    );
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [makeMatch("big-1", 0.9)] }),
+      }),
+    });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.results[0].truncated).toBe(true);
+    expect(data.results[0].content.length).toBeLessThan(big.length);
+    // full_length must reflect what get() would return, not the shortened text.
+    expect(data.results[0].full_length).toBe(big.length);
+  });
+
+  it("full=1 opts out of shortening, for renderers that show whole memories (#238)", async () => {
+    const big = "y".repeat(9000);
+    db.entries.push(
+      { id: "big-2", content: big, tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 },
+    );
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [makeMatch("big-2", 0.9)] }),
+      }),
+    });
+
+    const res = await worker.fetch(req("GET", "/recall?query=memory&full=1"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.results[0].truncated).toBe(false);
+    expect(data.results[0].content).toBe(big);
   });
 
   it("dedupes matches that share the same parentId", async () => {

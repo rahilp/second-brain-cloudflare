@@ -3073,7 +3073,9 @@
           // formatted text miscounts sources when memory content contains list items
           // hops=1 lets recall follow relationship edges one step out; direct matches
           // always outrank expanded ones (worker applies a graph-distance penalty)
-          const params = new URLSearchParams({ query, topK: '5', hops: '1' })
+          // full=1: the dashboard renders whole memories in its cards, so it opts out
+          // of the snippet shortening that keeps API/agent responses small
+          const params = new URLSearchParams({ query, topK: '5', hops: '1', full: '1' })
           if (selectedTag) params.set('tag', selectedTag)
           const recallRes = await fetch(`${WORKER_URL}/recall?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
           const data = await recallRes.json()

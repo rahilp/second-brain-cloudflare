@@ -21,6 +21,9 @@ export interface RecallSearchResult {
   insight: string;
   semanticUnavailable: boolean;
   queryUsed?: string;
+  // Distilled query terms, reused to pick a query-relevant excerpt when a long
+  // memory has to be shortened for the response.
+  queryTokens?: string[];
 }
 
 export interface KeywordRow {

@@ -5,6 +5,7 @@ import { buildEntryFilterQuery } from "../capture/entry";
 import { compressTag } from "../compression/digest";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { recallEntries } from "../recall/search";
+import { allowanceFor, snippetOf } from "../recall/snippet";
 
 export async function handleRecallRoutes(
   request: Request,
@@ -41,8 +42,11 @@ export async function handleRecallRoutes(
     const kindParam = url.searchParams.get("kind")?.trim();
     const kind = kindParam && (KIND_VALUES as readonly string[]).includes(kindParam) ? kindParam as MemoryKind : undefined;
     const hops = Math.min(Math.max(parseInt(url.searchParams.get("hops") ?? "0", 10), 0), 3);
+    // Long memories are shortened by default so API/CLI consumers get a bounded
+    // payload. Renderers that show the whole memory (the dashboard) pass full=1.
+    const full = ["1", "true", "yes"].includes((url.searchParams.get("full") ?? "").toLowerCase());
 
-    const { matches, insight, semanticUnavailable, queryUsed } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx);
+    const { matches, insight, semanticUnavailable, queryUsed, queryTokens } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx);
 
     if (!matches.length) {
       return json({
@@ -59,20 +63,27 @@ export async function handleRecallRoutes(
     return json({
       ok: true,
       query_used: queryUsed,
-      results: matches.map(m => ({
-        id: m.id,
-        content: m.content,
-        score: parseFloat((m.score * 100).toFixed(1)),
-        tags: m.tags,
-        source: m.source,
-        created_at: m.createdAt,
-        updated: m.isUpdate,
-        hop: m.hop,
-        via_provenance: m.viaProvenance ?? null,
-        via_type: m.viaType ?? null,
-        linked_at: m.viaLinkedAt ?? null,
-        related_to: m.viaFrom ?? null,
-      })),
+      results: matches.map((m, i) => {
+        const s = full
+          ? { text: m.content, truncated: false, fullLength: (m.content ?? "").length }
+          : snippetOf(m.content, allowanceFor(i, m.score), { queryTokens });
+        return {
+          id: m.id,
+          content: s.text,
+          truncated: s.truncated,
+          full_length: s.fullLength,
+          score: parseFloat((m.score * 100).toFixed(1)),
+          tags: m.tags,
+          source: m.source,
+          created_at: m.createdAt,
+          updated: m.isUpdate,
+          hop: m.hop,
+          via_provenance: m.viaProvenance ?? null,
+          via_type: m.viaType ?? null,
+          linked_at: m.viaLinkedAt ?? null,
+          related_to: m.viaFrom ?? null,
+        };
+      }),
       insight: insight || null,
       semantic_unavailable: semanticUnavailable,
     });

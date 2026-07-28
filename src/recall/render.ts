@@ -1,16 +1,44 @@
 import type { RecallMatch } from "./types";
+import { allowanceFor, RECALL_OUTPUT_BUDGET, snippetOf, truncationNote, type Snippet } from "./snippet";
 
-export function renderRecallText(matches: RecallMatch[], insight: string): string {
+export function renderRecallText(
+  matches: RecallMatch[],
+  insight: string,
+  opts: { full?: boolean; queryTokens?: string[] } = {},
+): string {
   const contentById = new Map(matches.map(m => [m.id, m.content]));
-  const text = matches.map((m, i) => {
+  const blocks: string[] = [];
+  let used = 0;
+  let omitted = 0;
+
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
     const date = new Date(m.createdAt).toLocaleDateString();
     const tagList = m.tags.length ? ` [${m.tags.join(", ")}]` : "";
     const src = m.source ? ` · ${m.source}` : "";
     const score = (m.score * 100).toFixed(0);
     const updateLabel = m.isUpdate ? " [updated]" : "";
     const hopLabel = m.hop > 0 ? ` [related · ${hopProvenance(m, contentById)}]` : "";
-    return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}\nID: ${m.id}\n${m.content}`;
-  }).join("\n\n");
+
+    const s: Snippet = opts.full
+      ? { text: (m.content ?? "").trim(), truncated: false, fullLength: (m.content ?? "").length }
+      : snippetOf(m.content, allowanceFor(i, m.score), { queryTokens: opts.queryTokens });
+    const body = s.truncated ? `${s.text}${truncationNote(m.id, s)}` : s.text;
+    const block = `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}\nID: ${m.id}\n${body}`;
+
+    // Stop once the budget is spent, but always return at least one match.
+    if (!opts.full && blocks.length && used + block.length > RECALL_OUTPUT_BUDGET) {
+      omitted = matches.length - i;
+      break;
+    }
+    used += block.length;
+    blocks.push(block);
+  }
+
+  let text = blocks.join("\n\n");
+  if (omitted > 0) {
+    text += `\n\n${omitted} more match${omitted > 1 ? "es" : ""} omitted to bound the response size. Narrow the query, or call get("<id>") for a specific memory.`;
+  }
   return insight ? `**Insight:** ${insight}\n\n---\n\n${text}` : text;
 }
 
