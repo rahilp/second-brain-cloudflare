@@ -471,6 +471,10 @@ pub struct IntegrationStatus {
     pub provider: String,
     pub name: String,
     pub connected: bool,
+    /// Settings-UI grouping id (knowledge / calendar / email). Used to group the
+    /// desktop list the same way the dashboard groups its own.
+    #[serde(default)]
+    pub category: Option<String>,
     #[serde(default)]
     pub workspace_name: Option<String>,
     #[serde(default)]
@@ -483,14 +487,23 @@ pub struct IntegrationStatus {
 #[tauri::command]
 pub async fn integration_status(app: AppHandle) -> Result<Vec<IntegrationStatus>, String> {
     if app.state::<SetupSession>().dry_run {
-        return Ok(vec![IntegrationStatus {
-            provider: "notion".into(),
-            name: "Notion".into(),
-            connected: false,
+        let demo = |provider: &str, name: &str, category: &str, connected: bool| IntegrationStatus {
+            provider: provider.into(),
+            name: name.into(),
+            connected,
+            category: Some(category.into()),
             workspace_name: None,
             last_synced_at: None,
             item_count: None,
-        }]);
+        };
+        return Ok(vec![
+            demo("notion", "Notion", "knowledge", false),
+            demo("calendar-google", "Google Calendar", "calendar", true),
+            demo("calendar-outlook", "Outlook Calendar", "calendar", false),
+            demo("calendar-icloud", "iCloud Calendar", "calendar", false),
+            demo("email-gmail", "Gmail", "email", true),
+            demo("email-icloud", "iCloud Mail", "email", false),
+        ]);
     }
     let info = secure_store::load_setup().ok_or("Setup hasn't finished yet.")?;
     let worker = info.worker_url.trim_end_matches('/');

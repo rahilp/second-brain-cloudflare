@@ -519,3 +519,18 @@ li.error .check-icon {
   color: var(--text-tertiary);
   margin-top: 18px;
 }
+
+/* Category rows in the integrations browser drill into a provider list. */
+.row-tappable {
+  cursor: pointer;
+  border-radius: 8px;
+  padding-inline: 8px;
+  margin-inline: -8px;
+}
+.row-tappable:hover {
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+}
+.row-tappable .row-title i {
+  margin-right: 8px;
+  opacity: 0.75;
+}

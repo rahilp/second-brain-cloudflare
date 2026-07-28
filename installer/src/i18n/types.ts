@@ -131,14 +131,18 @@ export type Messages = {
     obsidianSub: string;
     openObsidian: string;
     getPlugin: string;
-    notionTitle: string;
-    notionSub: string;
-    notionConnected: string;
-    notionConnectedTo: string;
+    connectedPlain: string;
+    connectedTo: string;
     syncNow: string;
     syncing: string;
     manage: string;
-    setupNotion: string;
+    setUp: string;
+    back: string;
+    connectedCount: string;
+    categoryKnowledge: string;
+    categoryCalendar: string;
+    categoryEmail: string;
+    categoryOther: string;
   };
   logout: {
     button: string;

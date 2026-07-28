@@ -226,7 +226,127 @@ interface IntegrationStatus {
   provider: string;
   name: string;
   connected: boolean;
+  category: string | null;
   workspaceName: string | null;
+}
+
+// Grouping mirrors the dashboard's own integrations screen, so the two surfaces
+// read the same way. The order is fixed rather than discovered, so the list does
+// not reshuffle as providers connect.
+const CATEGORY_ORDER = ["knowledge", "calendar", "email"] as const;
+
+function categoryLabel(id: string): string {
+  if (id === "knowledge") return t("integrations.categoryKnowledge");
+  if (id === "calendar") return t("integrations.categoryCalendar");
+  if (id === "email") return t("integrations.categoryEmail");
+  return t("integrations.categoryOther");
+}
+
+function categoryIcon(id: string): string {
+  if (id === "knowledge") return "ti-book";
+  if (id === "calendar") return "ti-calendar";
+  if (id === "email") return "ti-mail";
+  return "ti-plug";
+}
+
+/// One provider inside a category: status on the left, what you can do on the
+/// right. Connecting happens in the dashboard (it needs a secret pasted), so the
+/// desktop app deep-links there rather than duplicating those forms.
+function providerRow(status: IntegrationStatus): HTMLElement {
+  const title = h("div", { class: "row-title" }, [status.name]);
+  const sub = h("div", { class: "row-sub" }, []);
+  const actions = h("div", { class: "row-actions" });
+
+  if (status.connected) {
+    title.append(badge(t("common.connected"), true));
+    sub.textContent = status.workspaceName
+      ? t("integrations.connectedTo", { workspace: status.workspaceName })
+      : t("integrations.connectedPlain");
+    // Only Notion has a desktop-side sync command; everything else syncs on the
+    // Worker's own schedule, so offering a button here would be a lie.
+    if (status.provider === "notion") {
+      const sync = h("button", { class: "btn-secondary" }, [t("integrations.syncNow")]);
+      sync.addEventListener("click", async () => {
+        sync.disabled = true;
+        sync.textContent = t("integrations.syncing");
+        try {
+          sub.textContent = await invoke<string>("sync_notion");
+        } catch (e) {
+          sub.textContent = String(e);
+        } finally {
+          sync.disabled = false;
+          sync.textContent = t("integrations.syncNow");
+        }
+      });
+      actions.append(sync);
+    }
+    const manage = h("button", { class: "btn-ghost" }, [t("integrations.manage")]);
+    manage.addEventListener("click", () => void invoke("open_dashboard_integrations"));
+    actions.append(manage);
+  } else {
+    const setup = h("button", { class: "btn-secondary" }, [t("integrations.setUp")]);
+    setup.addEventListener("click", () => void invoke("open_dashboard_integrations"));
+    actions.append(setup);
+  }
+
+  return h("div", { class: "row" }, [h("div", {}, [title, sub]), actions]);
+}
+
+/// Renders the category list, and swaps itself for that category's providers
+/// when one is chosen. Drilling in keeps the window short: without it the list
+/// would be every provider at once, which is what made this panel long.
+function renderIntegrationBrowser(host: HTMLElement, all: IntegrationStatus[]): void {
+  const groups = new Map<string, IntegrationStatus[]>();
+  for (const item of all) {
+    const key = item.category ?? "other";
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(item);
+    else groups.set(key, [item]);
+  }
+  const ordered = [...groups.keys()].sort((a, b) => {
+    const ai = CATEGORY_ORDER.indexOf(a as (typeof CATEGORY_ORDER)[number]);
+    const bi = CATEGORY_ORDER.indexOf(b as (typeof CATEGORY_ORDER)[number]);
+    return (ai < 0 ? CATEGORY_ORDER.length : ai) - (bi < 0 ? CATEGORY_ORDER.length : bi);
+  });
+
+  const showCategories = () => {
+    const rows = ordered.map((id) => {
+      const items = groups.get(id) ?? [];
+      const connected = items.filter((i) => i.connected).length;
+      const row = h("div", { class: "row row-tappable" }, [
+        h("div", {}, [
+          h("div", { class: "row-title" }, [
+            h("i", { class: `ti ${categoryIcon(id)}` }),
+            categoryLabel(id),
+          ]),
+          h("div", { class: "row-sub" }, [
+            t("integrations.connectedCount", {
+              connected: String(connected),
+              total: String(items.length),
+            }),
+          ]),
+        ]),
+        h("div", { class: "row-actions" }, [h("i", { class: "ti ti-chevron-right" })]),
+      ]);
+      row.addEventListener("click", () => showCategory(id));
+      return row;
+    });
+    host.replaceChildren(...rows);
+  };
+
+  const showCategory = (id: string) => {
+    const back = h("button", { class: "btn-ghost" }, [t("integrations.back")]);
+    back.addEventListener("click", showCategories);
+    host.replaceChildren(
+      h("div", { class: "row" }, [
+        h("div", { class: "row-title" }, [categoryLabel(id)]),
+        h("div", { class: "row-actions" }, [back]),
+      ]),
+      ...(groups.get(id) ?? []).map(providerRow),
+    );
+  };
+
+  showCategories();
 }
 
 export function integrationRows(details: ConnectionDetails): HTMLElement {
@@ -273,53 +393,20 @@ export function integrationRows(details: ConnectionDetails): HTMLElement {
     obsidianActions.append(open, copy);
   })();
 
-  const notionSub = h("div", { class: "row-sub" }, [t("integrations.notionSub")]);
-  const notionActions = h("div", { class: "row-actions" });
-  const notionTitle = h("div", { class: "row-title" }, [t("integrations.notionTitle")]);
-  const notion = h("div", { class: "row" }, [
-    h("div", {}, [notionTitle, notionSub]),
-    notionActions,
-  ]);
+  // Worker-side integrations are discovered from the Worker rather than listed
+  // here, so providers added to the Worker (calendar, email) show up without a
+  // desktop release. Grouped by category and drilled into, which keeps this
+  // panel short as the provider list grows.
+  const integrations = h("div", {});
   void (async () => {
-    let connected = false;
-    let workspace: string | null = null;
     try {
       const list = await invoke<IntegrationStatus[]>("integration_status");
-      const n = list.find((i) => i.provider === "notion");
-      connected = !!n?.connected;
-      workspace = n?.workspaceName ?? null;
+      if (list.length) renderIntegrationBrowser(integrations, list);
     } catch {
-      /* offline */
-    }
-
-    if (connected) {
-      notionTitle.append(badge(t("common.connected"), true));
-      notionSub.textContent = workspace
-        ? t("integrations.notionConnectedTo", { workspace })
-        : t("integrations.notionConnected");
-      const sync = h("button", { class: "btn-secondary" }, [t("integrations.syncNow")]);
-      sync.addEventListener("click", async () => {
-        sync.disabled = true;
-        sync.textContent = t("integrations.syncing");
-        try {
-          notionSub.textContent = await invoke<string>("sync_notion");
-        } catch (e) {
-          notionSub.textContent = String(e);
-        } finally {
-          sync.disabled = false;
-          sync.textContent = t("integrations.syncNow");
-        }
-      });
-      const manage = h("button", { class: "btn-ghost" }, [t("integrations.manage")]);
-      manage.addEventListener("click", () => void invoke("open_dashboard_integrations"));
-      notionActions.replaceChildren(sync, manage);
-    } else {
-      const setup = h("button", { class: "btn-secondary" }, [t("integrations.setupNotion")]);
-      setup.addEventListener("click", () => void invoke("open_dashboard_integrations"));
-      notionActions.replaceChildren(setup);
+      /* offline: the rest of the panel still works */
     }
   })();
 
-  container.append(extension, obsidian, notion);
+  container.append(extension, obsidian, integrations);
   return container;
 }
