@@ -1,11 +1,11 @@
 import type { Env } from "../env";
 import {
   D1_MAX_BOUND_PARAMS,
-  DUPLICATE_FLAG_THRESHOLD,
   KEYWORD_CANDIDATE_LIMIT,
   VECTORIZE_GET_BY_IDS_BATCH,
   VECTORIZE_TOP_K_MULTIPLIER,
 } from "../constants";
+import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
 import { expandGraph, GRAPH_HOP_DECAY, GRAPH_MAX_HOPS } from "../graph/traverse";
 import type { EdgeProvenance, EdgeType } from "../graph/types";
@@ -69,8 +69,13 @@ function fuseDenseAndKeyword(
 export async function recallEntries(
   params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number; synthesize?: boolean },
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  // Resolved once at request entry by the route/MCP caller and threaded down.
+  // Optional so this stays callable without a config in tests and any future
+  // internal caller; the fallback costs one KV read.
+  config?: Readonly<Config>
 ): Promise<RecallSearchResult> {
+  const cfg = config ?? await resolveConfig(env);
   const { query, topK } = params;
   const synthesize = params.synthesize ?? true;
   let { tag, after, before, kind } = params;
@@ -140,7 +145,10 @@ export async function recallEntries(
     results = denseResults;
     keywordRows = kwRows;
 
-    if (!semanticUnavailable && results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
+    // Governed by its own threshold, not the write-path duplicate flag: the two
+    // shared a constant until #245, so retuning duplicate detection silently
+    // retuned recall widening.
+    if (!semanticUnavailable && results.matches.length && results.matches[0].score < cfg.RECALL_WIDEN_THRESHOLD) {
       try {
         results = await env.VECTORIZE.query(values, { topK: 50, returnMetadata: "all", returnValues: true });
       } catch (e) {
