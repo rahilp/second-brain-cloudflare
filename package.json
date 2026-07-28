@@ -21,14 +21,14 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.2",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "agents": "^0.19.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "agents": "^0.20.0",
     "ical.js": "^2.2.1",
     "postal-mime": "^2.7.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
@@ -40,5 +40,10 @@
         "description": "Your authentication token. Use a memorable phrase (like 'coffee-lover-2026') or generate a secure token with: openssl rand -base64 32. Save it - you'll need this for AI client connections!"
       }
     }
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260722.1": true,
+    "core-js-pure": false
   }
 }
