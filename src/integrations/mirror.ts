@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { resolveConfig } from "../config";
 import {
   INTEGRATION_PROVIDERS,
   getProvider,
@@ -35,7 +36,7 @@ export function makeMirrorStore(env: Env): MirrorStore {
         `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, importance_score) VALUES (?, ?, ?, ?, ?, ?, ?)`
       ).bind(id, content, JSON.stringify(finalTags), source, now, "[]", importance).run();
       try {
-        await storeEntry(env, id, content, finalTags, source, now);
+        await storeEntry(env, id, content, finalTags, source, now, await resolveConfig(env));
       } catch (e) {
         console.error("Vectorize insert failed (non-fatal):", e);
       }
@@ -53,7 +54,7 @@ export function makeMirrorStore(env: Env): MirrorStore {
       await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(content, id).run();
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, id, content, tags, row.source as string, Date.now());
+        newVectorIds = await storeEntry(env, id, content, tags, row.source as string, Date.now(), await resolveConfig(env));
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }

@@ -1,11 +1,13 @@
 import type { Env } from "../env";
+import { DEFAULTS, type Config } from "../config";
 import { LLM_MODEL, PATTERN_MAX_TOKENS } from "../constants";
 import { captureEntry } from "../capture/entry";
 
 export async function derivePattern(
   rows: { id: string; content: string }[],
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  config: Readonly<Config> = DEFAULTS
 ): Promise<void> {
   if (rows.length < 10) return;
 
@@ -31,7 +33,7 @@ If you find a genuine cross-memory pattern, respond with exactly ONE sentence st
 If no genuine pattern exists across 3+ memories, respond with exactly: NONE`;
 
   try {
-    const response = await (env.AI as any).run(LLM_MODEL as any, {
+    const response = await (env.AI as any).run(config.LLM_MODEL as any, {
       messages: [{ role: "user", content: prompt }],
       max_tokens: PATTERN_MAX_TOKENS,
     }) as any;

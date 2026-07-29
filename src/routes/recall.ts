@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { resolveConfig } from "../config";
 import { LLM_MODEL, VECTORIZE_FIX_HINT } from "../constants";
 import { CORS_HEADERS, json, requireAuth } from "../lib/http";
 import { buildEntryFilterQuery } from "../capture/entry";
@@ -46,7 +47,8 @@ export async function handleRecallRoutes(
     // payload. Renderers that show the whole memory (the dashboard) pass full=1.
     const full = ["1", "true", "yes"].includes((url.searchParams.get("full") ?? "").toLowerCase());
 
-    const { matches, insight, semanticUnavailable, queryUsed, queryTokens } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx);
+    const cfg = await resolveConfig(env);
+    const { matches, insight, semanticUnavailable, queryUsed, queryTokens } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx, cfg);
 
     if (!matches.length) {
       return json({
@@ -66,7 +68,7 @@ export async function handleRecallRoutes(
       results: matches.map((m, i) => {
         const s = full
           ? { text: m.content, truncated: false, fullLength: (m.content ?? "").length }
-          : snippetOf(m.content, allowanceFor(i, m.score), { queryTokens });
+          : snippetOf(m.content, allowanceFor(i, m.score, cfg), { queryTokens });
         return {
           id: m.id,
           content: s.text,
@@ -101,9 +103,10 @@ export async function handleRecallRoutes(
     const systemPrompt = `You are a personal memory assistant. Answer the user's question using ONLY the memories provided. Even if the match scores are low, extract any relevant facts and answer directly. Never say you don't have enough information if the answer exists anywhere in the memories. Be concise.`;
 
     const userMessage = `Question: ${body.query}\n\nRelevant memories:\n${body.memories}`;
+    const cfg = await resolveConfig(env);
 
     // Workers AI requires `as any` here — the SDK types don't cover all models
-    const stream = await env.AI.run(LLM_MODEL as any, {
+    const stream = await env.AI.run(cfg.LLM_MODEL as any, {
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage }

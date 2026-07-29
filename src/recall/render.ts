@@ -1,10 +1,11 @@
 import type { RecallMatch } from "./types";
+import { DEFAULTS, type Config } from "../config";
 import { allowanceFor, RECALL_OUTPUT_BUDGET, snippetOf, truncationNote, type Snippet } from "./snippet";
 
 export function renderRecallText(
   matches: RecallMatch[],
   insight: string,
-  opts: { full?: boolean; queryTokens?: string[] } = {},
+  opts: { full?: boolean; queryTokens?: string[]; config?: Readonly<Config> } = {},
 ): string {
   const contentById = new Map(matches.map(m => [m.id, m.content]));
   const blocks: string[] = [];
@@ -22,12 +23,12 @@ export function renderRecallText(
 
     const s: Snippet = opts.full
       ? { text: (m.content ?? "").trim(), truncated: false, fullLength: (m.content ?? "").length }
-      : snippetOf(m.content, allowanceFor(i, m.score), { queryTokens: opts.queryTokens });
+      : snippetOf(m.content, allowanceFor(i, m.score, opts.config), { queryTokens: opts.queryTokens });
     const body = s.truncated ? `${s.text}${truncationNote(m.id, s)}` : s.text;
     const block = `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}\nID: ${m.id}\n${body}`;
 
     // Stop once the budget is spent, but always return at least one match.
-    if (!opts.full && blocks.length && used + block.length > RECALL_OUTPUT_BUDGET) {
+    if (!opts.full && blocks.length && used + block.length > (opts.config ?? DEFAULTS).RECALL_OUTPUT_BUDGET) {
       omitted = matches.length - i;
       break;
     }

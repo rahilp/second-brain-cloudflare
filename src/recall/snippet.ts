@@ -20,6 +20,8 @@
 
 // Per-match ceiling for the leading matches. Even a "full" result is capped:
 // a single multi-thousand-character memory should never eat the whole budget.
+import { DEFAULTS, type Config } from "../config";
+
 export const FULL_MATCH_MAX_CHARS = 4000;
 // Per-match ceiling for everything after the leading matches.
 export const SNIPPET_MAX_CHARS = 400;
@@ -59,7 +61,7 @@ export interface Snippet {
  */
 export function snippetOf(
   content: string,
-  max: number = SNIPPET_MAX_CHARS,
+  max: number = DEFAULTS.SNIPPET_MAX_CHARS,
   opts: { queryTokens?: string[] } = {},
 ): Snippet {
   const raw = (content ?? "").trim();
@@ -173,8 +175,12 @@ export function truncationNote(id: string, s: Snippet): string {
  * get room, but only if they are also strong. `relScore` is the match score
  * relative to the top hit (recall normalizes scores so the top match is 1).
  */
-export function allowanceFor(index: number, relScore: number = 1): number {
-  return index < RECALL_FULL_MATCHES && relScore >= STRONG_MATCH_RATIO
-    ? FULL_MATCH_MAX_CHARS
-    : SNIPPET_MAX_CHARS;
+export function allowanceFor(
+  index: number,
+  relScore: number = 1,
+  config: Readonly<Config> = DEFAULTS,
+): number {
+  return index < config.RECALL_FULL_MATCHES && relScore >= config.STRONG_MATCH_RATIO
+    ? config.FULL_MATCH_MAX_CHARS
+    : config.SNIPPET_MAX_CHARS;
 }

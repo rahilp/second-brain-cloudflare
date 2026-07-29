@@ -1,18 +1,19 @@
 import type { Env } from "../env";
+import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { captureEntry } from "../capture/entry";
 import { DIGEST_MAX_TOKENS, LLM_MODEL } from "../constants";
 import { readStreamText } from "../lib/ai";
 import { KIND_PREFIX } from "../memory/kind";
 import { STATUS_PREFIX } from "../memory/status";
 import {
-  COMPRESSION_MIN_AGE_MS,
   compressionEligibilitySql,
 } from "./eligibility";
 
 export async function synthesizeDigest(
   tag: string,
   rows: { id: string; content: string }[],
-  env: Env
+  env: Env,
+  config: Readonly<Config> = DEFAULTS
 ): Promise<string> {
   if (!rows.length) return "";
 
@@ -29,7 +30,7 @@ State of "${tag}":`;
 
   let digest = "";
   try {
-    const stream = await (env.AI as any).run(LLM_MODEL as any, {
+    const stream = await (env.AI as any).run(config.LLM_MODEL as any, {
       messages: [{ role: "user", content: prompt }],
       max_tokens: DIGEST_MAX_TOKENS,
       stream: true,
@@ -47,6 +48,7 @@ export async function compressTag(
   env: Env,
   ctx: ExecutionContext
 ): Promise<{ synthesizedId: string | null; entriesUsed: number; text: string }> {
+  const cfg = await resolveConfig(env);
   if (tag.startsWith(STATUS_PREFIX) || tag.startsWith(KIND_PREFIX)) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
   }
@@ -69,10 +71,10 @@ export async function compressTag(
       AND tags NOT LIKE '%"synthesized"%'
       AND tags NOT LIKE '%"auto-pattern"%'
       AND tags NOT LIKE '%"rolled-up"%'
-      AND ${compressionEligibilitySql()}
+      AND ${compressionEligibilitySql("", cfg)}
     ORDER BY created_at DESC
     LIMIT 50
-  `).bind(`%"${tag}"%`, Date.now() - COMPRESSION_MIN_AGE_MS).all();
+  `).bind(`%"${tag}"%`, Date.now() - cfg.COMPRESSION_MIN_AGE_MS).all();
 
   if (rawEntries.length < 10) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };

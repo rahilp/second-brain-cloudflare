@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { resolveConfig } from "../config";
 import { z } from "zod";
 import type { Env } from "../env";
 import { VECTORIZE_FIX_HINT } from "../constants";
@@ -90,7 +91,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       }
 
       try {
-        await appendToEntry(env, id, existingContent, a, tags, source);
+        await appendToEntry(env, id, existingContent, a, tags, source, await resolveConfig(env));
       } catch (e) {
         console.error("Append failed:", e);
         return {
@@ -147,7 +148,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       // Step 2: Re-embed new content → inserts new vectors + updates vector_ids in D1
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
+        newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now(), await resolveConfig(env));
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }
@@ -199,7 +200,8 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ query, topK, tag, after, before, kind, hops }) => {
-      const { matches, insight, semanticUnavailable, queryTokens } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx);
+      const cfg = await resolveConfig(env);
+      const { matches, insight, semanticUnavailable, queryTokens } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx, cfg);
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
@@ -209,7 +211,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: notice + "Nothing found matching that query." }] };
       }
 
-      return { content: [{ type: "text", text: notice + renderRecallText(matches, insight, { queryTokens }) }] };
+      return { content: [{ type: "text", text: notice + renderRecallText(matches, insight, { queryTokens, config: cfg }) }] };
     }
   );
 
@@ -235,6 +237,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
 
       // Same size discipline as recall: browsing should not dump every entry in
       // full. Oversized rows are cut and marked so the caller can fetch them.
+      const budgetCfg = await resolveConfig(env);
       const blocks: string[] = [];
       let used = 0;
       let omitted = 0;
@@ -244,10 +247,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         const date = new Date(row.created_at as number).toLocaleDateString();
         const tags: string[] = JSON.parse(row.tags ?? "[]");
         const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
-        const s = snippetOf(row.content as string, SNIPPET_MAX_CHARS);
+        const s = snippetOf(row.content as string, (await resolveConfig(env)).SNIPPET_MAX_CHARS);
         const body = s.truncated ? `${s.text}${truncationNote(row.id as string, s)}` : s.text;
         const block = `${i + 1}. [${date} · ${row.source}${tagStr}]\nID: ${row.id as string}\n${body}`;
-        if (blocks.length && used + block.length > RECALL_OUTPUT_BUDGET) {
+        if (blocks.length && used + block.length > budgetCfg.RECALL_OUTPUT_BUDGET) {
           omitted = rows.length - i;
           break;
         }

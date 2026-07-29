@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { resolveConfig } from "../config";
 import { json, requireAuth } from "../lib/http";
 import { captureEntry } from "../capture/entry";
 import { appendToEntry, deleteStaleVectors, reembedOrThrow } from "../capture/store";
@@ -86,7 +87,7 @@ export async function handleCaptureRoutes(
     }
 
     try {
-      await appendToEntry(env, id, existingContent, addition, tags, source);
+      await appendToEntry(env, id, existingContent, addition, tags, source, await resolveConfig(env));
     } catch (e) {
       return json({ ok: false, error: `Append failed: ${(e as Error).message}` }, 500);
     }
@@ -133,7 +134,7 @@ export async function handleCaptureRoutes(
     // deleting every vector — which would leave the entry silently unsearchable.
     let newVectorIds: string[];
     try {
-      newVectorIds = await reembedOrThrow(env, id, finalContent, mergedTags, source);
+      newVectorIds = await reembedOrThrow(env, id, finalContent, mergedTags, source, await resolveConfig(env));
     } catch (e) {
       console.error("Re-embed failed — entry left unchanged:", e);
       return json({ ok: false, error: "Couldn't update: search re-index failed. Your memory is unchanged — please try again." }, 500);

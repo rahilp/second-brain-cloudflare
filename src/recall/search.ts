@@ -7,7 +7,7 @@ import {
 } from "../constants";
 import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
-import { expandGraph, GRAPH_HOP_DECAY, GRAPH_MAX_HOPS } from "../graph/traverse";
+import { expandGraph } from "../graph/traverse";
 import type { EdgeProvenance, EdgeType } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { derivePattern } from "../compression/pattern";
@@ -15,7 +15,7 @@ import { parseTimePhrase } from "../text/temporal";
 import { tokenizeQuery } from "../text/tokenize";
 import { distillToRareTerms, inferQueryTags } from "./distill";
 import { synthesizeInsight } from "./insight";
-import { cosineSim, mmrRerank, MMR_LAMBDA, rerankWithTimeDecay, type VectorizeMatch } from "./math";
+import { cosineSim, mmrRerank, rerankWithTimeDecay, type VectorizeMatch } from "./math";
 import { rrfFuse } from "./rrf";
 import type { KeywordRow, RecallMatch, RecallSearchResult } from "./types";
 
@@ -79,7 +79,7 @@ export async function recallEntries(
   const { query, topK } = params;
   const synthesize = params.synthesize ?? true;
   let { tag, after, before, kind } = params;
-  const hops = Math.max(0, Math.min(GRAPH_MAX_HOPS, params.hops ?? 0));
+  const hops = Math.max(0, Math.min(cfg.GRAPH_MAX_HOPS, params.hops ?? 0));
   const now = Date.now();
   let semanticUnavailable = false;
 
@@ -94,7 +94,7 @@ export async function recallEntries(
 
   const tokens = tokenizeQuery(embedQuery);
   const [values, queryTags] = await Promise.all([
-    embed(embedQuery, env),
+    embed(embedQuery, env, cfg),
     inferQueryTags(embedQuery, env),
   ]);
 
@@ -175,7 +175,7 @@ export async function recallEntries(
   const contradictionWins = new Map(rcRows.map(r => [r.id, r.contradiction_wins ?? 0]));
   const contradictionLosses = new Map(rcRows.map(r => [r.id, r.contradiction_losses ?? 0]));
 
-  const reranked = rerankWithTimeDecay(fusedMatches, recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses);
+  const reranked = rerankWithTimeDecay(fusedMatches, recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses, cfg);
 
   const seen = new Set<string>();
   const dedupedAll = reranked.filter((m) => {
@@ -184,7 +184,7 @@ export async function recallEntries(
     seen.add(parentId);
     return true;
   });
-  const deduped = mmrRerank(dedupedAll, MMR_LAMBDA, topK);
+  const deduped = mmrRerank(dedupedAll, cfg.MMR_LAMBDA, topK);
 
   if (!deduped.length) return { matches: [], insight: "", semanticUnavailable };
 
@@ -193,11 +193,11 @@ export async function recallEntries(
   let expandedScored: { parentId: string; score: number; hop: number; viaProvenance: EdgeProvenance; viaType: EdgeType; viaLinkedAt: number; viaFrom: string }[] = [];
   if (hops > 0) {
     const minSeedScore = deduped.reduce((mn, m) => Math.min(mn, m.score), Infinity);
-    const expanded = await expandGraph(seedParentIds, { hops }, env);
+    const expanded = await expandGraph(seedParentIds, { hops }, env, cfg);
     expandedScored = expanded.map(n => ({
       parentId: n.id,
       hop: n.hop,
-      score: minSeedScore * Math.pow(GRAPH_HOP_DECAY, n.hop) * n.viaWeight,
+      score: minSeedScore * Math.pow(cfg.GRAPH_HOP_DECAY, n.hop) * n.viaWeight,
       viaProvenance: n.viaProvenance,
       viaType: n.viaType,
       viaLinkedAt: n.viaLinkedAt,

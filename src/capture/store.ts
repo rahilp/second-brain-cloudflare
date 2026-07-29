@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { CHUNK_MAX_CHARS } from "../constants";
 import { embed } from "../lib/ai";
 import { inferEdgesOnWrite } from "../graph/edges";
@@ -11,7 +12,8 @@ export async function storeEntry(
   content: string,
   tags: string[],
   source: string,
-  now: number
+  now: number,
+  config: Readonly<Config> = DEFAULTS
 ): Promise<string[]> {
   const chunks = chunkText(content);
 
@@ -33,7 +35,7 @@ export async function storeEntry(
 
       return {
         id: chunks.length === 1 ? id : `${id}-chunk-${i}`,
-        values: await embed(chunk, env),
+        values: await embed(chunk, env, config),
         metadata,
       };
     })
@@ -56,8 +58,8 @@ export async function deleteStaleVectors(env: Env, oldIds: string[], newIds: str
   if (stale.length) await env.VECTORIZE.deleteByIds(stale);
 }
 
-export async function reembedOrThrow(env: Env, id: string, content: string, tags: string[], source: string): Promise<string[]> {
-  const ids = await storeEntry(env, id, content, tags, source, Date.now());
+export async function reembedOrThrow(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS): Promise<string[]> {
+  const ids = await storeEntry(env, id, content, tags, source, Date.now(), config);
   if (!ids.length) throw new Error("re-embed produced no vectors");
   return ids;
 }
@@ -68,7 +70,8 @@ export async function appendToEntry(
   existingContent: string,
   addition: string,
   tags: string[],
-  source: string
+  source: string,
+  config: Readonly<Config> = DEFAULTS
 ): Promise<void> {
   const row = await env.DB.prepare(
     `SELECT vector_ids FROM entries WHERE id = ?`
@@ -81,7 +84,7 @@ export async function appendToEntry(
   const newContent = existingContent + separator + addition;
 
   if (newContent.length > CHUNK_MAX_CHARS) {
-    const newVectorIds = await reembedOrThrow(env, id, newContent, tags, source);
+    const newVectorIds = await reembedOrThrow(env, id, newContent, tags, source, config);
 
     await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`)
       .bind(newContent, id).run();
@@ -93,7 +96,7 @@ export async function appendToEntry(
     }
 
     try {
-      await inferEdgesOnWrite(id, await neighborsFromVectorQuery(await embed(addition, env), env), env);
+      await inferEdgesOnWrite(id, await neighborsFromVectorQuery(await embed(addition, env, config), env), env);
     } catch (e) {
       console.error("Append auto-link failed (non-fatal):", e);
     }
@@ -103,7 +106,7 @@ export async function appendToEntry(
 
   const newChunkId = `${id}-update-${Date.now()}`;
 
-  const values = await embed(addition, env);
+  const values = await embed(addition, env, config);
 
   const metadata: Record<string, any> = {
     content: addition,

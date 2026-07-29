@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { DEFAULTS, type Config } from "../config";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { getKind } from "../memory/kind";
 import { getStatus } from "../memory/status";
@@ -30,8 +31,9 @@ export async function expandGraph(
   seedIds: string[],
   opts: { hops: number; fanoutCap?: number; maxNodes?: number; includeDeprecated?: boolean },
   env: Env,
+  config: Readonly<Config> = DEFAULTS,
 ): Promise<GraphNeighbor[]> {
-  const hops = Math.max(0, Math.min(GRAPH_MAX_HOPS, opts.hops));
+  const hops = Math.max(0, Math.min(config.GRAPH_MAX_HOPS, opts.hops));
   if (hops === 0 || seedIds.length === 0) return [];
   const fanoutCap = opts.fanoutCap ?? GRAPH_FANOUT_CAP;
   const maxNodes = opts.maxNodes ?? GRAPH_MAX_NODES;

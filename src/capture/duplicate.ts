@@ -1,9 +1,10 @@
 import type { Env } from "../env";
+import { DEFAULTS, type Config } from "../config";
 import {
+  // Write-path only and deliberately not exposed as a setting (#245): recall
+  // applies no minimum-score cutoff, so surfacing this would imply a recall
+  // control that does not exist.
   CANDIDATE_SCORE_THRESHOLD,
-  DUPLICATE_BLOCK_THRESHOLD,
-  DUPLICATE_FLAG_THRESHOLD,
-  LLM_MODEL,
   CONTRADICTION_MAX_TOKENS,
   SMART_MERGE_MAX_TOKENS,
 } from "../constants";
@@ -36,14 +37,18 @@ export function getDuplicateCheckSample(content: string): string {
   return `${start}\n...\n${middle}\n...\n${end}`;
 }
 
-export async function checkDuplicateAndContradiction(content: string, env: Env): Promise<{
+export async function checkDuplicateAndContradiction(
+  content: string,
+  env: Env,
+  config: Readonly<Config> = DEFAULTS,
+): Promise<{
   duplicate: DuplicateResult;
   contradiction: ContradictionResult;
   mergeAction: MergeAction | null;
   neighbors: { id: string; score: number }[];
 }> {
   const sample = getDuplicateCheckSample(content);
-  const values = await embed(sample, env);
+  const values = await embed(sample, env, config);
   const { matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
 
   const neighborScores = new Map<string, number>();
@@ -57,8 +62,8 @@ export async function checkDuplicateAndContradiction(content: string, env: Env):
   if (matches.length) {
     const top = matches[0];
     const matchId = (top.metadata as any)?.parentId ?? top.id;
-    if (top.score >= DUPLICATE_BLOCK_THRESHOLD) duplicate = { status: "blocked", matchId, score: top.score };
-    else if (top.score >= DUPLICATE_FLAG_THRESHOLD) duplicate = { status: "flagged", matchId, score: top.score };
+    if (top.score >= config.DUPLICATE_BLOCK_THRESHOLD) duplicate = { status: "blocked", matchId, score: top.score };
+    else if (top.score >= config.DUPLICATE_FLAG_THRESHOLD) duplicate = { status: "flagged", matchId, score: top.score };
   }
 
   let contradiction: ContradictionResult = { detected: false };
@@ -99,7 +104,7 @@ Respond with JSON only. No text outside the JSON.
 {"action":"keep_both"} OR {"action":"contradiction","conflicting_id":"<id>","reason":"<10 words max>"} OR {"action":"replace","target_id":"<id>"} OR {"action":"merge","target_id":"<id>","merged_content":"<text>"}`;
 
           try {
-            const stream = await (env.AI as any).run(LLM_MODEL as any, {
+            const stream = await (env.AI as any).run(config.LLM_MODEL as any, {
               messages: [{ role: "user", content: prompt }],
               max_tokens: SMART_MERGE_MAX_TOKENS,
               stream: true,
@@ -144,7 +149,7 @@ Respond with JSON only. No text outside the JSON object.
 {"contradicts": false} OR {"contradicts": true, "conflicting_id": "<exact_id>", "reason": "<10 words max>"}`;
 
           try {
-            const stream = await (env.AI as any).run(LLM_MODEL as any, {
+            const stream = await (env.AI as any).run(config.LLM_MODEL as any, {
               messages: [{ role: "user", content: prompt }],
               max_tokens: CONTRADICTION_MAX_TOKENS,
               stream: true,

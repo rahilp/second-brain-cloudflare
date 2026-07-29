@@ -1,15 +1,15 @@
 import type { Env } from "../env";
+import { DEFAULTS, type Config } from "../config";
 import {
   KEYWORD_MIN_TOKEN_LEN,
   KEYWORD_STOPWORDS,
-  LLM_MODEL,
   MAX_QUERY_TERMS,
   QUERY_SATURATION_FRACTION,
 } from "../constants";
 import { readStreamText } from "../lib/ai";
 import { extractHashtags } from "../text/hashtags";
 
-export async function inferQueryTags(query: string, env: Env): Promise<string[]> {
+export async function inferQueryTags(query: string, env: Env, config: Readonly<Config> = DEFAULTS): Promise<string[]> {
   const { hashtags } = extractHashtags(query);
   if (hashtags.length) return hashtags;
 
@@ -28,7 +28,7 @@ export async function inferQueryTags(query: string, env: Env): Promise<string[]>
   if (!knownTags.length) return [];
 
   try {
-    const stream = await env.AI.run(LLM_MODEL as any, {
+    const stream = await env.AI.run(config.LLM_MODEL as any, {
       messages: [{
         role: "user",
         content: `From this list of tags: ${knownTags.slice(0, 50).join(", ")}\n\nWhich tags best match this query? Reply with only a comma-separated list of matching tag names from the list, or nothing if none apply.\n\nQuery: ${query.slice(0, 300)}`,
@@ -44,7 +44,7 @@ export async function inferQueryTags(query: string, env: Env): Promise<string[]>
   }
 }
 
-export async function distillToRareTerms(query: string, env: Env): Promise<string> {
+export async function distillToRareTerms(query: string, env: Env, config: Readonly<Config> = DEFAULTS): Promise<string> {
   const words = query.split(/\s+/).filter(Boolean);
   const norm = (w: string) => w.toLowerCase().replace(/^[^\w#.]+|[^\w#.]+$/g, "");
   const content = words.filter(w => {

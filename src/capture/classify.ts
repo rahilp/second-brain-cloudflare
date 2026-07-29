@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { DEFAULTS, type Config } from "../config";
 import { CLASSIFY_MAX_TOKENS, LLM_MODEL } from "../constants";
 import { readStreamText } from "../lib/ai";
 import { withKind, type MemoryKind } from "../memory/kind";
@@ -34,10 +35,10 @@ function parseClassification(text: string): { importance: number; canonical: boo
   };
 }
 
-export async function classifyEntry(content: string, env: Env): Promise<{ importance: number; canonical: boolean; kind: MemoryKind | null }> {
+export async function classifyEntry(content: string, env: Env, config: Readonly<Config> = DEFAULTS): Promise<{ importance: number; canonical: boolean; kind: MemoryKind | null }> {
   let text: string;
   try {
-    const stream = await env.AI.run(LLM_MODEL as any, {
+    const stream = await env.AI.run(config.LLM_MODEL as any, {
       messages: [{ role: "user", content:
         `Classify this memory. Respond with ONLY one JSON object and nothing else — no prose, no markdown, no code fences.\n` +
         `{"importance": <1-5>, "canonical": <true|false>, "kind": "episodic"|"semantic"}\n` +

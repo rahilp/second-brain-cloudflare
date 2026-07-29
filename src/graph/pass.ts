@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { initializeDatabase } from "../db/init";
 import { embed } from "../lib/ai";
 import { inferEdgesOnWrite } from "./edges";
@@ -8,6 +9,9 @@ const EDGE_PRUNE_WEIGHT = 0.3;
 const EDGE_PRUNE_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function runGraphPass(env: Env, ctx: ExecutionContext): Promise<void> {
+  // One resolve for the whole pass: every embed below must use the same model
+  // the capture and recall paths use.
+  const cfg = await resolveConfig(env);
   await initializeDatabase(env);
 
   try {
@@ -33,7 +37,7 @@ export async function runGraphPass(env: Env, ctx: ExecutionContext): Promise<voi
 
   for (const entry of unlinked) {
     try {
-      const values = await embed(entry.content, env);
+      const values = await embed(entry.content, env, cfg);
       const { matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
       const scores = new Map<string, number>();
       for (const m of matches) {

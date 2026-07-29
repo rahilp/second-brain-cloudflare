@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { DEFAULTS, type Config } from "../config";
 import { EMBEDDING_MODEL } from "../constants";
 
 export function graceMs(env: Env): number {
@@ -22,8 +23,12 @@ export async function readStreamText(stream: ReadableStream): Promise<string> {
   return text;
 }
 
-export async function embed(text: string, env: Env): Promise<number[]> {
+export async function embed(
+  text: string,
+  env: Env,
+  config: Readonly<Config> = DEFAULTS,
+): Promise<number[]> {
   // Workers AI requires `as any` here — the SDK types don't cover all models
-  const result = (await env.AI.run(EMBEDDING_MODEL as any, { text: [text] })) as any;
+  const result = (await env.AI.run(config.EMBEDDING_MODEL as any, { text: [text] })) as any;
   return result.data[0] as number[];
 }

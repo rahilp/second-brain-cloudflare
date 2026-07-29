@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { createEdge, inferEdgesOnWrite } from "../graph/edges";
 import { getStatus, withStatus } from "../memory/status";
 import { extractHashtags } from "../text/hashtags";
@@ -41,14 +42,19 @@ export async function captureEntry(
   tags: string[],
   source: string,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  config?: Readonly<Config>
 ): Promise<CaptureResult> {
+  // Resolved once per capture and threaded through duplicate detection and
+  // every embed below. Recall and capture must agree on EMBEDDING_MODEL or the
+  // vectors they produce are not comparable.
+  const cfg = config ?? await resolveConfig(env);
   const raw = rawContent.trim();
   const { cleanContent, hashtags } = extractHashtags(raw);
   const c = cleanContent || raw;
   const t = [...new Set([...tags.map(tag => tag.toLowerCase()), ...hashtags])];
 
-  const { duplicate: dup, contradiction, mergeAction, neighbors } = await checkDuplicateAndContradiction(c, env);
+  const { duplicate: dup, contradiction, mergeAction, neighbors } = await checkDuplicateAndContradiction(c, env, cfg);
 
   if (dup.status === "blocked") {
     return { status: "blocked", matchId: dup.matchId, score: dup.score };
@@ -74,7 +80,7 @@ export async function captureEntry(
 
       let newVectorIds: string[] | null = null;
       try {
-        newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource);
+        newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg);
       } catch (e) {
         console.error("Merge re-embed failed — keeping both, target untouched:", e);
       }
@@ -104,7 +110,7 @@ export async function captureEntry(
   ).bind(id, c, JSON.stringify(finalTags), source, now, "[]").run();
 
   ctx.waitUntil(
-    storeEntry(env, id, c, finalTags, source, now)
+    storeEntry(env, id, c, finalTags, source, now, cfg)
       .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
   );
 
