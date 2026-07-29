@@ -58,7 +58,13 @@ export const DEFAULTS = {
   EMBEDDING_MODEL: "@cf/baai/bge-small-en-v1.5",
 } as const;
 
-export type Config = { -readonly [K in keyof typeof DEFAULTS]: (typeof DEFAULTS)[K] };
+// DEFAULTS is `as const` so the shipped values are pinned and a typo shows up
+// as a type error. Config must widen those literals back to number/string,
+// though — without this, `Partial<Config>` would only accept the exact default
+// value and reject every real override.
+type Widen<T> = T extends number ? number : T extends string ? string : T;
+
+export type Config = { -readonly [K in keyof typeof DEFAULTS]: Widen<(typeof DEFAULTS)[K]> };
 export type ConfigKey = keyof Config;
 
 type Rule =
@@ -203,4 +209,91 @@ export async function resolveConfig(env: Env): Promise<Readonly<Config>> {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// ── Write path ───────────────────────────────────────────────────────────────
+//
+// Deliberately stricter than resolve. A bad value arriving from KV is repaired,
+// because recall must not fail on it. A bad value arriving from a caller is
+// rejected with a message naming the conflict, so the settings UI can explain
+// what happened rather than appear to accept a change and silently discard it.
+
+export type WriteResult = { ok: true } | { ok: false; error: string };
+
+/** Reads the raw sparse blob. Any failure reads as "no overrides". */
+export async function readOverrides(env: Env): Promise<Partial<Config>> {
+  try {
+    const raw = await env.OAUTH_KV.get(CONFIG_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!isRecord(parsed)) return {};
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed)) if (k in DEFAULTS) out[k] = v;
+    return out as Partial<Config>;
+  } catch {
+    return {};
+  }
+}
+
+/** Strict per-key check. Returns an error message, or null when acceptable. */
+function validateStrict(key: string, value: unknown): string | null {
+  if (!(key in DEFAULTS)) return `${key} is not a known setting`;
+  const rule = RULES[key as ConfigKey];
+
+  if (rule.kind === "string") {
+    return typeof value === "string" && value.trim() !== ""
+      ? null
+      : `${key} must be a non-empty string`;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return `${key} must be a finite number`;
+  }
+  if (rule.integer && !Number.isInteger(value)) {
+    return `${key} must be a whole number`;
+  }
+  if (value < rule.min || value > rule.max) {
+    return `${key} must be between ${rule.min} and ${rule.max} (got ${value})`;
+  }
+  return null;
+}
+
+/**
+ * Merges a patch into the stored overrides. Rejects the whole patch if any key
+ * is unknown, malformed, or would invert an invariant once merged with what is
+ * already stored — a value can be individually valid and still break the pair.
+ */
+export async function writeOverrides(env: Env, patch: Partial<Config>): Promise<WriteResult> {
+  for (const [key, value] of Object.entries(patch)) {
+    const error = validateStrict(key, value);
+    if (error) return { ok: false, error };
+  }
+
+  const merged = { ...(await readOverrides(env)), ...patch } as Record<string, unknown>;
+  const effective = { ...DEFAULTS, ...merged } as Config;
+
+  for (const invariant of INVARIANTS) {
+    if (!invariant.holds(effective)) return { ok: false, error: invariant.describe };
+  }
+
+  // Values equal to the shipped default are dropped rather than stored. Storing
+  // them would pin the user to today's number and stop a retuned default in a
+  // later release from ever reaching them.
+  const sparse: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (value !== DEFAULTS[key as ConfigKey]) sparse[key] = value;
+  }
+
+  await env.OAUTH_KV.put(CONFIG_KEY, JSON.stringify(sparse));
+  return { ok: true };
+}
+
+/**
+ * Per-setting reset. A delete rather than a write-back of the default, so the
+ * user rejoins the shipped value and picks up any future retune of it.
+ */
+export async function resetOverride(env: Env, key: ConfigKey): Promise<void> {
+  const overrides = { ...(await readOverrides(env)) } as Record<string, unknown>;
+  if (!(key in overrides)) return;
+  delete overrides[key];
+  await env.OAUTH_KV.put(CONFIG_KEY, JSON.stringify(overrides));
 }
