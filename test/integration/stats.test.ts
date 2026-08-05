@@ -192,11 +192,19 @@ describe("GET /stats — digest candidates", () => {
     expect(data.digest_candidates.some((c: any) => c.tag === "work")).toBe(false);
   });
 
-  it("excludes reserved namespaced tags (kind:* / status:*) from digest candidates", async () => {
+  // /stats reports what the nightly run would compress, so it has to apply the same rule.
+  // volatility:* and stale:as-of are written in bulk by the staleness pass, so they carry
+  // high counts and would otherwise sit at the top of a list of "digest candidates" that
+  // can never produce a digest.
+  //
+  // Scope: this runs against the D1 mock, whose digest-candidate branch calls isTopicTag(),
+  // so it covers the predicate rather than the SQL /stats actually issues. The query itself
+  // is covered by test/integration/digest-candidates.test.ts against real SQLite.
+  it("excludes reserved namespaced tags (kind:* / status:* / volatility:* / stale:as-of) from digest candidates", async () => {
     for (let i = 0; i < 12; i++) {
       db.entries.push({
         ...compressible(`e-${i}`, "work"),
-        tags: JSON.stringify(["work", "kind:semantic", "status:canonical"]),
+        tags: JSON.stringify(["work", "kind:semantic", "status:canonical", "volatility:state", "stale:as-of"]),
       });
     }
     const res = await worker.fetch(req("GET", "/stats"), env, ctx);
@@ -205,5 +213,7 @@ describe("GET /stats — digest candidates", () => {
     expect(tags).toContain("work");                  // topical tag still a candidate
     expect(tags).not.toContain("kind:semantic");     // namespaced excluded
     expect(tags).not.toContain("status:canonical");  // namespaced excluded
+    expect(tags).not.toContain("volatility:state");  // written by the staleness pass
+    expect(tags).not.toContain("stale:as-of");       // written by the staleness pass
   });
 });
