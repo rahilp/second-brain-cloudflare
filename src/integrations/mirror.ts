@@ -14,6 +14,7 @@ import { classifyEntry } from "../capture/classify";
 import { withKind } from "../memory/kind";
 import { withStatus } from "../memory/status";
 import { tagsAfterWrite } from "../memory/stale";
+import { rememberTags } from "../tags/vocabulary";
 
 export function makeMirrorStore(env: Env): MirrorStore {
   return {
@@ -40,6 +41,16 @@ export function makeMirrorStore(env: Env): MirrorStore {
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, importance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(id, content, JSON.stringify(finalTags), source, now, now, "[]", importance).run();
+      // Promptness, not correctness (#288). Every tag inserted here is a compile-time
+      // constant — a provider id from the registry in integrations/index.ts, plus
+      // whatever kind:/status: the classifier added — so the vocabulary's age limit
+      // would admit them on its own. This just means a freshly connected integration
+      // shows up in the dashboard's tag filter today rather than tomorrow.
+      //
+      // Awaited because the scheduled sync has no ExecutionContext to defer to. Costs
+      // one KV get per created entry; the put fires only on the first item of a newly
+      // connected provider.
+      await rememberTags(env, finalTags);
       try {
         await storeEntry(env, id, content, finalTags, source, now, cfg);
       } catch (e) {

@@ -5,6 +5,7 @@ import { embed } from "../lib/ai";
 import { inferEdgesOnWrite } from "../graph/edges";
 import { neighborsFromVectorQuery } from "../graph/traverse";
 import { chunkText } from "../text/chunk";
+import { rememberTags } from "../tags/vocabulary";
 import { extractHashtags } from "../text/hashtags";
 import { isVectorizeUnavailable } from "../vectorize/health";
 import { tagsAfterWrite } from "../memory/stale";
@@ -165,6 +166,12 @@ export async function updateEntryContent(
   // vectors are kept below rather than retired.
   await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
     .bind(finalContent, JSON.stringify(mergedTags), Date.now(), id).run();
+
+  // Rewritten content can carry hashtags the brain has never seen, so this is one of the
+  // two places an unknown tag enters the corpus (#288). It sits here rather than in the
+  // route because #289 made this the single update path — putting it in the caller would
+  // have left the MCP tool introducing tags the cache never learned about.
+  await rememberTags(env, mergedTags);
 
   if (newVectorIds) {
     try {
