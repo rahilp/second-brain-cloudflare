@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { VECTORIZE_FIX_HINT } from "../constants";
 import { buildEntryFilterQuery, captureEntry } from "../capture/entry";
-import { appendToEntry, deleteStaleVectors, storeEntry } from "../capture/store";
+import { appendToEntry, updateEntryContent } from "../capture/store";
 import { applyStatus, forgetEntry } from "../capture/lifecycle";
 import { createEdge, deleteEdge, edgeLabel } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
@@ -126,9 +126,9 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: "Content cannot be empty." }] };
       }
 
-      // Read current row upfront — need tags, source, AND old vector_ids before any mutation
+      // Refuse before anything is written — same guard, same read, as POST /update.
       const row = await env.DB.prepare(
-        `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+        `SELECT source FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
 
       if (!row) {
@@ -139,32 +139,32 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: mirrorEditError(row.source as string) }] };
       }
 
-      const tags: string[] = JSON.parse(row.tags ?? "[]").filter((t: string) => t !== "rolled-up");
-      const source = row.source as string;
-      const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+      const result = await updateEntryContent(env, id, newContent, await resolveConfig(env));
 
-      // Step 1: Update D1 content and tags (strip rolled-up so updated entry ranks normally)
-      await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
-        .bind(newContent, JSON.stringify(tags), id).run();
-
-      // Step 2: Re-embed new content → inserts new vectors + updates vector_ids in D1
-      let newVectorIds: string[] = [];
-      try {
-        newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now(), await resolveConfig(env));
-      } catch (e) {
-        console.error("Vectorize re-embed failed (non-fatal):", e);
+      // Only reachable if the entry was deleted between the guard read and the write.
+      if (result.status === "not_found") {
+        return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       }
-      const newVectorCount = newVectorIds.length;
 
-      // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
-      try {
-        await deleteStaleVectors(env, oldVectorIds, newVectorIds);
-      } catch (e) {
-        console.error("Old vector cleanup failed (non-fatal):", e);
+      // Fails closed (#212): nothing was written, so the reply must not claim otherwise.
+      // This tool used to report success here while leaving the index pointing at the old
+      // text, and no repair path could see it — /vectorize-pending and /stats both look for
+      // an empty vector_ids, which a mis-indexed entry does not have (#289).
+      if (result.status === "reembed_failed") {
+        return { content: [{ type: "text", text: `Couldn't update entry ${id}: search re-index failed. Your memory is unchanged — please try again.` }] };
+      }
+
+      if (!result.vectorIds) {
+        return {
+          content: [{
+            type: "text",
+            text: `Updated entry ${id}. Note: it was not re-indexed for semantic search because the Vectorize index is missing — the previous index is kept and it is still findable by keyword. Fix: ${VECTORIZE_FIX_HINT}.`,
+          }],
+        };
       }
 
       return {
-        content: [{ type: "text", text: `Updated entry ${id}. Re-embedded as ${newVectorCount} vector(s).` }],
+        content: [{ type: "text", text: `Updated entry ${id}. Re-embedded as ${result.vectorIds.length} vector(s).` }],
       };
     }
   );
