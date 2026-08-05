@@ -14,6 +14,7 @@ import { classifyEntry } from "../capture/classify";
 import { withKind } from "../memory/kind";
 import { withStatus } from "../memory/status";
 import { tagsAfterWrite } from "../memory/stale";
+import { rememberTags } from "../tags/vocabulary";
 
 export function makeMirrorStore(env: Env): MirrorStore {
   return {
@@ -40,6 +41,12 @@ export function makeMirrorStore(env: Env): MirrorStore {
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, importance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(id, content, JSON.stringify(finalTags), source, now, now, "[]", importance).run();
+      // Third and last of the unknown-tag entry points (#288). Awaited rather than
+      // deferred because the scheduled sync has no ExecutionContext to hand this to,
+      // and it costs one KV read — a put only on the first item of a newly connected
+      // provider, so a steady-state sync pays nothing. Without it a freshly connected
+      // integration is missing from the dashboard's tag filter until the next rebuild.
+      await rememberTags(env, finalTags);
       try {
         await storeEntry(env, id, content, finalTags, source, now, cfg);
       } catch (e) {

@@ -7,6 +7,7 @@ import { appendToEntry, deleteStaleVectors, reembedOrDegrade } from "../capture/
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { extractHashtags } from "../text/hashtags";
 import { tagsAfterWrite } from "../memory/stale";
+import { rememberTags } from "../tags/vocabulary";
 
 export async function handleCaptureRoutes(
   request: Request,
@@ -151,6 +152,10 @@ export async function handleCaptureRoutes(
     // the old vectors are kept below rather than retired.
     await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
       .bind(finalContent, JSON.stringify(mergedTags), Date.now(), id).run();
+
+    // The rewritten content can carry hashtags the brain has never seen, which makes
+    // this the second of the three places an unknown tag enters the corpus (#288).
+    ctx.waitUntil(rememberTags(env, mergedTags));
 
     if (newVectorIds) {
       try {

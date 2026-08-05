@@ -3,12 +3,13 @@ import { json, requireAuth } from "../lib/http";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
+import { getTagVocabulary } from "../tags/vocabulary";
 
 export async function handleEntriesRoutes(
   request: Request,
   url: URL,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
 ): Promise<Response | null> {
   // GET /count
   if (url.pathname === "/count" && request.method === "GET") {
@@ -18,14 +19,15 @@ export async function handleEntriesRoutes(
     return json({ count: (row?.count as number) ?? 0 });
   }
 
-  // GET /tags
+  // GET /tags — the dashboard's filter dropdown, refetched on every page load.
+  // Reads the same cache recall does (#288): the scan behind it costs 180,000 rows
+  // on a 20,000-entry brain, and nothing here is worth that per navigation. Unlike
+  // recall this route has no useful degraded answer, so a cold cache is scanned
+  // inline rather than answered empty — see getTagVocabulary.
   if (url.pathname === "/tags" && request.method === "GET") {
     const authErr = requireAuth(request, env);
     if (authErr) return authErr;
-    const { results } = await env.DB.prepare(
-      `SELECT DISTINCT value FROM entries, json_each(entries.tags) ORDER BY value`
-    ).all();
-    return json((results as any[]).map(r => r.value as string));
+    return json(await getTagVocabulary(env, ctx));
   }
 
   // GET /export — complete backup: every entry plus the edges table. Single

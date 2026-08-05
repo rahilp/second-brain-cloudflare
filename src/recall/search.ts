@@ -133,7 +133,7 @@ export async function recallEntries(
   const tokens = tokenizeQuery(embedQuery);
   const [values, queryTags] = await Promise.all([
     embed(embedQuery, env, cfg),
-    inferQueryTags(embedQuery, env, cfg),
+    inferQueryTags(embedQuery, env, cfg, ctx),
   ]);
 
   let keywordRows: KeywordRow[] = [];

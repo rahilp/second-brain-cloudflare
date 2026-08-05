@@ -9,6 +9,7 @@ import { deprecateEntry } from "./lifecycle";
 import { deleteStaleVectors, reembedOrThrow, storeEntry } from "./store";
 import { tagsAfterWrite } from "../memory/stale";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
+import { rememberTags } from "../tags/vocabulary";
 
 export function buildEntryFilterQuery(params: {
   n: number;
@@ -122,6 +123,11 @@ export async function captureEntry(
     storeEntry(env, id, c, finalTags, source, now, cfg)
       .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
   );
+
+  // Capture is where a tag string nobody wrote into the source first exists, so it
+  // is where the cached vocabulary has to learn one (#288). Deferred: the row is
+  // already committed, and the next recall reads KV, not this promise.
+  ctx.waitUntil(rememberTags(env, finalTags));
 
   scheduleClassifyAndTag(id, c, env, ctx, cfg);
 
