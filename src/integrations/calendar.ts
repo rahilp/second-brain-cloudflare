@@ -96,8 +96,33 @@ function pushSingle(ev: any, startMs: number, endMs: number, out: Occurrence[]):
 }
 
 /**
+ * Slack added to every reach bound, to cover UTC-offset changes.
+ *
+ * The bound below is measured in absolute milliseconds, but ical.js builds an
+ * occurrence by adding the master's WALL-CLOCK duration in the occurrence's own
+ * timezone. Those two disagree across a DST transition, in both directions:
+ *
+ *  - A two-hour event whose end lands in a repeated hour takes THREE absolute
+ *    hours, so a bound measured off a master that spans no transition is short
+ *    by the offset change.
+ *  - A master whose own DTSTART/DTEND straddles a spring-forward gap measures
+ *    ONE absolute hour while being two on the wall — and since the master is
+ *    what the bound is derived from, that under-measurement would poison every
+ *    occurrence of the series forever, including ones nowhere near a transition.
+ *
+ * Reproducing ical.js's timezone arithmetic per occurrence would mean building
+ * the occurrence, which is the exact work the bound exists to avoid. A day of
+ * slack sidesteps it: every transition in current tzdata is an hour or less
+ * (Lord Howe's is thirty minutes), so this is not a close call. It costs almost
+ * nothing, because the bound is compared against a window that opens two days
+ * back — a year-old weekly series still rejects 51 of its 52 occurrences.
+ */
+const REACH_DST_SLACK_MS = DAY_MS;
+
+/**
  * The furthest past its nominal start that an occurrence of this series can
- * still be running — its longest possible (end − recurrence time).
+ * still be running — its longest possible (end − recurrence time), plus the
+ * slack above.
  *
  * This is what lets the walk below reject a spent occurrence from the iterator's
  * own time, without building the occurrence first. It has to bound overrides as
@@ -118,7 +143,7 @@ function seriesReachMs(ev: any, exceptions: any[]): number {
       return Infinity;
     }
   }
-  return Math.max(reach, 0);
+  return Math.max(reach, 0) + REACH_DST_SLACK_MS;
 }
 
 function expandRecurring(ev: any, startMs: number, endMs: number, out: Occurrence[], reachMs: number): void {
@@ -137,7 +162,8 @@ function expandRecurring(ev: any, startMs: number, endMs: number, out: Occurrenc
     // 91% for weekly series a year old, and getOccurrenceDetails is where
     // essentially all of the expansion's CPU goes (#290). Deciding it from the
     // iterator's own time skips building the occurrence at all. The reach bound
-    // is what keeps this exact for events still running when the window opens.
+    // is what keeps this exact for events still running when the window opens,
+    // including across a DST transition — see seriesReachMs.
     if (occStartMs + reachMs < startMs) continue;
     const details = ev.getOccurrenceDetails(next);
     const e = details.endDate.toJSDate().getTime();

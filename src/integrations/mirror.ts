@@ -4,6 +4,7 @@ import {
   INTEGRATION_PROVIDERS,
   getProvider,
   loadIntegration,
+  saveIntegration,
   deleteIntegration,
 } from "../integrations";
 import type { IntegrationProvider, MirrorStore } from "./framework";
@@ -143,12 +144,15 @@ const CRON_SYNC_MAX_BATCHES = 1;
  * multiplier is the provider count. Rotating keeps the cost of a run flat in the
  * number of connections; the hourly schedule is what keeps each one fresh.
  *
- * The rotation key is `updatedAt`, not `lastSyncedAt`. Every provider writes
+ * The rotation key is `updatedAt`, not `lastSyncedAt`. Providers write
  * `updatedAt` on every sync ATTEMPT but `lastSyncedAt` only on success, so
  * ordering by the latter would park the rotation on a provider whose token has
  * expired — it would be picked every hour, forever, and starve the ones that
- * still work. `updatedAt` always advances, so a failing provider takes its turn
- * and yields.
+ * still work.
+ *
+ * Advancing that key is this function's job, not the provider's — see
+ * advanceRotationCursor. Under rotation a provider that never advances is not a
+ * slow provider, it is a stuck queue.
  */
 export async function runScheduledIntegrationSync(env: Env): Promise<void> {
   let due: IntegrationProvider | null = null;
@@ -168,8 +172,47 @@ export async function runScheduledIntegrationSync(env: Env): Promise<void> {
 
   await initializeDatabase(env);
   const store = makeMirrorStore(env);
-  for (let i = 0; i < CRON_SYNC_MAX_BATCHES; i++) {
-    const result = await due.sync(env, store);
-    if (!result.ok || result.remaining === 0) break;
+  try {
+    for (let i = 0; i < CRON_SYNC_MAX_BATCHES; i++) {
+      const result = await due.sync(env, store);
+      if (!result.ok || result.remaining === 0) break;
+    }
+  } finally {
+    await advanceRotationCursor(env, due.id);
+  }
+}
+
+/**
+ * Move the rotation past the provider that just had its turn, whatever happened
+ * during it.
+ *
+ * Providers persist `updatedAt` themselves on success and on the errors their own
+ * handlers catch, but a throw that escapes those handlers persists nothing.
+ * `job()` in src/index.ts swallows it, the record keeps its old `updatedAt`, and
+ * the selection above picks the same provider again — every hour, forever, while
+ * every other connection waits. Its item map did not persist either, so each of
+ * those runs re-mirrors the same batch under fresh ids: new memories and new D1
+ * writes every hour for work already done. The old shape visited every provider
+ * per run, so a throw cost the providers after it in registry order one turn;
+ * under rotation it costs all of them every turn, which is why this is the
+ * caller's responsibility now rather than a detail each provider gets right.
+ *
+ * Best effort by design. If this write is the thing failing there is nothing
+ * further to try, and it must not replace the sync error that brought us here —
+ * hence the catch, in a `finally` block.
+ *
+ * One case it deliberately cannot fix: a KV outage broad enough to fail this put
+ * would have failed the provider's own save too. The cursor lives in KV, so
+ * nothing in-process can advance it. What this does cover is the far likelier
+ * shape — a provider throwing past its handlers while KV is perfectly healthy.
+ */
+async function advanceRotationCursor(env: Env, providerId: string): Promise<void> {
+  try {
+    const record = await loadIntegration(env, providerId);
+    if (!record) return; // disconnected mid-run — nothing to advance
+    record.updatedAt = Date.now();
+    await saveIntegration(env, record);
+  } catch (e) {
+    console.error(`Integration rotation cursor did not advance for ${providerId} (non-fatal):`, e);
   }
 }

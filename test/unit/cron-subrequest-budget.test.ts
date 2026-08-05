@@ -21,6 +21,7 @@ import { makeTestDb, makeTestEnv, makeVectorizeMock, makeMemoryKV } from "../hel
 import { D1Mock } from "../helpers/d1-mock";
 import type { Env } from "../../src/env";
 import { INTEGRATION_SYNC_CRON } from "../../src/integrations/mirror";
+import { INTEGRATION_PROVIDERS } from "../../src/integrations";
 
 const FREE_PLAN_SUBREQUESTS = 50;
 const MAINTENANCE_CRON = "0 1 * * *";
@@ -113,6 +114,16 @@ async function connectCalendar(
   const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => ics }) as any);
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+// Consecutive runs in a test land in the same millisecond, which the real
+// schedule never does — and the rotation cursor is a timestamp, so equal
+// timestamps tie and registry order wins every time. Step a fake clock by an
+// hour per run so a multi-run test models the schedule it is describing.
+function hourlyClock(): (run: number) => void {
+  const base = Date.now();
+  const spy = vi.spyOn(Date, "now");
+  return (run: number) => spy.mockReturnValue(base + run * 3600_000);
 }
 
 // `cron` selects which invocation is being measured — the two schedules are two
@@ -289,7 +300,9 @@ describe("nightly cron D1 subrequest cost", () => {
         return { ok: true, status: 200, text: async () => ics } as any;
       }));
 
+      const tick = hourlyClock();
       for (let run = 0; run < 4; run++) {
+        tick(run);
         resetDatabaseInit();
         await runCron(env, INTEGRATION_SYNC_CRON);
       }
@@ -300,6 +313,36 @@ describe("nightly cron D1 subrequest cost", () => {
       // four runs, so two of them were its.
       expect(db.entries.filter(e => e.source === "calendar-outlook"))
         .toHaveLength(2 * SYNC_EVENT_BATCH);
+    });
+
+    // The case above is an error the provider's own handler catches, so the
+    // provider persists updatedAt itself. This is the one where it does not:
+    // a throw escaping the handler is swallowed by job() in src/index.ts, and
+    // nothing about the record was written. If the rotation trusted providers to
+    // advance their own cursor, this provider would be re-selected every run
+    // forever — and, because its item map did not persist either, would re-mirror
+    // the same batch under fresh ids each time.
+    it("advances past a provider whose sync throws past its own handler", async () => {
+      const db = makeTestDb();
+      const kv = makeMemoryKV();
+      await connectCalendar(kv, 120, ["calendar-google", "calendar-outlook"]);
+      const { env } = countingEnv(db, { OAUTH_KV: kv });
+      vi.spyOn(INTEGRATION_PROVIDERS["calendar-google"], "sync")
+        .mockRejectedValue(new Error("KV write failed inside saveIntegration"));
+
+      const tick = hourlyClock();
+      for (let run = 0; run < 4; run++) {
+        tick(run);
+        resetDatabaseInit();
+        await runCron(env, INTEGRATION_SYNC_CRON);
+      }
+
+      // Two of the four runs went to the provider that works.
+      expect(db.entries.filter(e => e.source === "calendar-outlook"))
+        .toHaveLength(2 * SYNC_EVENT_BATCH);
+      // And the thrower never mirrored anything, so there are no duplicate
+      // re-creations to find.
+      expect(db.entries.filter(e => e.source === "calendar-google")).toHaveLength(0);
     });
   });
 
