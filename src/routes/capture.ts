@@ -3,10 +3,8 @@ import { resolveConfig } from "../config";
 import { VECTORIZE_FIX_HINT } from "../constants";
 import { json, requireAuth } from "../lib/http";
 import { captureEntry } from "../capture/entry";
-import { appendToEntry, deleteStaleVectors, reembedOrDegrade } from "../capture/store";
+import { appendToEntry, updateEntryContent } from "../capture/store";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
-import { extractHashtags } from "../text/hashtags";
-import { tagsAfterWrite } from "../memory/stale";
 
 export async function handleCaptureRoutes(
   request: Request,
@@ -118,8 +116,11 @@ export async function handleCaptureRoutes(
     const id = body.id.trim();
     const newContent = body.content.trim();
 
+    // Refuse before anything is written. Only `source` is needed: updateEntryContent reads
+    // the rest for itself, and keeping the mirror guard out here is what stops
+    // capture/store.ts having to depend on the integrations registry (see #289).
     const row = await env.DB.prepare(
-      `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+      `SELECT source FROM entries WHERE id = ?`
     ).bind(id).first() as Record<string, any> | null;
 
     if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
@@ -128,39 +129,18 @@ export async function handleCaptureRoutes(
       return json({ ok: false, error: mirrorEditError(row.source as string) }, 409);
     }
 
-    const tags: string[] = JSON.parse(row.tags ?? "[]");
-    const { cleanContent, hashtags: newHashtags } = extractHashtags(newContent);
-    const mergedTags = tagsAfterWrite([...new Set([...tags, ...newHashtags])]);
-    const source = row.source as string;
-    const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
-    const finalContent = cleanContent || newContent;
+    const result = await updateEntryContent(env, id, newContent, await resolveConfig(env));
 
-    // Re-embed FIRST (#212): if it fails, leave the entry's content and vectors
-    // untouched and surface an error, instead of committing new content and then
-    // deleting every vector — which would leave the entry silently unsearchable.
-    // null means Vectorize is unreachable (#270), not that this embed failed.
-    let newVectorIds: string[] | null;
-    try {
-      newVectorIds = await reembedOrDegrade(env, id, finalContent, mergedTags, source, await resolveConfig(env));
-    } catch (e) {
-      console.error("Re-embed failed — entry left unchanged:", e);
+    // Only reachable if the entry was deleted between the guard read and the write.
+    if (result.status === "not_found") {
+      return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+    }
+
+    if (result.status === "reembed_failed") {
       return json({ ok: false, error: "Couldn't update: search re-index failed. Your memory is unchanged — please try again." }, 500);
     }
 
-    // Safe to commit: either the embed succeeded, or Vectorize is unavailable and
-    // the old vectors are kept below rather than retired.
-    await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
-      .bind(finalContent, JSON.stringify(mergedTags), Date.now(), id).run();
-
-    if (newVectorIds) {
-      try {
-        await deleteStaleVectors(env, oldVectorIds, newVectorIds);
-      } catch (e) {
-        console.error("Old vector cleanup failed (non-fatal):", e);
-      }
-    }
-
-    if (!newVectorIds) {
+    if (!result.vectorIds) {
       return json({
         ok: true,
         id,
@@ -170,7 +150,7 @@ export async function handleCaptureRoutes(
       });
     }
 
-    return json({ ok: true, id, vectors: newVectorIds.length });
+    return json({ ok: true, id, vectors: result.vectorIds.length });
   }
 
   return null;
