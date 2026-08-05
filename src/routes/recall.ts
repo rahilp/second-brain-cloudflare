@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { resolveConfig } from "../config";
 import { LLM_MODEL, VECTORIZE_FIX_HINT } from "../constants";
-import { CORS_HEADERS, json, requireAuth } from "../lib/http";
+import { CORS_HEADERS, intParam, json, requireAuth } from "../lib/http";
 import { buildEntryFilterQuery } from "../capture/entry";
 import { compressTag } from "../compression/digest";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -18,10 +18,15 @@ export async function handleRecallRoutes(
   if (url.pathname === "/list" && request.method === "GET") {
     const authErr = requireAuth(request, env);
     if (authErr) return authErr;
-    const n = Math.min(parseInt(url.searchParams.get("n") ?? "20", 10), 100);
+    // Floor of 0 as well as the cap: SQLite reads a negative LIMIT as no limit
+    // at all, so `?n=-1` used to return the whole entries table.
+    const n = intParam(url, "n", { fallback: 20, min: 0, max: 100 });
+    if (n instanceof Response) return n;
     const tag = url.searchParams.get("tag")?.trim() || undefined;
-    const after = url.searchParams.has("after") ? parseInt(url.searchParams.get("after")!, 10) : undefined;
-    const before = url.searchParams.has("before") ? parseInt(url.searchParams.get("before")!, 10) : undefined;
+    const after = intParam(url, "after");
+    if (after instanceof Response) return after;
+    const before = intParam(url, "before");
+    if (before instanceof Response) return before;
 
     const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
     const { results } = await env.DB.prepare(sql).bind(...bindings).all();
@@ -36,13 +41,17 @@ export async function handleRecallRoutes(
     const query = url.searchParams.get("query")?.trim();
     if (!query) return json({ ok: false, error: "query is required" }, 400);
 
-    const topK = Math.min(Math.max(parseInt(url.searchParams.get("topK") ?? "5", 10), 1), 20);
+    const topK = intParam(url, "topK", { fallback: 5, min: 1, max: 20 });
+    if (topK instanceof Response) return topK;
     const tag = url.searchParams.get("tag")?.trim() || undefined;
-    const after = url.searchParams.has("after") ? parseInt(url.searchParams.get("after")!, 10) : undefined;
-    const before = url.searchParams.has("before") ? parseInt(url.searchParams.get("before")!, 10) : undefined;
+    const after = intParam(url, "after");
+    if (after instanceof Response) return after;
+    const before = intParam(url, "before");
+    if (before instanceof Response) return before;
     const kindParam = url.searchParams.get("kind")?.trim();
     const kind = kindParam && (KIND_VALUES as readonly string[]).includes(kindParam) ? kindParam as MemoryKind : undefined;
-    const hops = Math.min(Math.max(parseInt(url.searchParams.get("hops") ?? "0", 10), 0), 3);
+    const hops = intParam(url, "hops", { fallback: 0, min: 0, max: 3 });
+    if (hops instanceof Response) return hops;
     // Long memories are shortened by default so API/CLI consumers get a bounded
     // payload. Renderers that show the whole memory (the dashboard) pass full=1.
     const full = ["1", "true", "yes"].includes((url.searchParams.get("full") ?? "").toLowerCase());

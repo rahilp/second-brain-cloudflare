@@ -56,13 +56,17 @@ describe("GET /list", () => {
     expect(data.length).toBeLessThanOrEqual(100);
   });
 
-  it("returns a valid response when ?n= is non-numeric", async () => {
+  // This used to assert a 200 with an array body, which only ever held because
+  // D1Mock reads the bound LIMIT with Number() and slices by it. Real D1 rejects
+  // a NaN LIMIT at execution with SQLITE_MISMATCH, so the route answered 500 —
+  // see test/integration/query-param-validation.test.ts, which runs the same
+  // request against real SQLite.
+  it("rejects a non-numeric ?n= rather than passing it to the database", async () => {
     db.entries.push({ id: "x", content: "One", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]" });
 
     const res = await worker.fetch(req("GET", "/list?n=abc"), env, ctx);
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(Array.isArray(data)).toBe(true);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "n must be an integer" });
   });
 
   // ── Filter parity with list_recent (?tag, ?after, ?before) ──────────────────
