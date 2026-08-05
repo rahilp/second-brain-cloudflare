@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import {
   D1_MAX_BOUND_PARAMS,
+  KEYWORD_MAX_TOKENS,
   VECTORIZE_GET_BY_IDS_BATCH,
   VECTORIZE_TOP_K_MULTIPLIER,
 } from "../constants";
@@ -22,10 +23,16 @@ import type { KeywordRow, RecallMatch, RecallSearchResult } from "./types";
 
 async function keywordSearch(tokens: string[], env: Env, limit: number): Promise<KeywordRow[]> {
   if (!tokens.length) return [];
-  const where = tokens.map(() => "content LIKE ?").join(" OR ");
+  // Capped here rather than at distillation's uncapped exits because this is
+  // the only place a token count becomes SQL, and there are two such exits —
+  // one of which needs nothing worse than an empty corpus to fire (#276). Query
+  // order is the only ordering available on those paths: they are exactly the
+  // paths where the frequencies that would rank the terms are missing.
+  const terms = tokens.slice(0, KEYWORD_MAX_TOKENS);
+  const where = terms.map(() => "content LIKE ?").join(" OR ");
   const { results } = await env.DB.prepare(
     `SELECT id, content, tags, source, created_at FROM entries WHERE ${where} ORDER BY created_at DESC LIMIT ?`
-  ).bind(...tokens.map(t => `%${t}%`), limit).all();
+  ).bind(...terms.map(t => `%${t}%`), limit).all();
   return results as unknown as KeywordRow[];
 }
 
@@ -236,16 +243,31 @@ export async function recallEntries(
     }));
   }
 
+  // Chunked like the recall-count fetch above. This id list is the seeds plus
+  // whatever the graph expansion returned, so its length is the sum of two caps
+  // this query does not own — topK and GRAPH_MAX_NODES. They sum to 70 today,
+  // which fits one statement; the loop is what makes raising either of them a
+  // tuning change here rather than a query D1 rejects. One consequence if a
+  // second batch ever runs: d1Rows is then batch order, not one result set's
+  // order, which derivePattern's rows.slice(0, 20) below samples from.
   const allParentIds = [...seedParentIds, ...expandedScored.map(e => e.parentId)];
-  const placeholders = allParentIds.map(() => "?").join(", ");
-  const d1Bindings: (string | number)[] = [...allParentIds];
-  let d1Sql = `SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
+  let d1Filters = ` AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
+  const filterBindings: number[] = [];
   if (kind && (KIND_VALUES as readonly string[]).includes(kind)) {
-    d1Sql += ` AND tags LIKE '%"kind:${kind}"%'`;
+    d1Filters += ` AND tags LIKE '%"kind:${kind}"%'`;
   }
-  if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
-  if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
-  const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
+  if (after !== undefined) { d1Filters += ` AND created_at >= ?`; filterBindings.push(after); }
+  if (before !== undefined) { d1Filters += ` AND created_at <= ?`; filterBindings.push(before); }
+  const d1Rows: Record<string, any>[] = [];
+  const idBatchSize = D1_MAX_BOUND_PARAMS - filterBindings.length;
+  for (let i = 0; i < allParentIds.length; i += idBatchSize) {
+    const batch = allParentIds.slice(i, i + idBatchSize);
+    const placeholders = batch.map(() => "?").join(", ");
+    const { results } = await env.DB.prepare(
+      `SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN (${placeholders})${d1Filters}`
+    ).bind(...batch, ...filterBindings).all() as { results: Record<string, any>[] };
+    d1Rows.push(...results);
+  }
 
   const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
 

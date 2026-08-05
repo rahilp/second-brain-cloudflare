@@ -93,8 +93,9 @@ describe("config rule coverage", () => {
 
   it("platform limits are absent from the config surface", () => {
     // Exposing these guarantees breakage rather than risking it: Vectorize
-    // rejects >20 ids per call, D1 caps bound params at 100.
-    for (const forbidden of ["VECTORIZE_GET_BY_IDS_BATCH", "D1_MAX_BOUND_PARAMS", "EDGE_QUERY_BATCH"]) {
+    // rejects >20 ids per call, D1 caps bound params at 100 and refuses an
+    // expression tree deeper than 100 (#276).
+    for (const forbidden of ["VECTORIZE_GET_BY_IDS_BATCH", "D1_MAX_BOUND_PARAMS", "EDGE_QUERY_BATCH", "KEYWORD_MAX_TOKENS"]) {
       expect(DEFAULTS).not.toHaveProperty(forbidden);
     }
   });
