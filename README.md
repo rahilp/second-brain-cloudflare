@@ -49,7 +49,7 @@ Prefer to run it yourself? Use the one-click **[Deploy to Cloudflare](https://de
 
 * **Memory graph.** Memories now connect to each other — automatically as you save, or explicitly with the new `link` and `connections` tools. Recall can follow those connections (the `hops` option) to surface related context that a plain search would miss, and the dashboard has a new **Graph** tab to explore your memory visually.
 
-* **Notion sync.** Connect your Notion workspace from **Settings → Integrations** in the dashboard. Pages you share with the connection sync into memory, stay updated as they change in Notion, and surface in recall alongside everything else. Nightly automatic sync, or on demand with **Sync now**.
+* **Notion sync.** Connect your Notion workspace from **Settings → Integrations** in the dashboard. Pages you share with the connection sync into memory, stay updated as they change in Notion, and surface in recall alongside everything else. Automatic hourly sync, or on demand with **Sync now**.
 
 * **Graceful degradation.** If the Vectorize index is missing, the whole brain keeps working keyword-only: recall falls back to keyword search with a clear notice, and captures, appends and updates are still committed rather than rejected. A `/health` endpoint reports index status, and the dashboard shows a banner with the exact fix.
 
@@ -92,9 +92,9 @@ Memory is most useful when capturing information is easy. Second Brain connects 
   npm install -g second-brain-cf-cli
   ```
 
-* **Notion:** Connect your Notion workspace from **Settings → Integrations** in the web dashboard. Create an internal **connection** in the [Notion developer portal](https://app.notion.com/developers/connections) (a connection, not a personal access token — only connections appear in a page's Connections menu), share the pages you want remembered with it, and paste its secret — shared pages sync into memory automatically (nightly, or on demand with **Sync now**) and stay updated as they change in Notion.
+* **Notion:** Connect your Notion workspace from **Settings → Integrations** in the web dashboard. Create an internal **connection** in the [Notion developer portal](https://app.notion.com/developers/connections) (a connection, not a personal access token — only connections appear in a page's Connections menu), share the pages you want remembered with it, and paste its secret — shared pages sync into memory automatically (hourly, or on demand with **Sync now**) and stay updated as they change in Notion.
 
-* **Calendar:** Connect Google, Outlook, or iCloud from **Settings → Integrations** and paste your calendar's private **iCal (`.ics`) link** (Google: *your calendar → Integrate calendar → "Secret address in iCal format"*; Outlook: *Calendar → Shared calendars → Publish*; iCloud: *Share Calendar → Public Calendar*). Read-only — upcoming events sync into memory automatically (nightly, or on demand with **Sync now**), and past events are kept as a bounded history.
+* **Calendar:** Connect Google, Outlook, or iCloud from **Settings → Integrations** and paste your calendar's private **iCal (`.ics`) link** (Google: *your calendar → Integrate calendar → "Secret address in iCal format"*; Outlook: *Calendar → Shared calendars → Publish*; iCloud: *Share Calendar → Public Calendar*). Read-only — upcoming events sync into memory automatically (hourly, or on demand with **Sync now**), and past events are kept as a bounded history.
 
 * **Email:** Connect Gmail or iCloud from **Settings → Integrations** with an **app password** (Google: *Account → Security → App passwords*; iCloud: *appleid.apple.com → App-Specific Passwords*). Read-only — meaningful messages are captured into memory, while newsletters, marketing, receipts, and other automated mail are filtered out.
 

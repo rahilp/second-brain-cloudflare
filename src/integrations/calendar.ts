@@ -29,7 +29,16 @@ export const RETENTION_MS = 180 * DAY_MS;    // hard bound on kept history
 // past, so they don't accumulate as low-value memories; one-off past events still
 // keep the full RETENTION_MS as historical memory.
 export const RECURRING_RETENTION_MS: number | null = 0;
-export const SYNC_EVENT_BATCH = 10;          // create/update ceiling per batch (subrequest budget)
+// Create/update ceiling per batch. The budget that binds here is D1's — 50
+// queries per Worker invocation on the free plan — not the one outbound fetch
+// per sync this used to be justified by, which is how the real cost went
+// unnoticed (#290). Each mirrored occurrence costs the mirror store two D1
+// queries to create (insert, then vector_ids) and three to update (read, content
+// write, vector_ids), on top of its classify, embed and Vectorize calls. So ten
+// items is 20–30 D1 queries: comfortable in an HTTP sync, which owns its whole
+// invocation, and the most the nightly cron can afford in the one it shares with
+// three other jobs (see CRON_SYNC_MAX_BATCHES in mirror.ts).
+export const SYNC_EVENT_BATCH = 10;
 export const MAX_OCCURRENCES_PER_EVENT = 200;
 const MAX_ITER = 100_000;                     // guards pathological RRULEs. Note: ev.iterator() walks from DTSTART, so this budget is also spent reaching the window; 100k covers realistic old/frequent series (e.g. hourly for ~10y, daily for centuries). Sub-hourly rules running many years may exhaust it and yield no occurrences — acceptable.
 const MAX_DESCRIPTION_CHARS = 4000;
@@ -86,7 +95,33 @@ function pushSingle(ev: any, startMs: number, endMs: number, out: Occurrence[]):
   });
 }
 
-function expandRecurring(ev: any, startMs: number, endMs: number, out: Occurrence[]): void {
+/**
+ * The furthest past its nominal start that an occurrence of this series can
+ * still be running — its longest possible (end − recurrence time).
+ *
+ * This is what lets the walk below reject a spent occurrence from the iterator's
+ * own time, without building the occurrence first. It has to bound overrides as
+ * well as the master, because a RECURRENCE-ID instance can be both moved later
+ * and made longer; `end − recurrence-id` covers those two in one number. An
+ * override we cannot read returns Infinity, which disables the shortcut for this
+ * series rather than risking a wrong skip.
+ */
+function seriesReachMs(ev: any, exceptions: any[]): number {
+  let reach = ev.endDate.toJSDate().getTime() - ev.startDate.toJSDate().getTime();
+  for (const ex of exceptions) {
+    try {
+      const rid = ex.getFirstPropertyValue("recurrence-id");
+      if (!rid) continue;
+      const end = new ICAL.Event(ex).endDate.toJSDate().getTime();
+      reach = Math.max(reach, end - rid.toJSDate().getTime());
+    } catch {
+      return Infinity;
+    }
+  }
+  return Math.max(reach, 0);
+}
+
+function expandRecurring(ev: any, startMs: number, endMs: number, out: Occurrence[], reachMs: number): void {
   if (!ev.uid) return;
   const it = ev.iterator();
   let next: any;
@@ -96,6 +131,14 @@ function expandRecurring(ev: any, startMs: number, endMs: number, out: Occurrenc
     if (++iter > MAX_ITER) break;
     const occStartMs = next.toJSDate().getTime();
     if (occStartMs > endMs) break; // iterator is chronological — nothing further is in-window
+    // Cheap rejection before the expensive one. ev.iterator() walks from DTSTART,
+    // so on a series that has been running for a year the great majority of the
+    // occurrences visited here ended long before the window opens — measured at
+    // 91% for weekly series a year old, and getOccurrenceDetails is where
+    // essentially all of the expansion's CPU goes (#290). Deciding it from the
+    // iterator's own time skips building the occurrence at all. The reach bound
+    // is what keeps this exact for events still running when the window opens.
+    if (occStartMs + reachMs < startMs) continue;
     const details = ev.getOccurrenceDetails(next);
     const e = details.endDate.toJSDate().getTime();
     if (e < startMs) continue;                 // occurrence already ended before window
@@ -153,8 +196,9 @@ export function parseAndExpand(icsText: string, windowStartMs: number, windowEnd
     try {
       if (g.master) {
         const ev = new ICAL.Event(g.master, { exceptions: g.exceptions });
-        if (ev.isRecurring()) expandRecurring(ev, windowStartMs, windowEndMs, out);
-        else pushSingle(ev, windowStartMs, windowEndMs, out);
+        if (ev.isRecurring()) {
+          expandRecurring(ev, windowStartMs, windowEndMs, out, seriesReachMs(ev, g.exceptions));
+        } else pushSingle(ev, windowStartMs, windowEndMs, out);
       } else {
         // No master in the feed (e.g. Google exports only the modified instances
         // of a series whose master is out of range): emit each override as a

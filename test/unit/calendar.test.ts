@@ -209,6 +209,58 @@ describe("parseAndExpand", () => {
     const occs = parseAndExpand(ics, ms("2026-07-01T00:00:00Z"), ms("2026-07-31T00:00:00Z"));
     expect(occs).toEqual([]);
   });
+
+  // ── The reach bound (#290) ──────────────────────────────────────────────
+  // The walk rejects spent occurrences from the iterator's own time so it does
+  // not have to build them, which is where the expansion's CPU went. These are
+  // the two cases where an occurrence whose recurrence time is BEFORE the
+  // window is nonetheless in it — i.e. exactly what a naive start-time skip
+  // would silently drop.
+
+  it("keeps a long-running instance that began before the window and is still running", () => {
+    const ics = calendar(
+      vevent([
+        "UID:long-run@test",
+        "DTSTAMP:20260101T000000Z",
+        // Weekly nine-day event: the instance starting 2026-06-29 runs to 07-08,
+        // so it overlaps a window that opens on 07-01 despite starting before it.
+        "DTSTART:20260105T090000Z",
+        "DTEND:20260114T170000Z",
+        "RRULE:FREQ=WEEKLY",
+        "SUMMARY:Long Conference",
+      ]),
+    );
+    const occs = parseAndExpand(ics, ms("2026-07-01T00:00:00Z"), ms("2026-07-02T00:00:00Z"));
+    expect(occs.length).toBeGreaterThan(0);
+    expect(occs.every(o => o.summary === "Long Conference")).toBe(true);
+    // At least one of them started before the window opened.
+    expect(occs.some(o => o.start < ms("2026-07-01T00:00:00Z"))).toBe(true);
+  });
+
+  it("keeps an instance an override moved forward into the window", () => {
+    const ics = calendar(
+      vevent([
+        "UID:moved@test",
+        "DTSTAMP:20260101T000000Z",
+        "DTSTART:20260601T090000Z",
+        "DTEND:20260601T100000Z",
+        "RRULE:FREQ=WEEKLY",
+        "SUMMARY:Standup",
+      ]),
+      vevent([
+        "UID:moved@test",
+        // Nominally 2026-06-22, three weeks before the window — but pushed out
+        // to 2026-07-10, which is inside it.
+        "RECURRENCE-ID:20260622T090000Z",
+        "DTSTAMP:20260101T000000Z",
+        "DTSTART:20260710T090000Z",
+        "DTEND:20260710T100000Z",
+        "SUMMARY:Standup (moved)",
+      ]),
+    );
+    const occs = parseAndExpand(ics, ms("2026-07-09T00:00:00Z"), ms("2026-07-11T00:00:00Z"));
+    expect(occs.map(o => o.summary)).toContain("Standup (moved)");
+  });
 });
 
 describe("computeCalendarPlan", () => {
