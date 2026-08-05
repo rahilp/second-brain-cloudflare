@@ -120,6 +120,78 @@ describe("runNightlyCompression() tag bound", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
+  /**
+   * The staleness pass writes volatility: and stale:as-of across up to 25 entries a night,
+   * so those tags carry a higher entry count than most real topics. They are not topics and
+   * never produce a digest — but the candidate list is ordered by count and only the first
+   * COMPRESSION_MAX_TAGS_PER_RUN are taken, so if they appear at all they take slots from
+   * the tags that would have produced one. The user-visible symptom is compression quietly
+   * doing half as much, with nothing logged.
+   *
+   * Scope: this covers the PREDICATE, not the query. The D1 mock's digest-candidate branch
+   * calls isTopicTag(), so a WHERE clause that drifted from it would leave this test green
+   * — verified by mutation. test/integration/digest-candidates.test.ts runs the clause
+   * itself against real SQLite and is what actually covers the SQL.
+   */
+  it("does not let system tags take digest slots from real topics", async () => {
+    seedTags(db, 5, 15);
+    // Mark entries the way the staleness pass does: on top of their existing topic tags.
+    for (const e of db.entries.slice(0, 25)) {
+      e.tags = JSON.stringify([...JSON.parse(e.tags), "volatility:state", "stale:as-of"]);
+    }
+
+    await runCron(env);
+
+    expect(digestedTags(db).size).toBe(COMPRESSION_MAX_TAGS_PER_RUN);
+    const synthesized = db.entries.filter(e => JSON.parse(e.tags ?? "[]").includes("synthesized"));
+    for (const e of synthesized) {
+      const tags: string[] = JSON.parse(e.tags);
+      expect(tags.some(t => t.startsWith("volatility:") || t === "stale:as-of")).toBe(false);
+    }
+  });
+
+  /**
+   * The damage, not the predicate.
+   *
+   * A reserved tag admitted in mixed case does not merely waste a digest slot. compressTag
+   * selects the entries it rolls up with `tags LIKE '%"<tag>"%'`, and LIKE ignores ASCII
+   * case, so the candidate `Kind:Semantic` selects every entry tagged `kind:semantic` —
+   * classified entries, which is most of them. Those entries get `rolled-up` and a
+   * `[Digest: …]` suffix appended to their content permanently, drop out of staleness and
+   * future compression, and lose recall weight. Here `holiday-plans` has only nine entries,
+   * far under the ten a digest needs, so nothing about it is a legitimate candidate — and
+   * yet it was the collateral when this regressed.
+   *
+   * The mirror path (src/integrations/mirror.ts) inserts tags without lowercasing, which is
+   * how a mixed-case system tag gets into the table in the first place.
+   */
+  it("does not roll up unrelated entries when a system tag arrives in mixed case", async () => {
+    const old = Date.now() - 200 * 24 * 3600 * 1000;
+    for (let i = 0; i < 11; i++) {
+      db.entries.push({
+        id: `mirror-${i}`, content: `Mirrored note ${i}`, tags: JSON.stringify(["Kind:Semantic"]),
+        source: "notion", created_at: old + i, updated_at: old + i, vector_ids: "[]",
+        recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0,
+      });
+    }
+    for (let i = 0; i < 9; i++) {
+      db.entries.push({
+        id: `holiday-${i}`, content: `Holiday idea ${i}`, tags: JSON.stringify(["holiday-plans", "kind:semantic"]),
+        source: "api", created_at: old + i, updated_at: old + i, vector_ids: "[]",
+        recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0,
+      });
+    }
+
+    await runCron(env);
+
+    for (let i = 0; i < 9; i++) {
+      const row = db.entries.find(e => e.id === `holiday-${i}`)!;
+      expect(JSON.parse(row.tags)).not.toContain("rolled-up");
+      expect(row.content).toBe(`Holiday idea ${i}`); // content never appended to
+    }
+    expect(db.entries.filter(e => JSON.parse(e.tags).includes("synthesized"))).toHaveLength(0);
+  });
+
   it("starts from the top when the cursor cannot be read", async () => {
     seedTags(db, 20);
     const failingKV = {

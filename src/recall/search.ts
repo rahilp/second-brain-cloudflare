@@ -20,6 +20,7 @@ import { cosineSim, mmrRerank, rerankWithTimeDecay, type VectorizeMatch } from "
 import { rrfFuse } from "./rrf";
 import { computeCompoundStale } from "./compound-stale";
 import type { KeywordRow, RecallMatch, RecallSearchResult } from "./types";
+import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 
 async function keywordSearch(tokens: string[], env: Env, limit: number): Promise<KeywordRow[]> {
   if (!tokens.length) return [];
@@ -138,9 +139,13 @@ export async function recallEntries(
   let keywordRows: KeywordRow[] = [];
   let results: { matches: VectorizeMatch[] };
   if (tag) {
+    // Escaped: a tag is user data and LIKE reads _ and % as wildcards. This is a read, so
+    // the failure is over-broad results rather than the permanent rollup the same bug
+    // caused in compressTag — but `?tag=%` silently defeats the filter entirely and
+    // returns the whole brain, which is not a recoverable-looking answer either.
     const { results: tagRows } = await env.DB.prepare(
-      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?`
-    ).bind(`%"${tag}"%`).all();
+      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}`
+    ).bind(tagLikePattern(tag)).all();
     if (!tagRows.length) return { matches: [], insight: "", semanticUnavailable };
     keywordRows = tagRows as unknown as KeywordRow[];
 
