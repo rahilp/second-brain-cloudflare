@@ -15,6 +15,14 @@
  * compressTag rolls up every row its selector returns, appending to their content and
  * marking them `rolled-up`.
  *
+ * Known and deliberately not handled: `tags` is JSON, so a tag containing `"` or `\` is
+ * stored escaped (`a"b` as `a\"b`) and this pattern will not match it. The unescaped form
+ * did not match it either — it just failed differently — and neither character can arrive
+ * through a hashtag, since src/text/hashtags.ts matches \w. Escaping for LIKE and escaping
+ * for JSON are two different transforms; doing the second properly means building the
+ * pattern from the JSON encoding of the tag, not from the tag. Failing closed is the right
+ * side to be wrong on for a selector that decides what gets rolled up.
+ *
  * Lives here rather than with any one caller because four modules across three concerns
  * need it, and it is the tag vocabulary's own business how a tag is encoded and matched.
  * Pure by the rules in src/ARCHITECTURE.md — it imports nothing.

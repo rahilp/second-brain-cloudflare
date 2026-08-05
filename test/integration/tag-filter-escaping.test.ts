@@ -18,8 +18,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { buildEntryFilterQuery } from "../../src/capture/entry";
 import { recallEntries } from "../../src/recall/search";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
-import { makeTestDb, makeTestEnv } from "../helpers/make-env";
-import { tagLikePattern, TAG_LIKE_ESCAPE } from "../../src/memory/tag-sql";
+import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
+import { makeTestDb, makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
+import worker from "../../src/index";
+import { req } from "../helpers/make-request";
+import type { Env } from "../../src/env";
+import { tagLikePattern } from "../../src/memory/tag-sql";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -30,11 +34,53 @@ afterEach(() => {
   sqlite = null;
 });
 
-/** Eleven entries on an underscore tag, nine on the neighbour a `_` wildcard would reach. */
+/**
+ * An Env whose DB is real SQLite.
+ *
+ * `makeSqliteD1` applies db/schema.sql, which deliberately omits the columns
+ * initializeDatabase adds by ALTER (updated_at, staleness_checked_at, the counters) — so
+ * `exec` really executes and seedEnv runs the real initializeDatabase over it. Listing
+ * those columns here instead would be a second copy of the migration, wrong the moment one
+ * is added.
+ *
+ * `batch` runs sequentially, which is enough for the read paths under test. Vectorize
+ * returns one vector per requested id so the tag-scoped branch has something to score;
+ * WHICH ids it is asked for is decided entirely by the tag query, which is the point.
+ */
+function envOver(s: SqliteD1): Env {
+  const DB = {
+    prepare: (sql: string) => s.db.prepare(sql),
+    exec: async (sql: string) => s.db.prepare(sql).run(),
+    batch: async (stmts: any[]) => Promise.all(stmts.map(st => st.run())),
+  } as unknown as D1Database;
+  const VECTORIZE = {
+    ...makeVectorizeMock(),
+    getByIds: async (ids: string[]) =>
+      ids.map(id => ({ id, values: new Array(384).fill(0.1), metadata: { parentId: id.replace(/^v-/, "") } })),
+  } as unknown as VectorizeIndex;
+  return makeTestEnv(undefined, { DB, VECTORIZE });
+}
+
+/** Seeded SQLite plus an Env over it, with the real schema migration applied. */
+async function seedEnv(): Promise<Env> {
+  sqlite = seeded();
+  const env = envOver(sqlite);
+  resetDatabaseInit();
+  await initializeDatabase(env);
+  return env;
+}
+
+const OWN = Array.from({ length: 11 }, (_, i) => `own-${i}`).sort();
+const OTHER = Array.from({ length: 9 }, (_, i) => `other-${i}`).sort();
+
+/**
+ * Eleven entries on an underscore tag, nine on the neighbour a `_` wildcard would reach.
+ * Every entry carries a vector id so the tag-scoped recall path has something to fetch.
+ */
 function seeded(): SqliteD1 {
   const s = makeSqliteD1();
-  for (let i = 0; i < 11; i++) s.seed({ id: `own-${i}`, content: `m${i}`, createdAt: 1000 + i, tags: ["q3_planning"] });
-  for (let i = 0; i < 9; i++) s.seed({ id: `other-${i}`, content: `m${i}`, createdAt: 2000 + i, tags: ["q3-planning"] });
+  OWN.forEach((id, i) => s.seed({ id, content: `planning note ${i}`, createdAt: 1000 + i, tags: ["q3_planning"], vectorIds: [`v-${id}`] }));
+  OTHER.forEach((id, i) => s.seed({ id, content: `planning note ${i}`, createdAt: 2000 + i, tags: ["q3-planning"], vectorIds: [`v-${id}`] }));
   return s;
 }
 
@@ -49,9 +95,7 @@ describe("GET /entries and /list tag filter", () => {
   }
 
   it("does not reach a neighbouring tag through an underscore wildcard", async () => {
-    const matched = await ids("q3_planning");
-    expect(matched).toHaveLength(11);
-    expect(matched.every(id => id.startsWith("own-"))).toBe(true);
+    expect(await ids("q3_planning")).toEqual(OWN);
   });
 
   it("does not return everything for a percent tag", async () => {
@@ -60,8 +104,7 @@ describe("GET /entries and /list tag filter", () => {
   });
 
   it("still returns exactly the entries carrying the tag it was given", async () => {
-    expect(await ids("q3-planning")).toHaveLength(9);
-    expect(await ids("q3_planning")).toHaveLength(11);
+    expect(await ids("q3-planning")).toEqual(OTHER);
   });
 });
 
@@ -106,18 +149,64 @@ describe("tag-scoped recall candidate query", () => {
     expect(bound[0]?.[0]).not.toBe(`%"q3_planning"%`); // the unescaped form
   });
 
-  // The clause from src/recall/search.ts, built from the same exported pieces it uses.
-  async function ids(tag: string): Promise<string[]> {
-    sqlite = seeded();
-    const { results } = await sqlite.db.prepare(
-      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}`,
-    ).bind(tagLikePattern(tag)).all();
-    return (results as { id: string }[]).map(r => r.id).sort();
+  /**
+   * The behavioural half: the real recallEntries against real SQLite, asserting on the
+   * entries it comes back with.
+   *
+   * This deliberately does not rebuild the query. An earlier version of this test did, and
+   * it passed with search.ts's escaping removed — it was proving the helper works, not that
+   * recall uses it. Only the entry ids answer the question the test is named for.
+   */
+  async function recalled(tag: string): Promise<string[]> {
+    const env = await seedEnv();
+    const { matches } = await recallEntries(
+      { query: "planning", topK: 50, tag, synthesize: false },
+      env,
+      ctx,
+    );
+    return matches.map(m => m.id).sort();
   }
 
-  it("scopes recall to the tag it was given, wildcards and all", async () => {
-    expect((await ids("q3_planning")).every(id => id.startsWith("own-"))).toBe(true);
-    expect(await ids("%")).toEqual([]);
-    expect(await ids("q3-planning")).toHaveLength(9);
+  it("returns only the entries carrying an underscore tag", async () => {
+    expect(await recalled("q3_planning")).toEqual(OWN);
+  });
+
+  it("returns nothing for a percent tag rather than the whole brain", async () => {
+    expect(await recalled("%")).toEqual([]);
+    expect(await recalled("%planning%")).toEqual([]);
+  });
+
+  it("still returns the entries carrying an ordinary tag", async () => {
+    expect(await recalled("q3-planning")).toEqual(OTHER);
+  });
+});
+
+/**
+ * The route, end to end: a real HTTP request through the worker, against real SQLite,
+ * asserting on the response body. `?tag=%` returning the whole brain is the case that
+ * looks most like a valid answer and is therefore least likely to be noticed.
+ */
+describe("GET /list tag filter, end to end", () => {
+  async function listed(tag: string): Promise<string[]> {
+    const env = await seedEnv();
+    const res = await worker.fetch(
+      req("GET", `/list?n=100&tag=${encodeURIComponent(tag)}`),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { id: string }[]).map(r => r.id).sort();
+  }
+
+  it("does not reach a neighbouring tag through an underscore wildcard", async () => {
+    expect(await listed("q3_planning")).toEqual(OWN);
+  });
+
+  it("does not return every entry for a percent tag", async () => {
+    expect(await listed("%")).toEqual([]);
+  });
+
+  it("still returns the entries carrying an ordinary tag", async () => {
+    expect(await listed("q3-planning")).toEqual(OTHER);
   });
 });

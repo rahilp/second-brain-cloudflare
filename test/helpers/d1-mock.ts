@@ -235,6 +235,11 @@ export class D1Mock {
           const row = db.entries.find((e: any) => e.id === args[0]);
           return row ? { vector_ids: row.vector_ids } : null;
         }
+        // These branches match `as count` in lower case only. src/migration/embedding.ts
+        // writes `AS count`, so three of its queries fall through here and return null
+        // rather than a row — pre-existing, and those paths are covered against real SQLite
+        // in test/integration/embedding-migration.test.ts. Worth knowing before adding a
+        // fourth caller and trusting the double.
         if (s.includes("COUNT(*) as count") && s.includes("AVG(importance_score)")) {
           const count = db.entries.length;
           const scored = db.entries.filter((e: any) => typeof e.importance_score === "number");
