@@ -238,9 +238,16 @@ describe("runStalenessPass", () => {
 describe("runStalenessPass D1 round-trip cost", () => {
   const SUBREQUEST_BUDGET = 50;
 
+  /**
+   * `prepared` is the pass's own statements. initializeDatabase's schema probe is dropped
+   * because it is not per-row cost and it is memoised across the whole invocation, so
+   * counting it would make these assertions depend on whether some earlier test in the
+   * file happened to warm the memo first. The cron budget test is where init's cost lives.
+   */
   function countingEnv(db: D1Mock, overrides: Partial<D1Database> = {}) {
     const prepared: string[] = [];
     const execd: string[] = [];
+    const isSchemaProbe = (sql: string) => sql.startsWith("SELECT type AS kind, name FROM sqlite_master");
     const billed = { run: 0, first: 0, all: 0, exec: 0, batch: 0, batched: [] as number[],
       get total() { return this.run + this.first + this.all + this.exec + this.batch; } };
     const wrap = (stmt: any): any => ({
@@ -251,7 +258,7 @@ describe("runStalenessPass D1 round-trip cost", () => {
       __inner: stmt,
     });
     const DB = {
-      prepare(sql: string) { prepared.push(sql); return wrap(db.prepare(sql)); },
+      prepare(sql: string) { if (!isSchemaProbe(sql)) prepared.push(sql); return wrap(db.prepare(sql)); },
       exec(sql: string) { billed.exec++; execd.push(sql); return db.exec(sql); },
       batch: (stmts: any[]) => {
         billed.batch++;

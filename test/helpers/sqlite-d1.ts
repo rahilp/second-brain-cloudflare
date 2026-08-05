@@ -12,8 +12,16 @@
  * for real against the project's own `db/schema.sql`. A wrong comparison then
  * fails the test instead of passing a string match.
  *
+ * The schema migration in `src/db/init.ts` is the other case, and the sharper
+ * one: `d1-mock`'s `exec()` is a no-op, so it cannot express "that column is
+ * already there" or "that table is not" — the two facts the migration now reads
+ * before it writes. Against real SQLite a probe that misreports an empty
+ * database as migrated leaves the tables uncreated and the next statement fails,
+ * which is exactly the regression worth catching. Pass `{ schema: false }` for a
+ * database with nothing in it at all.
+ *
  * Only the surface the code under test uses is implemented — `prepare`, `bind`,
- * `all`, `first`, `run`. Reach for `d1-mock` for everything else.
+ * `all`, `first`, `run`, `exec`. Reach for `d1-mock` for everything else.
  */
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
@@ -51,6 +59,13 @@ class SqliteStatement {
 export interface SqliteD1 {
   /** Shaped like `env.DB`. */
   db: { prepare(sql: string): SqliteStatement; exec(sql: string): Promise<void> };
+  /**
+   * One entry per D1 call made through `db` — which is one entry per subrequest,
+   * since `prepare()` here is only ever followed by a single execution.
+   */
+  issued: string[];
+  /** Column names currently on `entries`, straight from SQLite. */
+  columns(): string[];
   /** Insert an entry directly, bypassing the capture pipeline. */
   seed(entry: {
     id: string;
@@ -72,11 +87,11 @@ export interface SqliteD1 {
  * column rename breaks these tests, which is the point — the migration's SQL
  * names columns.
  */
-export function makeSqliteD1(): SqliteD1 {
+export function makeSqliteD1({ schema: applySchema = true }: { schema?: boolean } = {}): SqliteD1 {
   const raw = new DatabaseSync(":memory:");
   // The schema uses D1-flavoured DDL; execute it statement by statement so one
   // unsupported pragma cannot take the whole file down silently.
-  const schema = readFileSync(SCHEMA, "utf8");
+  const schema = applySchema ? readFileSync(SCHEMA, "utf8") : "";
   for (const statement of schema.split(";")) {
     // Strip comment lines rather than skipping any chunk that starts with one:
     // splitting on ";" leaves the preceding comment attached to the statement
@@ -98,14 +113,27 @@ export function makeSqliteD1(): SqliteD1 {
     }
   }
 
+  const issued: string[] = [];
+
   return {
+    issued,
     db: {
-      prepare: (sql: string) => new SqliteStatement(raw, sql),
+      prepare: (sql: string) => {
+        issued.push(sql);
+        return new SqliteStatement(raw, sql);
+      },
       // Present so a whole-Worker request against this facade runs the real
       // initializeDatabase path rather than failing on a missing method. The
       // schema is already applied above; that DDL is idempotent, and the ALTERs
       // raise the same "duplicate column name" D1 does, which init.ts expects.
-      exec: async (sql: string) => { raw.exec(sql); },
+      exec: async (sql: string) => {
+        issued.push(sql);
+        raw.exec(sql);
+      },
+    },
+    columns() {
+      return (raw.prepare(`SELECT name FROM pragma_table_info('entries')`).all() as { name: string }[])
+        .map(r => r.name);
     },
     seed({ id, content, createdAt, tags = [], source = "api", vectorIds = [] }) {
       raw

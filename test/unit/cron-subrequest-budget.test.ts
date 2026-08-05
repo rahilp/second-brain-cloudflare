@@ -1,8 +1,13 @@
 /**
  * All four nightly jobs are fired from a single scheduled() invocation (src/index.ts),
  * so they share ONE subrequest budget — 50 on the free plan. Each of them awaits
- * initializeDatabase, so before it was memoised the same dozen DDL statements were paid
+ * initializeDatabase, so before it was memoised the same thirteen DDL statements were paid
  * for once per job, and the pass that runs last could find the budget already spent.
+ *
+ * Memoisation cut that to thirteen; #282 cut the thirteen to a single catalogue read
+ * on any brain that is already migrated, which every brain is after its first request.
+ * The D1 mock answers the probe as a migrated brain, which is what a nightly cron always
+ * runs against — a brain with no schema has no entries to compress.
  *
  * This measures the whole invocation rather than any one job, because per-job budget
  * assertions are not true in situ.
@@ -67,7 +72,7 @@ describe("nightly cron D1 subrequest cost", () => {
     vi.restoreAllMocks();
   });
 
-  it("pays for the schema DDL once per invocation, not once per job", async () => {
+  it("probes the schema once per invocation, not once per job, and issues no DDL", async () => {
     const db = makeTestDb();
     const old = Date.now() - STALENESS_AGE_MS - 86400000;
     for (let i = 0; i < 25; i++) {
@@ -81,8 +86,10 @@ describe("nightly cron D1 subrequest cost", () => {
     await runCron(env);
 
     // The signature statement of initializeDatabase, once for the whole cron.
-    const ddl = statements.filter(s => s.startsWith("CREATE TABLE IF NOT EXISTS entries"));
-    expect(ddl).toHaveLength(1);
+    expect(statements.filter(s => s.startsWith("SELECT type AS kind, name FROM sqlite_master"))).toHaveLength(1);
+    // #282: the schema is already there, and the whole point is that finding that out no
+    // longer costs a CREATE and an ALTER per object.
+    expect(statements.filter(s => /^(CREATE|ALTER)\b/.test(s))).toEqual([]);
   });
 
   // The staleness pass used to be the largest consumer of this budget: one CAS per
