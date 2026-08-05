@@ -234,11 +234,19 @@ describe("runStalenessPass", () => {
 describe("runStalenessPass D1 round-trip cost", () => {
   const SUBREQUEST_BUDGET = 50;
 
+  /**
+   * `prepared` is the pass's own statements. initializeDatabase's schema probe is dropped
+   * because it is not per-row cost and it is memoised across the whole invocation, so
+   * counting it would make these assertions depend on whether some earlier test in the
+   * file happened to warm the memo first — which is exactly what it did before this
+   * filter existed. The cron budget test is where init's cost is measured.
+   */
   function countingEnv(db: D1Mock) {
     const prepared: string[] = [];
     const execd: string[] = [];
+    const isSchemaProbe = (sql: string) => sql.startsWith("SELECT type AS kind, name FROM sqlite_master");
     const DB = {
-      prepare(sql: string) { prepared.push(sql); return db.prepare(sql); },
+      prepare(sql: string) { if (!isSchemaProbe(sql)) prepared.push(sql); return db.prepare(sql); },
       exec(sql: string) { execd.push(sql); return db.exec(sql); },
       batch: (stmts: any[]) => db.batch(stmts),
     } as unknown as D1Database;
@@ -284,9 +292,10 @@ describe("runStalenessPass D1 round-trip cost", () => {
     expect(prepared.filter(s => s.includes("COALESCE(updated_at, created_at) <"))).toHaveLength(1);
     expect(prepared.filter(s => s.startsWith("UPDATE entries SET tags = ?, staleness_checked_at = ?")))
       .toHaveLength(STALENESS_PASS_LIMIT);
-    // The pass's own cost: 1 candidate query + 25 CAS writes. The DDL is not counted
-    // here because it is memoised across the whole invocation — see the cron budget test
-    // in test/unit/cron-subrequest-budget.test.ts, which is where the 50 actually binds.
+    // The pass's own cost: 1 candidate query + 25 CAS writes. Schema init is not counted
+    // here — countingEnv drops its probe and its DDL is memoised across the whole
+    // invocation. See the cron budget test in test/unit/cron-subrequest-budget.test.ts,
+    // which is where the 50 actually binds.
     expect(prepared).toHaveLength(STALENESS_PASS_LIMIT + 1);
     expect(execd.length).toBeLessThanOrEqual(SUBREQUEST_BUDGET);
   });

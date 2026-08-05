@@ -1,5 +1,15 @@
 import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL } from "../../src/compression/eligibility";
 
+/** What src/db/init.ts's probe sees on a migrated brain — see the handler in all(). */
+const SCHEMA_PROBE_RESULTS = [
+  ...["entries", "edges"].map(name => ({ kind: "table", name })),
+  ...["idx_entries_created_at", "idx_entries_source", "idx_edges_source", "idx_edges_target",
+    "idx_edges_weight"].map(name => ({ kind: "index", name })),
+  ...["id", "content", "tags", "source", "created_at", "vector_ids", "recall_count",
+    "importance_score", "contradiction_wins", "contradiction_losses", "updated_at",
+    "staleness_checked_at"].map(name => ({ kind: "column", name })),
+];
+
 export class D1Mock {
   entries: any[] = [];
   edges: any[] = [];
@@ -247,6 +257,17 @@ export class D1Mock {
         return null;
       },
       async all() {
+        if (s.startsWith("SELECT type AS kind, name FROM sqlite_master")) {
+          // src/db/init.ts's schema probe. This mock stands in for a deployed brain, and
+          // a deployed brain is migrated — its rows carry every ALTER column below — so
+          // the honest answer is "all present", which is also what makes the mock report
+          // the real cold-start cost of a cold isolate rather than a fresh install's.
+          // The names are spelled out rather than imported from init.ts on purpose: a
+          // mock that derives its answer from the code under test can only ever agree
+          // with it. Fresh and partially-migrated brains are covered against real SQLite
+          // in test/unit/db-init.test.ts.
+          return { results: SCHEMA_PROBE_RESULTS };
+        }
         if (
           s === "SELECT id FROM entries WHERE tags LIKE ?" ||
           s === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?" ||
