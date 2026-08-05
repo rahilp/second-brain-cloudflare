@@ -3,12 +3,10 @@ import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { captureEntry } from "../capture/entry";
 import { DIGEST_MAX_TOKENS, LLM_MODEL } from "../constants";
 import { readStreamText } from "../lib/ai";
-import { KIND_PREFIX } from "../memory/kind";
-import { STATUS_PREFIX } from "../memory/status";
-import { VOLATILITY_PREFIX } from "../memory/volatility";
-import { STALE_AS_OF } from "../memory/stale";
+import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import {
   compressionEligibilitySql,
+  isTopicTag,
 } from "./eligibility";
 
 export async function synthesizeDigest(
@@ -86,8 +84,12 @@ export async function compressTag(
   ctx: ExecutionContext
 ): Promise<{ synthesizedId: string | null; entriesUsed: number; text: string }> {
   // Guard before resolveConfig: that is a KV read, and a system tag never compresses, so
-  // paying for it first is a wasted subrequest per skipped tag per night.
-  if (tag.startsWith(STATUS_PREFIX) || tag.startsWith(KIND_PREFIX) || tag.startsWith(VOLATILITY_PREFIX) || tag === STALE_AS_OF) {
+  // paying for it first is a wasted subrequest per skipped tag per night. The candidate
+  // query excludes these already; this is the backstop for a tag arriving another way, and
+  // GET /digest?tag= hands this function an arbitrary user string. isTopicTag rather than
+  // isReservedTag, because the bookkeeping tags are not "reserved" but are just as
+  // destructive to compress: `duplicate-candidate` has no row-level exclusion either.
+  if (!isTopicTag(tag)) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
   }
   const cfg = await resolveConfig(env);
@@ -95,10 +97,10 @@ export async function compressTag(
   const recentSynth = await env.DB.prepare(`
     SELECT id FROM entries
     WHERE tags LIKE '%"synthesized"%'
-      AND tags LIKE ?
+      AND tags LIKE ? ${TAG_LIKE_ESCAPE}
       AND created_at > ?
     LIMIT 1
-  `).bind(`%"${tag}"%`, Date.now() - 86400000).first();
+  `).bind(tagLikePattern(tag), Date.now() - 86400000).first();
 
   if (recentSynth) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
@@ -106,14 +108,14 @@ export async function compressTag(
 
   const { results: rawEntries } = await env.DB.prepare(`
     SELECT id, content FROM entries
-    WHERE tags LIKE ?
+    WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}
       AND tags NOT LIKE '%"synthesized"%'
       AND tags NOT LIKE '%"auto-pattern"%'
       AND tags NOT LIKE '%"rolled-up"%'
       AND ${compressionEligibilitySql("", cfg)}
     ORDER BY created_at DESC
     LIMIT 50
-  `).bind(`%"${tag}"%`, Date.now() - cfg.COMPRESSION_MIN_AGE_MS).all();
+  `).bind(tagLikePattern(tag), Date.now() - cfg.COMPRESSION_MIN_AGE_MS).all();
 
   if (rawEntries.length < 10) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };

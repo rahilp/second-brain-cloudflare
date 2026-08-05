@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { resolveConfig } from "../config";
 import { SB_VERSION } from "../env";
-import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql } from "../compression/eligibility";
+import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "../compression/eligibility";
 import { json, requireAuth } from "../lib/http";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
@@ -10,6 +10,7 @@ import { deprecateEntry } from "../capture/lifecycle";
 import { getStatus, withStatus } from "../memory/status";
 import { withKind } from "../memory/kind";
 import { checkVectorizeHealth } from "../vectorize/health";
+import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 
 export async function handleAdminRoutes(
   request: Request,
@@ -34,9 +35,7 @@ export async function handleAdminRoutes(
       env.DB.prepare(`
         SELECT value as tag, COUNT(*) as count
         FROM entries, json_each(entries.tags)
-        WHERE value NOT IN ('synthesized', 'auto-pattern', 'duplicate-candidate', 'contradiction-resolved', 'rolled-up')
-          AND value NOT LIKE 'status:%'
-          AND value NOT LIKE 'kind:%'
+        WHERE ${isTopicTagSql()}
           AND entries.tags NOT LIKE '%"rolled-up"%'
           AND entries.tags NOT LIKE '%"synthesized"%'
           AND entries.tags NOT LIKE '%"auto-pattern"%'
@@ -52,8 +51,8 @@ export async function handleAdminRoutes(
     const digestCandidates: { tag: string; count: number }[] = [];
     for (const row of candidateRows.results as any[]) {
       const existing = await env.DB.prepare(
-        `SELECT id FROM entries WHERE tags LIKE '%"synthesized"%' AND tags LIKE ? AND created_at > ? LIMIT 1`
-      ).bind(`%"${row.tag}"%`, cutoff).first();
+        `SELECT id FROM entries WHERE tags LIKE '%"synthesized"%' AND tags LIKE ? ${TAG_LIKE_ESCAPE} AND created_at > ? LIMIT 1`
+      ).bind(tagLikePattern(row.tag as string), cutoff).first();
       if (!existing) digestCandidates.push({ tag: row.tag as string, count: row.count as number });
     }
 

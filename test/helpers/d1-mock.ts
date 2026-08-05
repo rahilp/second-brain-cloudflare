@@ -1,4 +1,36 @@
-import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL } from "../../src/compression/eligibility";
+import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL, isTopicTag } from "../../src/compression/eligibility";
+
+/**
+ * Decode a `%"tag"%` bind parameter back to the tag, undoing tagLikePattern's escaping.
+ *
+ * Production escapes % and _ in the tag and pairs the clause with ESCAPE '\\', so a tag
+ * `q3_planning` arrives here as `%"q3\\_planning"%`. Without this the double would look for
+ * a tag spelled with a backslash and silently match nothing.
+ */
+const tagFromLikePattern = (pattern: string) =>
+  pattern.replace(/%"/g, "").replace(/"%/g, "").replace(/\\([%_\\])/g, "$1");
+
+/**
+ * Does this tag array satisfy `tags LIKE '%"<tag>"%'`?
+ *
+ * MODELS: ASCII case-insensitivity. SQLite's LIKE matches `Work` for `%"work"%`, and
+ * comparing case-sensitively here would make the double disagree with production on exactly
+ * the inputs behind #278's rollup bug, where the candidate `Kind:Semantic` selected — and
+ * rolled up — every entry carrying `kind:semantic`. test/unit/d1-mock-fidelity.test.ts pins
+ * this; do not "simplify" it back to Array.includes.
+ *
+ * DOES NOT MODEL, so a green test here is NOT coverage of any of these:
+ *   - LIKE wildcards in the tag. Real `%"q3_planning"%` also matches `q3-planning`, and
+ *     `%"%"%` matches every row; this matches exactly one tag either way. That is why P1's
+ *     escaping bug is covered against real SQLite in test/integration/, not here.
+ *   - JSON escaping. A tag containing a quote is stored as \\" so real LIKE misses it;
+ *     this compares the decoded strings and matches.
+ *   - Unicode case folding. SQLite's LIKE is ASCII-only; toLowerCase is not, so this
+ *     matches `Σ`/`σ` where real LIKE does not.
+ * Anything whose subject is the pattern rather than the tag belongs in a real-SQLite test.
+ */
+const tagMatchesLike = (tags: string[], tag: string) =>
+  tags.some(t => t.toLowerCase() === tag.toLowerCase());
 
 /** What src/db/init.ts's probe sees on a migrated brain — see the handler in all(). */
 const SCHEMA_PROBE_RESULTS = [
@@ -16,6 +48,10 @@ export class D1Mock {
 
   prepare(sql: string) {
     const s = sql.replace(/\s+/g, " ").trim();
+    // Production pairs every tag LIKE clause with `ESCAPE '\\'` (see tagLikePattern). The
+    // escape clause never changes which query a statement IS, so branches that identify a
+    // query by its exact text compare against this form rather than each growing a suffix.
+    const sBare = s.replace(/ ESCAPE '\\'/g, "");
     const db = this;
 
     const makeStmt = (args: any[]) => ({
@@ -209,6 +245,11 @@ export class D1Mock {
           const row = db.entries.find((e: any) => e.id === args[0]);
           return row ? { vector_ids: row.vector_ids } : null;
         }
+        // These branches match `as count` in lower case only. src/migration/embedding.ts
+        // writes `AS count`, so three of its queries fall through here and return null
+        // rather than a row — pre-existing, and those paths are covered against real SQLite
+        // in test/integration/embedding-migration.test.ts. Worth knowing before adding a
+        // fourth caller and trusting the double.
         if (s.includes("COUNT(*) as count") && s.includes("AVG(importance_score)")) {
           const count = db.entries.length;
           const scored = db.entries.filter((e: any) => typeof e.importance_score === "number");
@@ -248,8 +289,8 @@ export class D1Mock {
             const tags: string[] = JSON.parse(e.tags ?? "[]");
             if (!hardcoded.every(t => tags.includes(t))) return false;
             return likePatterns.every((p: string) => {
-              const tag = p.replace(/%"/g, "").replace(/"%/g, "");
-              return tags.includes(tag);
+              const tag = tagFromLikePattern(p);
+              return tagMatchesLike(tags, tag);
             });
           });
           return match ? { id: match.id } : null;
@@ -269,14 +310,14 @@ export class D1Mock {
           return { results: SCHEMA_PROBE_RESULTS };
         }
         if (
-          s === "SELECT id FROM entries WHERE tags LIKE ?" ||
-          s === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?" ||
-          s === "SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?"
+          sBare === "SELECT id FROM entries WHERE tags LIKE ?" ||
+          sBare === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?" ||
+          sBare === "SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?"
         ) {
           const pattern = String(args[0]);
-          const tag = pattern.replace(/%"/g, "").replace(/"%/g, "");
+          const tag = tagFromLikePattern(pattern);
           const results = db.entries
-            .filter((e: any) => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag))
+            .filter((e: any) => tagMatchesLike(JSON.parse(e.tags ?? "[]"), tag))
             .map((e: any) => ({ id: e.id, vector_ids: e.vector_ids ?? "[]", content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results };
         }
@@ -367,6 +408,14 @@ export class D1Mock {
           const row = db.entries.find((e: any) => e.id === args[0]);
           return { results: row ? [{ tags: row.tags }] : [] };
         }
+        if (s.startsWith("SELECT id, tags, content FROM entries WHERE id IN")) {
+          // Staleness retry re-read: fresh tags and content for every row whose CAS lost,
+          // in one statement. Rows deleted mid-pass simply do not come back.
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id, tags: e.tags, content: e.content }));
+          return { results };
+        }
         if (s.includes("COALESCE(updated_at, created_at) < ?") && s.includes("SELECT id, content, tags FROM entries")) {
           const cutoff = Number(args[0]);
           const limitMatch = s.match(/LIMIT (\d+)/);
@@ -450,12 +499,12 @@ export class D1Mock {
           // compressTag raw entries query — tag match, system-tag exclusion, and the
           // recall/age/contradiction eligibility predicate (cutoff is the 2nd bind param).
           const tagPattern = args[0] as string;
-          const tag = tagPattern.replace(/%"/g, "").replace(/"%/g, "");
+          const tag = tagFromLikePattern(tagPattern);
           const cutoff = Number(args[1]);
           const results = [...db.entries]
             .filter((e: any) => {
               const tags: string[] = JSON.parse(e.tags ?? "[]");
-              if (!tags.includes(tag)) return false;
+              if (!tagMatchesLike(tags, tag)) return false;
               if (tags.includes("synthesized") || tags.includes("auto-pattern") || tags.includes("rolled-up")) return false;
               if (!(e.importance_score == null || e.importance_score < COMPRESSION_IMPORTANCE_THRESHOLD)) return false;
               const rc = e.recall_count; // NULL/undefined → recall clause is falsy → protected (matches SQL)
@@ -478,7 +527,6 @@ export class D1Mock {
           // Digest-candidate query (nightly compression + /stats): per-tag count of
           // entries that pass the compression eligibility predicate. Cutoff is args[0].
           const cutoff = Number(args[0]);
-          const SYSTEM = ["synthesized", "auto-pattern", "duplicate-candidate", "contradiction-resolved", "rolled-up"];
           const counts = new Map<string, number>();
           for (const e of db.entries as any[]) {
             const tags: string[] = JSON.parse(e.tags ?? "[]");
@@ -488,8 +536,10 @@ export class D1Mock {
             if (!(rc === 0 || (rc < COMPRESSION_MIN_RECALL && e.created_at < cutoff))) continue;
             if (!(e.contradiction_wins == null || e.contradiction_wins === 0)) continue;
             for (const t of tags) {
-              if (SYSTEM.includes(t)) continue;
-              if (t.startsWith("status:") || t.startsWith("kind:")) continue;
+              // The same predicate isTopicTagSql() is generated from, rather than a second
+              // copy of the rule: a double that filters differently from production hides
+              // exactly the bugs it is supposed to catch.
+              if (!isTopicTag(t)) continue;
               counts.set(t, (counts.get(t) ?? 0) + 1);
             }
           }
@@ -563,8 +613,8 @@ export class D1Mock {
           let rows = [...db.entries];
           if (s.includes("tags LIKE ?")) {
             const pattern = String(filterArgs[argIdx++]);
-            const tag = pattern.replace(/%"/g, "").replace(/"%/g, "");
-            rows = rows.filter((e: any) => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag));
+            const tag = tagFromLikePattern(pattern);
+            rows = rows.filter((e: any) => tagMatchesLike(JSON.parse(e.tags ?? "[]"), tag));
           }
           if (s.includes("created_at >= ?")) {
             const after = Number(filterArgs[argIdx++]);

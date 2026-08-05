@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { resolveConfig } from "../config";
 import { initializeDatabase } from "../db/init";
-import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql } from "./eligibility";
+import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "./eligibility";
 import { compressTag } from "./digest";
 
 /**
@@ -66,9 +66,7 @@ export async function runNightlyCompression(env: Env, ctx: ExecutionContext): Pr
   const { results } = await env.DB.prepare(`
     SELECT value as tag, COUNT(*) as count
     FROM entries, json_each(entries.tags)
-    WHERE value NOT IN ('synthesized', 'auto-pattern', 'duplicate-candidate', 'contradiction-resolved', 'rolled-up')
-      AND value NOT LIKE 'status:%'
-      AND value NOT LIKE 'kind:%'
+    WHERE ${isTopicTagSql()}
       AND entries.tags NOT LIKE '%"rolled-up"%'
       AND entries.tags NOT LIKE '%"synthesized"%'
       AND entries.tags NOT LIKE '%"auto-pattern"%'

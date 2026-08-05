@@ -270,6 +270,46 @@ describe("compressTag()", () => {
     expect(env.AI.run).not.toHaveBeenCalled();
   });
 
+  // The candidate query excludes these, so reaching here means something else called
+  // compressTag directly. It matters more than it looks: without the guard a digest gets
+  // built for "everything the staleness pass touched", and markSourcesRolledUp then rolls
+  // up every one of those sources — taking them out of the running for the real topics
+  // they were also tagged with.
+  it("refuses to compress a volatility:* namespaced tag", async () => {
+    seedEntries(db, "volatility:state", 15, { recall_count: 0 });
+    const { ctx } = makeCtx();
+    const result = await compressTag("volatility:state", env, ctx);
+    expect(result.synthesizedId).toBeNull();
+    expect(env.AI.run).not.toHaveBeenCalled();
+    for (const e of db.entries) expect(JSON.parse(e.tags)).not.toContain("rolled-up");
+  });
+
+  it("refuses to compress the stale:as-of tag", async () => {
+    seedEntries(db, "stale:as-of", 15, { recall_count: 0 });
+    const { ctx } = makeCtx();
+    const result = await compressTag("stale:as-of", env, ctx);
+    expect(result.synthesizedId).toBeNull();
+    expect(env.AI.run).not.toHaveBeenCalled();
+    for (const e of db.entries) expect(JSON.parse(e.tags)).not.toContain("rolled-up");
+  });
+
+  // Mixed case is the dangerous form, not a curiosity. The source selector below this guard
+  // is `tags LIKE '%"<tag>"%'`, and LIKE ignores ASCII case — so `Kind:Semantic` reaching
+  // compressTag does not roll up the entries tagged `Kind:Semantic`, it rolls up every
+  // entry tagged `kind:semantic`. The guard has to reject it before that query runs.
+  it.each(["Kind:Semantic", "Status:Active", "Volatility:State", "Stale:As-Of", "STALE:AS-OF"])(
+    "refuses to compress %s regardless of case",
+    async (tag) => {
+      seedEntries(db, tag.toLowerCase(), 15, { recall_count: 0 });
+      const { ctx } = makeCtx();
+      const result = await compressTag(tag, env, ctx);
+      expect(result.synthesizedId).toBeNull();
+      expect(result.entriesUsed).toBe(0);
+      expect(env.AI.run).not.toHaveBeenCalled();
+      for (const e of db.entries) expect(JSON.parse(e.tags)).not.toContain("rolled-up");
+    },
+  );
+
   // ── Marking sources rolled-up (#278) ─────────────────────────────────────────
   //
   // All four nightly jobs share one scheduled() invocation and therefore one

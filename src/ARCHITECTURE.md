@@ -24,6 +24,7 @@ Incremental split of the former monolithic `index.ts`. Entry point remains `src/
 | embed, readStreamText, graceMs | `lib/ai.ts` |
 | initializeDatabase | `db/init.ts` |
 | status/kind tags | `memory/status.ts`, `memory/kind.ts` |
+| tag LIKE pattern + escaping | `memory/tag-sql.ts` |
 | compression eligibility | `compression/eligibility.ts` |
 | chunk, hashtags, temporal, tokenize | `text/*` |
 | cosineSim, rerank, mmr | `recall/math.ts` |
