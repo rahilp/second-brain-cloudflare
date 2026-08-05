@@ -51,6 +51,20 @@ export const KEYWORD_CANDIDATE_LIMIT = 500;
 // genuine word-boundary matches.
 export const SUBSTRING_MATCH_WEIGHT = 0.25;
 export const KEYWORD_MIN_TOKEN_LEN = 2;
+// The most LIKE terms this codebase will put into a single D1 statement: the
+// frequency scan's SUM columns (distill.ts) and the keyword arm's OR chain
+// (search.ts). The keyword arm needs the ceiling because distillToRareTerms
+// normally hands it MAX_QUERY_TERMS but two of its exits return the query
+// whole, and one of those needs nothing worse than an empty corpus to fire — so
+// a fresh install's first long query built a clause D1 rejected outright
+// (#276). Both of D1's limits bind at 99 terms: one parameter per term plus the
+// row limit against a budget of D1_MAX_BOUND_PARAMS, and an OR chain one
+// expression node deep per term against a tree-depth ceiling of 100 (measured:
+// 99 terms accepted, 100 rejected on depth first). 16 leaves 6x margin for a
+// future predicate, and keeps the two call sites agreeing by construction — the
+// widest set the scan ranks is the widest set the clause can carry, so no query
+// distillation can rank is ever truncated by the backstop.
+export const KEYWORD_MAX_TOKENS = 16;
 export const QUERY_SATURATION_FRACTION = 0.3;
 export const MAX_QUERY_TERMS = 3;
 export const KEYWORD_STOPWORDS = new Set([

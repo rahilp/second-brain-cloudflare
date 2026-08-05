@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { DEFAULTS, type Config } from "../config";
 import {
+  KEYWORD_MAX_TOKENS,
   KEYWORD_MIN_TOKEN_LEN,
   KEYWORD_STOPWORDS,
   MAX_QUERY_TERMS,
@@ -69,7 +70,11 @@ export async function distillToRareTerms(query: string, env: Env, config: Readon
     return { query: content.length ? content.join(" ") : query, df: null, total: null };
   }
 
-  const uniq = [...new Set(content.map(norm))].slice(0, 16);
+  // One bound parameter and one SUM column per term, so this scan is bounded by
+  // the same ceiling as the keyword clause it feeds. Sharing the constant is
+  // what makes that true rather than coincidental: the widest set ranked here
+  // is the widest set search.ts can carry, in either direction.
+  const uniq = [...new Set(content.map(norm))].slice(0, KEYWORD_MAX_TOKENS);
   try {
     const sums = uniq.map((_, i) => `SUM(CASE WHEN content LIKE ? THEN 1 ELSE 0 END) AS d${i}`).join(", ");
     const row = await env.DB.prepare(`SELECT COUNT(*) AS total, ${sums} FROM entries`)
