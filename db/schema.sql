@@ -36,3 +36,11 @@ CREATE TABLE IF NOT EXISTS edges (
 
 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
+-- The graph view reads the strongest edges (ORDER BY weight DESC LIMIT n). Without an
+-- ordered path to weight, SQLite scans every edge into a temp b-tree before the LIMIT
+-- applies — measured rows_read is 2 x the edge count whether or not a LIMIT is present,
+-- which at 500k edges is 1M rows read per request against D1's 5M/day free cap. Costs one
+-- extra index write per edge (5 -> 6 rows written per insert), which the far larger read
+-- saving pays for many times over. Must stay in step with src/db/init.ts, which creates
+-- the same index at runtime for brains that were migrated before it existed.
+CREATE INDEX IF NOT EXISTS idx_edges_weight ON edges(weight DESC);
