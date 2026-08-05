@@ -5,6 +5,8 @@ import { embed } from "../lib/ai";
 import { inferEdgesOnWrite } from "../graph/edges";
 import { neighborsFromVectorQuery } from "../graph/traverse";
 import { chunkText } from "../text/chunk";
+import { rememberTags } from "../tags/vocabulary";
+import { extractHashtags } from "../text/hashtags";
 import { isVectorizeUnavailable } from "../vectorize/health";
 import { tagsAfterWrite } from "../memory/stale";
 
@@ -83,6 +85,103 @@ export async function reembedOrDegrade(env: Env, id: string, content: string, ta
     console.error("Vectorize unavailable — committing content without re-embedding:", e);
     return null;
   }
+}
+
+/**
+ * What `updateEntryContent` did, in the terms its callers have to answer in.
+ *
+ * `vectorIds: null` is the keyword-only degrade (#270) — the content committed but
+ * Vectorize was unreachable, so the entry still carries its previous embedding.
+ */
+export type UpdateEntryResult =
+  | { status: "not_found" }
+  | { status: "reembed_failed" }
+  | { status: "updated"; vectorIds: string[] | null };
+
+/**
+ * Replace an entry's content outright, keeping D1, the tags and the vector index in step.
+ *
+ * `POST /update` and the MCP `update` tool both land here. They used to be two
+ * implementations of the same thing, and the copy behind MCP — the one every assistant
+ * client actually calls — silently missed every hardening the route gained (#289): it
+ * committed content against stale vectors when an embed failed, never moved the entry's
+ * updated_at, never reset the staleness tags, and never extracted hashtags. Anything that
+ * decides what gets written lives in here now; the callers only shape the reply.
+ * (updated_at is named bare above on purpose — test/unit/updated-at-coalesced.test.ts reads
+ * every backtick-delimited span in src/ as SQL, comments included.)
+ *
+ * The one thing they still do for themselves is the managed-mirror guard, because
+ * `integrations/mirror.ts` imports this module and the dependency must not run both ways.
+ * That guard refuses before anything is written, so a drift there cannot corrupt a row —
+ * unlike everything below, which is why everything below moved.
+ */
+export async function updateEntryContent(
+  env: Env,
+  id: string,
+  newContent: string,
+  config: Readonly<Config> = DEFAULTS
+): Promise<UpdateEntryResult> {
+  // vector_ids has to be read before any mutation: storeEntry overwrites it, and the
+  // cleanup below needs to know which vectors the entry had on the way in.
+  const row = await env.DB.prepare(
+    `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+  ).bind(id).first() as Record<string, any> | null;
+
+  if (!row) return { status: "not_found" };
+
+  const source = row.source as string;
+  const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+  const existingTags: string[] = JSON.parse(row.tags ?? "[]");
+
+  // Same treatment captureEntry gives every stored memory, which is the point — but note it
+  // flattens all whitespace, so a replacement does not preserve line breaks or code fences.
+  // `appendToEntry` deliberately does not flatten; prefer append when the shape matters.
+  const { cleanContent, hashtags } = extractHashtags(newContent);
+  // Content that is nothing but hashtags cleans down to "", which would blank the entry —
+  // keep it as written in that case and let the tags be extracted anyway.
+  const finalContent = cleanContent || newContent;
+  const mergedTags = tagsAfterWrite([...new Set([...existingTags, ...hashtags])])
+    // `rolled-up` is a claim about content that no longer exists: the nightly digest wrote
+    // it in the same statement that appended a `[Digest: <id>]` marker to the body, and a
+    // full replacement destroys that marker. Left in place it costs the corrected memory a
+    // 0.4x recall penalty (recall/math.ts) and bars it from every future digest, burying
+    // the only copy of the new fact. The same reasoning tagsAfterWrite applies to the
+    // volatility/staleness verdicts, and the reason `append` must NOT strip it — an append
+    // keeps the digested original inside the entry, so the digest still covers it.
+    .filter(t => t !== "rolled-up");
+
+  // Re-embed FIRST (#212): if it fails, leave the entry's content and vectors untouched and
+  // surface an error, instead of committing new content and then deleting every vector —
+  // which would leave the entry silently unsearchable. null means Vectorize is unreachable
+  // (#270), not that this embed failed.
+  let newVectorIds: string[] | null;
+  try {
+    newVectorIds = await reembedOrDegrade(env, id, finalContent, mergedTags, source, config);
+  } catch (e) {
+    console.error("Re-embed failed — entry left unchanged:", e);
+    return { status: "reembed_failed" };
+  }
+
+  // Safe to commit: either the embed succeeded, or Vectorize is unavailable and the old
+  // vectors are kept below rather than retired.
+  await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
+    .bind(finalContent, JSON.stringify(mergedTags), Date.now(), id).run();
+
+  // Rewritten content can carry hashtags the brain has never seen, so this is one of the
+  // two places an unknown tag enters the corpus (#288). It sits here rather than in the
+  // route because #289 made this the single update path — putting it in the caller would
+  // have left the MCP tool introducing tags the cache never learned about.
+  await rememberTags(env, mergedTags);
+
+  if (newVectorIds) {
+    try {
+      await deleteStaleVectors(env, oldVectorIds, newVectorIds);
+    } catch (e) {
+      console.error("Old vector cleanup failed (non-fatal):", e);
+    }
+  }
+
+  return { status: "updated", vectorIds: newVectorIds };
 }
 
 export async function appendToEntry(
