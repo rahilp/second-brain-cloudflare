@@ -58,6 +58,35 @@ async function applySchema(env: Env): Promise<void> {
   await env.DB.exec(`CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, target_id TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'relates_to', weight REAL NOT NULL DEFAULT 0.5, provenance TEXT NOT NULL DEFAULT 'inferred', metadata TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(source_id, target_id, type))`);
   await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id)`);
   await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)`);
+  // The graph view picks the strongest edges (ORDER BY weight DESC LIMIT n). Without an
+  // ordered path to weight SQLite reads the whole table into a temp b-tree and applies the
+  // LIMIT afterwards, so on workerd D1 that statement's rows_read is 2 x the edge count and
+  // is *identical* with and without the LIMIT: 400,000 at 200k edges, 6,000 with this
+  // index. D1's free plan allows 5M rows read/day and fails every query account-wide until
+  // 00:00 UTC once that is spent, so an authenticated caller could take the brain offline
+  // in a handful of /graph requests.
+  //
+  // This is the fifth index on a table written on the capture hot path, so it is a real
+  // trade rather than a free win. Measured, one whole capture (entry insert, vector_ids
+  // and classifier updates, plus inferEdgesOnWrite's worst case of 3 edges) costs 22 rows
+  // written before and 25 after — 4,545 captures/day against the 100k/day budget, down to
+  // 4,000. The same brain went from 3 /graph requests/day to 129 (and, unlike the write
+  // cost, that ceiling no longer falls as the brain grows). The read budget binds first by
+  // three orders of magnitude on any brain that is not capturing thousands of times a day.
+  //
+  // Building it on an existing brain costs one row written per edge, once: measured
+  // 200,001 rows written at 200k edges, and 0/0 on every run after that, since IF NOT
+  // EXISTS makes the repeat a genuine no-op. That one statement can exceed the 100k/day
+  // write cap on a brain that is already very large — the same hazard the updated_at note
+  // below describes. It is still the right call, because such a brain is precisely the one
+  // the missing index takes offline every day, and the cost here is paid once rather than
+  // on every /graph. If it ever needs to be avoided, the fix is to build the index out of
+  // band, not to leave the query unindexed.
+  //
+  // DESC matches the query; SQLite would walk an ASC index backwards just as well, but
+  // stating the direction keeps the index and its one caller obviously paired. Bonus: the
+  // nightly prune's `weight < ?` becomes a range search, 200,000 rows read down to 60,000.
+  await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_edges_weight ON edges(weight DESC)`);
   for (const alter of [
     `ALTER TABLE entries ADD COLUMN recall_count INTEGER DEFAULT 0`,
     `ALTER TABLE entries ADD COLUMN importance_score INTEGER DEFAULT 0`,
