@@ -154,7 +154,7 @@ export async function handleCaptureRoutes(
       .bind(finalContent, JSON.stringify(mergedTags), Date.now(), id).run();
 
     // The rewritten content can carry hashtags the brain has never seen, which makes
-    // this the second of the three places an unknown tag enters the corpus (#288).
+    // this the second of the two places an unknown tag enters the corpus (#288).
     ctx.waitUntil(rememberTags(env, mergedTags));
 
     if (newVectorIds) {

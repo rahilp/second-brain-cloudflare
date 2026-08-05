@@ -41,11 +41,15 @@ export function makeMirrorStore(env: Env): MirrorStore {
       await env.DB.prepare(
         `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, importance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(id, content, JSON.stringify(finalTags), source, now, now, "[]", importance).run();
-      // Third and last of the unknown-tag entry points (#288). Awaited rather than
-      // deferred because the scheduled sync has no ExecutionContext to hand this to,
-      // and it costs one KV read — a put only on the first item of a newly connected
-      // provider, so a steady-state sync pays nothing. Without it a freshly connected
-      // integration is missing from the dashboard's tag filter until the next rebuild.
+      // Promptness, not correctness (#288). Every tag inserted here is a compile-time
+      // constant — a provider id from the registry in integrations/index.ts, plus
+      // whatever kind:/status: the classifier added — so the vocabulary's age limit
+      // would admit them on its own. This just means a freshly connected integration
+      // shows up in the dashboard's tag filter today rather than tomorrow.
+      //
+      // Awaited because the scheduled sync has no ExecutionContext to defer to. Costs
+      // one KV get per created entry; the put fires only on the first item of a newly
+      // connected provider.
       await rememberTags(env, finalTags);
       try {
         await storeEntry(env, id, content, finalTags, source, now, cfg);

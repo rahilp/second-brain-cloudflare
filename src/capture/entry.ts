@@ -124,9 +124,11 @@ export async function captureEntry(
       .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
   );
 
-  // Capture is where a tag string nobody wrote into the source first exists, so it
-  // is where the cached vocabulary has to learn one (#288). Deferred: the row is
-  // already committed, and the next recall reads KV, not this promise.
+  // Capture is where a tag string nobody wrote into the source first exists, so it is
+  // one of the two places the cached vocabulary has to learn one (#288). Deferred, so
+  // the capture does not wait on KV — which means the tag is admitted once this
+  // settles rather than by the time the response lands, and a `GET /tags` fired
+  // straight off the back of the save can miss it by one refresh.
   ctx.waitUntil(rememberTags(env, finalTags));
 
   scheduleClassifyAndTag(id, c, env, ctx, cfg);

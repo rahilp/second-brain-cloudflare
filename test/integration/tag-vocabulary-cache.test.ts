@@ -18,12 +18,17 @@
  * conversation and every few messages after — so 90 a day on a 5,000-memory brain
  * was ordinary use, not a stress test.
  *
- * Making the SQL cheaper is not available: DISTINCT with ORDER BY cannot know its
- * first row until it has visited the last, and on real SQLite the plan is identical
- * with ORDER BY, without it, as a GROUP BY, with a LIMIT, and with an index on
- * `tags` — `SCAN entries`, `SCAN json_each`, temp b-tree, every time. So the tests
- * below are about the query *not running*, and about every way it can fail to run
- * costing a boost rather than a result.
+ * No rewrite makes that query sub-linear — every variant plans identically on real
+ * SQLite (`SCAN entries`, `SCAN json_each`, temp b-tree, with or without ORDER BY, as
+ * a GROUP BY, with a LIMIT, with an index on `tags`) — so the tests below are about
+ * the query *not running*, and about every way it can fail to run costing a boost
+ * rather than a result.
+ *
+ * The rebuild that remains does drop `ORDER BY value` and sort in JS, which is 44%
+ * off its rows read for identical output (5,000 entries: 45,000 → 25,000; 20,000:
+ * 180,000 → 100,000). Identical plans, different costs: the DISTINCT b-tree has to be
+ * walked back out to emit in order. `orders the vocabulary identically to the SQL it
+ * replaced` below is what keeps that honest.
  *
  * Driven against real SQLite (`test/helpers/sqlite-d1.ts`) with every statement
  * recorded, because what is under test is which statements are issued.
@@ -156,6 +161,53 @@ describe("the tag vocabulary is scanned once, not per recall", () => {
     expect(stored.rebuiltAt).toBeGreaterThan(0);
   });
 
+  it("orders the vocabulary identically to the SQL it replaced", async () => {
+    // The rebuild drops `ORDER BY value` and sorts in JS instead, for 44% off its
+    // rows read. That is only free if the order is the same, and this asserts it
+    // against SQLite's own answer rather than against a hand-written expectation —
+    // a JS sort that disagreed with BINARY collation would reorder the dashboard's
+    // dropdown and pass a literal list quite happily.
+    const h = harness(CORPUS);
+    const { results } = await h.env.DB.prepare(
+      `SELECT DISTINCT value FROM entries, json_each(entries.tags) ORDER BY value`
+    ).all();
+    const fromSql = (results as { value: string }[]).map(r => r.value);
+
+    expect(await getTagVocabulary(h.env)).toEqual(fromSql);
+  });
+
+  it("never freezes on a timestamp from the future, however far ahead", async () => {
+    // `now - rebuiltAt < MAX_AGE` is satisfied by every future timestamp, so one that
+    // is merely clamped to `Date.now()` re-anchors on each read and passes forever:
+    // no rebuild is ever scheduled, so nothing can correct it, and a tag deleted from
+    // the brain stays in the dropdown for good. Clock skew between the writing isolate
+    // and the reading one can produce one; a hand-edited blob certainly can.
+    for (const rebuiltAt of [Date.now() + 365 * 86400000, Number.MAX_SAFE_INTEGER]) {
+      const h = harness(CORPUS);
+      await h.kv.put(TAG_VOCABULARY_KEY, JSON.stringify({ tags: ["frozen"], rebuiltAt }));
+
+      expect(await getTagVocabulary(h.env)).toEqual(ALL_TAGS);
+      expect(h.scans()).toHaveLength(1);
+      sqlite?.close();
+      sqlite = null;
+    }
+  });
+
+  it("serves the future-dated list meanwhile rather than answering empty", async () => {
+    // Rejecting the timestamp must not reject the vocabulary with it: this is the
+    // same degradation as any other aged-out copy, so the caller gets something and
+    // the correction happens behind the response.
+    const h = harness(CORPUS);
+    await h.kv.put(TAG_VOCABULARY_KEY, JSON.stringify({
+      tags: ["frozen"],
+      rebuiltAt: Date.now() + 365 * 86400000,
+    }));
+
+    expect(await getTagVocabulary(h.env, h.ctx)).toEqual(["frozen"]);
+    await h.ctx.settle();
+    expect(await getTagVocabulary(h.env, h.ctx)).toEqual(ALL_TAGS);
+  });
+
   it("rebuilds behind the response once the cached copy ages out", async () => {
     const h = harness(CORPUS);
     await getTagVocabulary(h.env);
@@ -216,6 +268,37 @@ describe("a tag captured just now is inferable on the next recall", () => {
     expect(tags).toContain("lakehouse");
     // The whole point: no second scan bought that.
     expect(h.scans()).toHaveLength(1);
+  });
+
+  it("does not revert a rebuild that landed while it was working", async () => {
+    // Write-through reads, merges, and writes. A rebuild that puts between that read
+    // and that write would be undone by it: the older `rebuiltAt` goes back, aging
+    // the cache out and buying a second full scan, and the older tag list resurrects
+    // whatever the rebuild had just pruned. Re-reading before the put narrows both.
+    const h = harness(CORPUS);
+    await getTagVocabulary(h.env);
+    const aged = Date.now() - TAG_VOCABULARY_MAX_AGE_MS - 1;
+    await h.kv.put(TAG_VOCABULARY_KEY, JSON.stringify({ tags: ["gone", "work"], rebuiltAt: aged }));
+
+    // A rebuild lands in the middle of the write-through: after its read, before its put.
+    // Bound before the spy replaces the property, or the double would call itself.
+    // `get` is overloaded (single key vs bulk), so it is installed untyped.
+    const realGet = (h.kv.get as (k: string) => Promise<string | null>).bind(h.kv);
+    let interleaved = false;
+    vi.spyOn(h.kv, "get").mockImplementation((async (key: string) => {
+      const value = await realGet(key);
+      if (!interleaved) {
+        interleaved = true;
+        await h.kv.put(TAG_VOCABULARY_KEY, JSON.stringify({ tags: ["work"], rebuiltAt: Date.now() }));
+      }
+      return value;
+    }) as never);
+
+    await rememberTags(h.env, ["lakehouse"]);
+
+    const after = JSON.parse((await realGet(TAG_VOCABULARY_KEY))!);
+    expect(after.tags).toEqual(["lakehouse", "work"]);   // the pruned tag stays pruned
+    expect(after.rebuiltAt).toBeGreaterThan(aged);        // and the cache is still fresh
   });
 
   it("does not postpone the rebuild by touching rebuiltAt", async () => {
