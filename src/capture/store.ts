@@ -132,6 +132,9 @@ export async function updateEntryContent(
   const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
   const existingTags: string[] = JSON.parse(row.tags ?? "[]");
 
+  // Same treatment captureEntry gives every stored memory, which is the point — but note it
+  // flattens all whitespace, so a replacement does not preserve line breaks or code fences.
+  // `appendToEntry` deliberately does not flatten; prefer append when the shape matters.
   const { cleanContent, hashtags } = extractHashtags(newContent);
   // Content that is nothing but hashtags cleans down to "", which would blank the entry —
   // keep it as written in that case and let the tags be extracted anyway.
