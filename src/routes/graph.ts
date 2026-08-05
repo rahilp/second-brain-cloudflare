@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { json, requireAuth } from "../lib/http";
+import { intParam, json, requireAuth } from "../lib/http";
 import { createEdge, deleteEdge, isValidEdgeType } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { buildGraph, getConnections } from "../graph/traverse";
@@ -72,8 +72,10 @@ export async function handleGraphRoutes(
     if (authErr) return authErr;
 
     const seed = url.searchParams.get("seed")?.trim() || undefined;
-    const limitParam = url.searchParams.get("limit");
-    const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+    // Omitted still means the whole graph, up to buildGraph's own ceiling. The
+    // floor of 1 is what stops `?limit=0` and `?limit=-1` from meaning that too.
+    const limit = intParam(url, "limit", { min: 1 });
+    if (limit instanceof Response) return limit;
 
     const { nodes, edges } = await buildGraph({ seed, limit }, env, await resolveConfig(env));
     return json({ ok: true, nodes, edges });

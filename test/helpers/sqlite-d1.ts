@@ -50,7 +50,7 @@ class SqliteStatement {
 
 export interface SqliteD1 {
   /** Shaped like `env.DB`. */
-  db: { prepare(sql: string): SqliteStatement };
+  db: { prepare(sql: string): SqliteStatement; exec(sql: string): Promise<void> };
   /** Insert an entry directly, bypassing the capture pipeline. */
   seed(entry: {
     id: string;
@@ -99,7 +99,14 @@ export function makeSqliteD1(): SqliteD1 {
   }
 
   return {
-    db: { prepare: (sql: string) => new SqliteStatement(raw, sql) },
+    db: {
+      prepare: (sql: string) => new SqliteStatement(raw, sql),
+      // Present so a whole-Worker request against this facade runs the real
+      // initializeDatabase path rather than failing on a missing method. The
+      // schema is already applied above; that DDL is idempotent, and the ALTERs
+      // raise the same "duplicate column name" D1 does, which init.ts expects.
+      exec: async (sql: string) => { raw.exec(sql); },
+    },
     seed({ id, content, createdAt, tags = [], source = "api", vectorIds = [] }) {
       raw
         .prepare(
