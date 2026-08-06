@@ -26,7 +26,12 @@ const DRY = !!process.env.DRY_RUN;
 const POLL_SECONDS = 10;
 const POLL_MAX_MINUTES = 45;
 
-const WORKER_SRC = resolve(ROOT, "src/index.ts");
+// Derived from one relative constant so the path and the error message cannot
+// drift apart again — SB_VERSION moved from src/index.ts to src/env.ts in the
+// v2.1 modularisation and this script kept pointing at the old file, which made
+// `deploy:worker` fail on every invocation.
+const WORKER_SRC_REL = "src/env.ts";
+const WORKER_SRC = resolve(ROOT, WORKER_SRC_REL);
 const APP_VERSION_FILES = {
   tauriConf: resolve(ROOT, "installer/src-tauri/tauri.conf.json"),
   installerPkg: resolve(ROOT, "installer/package.json"),
@@ -82,7 +87,7 @@ function readWorkerVersion() {
   const m = readFileSync(WORKER_SRC, "utf8").match(
     /export\s+const\s+SB_VERSION\s*=\s*["']([^"']+)["']/,
   );
-  if (!m) fail("couldn't find SB_VERSION in src/index.ts");
+  if (!m) fail(`couldn't find SB_VERSION in ${WORKER_SRC_REL}`);
   return m[1];
 }
 
