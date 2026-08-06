@@ -226,6 +226,27 @@ describe("integrations routes", () => {
       expect(db.entries).toHaveLength(7);
     });
 
+    // #290: the mirror store resolved config inside createEntry, so every item in
+    // a batch paid its own KV read for a value that cannot change mid-batch — on
+    // top of the D1, Workers AI and Vectorize calls the item already costs. The
+    // store is built once per sync, which is the scope the read belongs at.
+    it("resolves config once per sync batch, not once per mirrored item", async () => {
+      fixture.pages = Array.from({ length: 5 }, (_, i) =>
+        notionPage(`p${i}`, `Note ${i}`, `2026-01-0${i + 1}T00:00:00.000Z`)
+      );
+      for (let i = 0; i < 5; i++) fixture.blocks[`p${i}`] = [paragraph(`body ${i}`)];
+      await connect();
+
+      const reads: string[] = [];
+      const kv = env.OAUTH_KV;
+      env.OAUTH_KV = { ...kv, get: (key: string) => { reads.push(key); return kv.get(key); } } as any;
+
+      const result = await (await sync()).json() as any;
+
+      expect(result).toMatchObject({ created: 5 });
+      expect(reads.filter(k => k === "config:overrides")).toHaveLength(1);
+    });
+
     it("records the error and returns 502 when the Notion API fails", async () => {
       fixture.pages = [notionPage("p1", "Note", "2026-01-01T00:00:00.000Z")];
       fixture.blocks["p1"] = [paragraph("test")];

@@ -225,7 +225,7 @@ Everything the installer ever calls, for auditability:
 | `POST /accounts/{a}/workers/scripts/second-brain/assets-upload-session` | start the dashboard asset upload |
 | `POST /accounts/{a}/workers/assets/upload?base64=true` | upload dashboard files |
 | `PUT /accounts/{a}/workers/scripts/second-brain` | deploy the Worker (multipart: module + metadata with D1/Vectorize/KV/AI bindings, `VECTORIZE_GRACE_MS` var, `AUTH_TOKEN` secret, assets) |
-| `PUT /accounts/{a}/workers/scripts/second-brain/schedules` | nightly maintenance cron (`0 1 * * *`) |
+| `PUT /accounts/{a}/workers/scripts/second-brain/schedules` | nightly maintenance (`0 1 * * *`) and hourly integration sync (`30 * * * *`) crons |
 | `POST /accounts/{a}/workers/scripts/second-brain/subdomain` | turn on the `workers.dev` URL |
 | `GET {worker}/health`, `POST {worker}/capture` | post-deploy smoke tests against the user's own Worker |
 

@@ -147,7 +147,11 @@ mod tests {
         assert_eq!(m.kv_binding, "OAUTH_KV");
         assert_eq!(m.ai_binding, "AI");
         assert!(m.compatibility_flags.contains(&"nodejs_compat".to_string()));
-        assert_eq!(m.cron, vec!["0 1 * * *"]);
+        // Two schedules, and the app has to provision BOTH: nightly maintenance, and
+        // the hourly integration sync that runs on its own budget (#290). An install
+        // that registered only the first would leave mirrors never syncing on their
+        // own. Order follows wrangler.jsonc, which is what set_cron receives.
+        assert_eq!(m.cron, vec!["0 1 * * *", "30 * * * *"]);
     }
 
     #[test]

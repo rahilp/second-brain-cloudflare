@@ -35,9 +35,23 @@
 	"assets": {
 		"directory": "./public"
 	},
+	// Two schedules, because they are two budgets. A Worker invocation gets 50 D1
+	// queries and 10 ms of CPU on the free plan, and the nightly maintenance pass
+	// already spends 30 of those queries — leaving too little for a mirror sync to
+	// do useful work without pushing the whole invocation over (#290). Splitting
+	// them gives the integration sync its own allowance. scheduled() in
+	// src/index.ts routes on the cron string; INTEGRATION_SYNC_CRON in
+	// src/integrations/mirror.ts must match the second entry exactly, and
+	// test/unit/cron-triggers.test.ts fails if it drifts.
 	"triggers": {
 		"crons": [
-			"0 1 * * *"
+			// Nightly maintenance: compression, graph pass, staleness pass.
+			"0 1 * * *",
+			// Integrations. Hourly, because one provider syncs per run (see
+			// runScheduledIntegrationSync) — a nightly rotation would leave a user
+			// with several connections waiting days between syncs. Offset to :30 so
+			// it never fires in the same minute as the nightly job.
+			"30 * * * *"
 		]
 	}
 }

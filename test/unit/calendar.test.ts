@@ -209,6 +209,149 @@ describe("parseAndExpand", () => {
     const occs = parseAndExpand(ics, ms("2026-07-01T00:00:00Z"), ms("2026-07-31T00:00:00Z"));
     expect(occs).toEqual([]);
   });
+
+  // ── The reach bound (#290) ──────────────────────────────────────────────
+  // The walk rejects spent occurrences from the iterator's own time so it does
+  // not have to build them, which is where the expansion's CPU went. These are
+  // the two cases where an occurrence whose recurrence time is BEFORE the
+  // window is nonetheless in it — i.e. exactly what a naive start-time skip
+  // would silently drop.
+
+  it("keeps a long-running instance that began before the window and is still running", () => {
+    const ics = calendar(
+      vevent([
+        "UID:long-run@test",
+        "DTSTAMP:20260101T000000Z",
+        // Weekly nine-day event: the instance starting 2026-06-29 runs to 07-08,
+        // so it overlaps a window that opens on 07-01 despite starting before it.
+        "DTSTART:20260105T090000Z",
+        "DTEND:20260114T170000Z",
+        "RRULE:FREQ=WEEKLY",
+        "SUMMARY:Long Conference",
+      ]),
+    );
+    const occs = parseAndExpand(ics, ms("2026-07-01T00:00:00Z"), ms("2026-07-02T00:00:00Z"));
+    expect(occs.length).toBeGreaterThan(0);
+    expect(occs.every(o => o.summary === "Long Conference")).toBe(true);
+    // At least one of them started before the window opened.
+    expect(occs.some(o => o.start < ms("2026-07-01T00:00:00Z"))).toBe(true);
+  });
+
+  // The bound is measured in absolute milliseconds; ical.js builds occurrences by
+  // adding a WALL-CLOCK duration in the event's own zone. These two cases are
+  // where those disagree. Both need a constructed calendar — a fuzz run over
+  // random windows practically never lands in the affected band.
+  const NEW_YORK_VTIMEZONE = [
+    "BEGIN:VTIMEZONE",
+    "TZID:America/New_York",
+    "BEGIN:DAYLIGHT",
+    "TZOFFSETFROM:-0500",
+    "TZOFFSETTO:-0400",
+    "TZNAME:EDT",
+    "DTSTART:19700308T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",
+    "END:DAYLIGHT",
+    "BEGIN:STANDARD",
+    "TZOFFSETFROM:-0400",
+    "TZOFFSETTO:-0500",
+    "TZNAME:EST",
+    "DTSTART:19701101T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",
+    "END:STANDARD",
+    "END:VTIMEZONE",
+  ].join("\r\n");
+
+  it("keeps an instance that runs long because it spans a fall-back transition", () => {
+    // Weekly Sat 23:00–01:00 New York: two hours on the wall. The instance
+    // starting 2024-11-02 23:00 EDT ends at an 01:00 that happens twice, so it
+    // runs THREE absolute hours — an hour past where a wall-clock bound lands.
+    const ics = calendar(
+      NEW_YORK_VTIMEZONE,
+      vevent([
+        "UID:fallback@test",
+        "DTSTAMP:20240101T000000Z",
+        "DTSTART;TZID=America/New_York:20241005T230000",
+        "DTEND;TZID=America/New_York:20241006T010000",
+        "RRULE:FREQ=WEEKLY",
+        "SUMMARY:Late Show",
+      ]),
+    );
+    // Window opens 2.5h into that occurrence — inside the hour it is still
+    // running but a two-hour bound has already written off.
+    const occs = parseAndExpand(ics, ms("2024-11-03T05:30:00Z"), ms("2024-11-03T12:00:00Z"));
+    expect(occs.map(o => o.start)).toContain(ms("2024-11-03T03:00:00Z"));
+  });
+
+  // The single case above is one point inside one band. This sweeps the whole
+  // transition weekend against a reference expansion that cannot skip anything
+  // (its window opens a month earlier), which is the property that actually
+  // matters: the skip must never change the result, whatever minute the window
+  // happens to open on. A bound short by any amount fails here.
+  it("stays exact minute by minute across a DST transition", () => {
+    const ics = calendar(
+      NEW_YORK_VTIMEZONE,
+      vevent([
+        "UID:evening@test", "DTSTAMP:20240101T000000Z",
+        "DTSTART;TZID=America/New_York:20240106T230000",
+        "DTEND;TZID=America/New_York:20240107T010000",
+        "RRULE:FREQ=WEEKLY", "SUMMARY:Late Show",
+      ]),
+      // Master straddling the spring-forward gap: two hours on the wall, one
+      // absolute, so the whole series is bounded off that shorter measurement.
+      vevent([
+        "UID:gap-master@test", "DTSTAMP:20240101T000000Z",
+        "DTSTART;TZID=America/New_York:20240310T013000",
+        "DTEND;TZID=America/New_York:20240310T033000",
+        "RRULE:FREQ=WEEKLY", "SUMMARY:Sunday Session",
+      ]),
+      // An hour that lands inside the repeated hour itself.
+      vevent([
+        "UID:repeated-hour@test", "DTSTAMP:20240101T000000Z",
+        "DTSTART;TZID=America/New_York:20240107T013000",
+        "DTEND;TZID=America/New_York:20240107T023000",
+        "RRULE:FREQ=WEEKLY", "SUMMARY:Small Hours",
+      ]),
+    );
+    const windowEnd = ms("2024-11-10T00:00:00Z");
+    const reference = parseAndExpand(ics, ms("2024-10-01T00:00:00Z"), windowEnd);
+    expect(reference.length).toBeGreaterThan(0);
+
+    // Two-minute steps either side of the 06:00Z transition. The error this
+    // guards against is an offset change, so it is never finer than the
+    // half-hour Lord Howe shifts by, let alone the hour everywhere else.
+    for (let t = ms("2024-11-03T02:00:00Z"); t <= ms("2024-11-03T08:00:00Z"); t += 120_000) {
+      // parseAndExpand keeps an occurrence when it has not yet ended at the
+      // window's start, so the reference filtered by that rule is the answer.
+      const expected = reference.filter(o => o.end >= t).map(o => o.key).sort();
+      const actual = parseAndExpand(ics, t, windowEnd).map(o => o.key).sort();
+      expect(actual, `window opening ${new Date(t).toISOString()}`).toEqual(expected);
+    }
+  });
+
+  it("keeps an instance an override moved forward into the window", () => {
+    const ics = calendar(
+      vevent([
+        "UID:moved@test",
+        "DTSTAMP:20260101T000000Z",
+        "DTSTART:20260601T090000Z",
+        "DTEND:20260601T100000Z",
+        "RRULE:FREQ=WEEKLY",
+        "SUMMARY:Standup",
+      ]),
+      vevent([
+        "UID:moved@test",
+        // Nominally 2026-06-22, three weeks before the window — but pushed out
+        // to 2026-07-10, which is inside it.
+        "RECURRENCE-ID:20260622T090000Z",
+        "DTSTAMP:20260101T000000Z",
+        "DTSTART:20260710T090000Z",
+        "DTEND:20260710T100000Z",
+        "SUMMARY:Standup (moved)",
+      ]),
+    );
+    const occs = parseAndExpand(ics, ms("2026-07-09T00:00:00Z"), ms("2026-07-11T00:00:00Z"));
+    expect(occs.map(o => o.summary)).toContain("Standup (moved)");
+  });
 });
 
 describe("computeCalendarPlan", () => {
