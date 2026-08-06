@@ -9,3 +9,5 @@ Rules:
 - Respect exclusions: if told "don't remember this" or "off the record", don't store it.
 
 Tags: personal, work, task, idea, context, claude-response + a topic tag. Always tag tasks as task. Source: chatgpt.
+
+Volatility: on remember/append/update, pass `volatility` when you can tell how long the fact stays true — durable (never changes), state (true for now, can move), volatile (true briefly). Omit it when unsure; a wrong verdict is worse than none, because state and volatile add a "verify before asserting" warning to every future recall.
