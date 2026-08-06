@@ -8,6 +8,7 @@ import { checkDuplicateAndContradiction } from "./duplicate";
 import { deprecateEntry } from "./lifecycle";
 import { deleteStaleVectors, reembedOrThrow, storeEntry } from "./store";
 import { tagsAfterWrite } from "../memory/stale";
+import { getVolatility, withVolatility } from "../memory/volatility";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { rememberTags } from "../tags/vocabulary";
 
@@ -93,7 +94,16 @@ export async function captureEntry(
       }
 
       if (newVectorIds) {
-        const refreshedTags = tagsAfterWrite(existingTags);
+        // The rest of the incoming tag list is deliberately discarded on a merge, which
+        // predates this and is left alone — but the volatility verdict cannot be, because
+        // it is the one value the tool schema tells the caller wins permanently. Dropping
+        // it here reported "merged" on a write that silently threw the judgment away, and
+        // the merge bumps updated_at, so the nightly pass would not revisit the entry for
+        // 90 days to re-derive anything. The caller judged the content being merged in, so
+        // its verdict describes the combined body more recently than the target's does.
+        const incomingVerdict = getVolatility(t);
+        const stripped = tagsAfterWrite(existingTags);
+        const refreshedTags = incomingVerdict ? withVolatility(stripped, incomingVerdict) : stripped;
         const now = Date.now();
         await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
           .bind(newContent, JSON.stringify(refreshedTags), now, targetId).run();

@@ -47,9 +47,25 @@ const HYDRATION_EXEMPTION = {
 
 type Finding = { kind: string; detail: string };
 
+/**
+ * Comments, stripped before anything else looks for backticks. Prose that mentions a
+ * column in markdown backticks is otherwise indistinguishable from a SQL template
+ * literal, and got reported as a schema violation. Real SQL never lives inside a
+ * comment, so this removes false positives without narrowing what the guard catches.
+ * Doing it before the backtick scan also stops a stray pair inside a comment from
+ * pairing across the comment boundary and swallowing real code.
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter(l => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+    .join("\n");
+}
+
 /** SQL string literals in a source file, normalised to one line. */
 function sqlLiterals(source: string): string[] {
-  return [...source.matchAll(/`([^`]*)`/g)]
+  return [...stripComments(source).matchAll(/`([^`]*)`/g)]
     .map(m => m[1].replace(/\s+/g, " ").trim())
     .filter(s => /\bupdated_at\b/.test(s));
 }
@@ -109,12 +125,7 @@ function rawSqlReads(sql: string, relPath: string): Finding[] {
  * stripped first so column references inside them are not double-counted here.
  */
 function rawTsReads(source: string): { text: string; coalesced: boolean }[] {
-  const code = source
-    .replace(/`[^`]*`/g, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter(l => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
-    .join("\n");
+  const code = stripComments(source).replace(/`[^`]*`/g, "");
 
   const out: { text: string; coalesced: boolean }[] = [];
   for (const m of code.matchAll(/\bupdated_at\b/g)) {
