@@ -8,7 +8,8 @@ import { chunkText } from "../text/chunk";
 import { rememberTags } from "../tags/vocabulary";
 import { extractHashtags } from "../text/hashtags";
 import { isVectorizeUnavailable } from "../vectorize/health";
-import { tagsAfterWrite } from "../memory/stale";
+import { tagsAfterWrite, tagsAfterAppend } from "../memory/stale";
+import { withVolatility, type Volatility } from "../memory/volatility";
 
 export async function storeEntry(
   env: Env,
@@ -119,7 +120,8 @@ export async function updateEntryContent(
   env: Env,
   id: string,
   newContent: string,
-  config: Readonly<Config> = DEFAULTS
+  config: Readonly<Config> = DEFAULTS,
+  volatility?: Volatility
 ): Promise<UpdateEntryResult> {
   // vector_ids has to be read before any mutation: storeEntry overwrites it, and the
   // cleanup below needs to know which vectors the entry had on the way in.
@@ -140,7 +142,10 @@ export async function updateEntryContent(
   // Content that is nothing but hashtags cleans down to "", which would blank the entry —
   // keep it as written in that case and let the tags be extracted anyway.
   const finalContent = cleanContent || newContent;
-  const mergedTags = tagsAfterWrite([...new Set([...existingTags, ...hashtags])])
+  // A caller-supplied verdict is applied after the strip, not before: tagsAfterWrite
+  // removes every volatility tag, so applying it first would throw the value away.
+  const strippedTags = tagsAfterWrite([...new Set([...existingTags, ...hashtags])]);
+  const mergedTags = (volatility ? withVolatility(strippedTags, volatility) : strippedTags)
     // `rolled-up` is a claim about content that no longer exists: the nightly digest wrote
     // it in the same statement that appended a `[Digest: <id>]` marker to the body, and a
     // full replacement destroys that marker. Left in place it costs the corrected memory a
@@ -191,7 +196,8 @@ export async function appendToEntry(
   addition: string,
   tags: string[],
   source: string,
-  config: Readonly<Config> = DEFAULTS
+  config: Readonly<Config> = DEFAULTS,
+  volatility?: Volatility
 ): Promise<boolean> {
   const row = await env.DB.prepare(
     `SELECT vector_ids FROM entries WHERE id = ?`
@@ -203,9 +209,14 @@ export async function appendToEntry(
   const separator = `\n\n[Update ${timestamp}]: `;
   const newContent = existingContent + separator + addition;
 
+  // Computed once and used by both branches below so they cannot drift. Unlike a
+  // replacement this keeps any existing volatility verdict (see tagsAfterAppend); a
+  // caller-supplied one still overrides it.
+  const appendedTags = tagsAfterAppend(tags);
+  const refreshedTags = volatility ? withVolatility(appendedTags, volatility) : appendedTags;
+
   if (newContent.length > CHUNK_MAX_CHARS) {
     const newVectorIds = await reembedOrDegrade(env, id, newContent, tags, source, config);
-    const refreshedTags = tagsAfterWrite(tags);
     const now = Date.now();
 
     await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
@@ -263,7 +274,6 @@ export async function appendToEntry(
     indexed = false;
   }
 
-  const refreshedTags = tagsAfterWrite(tags);
   const now = Date.now();
 
   await env.DB.prepare(

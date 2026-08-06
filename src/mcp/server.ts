@@ -12,9 +12,29 @@ import { getConnections } from "../graph/traverse";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
+import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/volatility";
 import { recallEntries } from "../recall/search";
 import { renderRecallText } from "../recall/render";
 import { RECALL_OUTPUT_BUDGET, SNIPPET_MAX_CHARS, snippetOf, truncationNote } from "../recall/snippet";
+
+// Asking the calling model for this is the whole point: it has already read the content
+// in order to decide to store it, so the judgment is free, and it is a far better
+// classifier than the regex fallback in staleness/heuristic.ts, which abstains on most
+// real content. Sent once per session as part of the tool schema rather than repeated in
+// recall output, and worded to make abstaining the safe move — a wrong verdict is worse
+// than none, because `state` and `volatile` earn a "verify before asserting" qualifier
+// on every future recall.
+const VOLATILITY_DESCRIPTION =
+  "How likely is this to stop being true? "
+  + "durable = never changes (a birthday, where someone grew up, something that already happened). "
+  + "state = true for now but can move (an employer, a city, a current plan or priority). "
+  + "volatile = true only briefly (a meeting, a deadline, this week's focus). "
+  + "Omit it when you are unsure — no verdict is better than a wrong one.";
+
+const volatilityParam = z
+  .enum([...VOLATILITY_VALUES] as [string, ...string[]])
+  .optional()
+  .describe(VOLATILITY_DESCRIPTION);
 
 export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
@@ -28,10 +48,21 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         content: z.string().describe("The idea, task, or note to store"),
         tags: z.array(z.string()).optional().describe("Optional tags for filtering"),
         source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
+        volatility: volatilityParam,
       },
     },
-    async ({ content, tags, source }) => {
-      const result = await captureEntry(content, tags ?? [], source ?? "claude", env, ctx);
+    async ({ content, tags, source, volatility }) => {
+      // Folded into the tag list rather than threaded through captureEntry: tags are
+      // already the carrier for every other reserved namespace (kind:, status:).
+      // withVolatility clears the namespace case-insensitively before appending, so a
+      // caller passing its own "volatility:"-prefixed tag alongside a conflicting enum
+      // value cannot leave two verdicts on one entry. That filter has to stay
+      // case-insensitive: captureEntry lowercases tags *after* this runs, so a
+      // case-sensitive one let "Volatility:durable" through to become a second verdict,
+      // and the injected one won.
+      const baseTags = tags ?? [];
+      const withVerdict = volatility ? withVolatility(baseTags, volatility as Volatility) : baseTags;
+      const result = await captureEntry(content, withVerdict, source ?? "claude", env, ctx);
       if (result.status === "blocked") {
         return { content: [{ type: "text", text: `Duplicate detected (${(result.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${result.matchId}` }] };
       }
@@ -62,9 +93,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       inputSchema: {
         id: z.string().describe("Entry ID to append to — from recall or list_recent"),
         addition: z.string().describe("The new information to add to the existing entry"),
+        volatility: volatilityParam,
       },
     },
-    async ({ id, addition }) => {
+    async ({ id, addition, volatility }) => {
       const row = await env.DB.prepare(
         `SELECT id, content, tags, source FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
@@ -92,7 +124,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
 
       let indexed: boolean;
       try {
-        indexed = await appendToEntry(env, id, existingContent, a, tags, source, await resolveConfig(env));
+        indexed = await appendToEntry(env, id, existingContent, a, tags, source, await resolveConfig(env), volatility as Volatility | undefined);
       } catch (e) {
         console.error("Append failed:", e);
         return {
@@ -118,9 +150,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       inputSchema: {
         id: z.string().describe("Entry ID to update — from recall or list_recent"),
         content: z.string().describe("The new content to replace the existing entry with"),
+        volatility: volatilityParam,
       },
     },
-    async ({ id, content }) => {
+    async ({ id, content, volatility }) => {
       const newContent = content.trim();
       if (!newContent) {
         return { content: [{ type: "text", text: "Content cannot be empty." }] };
@@ -139,7 +172,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: mirrorEditError(row.source as string) }] };
       }
 
-      const result = await updateEntryContent(env, id, newContent, await resolveConfig(env));
+      const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), volatility as Volatility | undefined);
 
       // Only reachable if the entry was deleted between the guard read and the write.
       if (result.status === "not_found") {

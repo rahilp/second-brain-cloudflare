@@ -5,6 +5,21 @@ import { json, requireAuth } from "../lib/http";
 import { captureEntry } from "../capture/entry";
 import { appendToEntry, updateEntryContent } from "../capture/store";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
+import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/volatility";
+
+/**
+ * Zod guards the MCP tools; these routes have no schema layer, so an unrecognised value
+ * has to be rejected here rather than dropped. Silently ignoring it would hand a caller
+ * that sent "Volatile" or "temporary" a 200 and no verdict, with nothing to tell them
+ * the field did not take.
+ */
+function readVolatility(raw: unknown): { value?: Volatility; error?: string } {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "string" || !(VOLATILITY_VALUES as readonly string[]).includes(raw)) {
+    return { error: `volatility must be one of: ${VOLATILITY_VALUES.join(", ")}` };
+  }
+  return { value: raw as Volatility };
+}
 
 export async function handleCaptureRoutes(
   request: Request,
@@ -17,11 +32,18 @@ export async function handleCaptureRoutes(
     const authErr = requireAuth(request, env);
     if (authErr) return authErr;
 
-    let body: { content?: string; tags?: string[]; source?: string };
+    let body: { content?: string; tags?: string[]; source?: string; volatility?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.content?.trim()) return json({ ok: false, error: "content is required" }, 400);
 
-    const result = await captureEntry(body.content, body.tags ?? [], body.source ?? "api", env, ctx);
+    const captureVol = readVolatility(body.volatility);
+    if (captureVol.error) return json({ ok: false, error: captureVol.error }, 400);
+
+    const captureTags = captureVol.value
+      ? withVolatility(body.tags ?? [], captureVol.value)
+      : body.tags ?? [];
+
+    const result = await captureEntry(body.content, captureTags, body.source ?? "api", env, ctx);
 
     if (result.status === "blocked") {
       return json({
@@ -62,10 +84,13 @@ export async function handleCaptureRoutes(
     const authErr = requireAuth(request, env);
     if (authErr) return authErr;
 
-    let body: { id?: string; addition?: string };
+    let body: { id?: string; addition?: string; volatility?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     if (!body.addition?.trim()) return json({ ok: false, error: "addition is required" }, 400);
+
+    const appendVol = readVolatility(body.volatility);
+    if (appendVol.error) return json({ ok: false, error: appendVol.error }, 400);
 
     const id = body.id.trim();
     const addition = body.addition.trim();
@@ -88,7 +113,7 @@ export async function handleCaptureRoutes(
 
     let indexed: boolean;
     try {
-      indexed = await appendToEntry(env, id, existingContent, addition, tags, source, await resolveConfig(env));
+      indexed = await appendToEntry(env, id, existingContent, addition, tags, source, await resolveConfig(env), appendVol.value);
     } catch (e) {
       return json({ ok: false, error: `Append failed: ${(e as Error).message}` }, 500);
     }
@@ -108,10 +133,13 @@ export async function handleCaptureRoutes(
     const authErr = requireAuth(request, env);
     if (authErr) return authErr;
 
-    let body: { id?: string; content?: string };
+    let body: { id?: string; content?: string; volatility?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     if (!body.content?.trim()) return json({ ok: false, error: "content is required" }, 400);
+
+    const updateVol = readVolatility(body.volatility);
+    if (updateVol.error) return json({ ok: false, error: updateVol.error }, 400);
 
     const id = body.id.trim();
     const newContent = body.content.trim();
@@ -129,7 +157,7 @@ export async function handleCaptureRoutes(
       return json({ ok: false, error: mirrorEditError(row.source as string) }, 409);
     }
 
-    const result = await updateEntryContent(env, id, newContent, await resolveConfig(env));
+    const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), updateVol.value);
 
     // Only reachable if the entry was deleted between the guard read and the write.
     if (result.status === "not_found") {
