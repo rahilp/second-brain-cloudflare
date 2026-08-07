@@ -281,6 +281,40 @@ describe("POST /import/* cursor job", () => {
     (counted.env.DB as any).batch = originalBatch;
   });
 
+  it("re-continue after deferred_retry converges (skips already-inserted rows)", async () => {
+    const counted = countingEnv(db, kv);
+    const { job_id } = await start(counted.env, 80, 0);
+    const rows = Array.from({ length: 80 }, (_, i) => ({ id: `conv-${i}`, content: `c${i}` }));
+    await append(counted.env, job_id, "entries", 0, rows);
+
+    let failBatches = true;
+    const innerBatch = (counted.env.DB as any).batch.bind(counted.env.DB);
+    (counted.env.DB as any).batch = async (stmts: any[]) => {
+      if (failBatches) {
+        counted.statements.push("BATCH");
+        throw new Error("forced batch failure");
+      }
+      return innerBatch(stmts);
+    };
+
+    const first = await cont(counted.env, job_id, "entries", 0);
+    expect(first.data.results.some((r: any) => r.reason === "deferred_retry")).toBe(true);
+    const afterFirst = db.entries.filter((e: any) => String(e.id).startsWith("conv-")).length;
+    expect(afterFirst).toBeGreaterThan(0);
+    expect(afterFirst).toBeLessThan(80);
+
+    // Restore batch so the second continue can finish the remainder.
+    failBatches = false;
+    const second = await cont(counted.env, job_id, "entries", 0);
+    expect(second.data.imported + second.data.skipped).toBe(80);
+    expect(second.data.results.filter((r: any) => r.reason === "deferred_retry")).toHaveLength(0);
+    expect(db.entries.filter((e: any) => String(e.id).startsWith("conv-"))).toHaveLength(80);
+
+    const st = await status(counted.env, job_id);
+    expect(st.data.failed_pages).toEqual([]);
+    expect(st.data.clean).toBe(true);
+  });
+
   it("rejects oversized append with 413", async () => {
     const { job_id } = await start(env, 1000, 0);
     const rows = Array.from({ length: 501 }, (_, i) => ({ id: `x-${i}`, content: "c" }));

@@ -311,6 +311,11 @@ export async function runPage(env: Env, body: unknown): Promise<ContinuePageResu
   const maxPages = phase === "entries" ? job.entry_pages : job.edge_pages;
   const page = parsePage(o.page, maxPages);
 
+  const budget = new SubrequestBudget();
+  // getJob already spent one SELECT; count it so the soft cap matches reality.
+  budget.charge();
+  // KV get is also a subrequest on the free-plan budget.
+  budget.charge();
   const raw = await env.OAUTH_KV.get(chunkKey(job_id, phase, page));
   if (raw == null) {
     throw new ImportJobError(
@@ -327,10 +332,6 @@ export async function runPage(env: Env, body: unknown): Promise<ContinuePageResu
   } catch {
     throw new ImportJobError("invalid_body", "staged page is corrupt; re-append it", 400);
   }
-
-  const budget = new SubrequestBudget();
-  // getJob already spent one SELECT; count it so the soft cap matches reality.
-  budget.charge();
 
   const outcome = phase === "entries"
     ? await importEntryPage(env, rows as ExportEntry[], budget)
