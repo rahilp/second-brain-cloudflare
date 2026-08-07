@@ -140,6 +140,15 @@ jobs:
             # signature is present rather than that it chains to a trusted root.
             $policy = if ($env:SIGNPATH_SIGNING_POLICY_SLUG) { $env:SIGNPATH_SIGNING_POLICY_SLUG } else { "test-signing" }
             $trusted = if ($policy -like "test*") { "0" } else { "1" }
+            # A test policy is for validating the pipeline, never for shipping. Signed
+            # with an untrusted certificate an installer is worse off than unsigned:
+            # Windows warns either way, but the signature details name a test
+            # certificate, which reads as a mistake. Nothing downstream would catch
+            # it — the build passes and the release publishes — so refuse here, where
+            # the message can say what to do.
+            if ($trusted -eq "0" -and $env:GITHUB_REF -like "refs/tags/installer-v*") {
+              throw "Refusing to publish a release signed by the '$policy' policy: it is backed by a certificate Windows does not trust. Point the SIGNPATH_SIGNING_POLICY_SLUG repository variable at your release policy before tagging."
+            }
             Write-Host "Signing enabled: SignPath policy '$policy' (signed after the build)."
             Add-Content -Path $env:GITHUB_ENV -Value "SIGNPATH_POLICY=$policy"
             Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGNPATH=1"
