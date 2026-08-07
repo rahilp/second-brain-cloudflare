@@ -140,20 +140,24 @@ jobs:
             # signature is present rather than that it chains to a trusted root.
             $policy = if ($env:SIGNPATH_SIGNING_POLICY_SLUG) { $env:SIGNPATH_SIGNING_POLICY_SLUG } else { "test-signing" }
             $trusted = if ($policy -like "test*") { "0" } else { "1" }
-            # A test policy is for validating the pipeline, never for shipping. Signed
-            # with an untrusted certificate an installer is worse off than unsigned:
-            # Windows warns either way, but the signature details name a test
-            # certificate, which reads as a mistake. Nothing downstream would catch
-            # it — the build passes and the release publishes — so refuse here, where
-            # the message can say what to do.
+            # A test policy is for validating the pipeline, never for shipping: signed
+            # with an untrusted certificate an installer is worse off than unsigned,
+            # because the signature details name a test certificate, which reads as a
+            # mistake rather than an absence. But a release must not be hostage to
+            # the signing setup either — the certificate's issuance is on SignPath's
+            # timeline, not ours, and app releases are also how Worker fixes reach
+            # users. So a tag build under a test policy publishes UNSIGNED, loudly:
+            # the status quo from before SignPath was configured, and the warning
+            # names the variable to flip once the release certificate exists.
             if ($trusted -eq "0" -and $env:GITHUB_REF -like "refs/tags/installer-v*") {
-              throw "Refusing to publish a release signed by the '$policy' policy: it is backed by a certificate Windows does not trust. Point the SIGNPATH_SIGNING_POLICY_SLUG repository variable at your release policy before tagging."
+              Write-Host "::warning::SIGNPATH_SIGNING_POLICY_SLUG is '$policy', whose certificate Windows does not trust. Publishing this release UNSIGNED. Point the variable at your release policy once its certificate is issued."
+            } else {
+              Write-Host "Signing enabled: SignPath policy '$policy' (signed after the build)."
+              Add-Content -Path $env:GITHUB_ENV -Value "SIGNPATH_POLICY=$policy"
+              Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGNPATH=1"
+              Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGNED=1"
+              Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGN_TRUSTED=$trusted"
             }
-            Write-Host "Signing enabled: SignPath policy '$policy' (signed after the build)."
-            Add-Content -Path $env:GITHUB_ENV -Value "SIGNPATH_POLICY=$policy"
-            Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGNPATH=1"
-            Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGNED=1"
-            Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGN_TRUSTED=$trusted"
           } else {
             Write-Host "::notice::Neither WINDOWS_CERTIFICATE nor SIGNPATH_API_TOKEN configured - producing an UNSIGNED Windows build (testing only)."
           }

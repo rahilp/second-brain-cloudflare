@@ -141,7 +141,7 @@ Because SignPath's key lives in an HSM, the installer is signed **after** the bu
 - **The updater signature.** `tauri-action` signs the *unsigned* installer's bytes, so the signature no longer matches once SignPath has signed it. The workflow regenerates the `.sig` over the signed file.
 - **The updater URL.** `latest.json` addresses assets by numeric id (`…/releases/assets/504326110`), and replacing an asset deletes it and mints a new id. The `publish` job re-derives both the URL and the signature from the release's live state.
 
-While `SIGNPATH_SIGNING_POLICY_SLUG` is `test-signing`, CI asserts only that a signature is present — `signtool verify /pa` cannot succeed against a self-signed certificate, so requiring it would prove nothing. Verification tightens to a full chain check automatically when you switch to `release-signing`. Signing requests under `release-signing` also wait for your approval in the SignPath dashboard; the default timeout is 10 minutes.
+While `SIGNPATH_SIGNING_POLICY_SLUG` is `test-signing`, dispatch builds sign with the test certificate and CI asserts only that a signature is present — `signtool verify /pa` cannot succeed against a self-signed certificate, so requiring it would prove nothing. Tag builds under a test policy publish **unsigned**, with a warning in the job output: a test-signed installer reaching users would read as a mistake, but a release should not be hostage to the certificate's issuance either. Verification tightens to a full chain check automatically when you switch to `release-signing`. Signing requests under `release-signing` also wait for your approval in the SignPath dashboard; the workflow allows an hour.
 
 ### In-app updates — updater signing key (one-time)
 
