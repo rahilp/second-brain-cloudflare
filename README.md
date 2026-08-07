@@ -213,6 +213,17 @@ A successful response will look like:
 {"ok":true,"id":"..."}
 ```
 
+**Bulk migration** (export → import round-trip, issue #217):
+
+1. `GET /export` on the source brain (`version: 2` JSON with `entries` + `edges`).
+2. `POST /import/start` with `{ "version": 2, "entry_total": N, "edge_total": M }` — returns `job_id`, page counts, and a free-plan write estimate (`estimated_row_writes`, `days_at_least`). D1 free plan is ~100k row writes/day (~25k entries/day at 4 writes/entry); large brains may need more than one day.
+3. Slice the dump into pages (`500` entries or `250` edges each) and `POST /import/append` once per page: `{ "job_id", "phase": "entries"|"edges", "page": 0…, "rows": [...] }`. Prefer appending every page before continuing. A `409 page_missing` on continue can mean KV has not yet made the append visible — retry with short backoff.
+4. `POST /import/continue` once per page (same `job_id` / `phase` / `page`). Re-run any page listed in `GET /import/status?job_id=` → `failed_pages` (retriable only: e.g. `missing_endpoint`, `deferred_retry`). Terminal validation failures stay in counters but do not block completion.
+5. When `done` is true, backfill embeddings with `POST /vectorize-pending` until `remaining` is `0`. You do not need `clean` first — imported rows already have `vector_ids: []`.
+6. Optional: `POST /import/reset` with `{ "job_id" }` to drop the ledger (KV chunks expire on their own TTL).
+
+Import does **not** go through `/capture` and does **not** call Workers AI; embeddings are deferred on purpose so a large restore cannot exhaust the daily neuron budget mid-run.
+
 <details>
 <summary><strong>How OAuth authentication works</strong></summary>
 

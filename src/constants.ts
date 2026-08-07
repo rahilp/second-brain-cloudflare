@@ -39,6 +39,33 @@ export const VECTORIZE_GET_BY_IDS_BATCH = 20;
 // D1 allows at most 100 bound parameters per query
 export const D1_MAX_BOUND_PARAMS = 100;
 
+// ── Bulk import (#217) ───────────────────────────────────────────────────────
+// One HTTP call = one page. Sized so a free-plan continue stays under 50
+// subrequests and ~5 ms CPU when probes are page-scoped (measured target: ~18
+// for entries, ~23 for edges). If a real-runtime measure exceeds 40 subrequests
+// or 5 ms CPU, shrink these before publishing any ceiling.
+export const IMPORT_ENTRIES_PER_PAGE = 500;
+export const IMPORT_EDGES_PER_PAGE = 250;
+/** D1 batch() chunk size — one subrequest regardless of statement count. */
+export const IMPORT_D1_BATCH_SIZE = 50;
+/**
+ * Soft cap inside a continue call. Free plan allows 50 subrequests; 5 are held
+ * for the ledger upsert and closing work. Past this, remaining rows become
+ * deferred_retry so the client can re-run the page.
+ */
+export const IMPORT_SUBREQUEST_SOFT_CAP = 45;
+/** KV chunk TTL — auto-cleanup without spending delete quota. */
+export const IMPORT_CHUNK_TTL_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * Maintainer-measured D1 write multipliers (entry row + indexes / edge row +
+ * indexes). Re-measure before publishing product ceilings; start responses use
+ * these only as an estimate.
+ */
+export const IMPORT_ENTRY_ROW_WRITES = 4;
+export const IMPORT_EDGE_ROW_WRITES = 5;
+export const IMPORT_FREE_PLAN_ROW_WRITES_PER_DAY = 100_000;
+export const IMPORT_RESULTS_MAX = 100;
+
 export const RRF_K = 60;
 // Candidate fetch window for the keyword arm. The query is still newest-first
 // (LIKE has no relevance ordering), so this bounds how far back a keyword match

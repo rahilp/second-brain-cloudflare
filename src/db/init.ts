@@ -80,6 +80,14 @@ const SCHEMA_OBJECTS: Record<string, string> = {
   // stating the direction keeps the index and its one caller obviously paired. Bonus: the
   // nightly prune's `weight < ?` becomes a range search, 200,000 rows read down to 60,000.
   idx_edges_weight: `CREATE INDEX IF NOT EXISTS idx_edges_weight ON edges(weight DESC)`,
+  // Bulk import job ledger (#217). Deliberately D1, not OAUTH_KV: the rest of the Worker
+  // keeps operational state in KV, but an import page can be replayed and status must sum
+  // exact counters after an upsert. KV is eventually consistent; a stale read would either
+  // double-count or hide a retriable page. Cost is one row written per page (~150 rows for
+  // a 25k-entry import) against D1's 100k writes/day — negligible next to the entry inserts.
+  // The payload itself still lives in KV (write-once, TTL); only the ledger is here.
+  import_jobs: `CREATE TABLE IF NOT EXISTS import_jobs (id TEXT PRIMARY KEY, version INTEGER NOT NULL, entry_total INTEGER NOT NULL, edge_total INTEGER NOT NULL, entry_pages INTEGER NOT NULL, edge_pages INTEGER NOT NULL, created_at INTEGER NOT NULL)`,
+  import_job_pages: `CREATE TABLE IF NOT EXISTS import_job_pages (job_id TEXT NOT NULL, phase TEXT NOT NULL, page INTEGER NOT NULL, imported INTEGER NOT NULL DEFAULT 0, skipped INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, retriable_failed INTEGER NOT NULL DEFAULT 0, done_at INTEGER NOT NULL, PRIMARY KEY (job_id, phase, page))`,
 };
 
 /**
@@ -117,8 +125,8 @@ const ENTRIES_COLUMNS: Record<string, string> = {
  * them inside the request that triggered it, and GET /graph was already close enough to
  * the ceiling that a cold isolate pushed it over: 59 against a limit of 50, now 47.
  *
- * Cost is one subrequest and one row read per catalogue entry: rows_read = 23 on a fully
- * migrated brain (our seven objects, plus D1's own bookkeeping table and SQLite's implicit
+ * Cost is one subrequest and one row read per catalogue entry: rows_read grows with the
+ * catalogue (our SCHEMA_OBJECTS, plus D1's own bookkeeping table and SQLite's implicit
  * autoindexes, plus twelve columns) and — the part worth checking rather than assuming —
  * flat in the number of entries, because neither side of the UNION touches table data.
  * Both figures measured on real D1 (workerd via Miniflare), not on the mock. It grows by

@@ -34,7 +34,7 @@ const tagMatchesLike = (tags: string[], tag: string) =>
 
 /** What src/db/init.ts's probe sees on a migrated brain — see the handler in all(). */
 const SCHEMA_PROBE_RESULTS = [
-  ...["entries", "edges"].map(name => ({ kind: "table", name })),
+  ...["entries", "edges", "import_jobs", "import_job_pages"].map(name => ({ kind: "table", name })),
   ...["idx_entries_created_at", "idx_entries_source", "idx_edges_source", "idx_edges_target",
     "idx_edges_weight"].map(name => ({ kind: "index", name })),
   ...["id", "content", "tags", "source", "created_at", "vector_ids", "recall_count",
@@ -45,6 +45,8 @@ const SCHEMA_PROBE_RESULTS = [
 export class D1Mock {
   entries: any[] = [];
   edges: any[] = [];
+  importJobs: any[] = [];
+  importJobPages: any[] = [];
 
   prepare(sql: string) {
     const s = sql.replace(/\s+/g, " ").trim();
@@ -57,17 +59,63 @@ export class D1Mock {
     const makeStmt = (args: any[]) => ({
       async run() {
         if (s.startsWith("INSERT INTO entries")) {
-          if (args.length >= 8) {
-            const [id, content, tags, source, created_at, updated_at, vector_ids, importance_score] = args;
-            db.entries.push({ id, content, tags, source, created_at, updated_at, vector_ids, recall_count: 0, importance_score: importance_score ?? 0, contradiction_wins: 0, contradiction_losses: 0 });
-          } else if (args.length === 7) {
-            const [id, content, tags, source, created_at, updated_at, vector_ids] = args;
-            db.entries.push({ id, content, tags, source, created_at, updated_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 });
+          const colMatch = s.match(/INSERT INTO entries \(([^)]+)\)/i);
+          if (!colMatch) throw new Error("INSERT INTO entries missing column list");
+          const cols = colMatch[1].split(",").map(c => c.trim());
+          if (cols.length !== args.length) {
+            throw new Error(`INSERT INTO entries column/bind mismatch: ${cols.length} vs ${args.length}`);
+          }
+          const row: Record<string, any> = {
+            recall_count: 0,
+            importance_score: 0,
+            contradiction_wins: 0,
+            contradiction_losses: 0,
+          };
+          cols.forEach((col, i) => { row[col] = args[i]; });
+          if (row.updated_at === undefined) row.updated_at = row.created_at ?? Date.now();
+          if (db.entries.some((e: any) => e.id === row.id)) {
+            throw new Error(`UNIQUE constraint failed: entries.id (${row.id})`);
+          }
+          db.entries.push(row);
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO import_jobs")) {
+          const [id, version, entry_total, edge_total, entry_pages, edge_pages, created_at] = args;
+          if (db.importJobs.some((j: any) => j.id === id)) {
+            throw new Error(`UNIQUE constraint failed: import_jobs.id (${id})`);
+          }
+          db.importJobs.push({ id, version, entry_total, edge_total, entry_pages, edge_pages, created_at });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO import_job_pages")) {
+          const [job_id, phase, page, imported, skipped, failed, retriable_failed, done_at] = args;
+          const existing = db.importJobPages.find(
+            (p: any) => p.job_id === job_id && p.phase === phase && p.page === page,
+          );
+          if (existing) {
+            existing.imported = imported;
+            existing.skipped = skipped;
+            existing.failed = failed;
+            existing.retriable_failed = retriable_failed;
+            existing.done_at = done_at;
           } else {
-            const [id, content, tags, source, created_at, vector_ids] = args;
-            db.entries.push({ id, content, tags, source, created_at, updated_at: created_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 });
+            db.importJobPages.push({
+              job_id, phase, page, imported, skipped, failed, retriable_failed, done_at,
+            });
           }
           return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("DELETE FROM import_job_pages WHERE job_id")) {
+          const [job_id] = args;
+          const before = db.importJobPages.length;
+          db.importJobPages = db.importJobPages.filter((p: any) => p.job_id !== job_id);
+          return { meta: { changes: before - db.importJobPages.length } };
+        }
+        if (s.startsWith("DELETE FROM import_jobs WHERE id")) {
+          const [id] = args;
+          const before = db.importJobs.length;
+          db.importJobs = db.importJobs.filter((j: any) => j.id !== id);
+          return { meta: { changes: before - db.importJobs.length } };
         }
         if (s.startsWith("UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ? WHERE id")) {
           const [content, vector_ids, tags, updated_at, id] = args;
@@ -202,6 +250,10 @@ export class D1Mock {
           return { meta: { changes: before - db.entries.length } };
         }
         if (s.startsWith("INSERT INTO edges")) {
+          const placeholderCount = (s.match(/\?/g) ?? []).length;
+          if (placeholderCount !== args.length) {
+            throw new Error(`INSERT INTO edges placeholder/bind mismatch: ${placeholderCount} vs ${args.length}`);
+          }
           const [id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at] = args;
           const existing = db.edges.find((e: any) => e.source_id === source_id && e.target_id === target_id && e.type === type);
           if (existing) {
@@ -275,7 +327,18 @@ export class D1Mock {
         if (s.includes("COUNT(*) as count")) {
           return { count: db.entries.length };
         }
-        if (s.includes("WHERE id") && !s.includes("json_each")) {
+        if (s.includes("FROM import_jobs WHERE id")) {
+          return db.importJobs.find((j: any) => j.id === args[0]) ?? null;
+        }
+        if (s.includes("FROM import_job_pages WHERE job_id = ? AND phase = ? AND page = ?")) {
+          return db.importJobPages.find(
+            (p: any) => p.job_id === args[0] && p.phase === args[1] && p.page === args[2],
+          ) ?? null;
+        }
+        if (s.includes("WHERE id") && !s.includes("json_each") && s.includes("FROM entries")) {
+          return db.entries.find((e: any) => e.id === args[0]) ?? null;
+        }
+        if (s.includes("WHERE id") && !s.includes("json_each") && !s.includes("FROM import_")) {
           return db.entries.find((e: any) => e.id === args[0]) ?? null;
         }
         if (s.includes("WHERE tags LIKE") && s.includes("created_at >")) {
@@ -308,6 +371,18 @@ export class D1Mock {
           // with it. Fresh and partially-migrated brains are covered against real SQLite
           // in test/unit/db-init.test.ts.
           return { results: SCHEMA_PROBE_RESULTS };
+        }
+        if (s === "SELECT id FROM entries") {
+          return { results: db.entries.map((e: any) => ({ id: e.id })) };
+        }
+        if (s === "SELECT source_id, target_id, type FROM edges") {
+          return {
+            results: db.edges.map((e: any) => ({
+              source_id: e.source_id,
+              target_id: e.target_id,
+              type: e.type,
+            })),
+          };
         }
         if (
           sBare === "SELECT id FROM entries WHERE tags LIKE ?" ||
@@ -347,6 +422,23 @@ export class D1Mock {
             .slice(0, limit)
             .map((e: any) => ({ id: e.id, content: e.content }));
           return { results: rows };
+        }
+        if (s.includes("FROM import_job_pages WHERE job_id = ?") && !s.includes("AND phase")) {
+          const results = db.importJobPages.filter((p: any) => p.job_id === args[0]);
+          return { results };
+        }
+        if (s.includes("SELECT id FROM entries WHERE id IN")) {
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id }));
+          return { results };
+        }
+        if (s.includes("SELECT source_id, target_id, type FROM edges WHERE source_id IN") && s.includes("OR target_id IN")) {
+          const ids = new Set(args.map((a: any) => String(a)));
+          const results = db.edges
+            .filter((e: any) => ids.has(e.source_id) || ids.has(e.target_id))
+            .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id, type: e.type }));
+          return { results };
         }
         if (s.includes("FROM edges WHERE source_id IN") && s.includes("OR target_id IN")) {
           // expandGraph BFS / graph edge fetch: every edge touching the frontier, strongest
@@ -639,5 +731,10 @@ export class D1Mock {
 
   async exec(_sql: string) { }
   async batch(stmts: any[]) { return Promise.all(stmts.map((s: any) => s.run())); }
-  reset() { this.entries = []; this.edges = []; }
+  reset() {
+    this.entries = [];
+    this.edges = [];
+    this.importJobs = [];
+    this.importJobPages = [];
+  }
 }

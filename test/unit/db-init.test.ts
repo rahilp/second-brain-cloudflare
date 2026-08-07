@@ -12,7 +12,7 @@ const MIGRATION: [column: string, alter: string][] = [
   ["staleness_checked_at", `ALTER TABLE entries ADD COLUMN staleness_checked_at INTEGER`],
 ];
 const ALL_COLUMNS = MIGRATION.map(([column]) => column);
-const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight"];
+const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "import_jobs", "import_job_pages"];
 const BASE_COLUMNS = ["id", "content", "tags", "source", "created_at", "vector_ids"];
 
 /** The catalogue read that opens every init. Spelled out so tests can exclude it by name. */
@@ -134,7 +134,7 @@ describe("initializeDatabase updated_at migration", () => {
       resetDatabaseInit();
       await initializeDatabase(env);
 
-      expect(migrated).toBe(13); // the one-off cost of creating a brain: 7 objects + 6 columns
+      expect(migrated).toBe(15); // the one-off cost of creating a brain: 9 objects + 6 columns
       expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
       expect(prepared).toHaveLength(3); // one probe each, and nothing else
       expect(touchesEntries(execd)).toEqual([]);
@@ -366,7 +366,7 @@ describe("initializeDatabase against real SQLite", () => {
     resetDatabaseInit(); // a second cold isolate against the brain the first one migrated
     await initializeDatabase(envFor(d1));
 
-    expect(cold).toBe(14); // one probe, then the thirteen statements a new brain needs
+    expect(cold).toBe(16); // one probe, then the fifteen statements a new brain needs
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });

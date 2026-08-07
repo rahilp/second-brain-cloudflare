@@ -44,3 +44,27 @@ CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
 -- saving pays for many times over. Must stay in step with src/db/init.ts, which creates
 -- the same index at runtime for brains that were migrated before it existed.
 CREATE INDEX IF NOT EXISTS idx_edges_weight ON edges(weight DESC);
+
+-- Bulk import job ledger (#217). Payload chunks live in KV — this is only the
+-- per-page outcome so status can sum exact counters after a replayed page.
+CREATE TABLE IF NOT EXISTS import_jobs (
+  id           TEXT PRIMARY KEY,
+  version      INTEGER NOT NULL,
+  entry_total  INTEGER NOT NULL,
+  edge_total   INTEGER NOT NULL,
+  entry_pages  INTEGER NOT NULL,
+  edge_pages   INTEGER NOT NULL,
+  created_at   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS import_job_pages (
+  job_id           TEXT NOT NULL,
+  phase            TEXT NOT NULL,
+  page             INTEGER NOT NULL,
+  imported         INTEGER NOT NULL DEFAULT 0,
+  skipped          INTEGER NOT NULL DEFAULT 0,
+  failed           INTEGER NOT NULL DEFAULT 0,
+  retriable_failed INTEGER NOT NULL DEFAULT 0,
+  done_at          INTEGER NOT NULL,
+  PRIMARY KEY (job_id, phase, page)
+);

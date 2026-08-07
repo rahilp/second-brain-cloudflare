@@ -5,6 +5,7 @@ import { ensureDbReady } from "../runtime/state";
 import { handleCaptureRoutes } from "./capture";
 import { handleRecallRoutes } from "./recall";
 import { handleEntriesRoutes } from "./entries";
+import { handleImportRoutes } from "./import";
 import { handleGraphRoutes } from "./graph";
 import { handleIntegrationsRoutes } from "./integrations";
 import { handleAdminRoutes } from "./admin";
@@ -23,6 +24,7 @@ const routeHandlers: RouteHandler[] = [
   handleCaptureRoutes,
   handleRecallRoutes,
   handleEntriesRoutes,
+  handleImportRoutes,
   handleGraphRoutes,
   handleIntegrationsRoutes,
   handleAdminRoutes,
