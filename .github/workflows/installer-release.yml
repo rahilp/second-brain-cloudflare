@@ -224,9 +224,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      # Signing requests under a policy that requires approval block here until
-      # they are approved in the SignPath dashboard. The default timeout is 10
-      # minutes; raise wait-for-completion-timeout-in-seconds if that is tight.
+      # Signing requests under a policy that requires approval block here until a
+      # human approves them in the SignPath dashboard. The action's default wait
+      # is 10 minutes, which is a trap for a release: nobody is reliably sitting
+      # at the dashboard when a build that takes ~20 minutes to compile finally
+      # reaches this step, and missing the window fails the whole release. An
+      # hour is the difference between "approve when you see the email" and
+      # "re-run the build". Costs nothing when the policy needs no approval —
+      # those requests return in seconds.
       - name: Sign installer with SignPath
         if: matrix.platform == 'windows-latest' && env.WIN_SIGNPATH == '1'
         uses: SignPath/github-action-submit-signing-request@v2.2
@@ -237,6 +242,7 @@ jobs:
           signing-policy-slug: ${{ env.SIGNPATH_POLICY }}
           github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
           wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: "3600"
           output-artifact-directory: ${{ runner.temp }}/signpath-out
 
       - name: Install signed installer and refresh updater signature
