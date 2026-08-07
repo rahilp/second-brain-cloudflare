@@ -39,6 +39,30 @@ describe("GET /export", () => {
     expect(data.entries[0].id).toBe("e149");
   });
 
+  // updated_at is what a restore needs to put an entry back where it was: recall reads
+  // it as the entry's age and the staleness pass selects on it. An export without it
+  // silently resets every restored entry's last-touched time to its creation time.
+  it("carries updated_at so a restore can put an entry back where it was", async () => {
+    seedEntry(db, "edited", "Edited later", [], 1000);
+    db.entries[0].updated_at = 9000;
+
+    const res = await worker.fetch(req("GET", "/export"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.entries[0].updated_at).toBe(9000);
+    expect(data.entries[0].created_at).toBe(1000);
+  });
+
+  // Rows written before the column existed hold NULL. Exporting that verbatim would
+  // hand the importer a null to insert, so the fallback happens on the way out.
+  it("falls back to created_at for rows written before updated_at existed", async () => {
+    seedEntry(db, "old", "Never edited", [], 1000);
+    db.entries[0].updated_at = null;
+
+    const res = await worker.fetch(req("GET", "/export"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.entries[0].updated_at).toBe(1000);
+  });
+
   it("includes edges and parses tags to real arrays", async () => {
     seedEntry(db, "a", "Memory A", ["work", "kind:semantic"]);
     seedEntry(db, "b", "Memory B", ["idea"]);

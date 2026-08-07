@@ -621,12 +621,14 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results: rows };
         }
-        if (s.startsWith("SELECT id, content, tags, source, created_at, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC")) {
-          // GET /export: every entry, newest first, no LIMIT.
+        if (s.startsWith("SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC")) {
+          // GET /export: every entry, newest first, no LIMIT. `last_updated` models the
+          // COALESCE, so a row that never had updated_at written exports its created_at.
           const results = [...db.entries]
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .map((e: any) => ({
               id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at,
+              last_updated: e.updated_at ?? e.created_at,
               recall_count: e.recall_count ?? 0, importance_score: e.importance_score ?? 0,
               contradiction_wins: e.contradiction_wins ?? 0, contradiction_losses: e.contradiction_losses ?? 0,
             }));

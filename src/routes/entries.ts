@@ -41,7 +41,7 @@ export async function handleEntriesRoutes(
     if (authErr) return authErr;
 
     const { results: entryRows } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC`
+      `SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC`
     ).all() as { results: Record<string, any>[] };
     const { results: edgeRows } = await env.DB.prepare(
       `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges`
@@ -49,12 +49,24 @@ export async function handleEntriesRoutes(
 
     // vector_ids are deliberately excluded — they're deployment-specific and an
     // import tool re-embeds anyway. Tags are parsed so the file holds real arrays.
+    //
+    // updated_at is carried because it is load-bearing on the way back in, not for
+    // display: recall reads it as the entry's age (src/recall/search.ts) and the
+    // staleness pass selects on it (src/staleness/pass.ts). Without it a restore
+    // silently rewrites every entry's last-touched time to its creation time, so
+    // anything edited long after it was written comes back looking untouched —
+    // ranked staler than it is, and eligible for a staleness verdict sooner.
+    // Coalesced in SQL because rows written before that column existed hold NULL, and
+    // the export should carry a number the importer can use directly. Aliased to
+    // `last_updated` rather than `updated_at` so the projection is not itself a bare
+    // read of the column — see test/unit/updated-at-coalesced.test.ts.
     const entries = entryRows.map(r => ({
       id: r.id,
       content: r.content,
       tags: JSON.parse(r.tags ?? "[]"),
       source: r.source,
       created_at: r.created_at,
+      updated_at: r.last_updated ?? r.created_at,
       recall_count: r.recall_count ?? 0,
       importance_score: r.importance_score ?? 0,
       contradiction_wins: r.contradiction_wins ?? 0,
