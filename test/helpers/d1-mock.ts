@@ -57,16 +57,21 @@ export class D1Mock {
     const makeStmt = (args: any[]) => ({
       async run() {
         if (s.startsWith("INSERT INTO entries")) {
-          if (args.length >= 8) {
-            const [id, content, tags, source, created_at, updated_at, vector_ids, importance_score] = args;
-            db.entries.push({ id, content, tags, source, created_at, updated_at, vector_ids, recall_count: 0, importance_score: importance_score ?? 0, contradiction_wins: 0, contradiction_losses: 0 });
-          } else if (args.length === 7) {
-            const [id, content, tags, source, created_at, updated_at, vector_ids] = args;
-            db.entries.push({ id, content, tags, source, created_at, updated_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 });
-          } else {
-            const [id, content, tags, source, created_at, vector_ids] = args;
-            db.entries.push({ id, content, tags, source, created_at, updated_at: created_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 });
+          const colMatch = s.match(/INSERT INTO entries \(([^)]+)\)/i);
+          if (!colMatch) throw new Error("INSERT INTO entries missing column list");
+          const cols = colMatch[1].split(",").map(c => c.trim());
+          if (cols.length !== args.length) {
+            throw new Error(`INSERT INTO entries column/bind mismatch: ${cols.length} vs ${args.length}`);
           }
+          const row: Record<string, any> = {
+            recall_count: 0,
+            importance_score: 0,
+            contradiction_wins: 0,
+            contradiction_losses: 0,
+          };
+          cols.forEach((col, i) => { row[col] = args[i]; });
+          if (row.updated_at === undefined) row.updated_at = row.created_at ?? Date.now();
+          db.entries.push(row);
           return { meta: { changes: 1 } };
         }
         if (s.startsWith("UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ? WHERE id")) {
@@ -202,6 +207,10 @@ export class D1Mock {
           return { meta: { changes: before - db.entries.length } };
         }
         if (s.startsWith("INSERT INTO edges")) {
+          const placeholderCount = (s.match(/\?/g) ?? []).length;
+          if (placeholderCount !== args.length) {
+            throw new Error(`INSERT INTO edges placeholder/bind mismatch: ${placeholderCount} vs ${args.length}`);
+          }
           const [id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at] = args;
           const existing = db.edges.find((e: any) => e.source_id === source_id && e.target_id === target_id && e.type === type);
           if (existing) {
@@ -309,6 +318,18 @@ export class D1Mock {
           // in test/unit/db-init.test.ts.
           return { results: SCHEMA_PROBE_RESULTS };
         }
+        if (s === "SELECT id FROM entries") {
+          return { results: db.entries.map((e: any) => ({ id: e.id })) };
+        }
+        if (s === "SELECT source_id, target_id, type FROM edges") {
+          return {
+            results: db.edges.map((e: any) => ({
+              source_id: e.source_id,
+              target_id: e.target_id,
+              type: e.type,
+            })),
+          };
+        }
         if (
           sBare === "SELECT id FROM entries WHERE tags LIKE ?" ||
           sBare === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?" ||
@@ -347,6 +368,19 @@ export class D1Mock {
             .slice(0, limit)
             .map((e: any) => ({ id: e.id, content: e.content }));
           return { results: rows };
+        }
+        if (s.includes("SELECT id FROM entries WHERE id IN")) {
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id }));
+          return { results };
+        }
+        if (s.includes("SELECT source_id, target_id, type FROM edges WHERE source_id IN") && s.includes("OR target_id IN")) {
+          const ids = new Set(args.map((a: any) => String(a)));
+          const results = db.edges
+            .filter((e: any) => ids.has(e.source_id) || ids.has(e.target_id))
+            .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id, type: e.type }));
+          return { results };
         }
         if (s.includes("FROM edges WHERE source_id IN") && s.includes("OR target_id IN")) {
           // expandGraph BFS / graph edge fetch: every edge touching the frontier, strongest

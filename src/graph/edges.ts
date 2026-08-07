@@ -24,7 +24,7 @@ export async function createEdge(
   sourceId: string,
   targetId: string,
   type: string,
-  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown> },
+  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown>; created_at?: number },
   env: Env,
 ): Promise<{ source_id: string; target_id: string; type: EdgeType } | null> {
   if (!isValidEdgeType(type)) return null;
@@ -38,12 +38,13 @@ export async function createEdge(
   const provenance = opts.provenance ?? "inferred";
   const metadata = JSON.stringify(opts.metadata ?? {});
   const now = Date.now();
+  const createdAt = opts.created_at ?? now;
 
   await env.DB.prepare(
     `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_id, target_id, type) DO UPDATE SET weight = max(weight, excluded.weight), updated_at = excluded.updated_at`
-  ).bind(crypto.randomUUID(), source, target, type, weight, provenance, metadata, now, now).run();
+  ).bind(crypto.randomUUID(), source, target, type, weight, provenance, metadata, createdAt, now).run();
 
   return { source_id: source, target_id: target, type };
 }
