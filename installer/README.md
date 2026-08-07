@@ -100,7 +100,7 @@ Tauri's bundler imports the certificate into a temporary keychain, signs, notari
 
 Choose one:
 
-- **SignPath Foundation (free for open source)** — the route this project is pursuing: [signpath.org](https://signpath.org) signs qualifying OSS projects at no cost. Prerequisites live in the root README's "Code signing policy" section; once the application is approved, the Windows job switches to their [GitHub Action](https://github.com/SignPath/github-action-submit-signing-request) (build unsigned → submit → manually approve in the SignPath dashboard → attach the signed installer). Note the signature carries SignPath Foundation's certificate, not your own identity.
+- **SignPath Foundation (free for open source)** — wired into the release workflow already; see "For the SignPath route" below. [signpath.org](https://signpath.org) signs qualifying OSS projects at no cost, and prerequisites live in the root README's "Code signing policy" section. Note the signature carries SignPath Foundation's certificate, not your own identity, so Windows shows *SignPath Foundation* as the publisher.
 - **OV (Organization Validation)** — cheaper and file-based, works on hosted runners as-is. Downside: SmartScreen keeps warning users until the binary earns download reputation, which takes time. Acceptable to start.
 - **EV (Extended Validation)** — clears SmartScreen immediately (best for this audience), but the private key must live on a FIPS hardware token or cloud HSM. A hardware token **cannot** be plugged into GitHub's hosted runners — you need either a cloud-signing service (e.g. Azure Artifact Signing, SSL.com eSigner, DigiCert KeyLocker — anything with a CI-callable API) wired in through `bundle.windows.signCommand` in `tauri.conf.json`, or a self-hosted runner with the token attached.
 
@@ -119,6 +119,29 @@ For the OV route:
 The Windows job imports the `.pfx`, points Tauri at its thumbprint, timestamps against DigiCert, and verifies with `signtool verify /pa /v` so a bad signature fails CI.
 
 For the EV/cloud route: skip those two secrets, store the provider's API credentials as secrets instead, and replace the "Enable Windows signing" step with the provider's CLI plus a `signCommand` config (e.g. `"signCommand": "artifact-signing-cli -e https://…azure.net -a Account -c Profile -d SecondBrain %1"`). Document which route is active here when you set it up.
+
+For the SignPath route:
+
+1. Apply at [signpath.org](https://signpath.org) and wait for your project to be provisioned. You get two signing policies: `test-signing`, backed by a **self-signed** certificate that Windows does not trust, and `release-signing`, backed by SignPath Foundation's real certificate. `release-signing` shows **INVALID** until the CA issues that certificate — that is normal and needs nothing from you.
+2. In SignPath, link the predefined **GitHub.com** trusted build system to your organization and to the project, and install the **SignPath GitHub App** on the repository. Origin verification depends on both.
+3. Create an API token for the CI user (SignPath → *Users* → the CI user → *API tokens*).
+4. Add one secret and three repository variables (Settings → Secrets and variables → Actions):
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Secret | `SIGNPATH_API_TOKEN` | the CI user's API token |
+| Variable | `SIGNPATH_ORGANIZATION_ID` | from the SignPath organization page |
+| Variable | `SIGNPATH_PROJECT_SLUG` | e.g. `second-brain-cloudflare` |
+| Variable | `SIGNPATH_SIGNING_POLICY_SLUG` | `test-signing` while validating, then `release-signing` |
+
+`SIGNPATH_SIGNING_POLICY_SLUG` defaults to `test-signing` when unset. Leaving `WINDOWS_CERTIFICATE` unset is what selects this route — a `.pfx` takes precedence if both are configured.
+
+Because SignPath's key lives in an HSM, the installer is signed **after** the build rather than during bundling, and two things have to be repaired afterwards. Both are handled by the workflow, and both are silent if you get them wrong:
+
+- **The updater signature.** `tauri-action` signs the *unsigned* installer's bytes, so the signature no longer matches once SignPath has signed it. The workflow regenerates the `.sig` over the signed file.
+- **The updater URL.** `latest.json` addresses assets by numeric id (`…/releases/assets/504326110`), and replacing an asset deletes it and mints a new id. The `publish` job re-derives both the URL and the signature from the release's live state.
+
+While `SIGNPATH_SIGNING_POLICY_SLUG` is `test-signing`, CI asserts only that a signature is present — `signtool verify /pa` cannot succeed against a self-signed certificate, so requiring it would prove nothing. Verification tightens to a full chain check automatically when you switch to `release-signing`. Signing requests under `release-signing` also wait for your approval in the SignPath dashboard; the default timeout is 10 minutes.
 
 ### In-app updates — updater signing key (one-time)
 

@@ -107,7 +107,7 @@ function rawSqlReads(sql: string, relPath: string): Finding[] {
     if (inAny(i, declarations) || inAny(i, coalesced) || inAny(i, insertColumns)) continue;
     // In a SET clause and followed by `=` — an assignment target.
     if (inAny(i, setClauses) && /^\s*=/.test(sql.slice(i + "updated_at".length))) continue;
-    if (relPath === HYDRATION_EXEMPTION.file && sql.includes(HYDRATION_EXEMPTION.marker)) continue;
+    if (relPath.replace(/\\/g, "/") === HYDRATION_EXEMPTION.file && sql.includes(HYDRATION_EXEMPTION.marker)) continue;
 
     const at = sql.slice(Math.max(0, i - 45), i + 45);
     const clause = /\bORDER\s+BY\b/i.test(sql.slice(0, i)) ? "ORDER BY"
@@ -131,7 +131,7 @@ function rawTsReads(source: string): { text: string; coalesced: boolean }[] {
   for (const m of code.matchAll(/\bupdated_at\b/g)) {
     const at = m.index! + "updated_at".length;
     const after = code.slice(at);
-    if (/^\s*:/.test(after)) continue; // object-literal key, not a read
+    if (/^\s*\??:/.test(after)) continue; // object-literal key or property declaration, not a read
     // The fallback has to be attached to THIS read. A created_at mention anywhere on the
     // line is not enough: an adjacent field in the same object literal, or a sort
     // tiebreaker, satisfies that while coalescing nothing. Require `?? … created_at`

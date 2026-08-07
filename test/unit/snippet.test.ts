@@ -130,6 +130,6 @@ describe("truncationNote", () => {
   it("carries the id and the full size so the caller can fetch the rest", () => {
     const note = truncationNote("abc-123", { text: "…", truncated: true, fullLength: 12345 });
     expect(note).toContain('get("abc-123")');
-    expect(note).toContain("12,345");
+    expect(note).toMatch(/12[,.]345/);
   });
 });

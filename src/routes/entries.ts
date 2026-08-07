@@ -1,4 +1,6 @@
 import type { Env } from "../env";
+import { importExportPayload, parseImportBody, parseImportLimit, parseImportOffset } from "../entries/import";
+import { initializeDatabase } from "../db/init";
 import { json, requireAuth } from "../lib/http";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
@@ -67,6 +69,39 @@ export async function handleEntriesRoutes(
       created_at: r.created_at,
     }));
     return json({ ok: true, exported_at: Date.now(), version: 2, entries, edges });
+  }
+
+  // POST /import — round-trip counterpart to GET /export (issue #217). Inserts by
+  // export id (skip if exists), preserves created_at/updated_at/tags/source, defers
+  // embedding via vector_ids=[] so POST /vectorize-pending can backfill without
+  // burning the Workers AI quota in one request. Does NOT go through /capture.
+  //
+  // Paged positionally: one call examines entries[offset .. offset+limit), then —
+  // once entries are exhausted — edges[edge_offset .. edge_offset+limit). Clients
+  // resend the same file with the next_offset/next_edge_offset from the previous
+  // response until both remaining counts are 0. See importExportPayload for why
+  // this is what keeps a large restore inside the D1 free-plan query budget.
+  if (url.pathname === "/import" && request.method === "POST") {
+    const authErr = requireAuth(request, env);
+    if (authErr) return authErr;
+
+    // Awaited, not left to ensureDbReady's waitUntil: an import is often a freshly
+    // deployed brain's first request, which is exactly when the schema ALTERs have
+    // not run yet and every insert would fail on a missing column. Latched after
+    // the first call, so this costs nothing in the steady state.
+    await initializeDatabase(env);
+
+    let body: unknown;
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+
+    const parsed = parseImportBody(body);
+    if (!parsed.ok) return json({ ok: false, error: parsed.error }, 400);
+
+    const limit = parseImportLimit(url.searchParams.get("limit"));
+    const offset = parseImportOffset(url.searchParams.get("offset"));
+    const edgeOffset = parseImportOffset(url.searchParams.get("edge_offset"));
+    const summary = await importExportPayload(env, parsed.payload, { limit, offset, edgeOffset });
+    return json(summary);
   }
 
   // POST /forget — delete-by-id, mirrors the MCP `forget` tool

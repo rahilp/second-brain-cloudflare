@@ -78,6 +78,11 @@ describe("createEdge", () => {
     expect(db.edges[0].provenance).toBe("explicit");
     expect(JSON.parse(db.edges[0].metadata)).toEqual({ note: "hi" });
   });
+
+  it("preserves a custom created_at on insert", async () => {
+    await createEdge("a", "b", "relates_to", { created_at: 42_000 }, env);
+    expect(db.edges[0].created_at).toBe(42_000);
+  });
 });
 
 describe("expandGraph", () => {

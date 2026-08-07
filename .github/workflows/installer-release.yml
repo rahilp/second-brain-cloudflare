@@ -19,6 +19,11 @@ on:
 
 permissions:
   contents: write
+  # SignPath's connector reads this workflow run and downloads the unsigned
+  # installer from GitHub itself — that is what proves to SignPath the artifact
+  # came from a GitHub build and not from someone's laptop. Harmless when the
+  # SignPath route is not configured.
+  actions: read
 
 jobs:
   build:
@@ -86,12 +91,27 @@ jobs:
           fi
 
       # ── Windows signing (skipped cleanly when secrets absent) ──────────────
-      # OV certificate as a .pfx file. For EV certificates on a token/HSM, see
-      # installer/README.md — that route needs a cloud-signing signCommand
-      # instead of this step.
+      # Two routes, both optional, checked in this order:
+      #
+      #   1. WINDOWS_CERTIFICATE — your own OV certificate as a .pfx. Imported
+      #      here and used by Tauri during bundling. For EV certificates on a
+      #      token/HSM, see installer/README.md — that route needs a
+      #      cloud-signing signCommand instead of this step.
+      #   2. SIGNPATH_API_TOKEN — SignPath.io, free for open source through
+      #      SignPath Foundation. The private key never leaves SignPath's HSM,
+      #      so the installer cannot be signed during bundling the way a .pfx
+      #      is; it is signed after the build, in the steps below.
+      #
+      # With neither configured the build still succeeds and produces UNSIGNED
+      # artifacts, clearly labelled in the job output.
       - name: Enable Windows signing
         if: matrix.platform == 'windows-latest'
         shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
         run: |
           if ("${{ secrets.WINDOWS_CERTIFICATE }}" -ne "") {
             Write-Host "Signing enabled: importing certificate."
@@ -106,8 +126,36 @@ jobs:
             } } } | ConvertTo-Json -Depth 5
             Set-Content -Path "src-tauri/tauri.windows.conf.json" -Value $config
             Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGNED=1"
+            Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGN_TRUSTED=1"
+          } elseif ($env:SIGNPATH_API_TOKEN -ne "") {
+            $missing = @()
+            if (-not $env:SIGNPATH_ORGANIZATION_ID) { $missing += "SIGNPATH_ORGANIZATION_ID" }
+            if (-not $env:SIGNPATH_PROJECT_SLUG) { $missing += "SIGNPATH_PROJECT_SLUG" }
+            if ($missing.Count -gt 0) {
+              throw "SIGNPATH_API_TOKEN is set, but these repository variables are missing: $($missing -join ', '). Add them under Settings > Secrets and variables > Actions > Variables."
+            }
+            # test-signing is SignPath's self-signed policy, issued so the pipeline
+            # can be wired up before the real certificate exists. Windows does not
+            # trust it, so the verification step below asserts only that a
+            # signature is present rather than that it chains to a trusted root.
+            $policy = if ($env:SIGNPATH_SIGNING_POLICY_SLUG) { $env:SIGNPATH_SIGNING_POLICY_SLUG } else { "test-signing" }
+            $trusted = if ($policy -like "test*") { "0" } else { "1" }
+            # A test policy is for validating the pipeline, never for shipping. Signed
+            # with an untrusted certificate an installer is worse off than unsigned:
+            # Windows warns either way, but the signature details name a test
+            # certificate, which reads as a mistake. Nothing downstream would catch
+            # it — the build passes and the release publishes — so refuse here, where
+            # the message can say what to do.
+            if ($trusted -eq "0" -and $env:GITHUB_REF -like "refs/tags/installer-v*") {
+              throw "Refusing to publish a release signed by the '$policy' policy: it is backed by a certificate Windows does not trust. Point the SIGNPATH_SIGNING_POLICY_SLUG repository variable at your release policy before tagging."
+            }
+            Write-Host "Signing enabled: SignPath policy '$policy' (signed after the build)."
+            Add-Content -Path $env:GITHUB_ENV -Value "SIGNPATH_POLICY=$policy"
+            Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGNPATH=1"
+            Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGNED=1"
+            Add-Content -Path $env:GITHUB_ENV -Value "WIN_SIGN_TRUSTED=$trusted"
           } else {
-            Write-Host "::notice::WINDOWS_CERTIFICATE not configured - producing an UNSIGNED Windows build (testing only)."
+            Write-Host "::notice::Neither WINDOWS_CERTIFICATE nor SIGNPATH_API_TOKEN configured - producing an UNSIGNED Windows build (testing only)."
           }
 
       # ── Updater artifacts (skipped cleanly when the signing key is absent) ──
@@ -158,6 +206,103 @@ jobs:
           updaterJsonPreferNsis: true
           uploadWorkflowArtifacts: ${{ !startsWith(github.ref, 'refs/tags/installer-v') }}
 
+      # ── Windows signing via SignPath (post-build) ──────────────────────────
+      # The key lives in SignPath's HSM and never reaches the runner, so the
+      # installer is signed here rather than during bundling. Ordering is the
+      # whole difficulty: tauri-action has already written the updater signature
+      # over the UNSIGNED .exe, and that signature is computed over the file
+      # bytes — so it is regenerated below, once the signed .exe is back.
+      - name: Stage unsigned installer for SignPath
+        if: matrix.platform == 'windows-latest' && env.WIN_SIGNPATH == '1'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "src-tauri\target\release\bundle\nsis\*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "no NSIS installer found to sign" }
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\signpath-in" | Out-Null
+          Copy-Item $exe.FullName "$env:RUNNER_TEMP\signpath-in\"
+          Add-Content -Path $env:GITHUB_ENV -Value "WIN_INSTALLER=$($exe.FullName)"
+          Add-Content -Path $env:GITHUB_ENV -Value "WIN_INSTALLER_NAME=$($exe.Name)"
+
+      - name: Upload unsigned installer for SignPath
+        id: upload-unsigned
+        if: matrix.platform == 'windows-latest' && env.WIN_SIGNPATH == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-installer
+          path: ${{ runner.temp }}/signpath-in/*.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      # Signing requests under a policy that requires approval block here until a
+      # human approves them in the SignPath dashboard. The action's default wait
+      # is 10 minutes, which is a trap for a release: nobody is reliably sitting
+      # at the dashboard when a build that takes ~20 minutes to compile finally
+      # reaches this step, and missing the window fails the whole release. An
+      # hour is the difference between "approve when you see the email" and
+      # "re-run the build". Costs nothing when the policy needs no approval —
+      # those requests return in seconds.
+      - name: Sign installer with SignPath
+        if: matrix.platform == 'windows-latest' && env.WIN_SIGNPATH == '1'
+        uses: SignPath/github-action-submit-signing-request@v2.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_POLICY }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: "3600"
+          output-artifact-directory: ${{ runner.temp }}/signpath-out
+
+      - name: Install signed installer and refresh updater signature
+        if: matrix.platform == 'windows-latest' && env.WIN_SIGNPATH == '1'
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $signed = Get-ChildItem "$env:RUNNER_TEMP\signpath-out" -Recurse -Filter $env:WIN_INSTALLER_NAME |
+                    Select-Object -First 1
+          if (-not $signed) { throw "SignPath returned no file named $env:WIN_INSTALLER_NAME" }
+          Copy-Item $signed.FullName $env:WIN_INSTALLER -Force
+          Write-Host "Signed installer copied over $env:WIN_INSTALLER"
+          # Without this the updater would hand users a signature for bytes that
+          # no longer exist and every Windows auto-update would fail verification.
+          if ($env:UPDATER_ENABLED -eq "1") {
+            Remove-Item "$($env:WIN_INSTALLER).sig" -ErrorAction SilentlyContinue
+            npm run tauri -- signer sign "$env:WIN_INSTALLER"
+            if (-not (Test-Path "$($env:WIN_INSTALLER).sig")) {
+              throw "updater signature was not regenerated for the signed installer"
+            }
+            Write-Host "Updater signature regenerated over the signed installer."
+          }
+
+      # tauri-action already uploaded the unsigned build when it created the
+      # draft release, so the signed files have to replace it.
+      - name: Attach signed installer to the release
+        if: matrix.platform == 'windows-latest' && env.WIN_SIGNPATH == '1' && startsWith(github.ref, 'refs/tags/installer-v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $files = @($env:WIN_INSTALLER)
+          if (Test-Path "$($env:WIN_INSTALLER).sig") { $files += "$($env:WIN_INSTALLER).sig" }
+          gh release upload $env:GITHUB_REF_NAME $files --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw "failed to attach the signed installer to the release" }
+
+      # On workflow_dispatch there is no release to attach to, and tauri-action
+      # uploaded its workflow artifact before signing — so publish the signed one
+      # separately, which is what makes a dry run inspectable.
+      - name: Upload signed installer as a workflow artifact
+        if: matrix.platform == 'windows-latest' && env.WIN_SIGNPATH == '1' && !startsWith(github.ref, 'refs/tags/installer-v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows-installer
+          path: |
+            ${{ env.WIN_INSTALLER }}
+            ${{ env.WIN_INSTALLER }}.sig
+          if-no-files-found: error
+
       # tauri-action notarizes and staples the .app but not the .dmg that wraps
       # it — a signed-but-un-notarized DMG still trips Gatekeeper on download.
       # Notarize + staple the DMG itself so the downloaded file is clean too.
@@ -196,13 +341,31 @@ jobs:
         run: |
           # signtool lives in the Windows SDK on hosted runners.
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\**\x64\signtool.exe" -Recurse | Select-Object -Last 1
-          $artifacts = @(Get-ChildItem "src-tauri\target\release\bundle\nsis\*.exe" -ErrorAction SilentlyContinue) +
-                       @(Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" -ErrorAction SilentlyContinue)
+          # Under SignPath only the installer we submitted is signed, so verify
+          # exactly that file rather than everything the bundler produced.
+          $artifacts = if ($env:WIN_SIGNPATH -eq "1") {
+            @(Get-Item $env:WIN_INSTALLER)
+          } else {
+            @(Get-ChildItem "src-tauri\target\release\bundle\nsis\*.exe" -ErrorAction SilentlyContinue) +
+            @(Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" -ErrorAction SilentlyContinue)
+          }
           if ($artifacts.Count -eq 0) { throw "no Windows installers found to verify" }
           foreach ($a in $artifacts) {
             Write-Host "Verifying $($a.FullName)"
-            & $signtool.FullName verify /pa /v $a.FullName
-            if ($LASTEXITCODE -ne 0) { throw "signature verification failed for $($a.Name)" }
+            if ($env:WIN_SIGN_TRUSTED -eq "1") {
+              & $signtool.FullName verify /pa /v $a.FullName
+              if ($LASTEXITCODE -ne 0) { throw "signature verification failed for $($a.Name)" }
+            } else {
+              # A self-signed test certificate cannot chain to a trusted root, so
+              # `signtool verify /pa` is guaranteed to fail and would prove nothing.
+              # What is worth asserting is that a signature was applied at all.
+              $sig = Get-AuthenticodeSignature $a.FullName
+              if ($sig.Status -eq "NotSigned" -or -not $sig.SignerCertificate) {
+                throw "no signature found on $($a.Name)"
+              }
+              Write-Host "Signed by: $($sig.SignerCertificate.Subject)"
+              Write-Host "::notice::$($a.Name) is signed with a TEST certificate ($($sig.Status)). Windows will still warn on first run - this build is for pipeline validation, not distribution."
+            }
           }
 
   # The release stays a draft until BOTH platforms built and verified, so a
@@ -212,6 +375,65 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # latest.json is what drives in-app updates, and tauri-action wrote it
+      # during the build — before SignPath signed the Windows installer. Two
+      # things in it then describe a file that no longer exists:
+      #
+      #   * signature — computed over the unsigned bytes.
+      #   * url — an asset-ID URL (…/releases/assets/504326110). Replacing an
+      #     asset means deleting and re-uploading it, which mints a NEW id, so
+      #     the recorded URL now points at a deleted asset and every Windows
+      #     update would 404.
+      #
+      # Both are re-derived from the release's live state, which makes this
+      # idempotent and correct no matter how the installer got there. Doing it
+      # here rather than in the build job is deliberate: both platforms have
+      # finished writing to the release by now, so it cannot race the macOS
+      # job's own latest.json upload. No-op on unsigned builds and on the .pfx
+      # route, where nothing was replaced after the manifest was written.
+      - name: Sync Windows installer into latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets)
+          names=$(printf '%s' "$assets" | jq -r '.assets[].name')
+          if ! printf '%s\n' "$names" | grep -qx 'latest.json'; then
+            echo "::notice::no latest.json in this release - in-app updates are not enabled, nothing to sync"
+            exit 0
+          fi
+          exe=$(printf '%s\n' "$names" | grep -E '\.exe$' | head -1 || true)
+          if [ -z "$exe" ] || ! printf '%s\n' "$names" | grep -qxF "$exe.sig"; then
+            echo "::notice::no Windows installer and signature pair in this release, nothing to sync"
+            exit 0
+          fi
+          url=$(printf '%s' "$assets" | jq -r --arg n "$exe" '.assets[] | select(.name == $n) | .apiUrl')
+          work=$(mktemp -d)
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json --pattern "$exe.sig" --dir "$work" --clobber
+          changed=$(node -e '
+            const fs = require("fs");
+            const [dir, sigName, url] = process.argv.slice(1);
+            const file = `${dir}/latest.json`;
+            const signature = fs.readFileSync(`${dir}/${sigName}`, "utf8").trim();
+            const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+            let changed = false;
+            for (const [target, entry] of Object.entries(manifest.platforms ?? {})) {
+              if (!target.startsWith("windows-")) continue;
+              if (entry.signature !== signature) { entry.signature = signature; changed = true; }
+              if (entry.url !== url) { entry.url = url; changed = true; }
+            }
+            if (changed) fs.writeFileSync(file, JSON.stringify(manifest, null, 2));
+            process.stdout.write(changed ? "yes" : "no");
+          ' "$work" "$exe.sig" "$url")
+          if [ "$changed" = "yes" ]; then
+            gh release upload "$GITHUB_REF_NAME" "$work/latest.json" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            echo "latest.json now points at the signed installer."
+          else
+            echo "latest.json already matches the published installer."
+          fi
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
