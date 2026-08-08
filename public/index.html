@@ -278,6 +278,7 @@
         <div class="digest-section" id="digest-section" style="display: none"></div>
         <div class="digest-section" id="vectorize-section" style="display: none"></div>
         <div class="digest-section" id="classify-section" style="display: none"></div>
+        <div class="digest-section" id="restore-section" style="display: none"></div>
         <div class="theme-row">
           <span class="theme-row-label">Appearance</span>
           <div class="theme-toggle" id="theme-toggle">
@@ -296,8 +297,9 @@
           <i class="ti ti-clock"></i> View all memories
         </button>
         <button class="menu-item" onclick="openIntegrations()"><i class="ti ti-plug"></i> Integrations</button>
-        <button class="menu-item" onclick="exportMemories('json')"><i class="ti ti-download"></i> Export as JSON</button>
+        <button class="menu-item" onclick="exportMemories('json')"><i class="ti ti-download"></i> Back up as JSON</button>
         <button class="menu-item" onclick="exportMemories('markdown')"><i class="ti ti-markdown"></i> Export as Markdown</button>
+        <button class="menu-item" id="restore-btn" onclick="restoreFromBackup()"><i class="ti ti-upload"></i> Restore from backup</button>
         <div class="about-credits" id="about-credits" aria-label="About Second Brain"></div>
         <button class="menu-item danger" onclick="logout()"><i class="ti ti-logout"></i> Disconnect</button>
       </div>
