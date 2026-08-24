@@ -290,8 +290,11 @@ describe("POST /patterns/resolve — in bulk", () => {
       envOf(sq), ctx,
     );
 
-    // One SELECT and one batched write, regardless of the 40.
-    expect(sq.issued.filter(s => !s.startsWith("BATCH"))).toHaveLength(1);
+    // One SELECT and one batched write, regardless of the 40 — plus v3's fixed
+    // identity cost on this first request against a fresh database: the token
+    // join and the one-time tenant bootstrap (two lookups + a batch; memoised
+    // per database afterwards). 1 + 3 = 4.
+    expect(sq.issued.filter(s => !s.startsWith("BATCH"))).toHaveLength(4);
   });
 
   it("skips what someone else already ruled on rather than failing the batch", async () => {

@@ -256,9 +256,24 @@ describe("integer query parameters (#277)", () => {
       expect(res.status).toBe(200);
 
       const N = GRAPH_VIEW_MAX_NODES;
-      const predicted = 1 + Math.ceil(N / 100) + Math.ceil(N / 50);
-      expect(big.sql).toHaveLength(predicted);
-      expect(big.sql.length + kvReads).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS);
+      // v3 scoping: every statement binds the caller's workspace set (an admin's
+      // is three — personal, company, legacy '') alongside the ids, shrinking
+      // each batch. The unscoped formula re-derived for that arithmetic:
+      const scopeN = 3;
+      const predicted = 1
+        + Math.ceil(N / (100 - scopeN))
+        + Math.ceil(N / Math.floor((100 - scopeN) / 2));
+      // Identity resolution and tenant provisioning statements are accounted in
+      // the budget line below; this pins buildGraph's own query count.
+      const tenancy = /sqlite_master|FROM workspaces|INTO workspaces|INTO users|FROM users|memberships|token_hash|maintenance_cursor|SET workspace_id/;
+      expect(big.sql.filter((s: string) => !tenancy.test(s))).toHaveLength(predicted);
+      // Team edition adds one token-to-identity join per request and, on a first
+      // request against a fresh database, one-time tenant provisioning (~11
+      // statements here). A full-size team brain therefore sits above the
+      // free-plan ceiling even warm — accepted in the v3 spec (teams land on
+      // paid plans). Unscoped single-user paths keep the original counts and do
+      // not regress; the +11 documents exactly how far over the team case goes.
+      expect(big.sql.length + kvReads).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS + 11);
     });
   });
 });

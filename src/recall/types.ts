@@ -1,4 +1,5 @@
 import type { EdgeProvenance, EdgeType } from "../graph/types";
+import type { Identity } from "../lib/identity";
 import type { EmbeddingQueryMode } from "./query-profile";
 import type { RootView } from "./root-selector";
 
@@ -70,6 +71,12 @@ export interface RecallOperationDiagnostics {
 export interface RecallInternalOptions {
   embeddingQueryMode?: EmbeddingQueryMode;
   diagnostics?: RecallDiagnostics;
+  /**
+   * When present, every entries read in the pipeline is scoped to the caller's
+   * readable workspaces (personal ∪ company). Absent — internal callers and the
+   * pre-tenancy tests — the SQL is exactly what it was before v3.
+   */
+  identity?: Identity;
 }
 
 export interface KeywordRow {

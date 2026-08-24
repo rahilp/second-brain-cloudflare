@@ -25,6 +25,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import worker from "../../src/index";
 import { buildMcpServer } from "../../src/mcp/server";
+import { requireIdentity } from "../../src/lib/identity";
 import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 import { makeAIMock, makeMemoryKV, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
@@ -152,8 +153,12 @@ describe("POST /update and the MCP update tool write identical state (#289)", ()
    * the row the first one did rather than from what the first one left behind.
    */
   async function setUp(world: World) {
-    await d1.prepare(`DELETE FROM entries`).run();
     const { env, store, OAUTH_KV } = makeEnv(world);
+    // Provision tenancy BEFORE seeding so the seed lands in the owner's personal
+    // workspace exactly like any post-bootstrap write — otherwise the first caller
+    // in the file would get its row backfilled and later ones would not.
+    const owner = await ownerOf(env);
+    await d1.prepare(`DELETE FROM entries`).run();
     if (world.connectedIntegration) {
       await OAUTH_KV.put(
         `integrations:${world.connectedIntegration}`,
@@ -162,8 +167,8 @@ describe("POST /update and the MCP update tool write identical state (#289)", ()
     }
     const s = world.seed;
     await d1.prepare(
-      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, recall_count, importance_score)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 3)`,
+      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, recall_count, importance_score, workspace_id, actor_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 3, ?, ?)`,
     ).bind(
       ENTRY_ID,
       s.content,
@@ -172,6 +177,8 @@ describe("POST /update and the MCP update tool write identical state (#289)", ()
       s.createdAt ?? SEEDED_AT,
       s.updatedAt ?? null,
       JSON.stringify(s.vectorIds ?? [ENTRY_ID]),
+      owner.personalWorkspaceId,
+      owner.userId,
     ).run();
     return { env, store };
   }
@@ -194,10 +201,18 @@ describe("POST /update and the MCP update tool write identical state (#289)", ()
     return { snapshot: await capture(store), status: res.status, reply: body.message ?? body.error ?? "" };
   }
 
+  /** The owner identity, resolved exactly as the API handler does before building the server. */
+  async function ownerOf(env: Env) {
+    const request = req("POST", "/mcp");
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) throw new Error("owner failed to resolve");
+    return auth;
+  }
+
   /** The MCP `update` tool, through a real MCP client and transport. */
   async function viaMcp(world: World, content: string) {
     const { env, store } = await setUp(world);
-    const server = buildMcpServer(env, ctx);
+    const server = buildMcpServer(env, ctx, await ownerOf(env));
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "parity-client", version: "1.0.0" });
     await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
@@ -407,7 +422,7 @@ describe("POST /update and the MCP update tool write identical state (#289)", ()
     const httpSnapshot = await capture(httpStore);
 
     const { env: mcpEnv, store: mcpStore } = await setUp(world);
-    const server = buildMcpServer(mcpEnv, ctx);
+    const server = buildMcpServer(mcpEnv, ctx, await ownerOf(mcpEnv));
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "parity-client", version: "1.0.0" });
     await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);

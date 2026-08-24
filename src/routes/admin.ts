@@ -2,7 +2,8 @@ import type { Env } from "../env";
 import { resolveConfig } from "../config";
 import { SB_VERSION } from "../env";
 import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "../compression/eligibility";
-import { intParam, json, requireAuth } from "../lib/http";
+import { intParam, json } from "../lib/http";
+import { requireIdentity, type Identity } from "../lib/identity";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
 import { storeEntry } from "../capture/store";
@@ -24,6 +25,19 @@ import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candida
  */
 const MAX_PATTERN_BULK = 100;
 
+/**
+ * The admin surface's twin of requireIdentity: everything here is deployment-wide
+ * (cross-workspace stats, bulk backfills, insight review), so a signed-in member
+ * gets 403 rather than the data. The spec carves these queries out of the
+ * scope-helper rule exactly because this gate is what stands in front of them.
+ */
+async function requireAdmin(request: Request, env: Env): Promise<Identity | Response> {
+  const auth = await requireIdentity(request, env);
+  if (auth instanceof Response) return auth;
+  if (auth.role !== "admin") return json({ ok: false, error: "Forbidden" }, 403);
+  return auth;
+}
+
 export async function handleAdminRoutes(
   request: Request,
   url: URL,
@@ -33,8 +47,8 @@ export async function handleAdminRoutes(
   const cfg = await resolveConfig(env);
   // GET /stats
   if (url.pathname === "/stats" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
     const graceCutoff = Date.now() - graceMs(env);
     const [summary, tagRows, candidateRows] = await Promise.all([
       env.DB.prepare(
@@ -96,10 +110,13 @@ export async function handleAdminRoutes(
   }
 
   // GET /health — index/runtime health, used by the dashboard banner, the
-  // README verify step, and external uptime checks.
+  // README verify step, and external uptime checks. Authenticated like the
+  // rest of the API but deliberately NOT admin-gated: it reports index state,
+  // not cross-workspace data, and every signed-in member's dashboard banner
+  // reads it.
   if (url.pathname === "/health" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
     const vectorize = await checkVectorizeHealth(env);
     return json({ ok: vectorize.ok, version: SB_VERSION, vectorize });
   }
@@ -113,8 +130,8 @@ export async function handleAdminRoutes(
   // them the filter throws away every row and the panel renders empty while
   // real proposals wait behind them. Filtering belongs in the query.
   if (url.pathname === "/patterns" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
 
     const limit = intParam(url, "limit", { fallback: 50, min: 1, max: 100 });
     if (limit instanceof Response) return limit;
@@ -186,8 +203,8 @@ export async function handleAdminRoutes(
   // before /patterns existed, and it renders an empty list rather than a wrong
   // one. Filtering belongs in the query.
   if (url.pathname === "/stale" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
 
     const limit = intParam(url, "limit", { fallback: 50, min: 1, max: 100 });
     if (limit instanceof Response) return limit;
@@ -234,8 +251,8 @@ export async function handleAdminRoutes(
   // the actual complaint this answers, and doing it as N single requests would
   // be N round trips against a Worker that gets ~50 D1 queries per invocation.
   if (url.pathname === "/patterns/resolve" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
 
     let body: { id?: string; ids?: unknown; action?: string };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
@@ -344,8 +361,8 @@ export async function handleAdminRoutes(
 
   // POST /vectorize-pending
   if (url.pathname === "/vectorize-pending" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
 
     const graceCutoff = Date.now() - graceMs(env);
 
@@ -401,8 +418,8 @@ export async function handleAdminRoutes(
   // batch per call, idempotent (skips entries that already carry either tag), and
   // resumable (safe to stop/restart). No schema migration — only writes tags.
   if (url.pathname === "/classify-pending" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
 
     const UNCLASSIFIED_WHERE = `tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%'`;
 
@@ -456,8 +473,8 @@ export async function handleAdminRoutes(
   // brain, not a one-shot backfill. Call it until `seeds_examined` comes back
   // small — that means the cursor has caught up to the present.
   if (url.pathname === "/insights/accrue" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
 
     const pendingCount = () =>
       env.DB.prepare(`SELECT COUNT(*) AS n FROM insight_candidates WHERE status = 'pending'`)
@@ -493,8 +510,8 @@ export async function handleAdminRoutes(
   // is reported with null shape/text rather than dropped, so a reader can see
   // a high-scoring pair was considered and rejected, not just what survived.
   if (url.pathname === "/insights/dry-run" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
 
     const limit = intParam(url, "limit", { fallback: 10, min: 1, max: 25 });
     if (limit instanceof Response) return limit;

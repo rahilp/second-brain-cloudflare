@@ -8,7 +8,9 @@ import {
 } from "../integrations";
 import type { IntegrationRecord } from "../integrations";
 import type { Env } from "../env";
-import { json, requireAuth } from "../lib/http";
+import { json } from "../lib/http";
+import { requireIdentity } from "../lib/identity";
+import { scopeWrite } from "../lib/scope";
 import { forgetEntry } from "../capture/lifecycle";
 import { makeMirrorStore } from "../integrations/mirror";
 
@@ -20,8 +22,8 @@ export async function handleIntegrationsRoutes(
 ): Promise<Response | null> {
   // GET /integrations — provider list + connection status (never the token)
   if (url.pathname === "/integrations" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
     const integrations = [];
     for (const provider of Object.values(INTEGRATION_PROVIDERS)) {
       integrations.push(integrationStatus(provider, await loadIntegration(env, provider.id)));
@@ -32,8 +34,9 @@ export async function handleIntegrationsRoutes(
   // POST /integrations/:provider/(connect|sync|disconnect)
   const integrationRoute = url.pathname.match(/^\/integrations\/([a-z0-9-]+)\/(connect|sync|disconnect)$/);
   if (integrationRoute && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    const writeCtx = { workspaceId: scopeWrite(auth), actorId: auth.userId };
     const provider = getProvider(integrationRoute[1]);
     if (!provider) return json({ ok: false, error: `Unknown integration: ${integrationRoute[1]}` }, 404);
     const action = integrationRoute[2];
@@ -81,7 +84,7 @@ export async function handleIntegrationsRoutes(
       if (!(await loadIntegration(env, provider.id))) {
         return json({ ok: false, error: `${provider.name} is not connected` }, 404);
       }
-      const result = await provider.sync(env, makeMirrorStore(env));
+      const result = await provider.sync(env, makeMirrorStore(env, writeCtx));
       return json(result, result.ok ? 200 : 502);
     }
 

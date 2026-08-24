@@ -71,7 +71,13 @@ function withD1Limits(
     first: async () => { check(sql, params); return stmt.first(); },
     run: async () => { check(sql, params); return stmt.run(); },
   });
-  return { prepare: (sql: string) => wrap(sql, inner.prepare(sql), []) };
+  return {
+    prepare: (sql: string) => wrap(sql, inner.prepare(sql), []),
+    // Identity resolution runs the schema init and tenant bootstrap on the
+    // request path; pass both through to the facade underneath.
+    exec: (sql: string) => inner.exec(sql),
+    batch: (stmts: never[]) => inner.batch(stmts),
+  };
 }
 
 const exprDepth = (sql: string) => sql.split(/\s+OR\s+/i).length + 1;
@@ -182,8 +188,10 @@ describe("recall stays inside D1's statement limits", () => {
       expect(long.status).toBe(200);
       // Distillation still puts its three rarest terms first, while bounded
       // retrieval anchors use the remainder of the existing 16-token budget.
-      // The final parameter remains the row limit.
-      expect(keywordStatements(executed)[0].params.length).toBe(17);
+      // The final parameter remains the row limit; between them sit the three
+      // workspace-scope bindings (personal, company, legacy '') that v3 adds
+      // whenever an Identity is in play — 16 + 3 + 1 = 20.
+      expect(keywordStatements(executed)[0].params.length).toBe(20);
 
       executed.length = 0;
       const short = await worker.fetch(req("GET", "/recall?query=topic0"), env, ctx);

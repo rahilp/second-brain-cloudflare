@@ -57,16 +57,20 @@ export const GRAPH_VIEW_MAX_NODES = 1500;
  */
 const MACHINE_AUTHORED_TAGS = new Set(["auto-pattern", "auto-insight", "synthesized"]);
 export const GRAPH_HOP_DECAY = 0.6;
-const EDGE_QUERY_BATCH = Math.floor(D1_MAX_BOUND_PARAMS / 2);
+// Edge-fetch batches bind each id twice (source and target), so a batch's real
+// cost is 2 ids + any scope bindings against D1_MAX_BOUND_PARAMS — computed at
+// each loop rather than as a fixed constant, because scoping changes the budget.
 
 // Scoped to the caller's readable workspaces when an Identity is supplied, so the
 // deprecation verdict is not read off rows the caller cannot see.
 async function deprecatedIdsAmong(ids: string[], env: Env, identity?: Identity): Promise<Set<string>> {
   const scope = identity ? scopeWhere(identity) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
+  // Scope bindings share the statement's bound-parameter budget with the ids.
+  const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
   const deprecated = new Set<string>();
-  for (let i = 0; i < ids.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
+  for (let i = 0; i < ids.length; i += take) {
+    const batch = ids.slice(i, i + take);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
       `SELECT id, tags FROM entries WHERE id IN (${ph})${scopeSql}`
@@ -103,8 +107,11 @@ export async function expandGraph(
 
   for (let hop = 1; hop <= hops && frontier.length && out.length < maxNodes; hop++) {
     const edgeRows: { source_id: string; target_id: string; type: string; weight: number; provenance: EdgeProvenance; created_at: number }[] = [];
-    for (let i = 0; i < frontier.length; i += EDGE_QUERY_BATCH) {
-      const batch = frontier.slice(i, i + EDGE_QUERY_BATCH);
+    // The double-sided IN binds each id twice, so scope bindings eat into the
+    // same bound-parameter budget — shrink the batch rather than overflow it.
+    const edgeTake = Math.max(1, Math.floor((D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0)) / 2));
+    for (let i = 0; i < frontier.length; i += edgeTake) {
+      const batch = frontier.slice(i, i + edgeTake);
       const ph = batch.map(() => "?").join(", ");
       // The OR group is parenthesised only in the scoped form: appending a bare
       // `AND workspace_id IN (...)` to the unparenthesised OR would bind to the
@@ -156,8 +163,10 @@ async function hydrateGraphEntries(ids: string[], env: Env, identity?: Identity)
   const map = new Map<string, Record<string, any>>();
   const scope = identity ? scopeWhere(identity) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
-  for (let i = 0; i < ids.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
+  // Scope bindings share the statement's bound-parameter budget with the ids.
+  const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  for (let i = 0; i < ids.length; i += take) {
+    const batch = ids.slice(i, i + take);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
       `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${ph})${scopeSql}`
@@ -235,8 +244,10 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
 
   const nodeRows = new Map<string, Record<string, any>>();
   const nodeScopeSql = scope ? ` AND ${scope.clause}` : "";
-  for (let i = 0; i < nodeIds.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = nodeIds.slice(i, i + D1_MAX_BOUND_PARAMS);
+  // Scope bindings share the statement's bound-parameter budget with the ids.
+  const nodeTake = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  for (let i = 0; i < nodeIds.length; i += nodeTake) {
+    const batch = nodeIds.slice(i, i + nodeTake);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
       `SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN (${ph})${nodeScopeSql}`
@@ -266,8 +277,10 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
   const presentIds = [...nodeIdSet];
   const edgeSeen = new Set<string>();
   const edges: GraphView["edges"] = [];
-  for (let i = 0; i < presentIds.length; i += EDGE_QUERY_BATCH) {
-    const batch = presentIds.slice(i, i + EDGE_QUERY_BATCH);
+  // Same bound-parameter arithmetic as expandGraph: ids bound twice plus scope.
+  const edgeTake = Math.max(1, Math.floor((D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0)) / 2));
+  for (let i = 0; i < presentIds.length; i += edgeTake) {
+    const batch = presentIds.slice(i, i + edgeTake);
     const ph = batch.map(() => "?").join(", ");
     const sql = scope
       ? `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE (source_id IN (${ph}) OR target_id IN (${ph})) AND ${scope.clause} ORDER BY weight DESC`

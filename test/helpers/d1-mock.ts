@@ -52,17 +52,91 @@ const SCHEMA_PROBE_RESULTS = [
 export class D1Mock {
   entries: any[] = [];
   edges: any[] = [];
+  // Tenancy rows, populated by the real ensureTenantBootstrap when a route's
+  // requireIdentity runs against this double. The statements it issues are
+  // modelled just faithfully enough for the owner identity to resolve; member
+  // provisioning is covered against real SQLite in test/integration/.
+  users: any[] = [];
+  workspaces: any[] = [];
+  memberships: any[] = [];
 
   prepare(sql: string) {
-    const s = sql.replace(/\s+/g, " ").trim();
+    let s = sql.replace(/\s+/g, " ").trim();
+
+    // Team-edition workspace scoping. Production appends `AND workspace_id IN (?, ?)`
+    // (or a bare `WHERE` form) whenever an Identity is in play. Every integration test
+    // in this file runs as the owner whose bootstrap backfill has already moved all
+    // seeded rows into the readable set, so filtering would change nothing — the honest
+    // move is to strip the clause AND its bound values so the legacy shape handlers
+    // keep matching. Workspace isolation itself is NOT modelled by this double; it is
+    // covered against real SQLite in test/integration/team-recall-scoping.test.ts and
+    // test/unit/team-scoping.test.ts.
+    const scopeDrop = new Set<number>();
+    if (/workspace_id IN \(/.test(s)) {
+      const clauseRe = /(?:AND |WHERE )workspace_id IN \(((?:\?(?:, )?)+)\)/g;
+      for (const m of s.matchAll(clauseRe)) {
+        const offset = (s.slice(0, m.index!).match(/\?/g) ?? []).length;
+        const n = (m[1].match(/\?/g) ?? []).length;
+        for (let i = 0; i < n; i++) scopeDrop.add(offset + i);
+      }
+      s = s.replace(clauseRe, " ")
+        .replace(/\s{2,}/g, " ").trim()
+        // A clause that was the only condition leaves a dangling connector.
+        .replace(/^WHERE\s+(?=ORDER\b|LIMIT\b|GROUP\b|$)/i, "")
+        .replace(/\bAND\s+\)/g, ")")
+        .replace(/WHERE\s*\)/gi, ")");
+    }
+
     // Production pairs every tag LIKE clause with `ESCAPE '\\'` (see tagLikePattern). The
     // escape clause never changes which query a statement IS, so branches that identify a
     // query by its exact text compare against this form rather than each growing a suffix.
     const sBare = s.replace(/ ESCAPE '\\'/g, "");
     const db = this;
 
-    const makeStmt = (args: any[]) => ({
+    const makeStmt = (allArgs: any[]) => {
+      // Drop the bindings that belonged to the stripped scope clauses, positionally.
+      const args = scopeDrop.size ? allArgs.filter((_, i) => !scopeDrop.has(i)) : allArgs;
+      return {
       async run() {
+        if (s.startsWith("INSERT INTO workspaces")) {
+          db.workspaces.push({ id: args[0], kind: args[1], name: args[2], created_at: args[3] });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO users")) {
+          const [id, name, email, role, token_hash, suspended, created_at] = args;
+          db.users.push({ id, name, email, role, token_hash, suspended, created_at });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO memberships")) {
+          // INSERT ... SELECT ?, ?, ? WHERE NOT EXISTS (... user_id = ? AND workspace_id = ?):
+          // the id pair is bound twice, first to write, then to guard.
+          const [userId, wsId] = args;
+          if (!db.memberships.some((m: any) => m.user_id === userId && m.workspace_id === wsId)) {
+            db.memberships.push({ user_id: userId, workspace_id: wsId, created_at: args[2] });
+            return { meta: { changes: 1 } };
+          }
+          return { meta: { changes: 0 } };
+        }
+        if (s.startsWith("INSERT INTO maintenance_cursor")) {
+          return { meta: {} };
+        }
+        // ensureTenantBootstrap's one-time legacy backfill. Modelled for real so
+        // rows pushed by tests without a workspace_id still land in the owner's
+        // personal workspace before any scoped read sees them.
+        if (s.startsWith("UPDATE entries SET workspace_id = ? WHERE workspace_id = ''")) {
+          let n = 0;
+          for (const e of db.entries) {
+            if (!e.workspace_id) { e.workspace_id = args[0]; n++; }
+          }
+          return { meta: { changes: n } };
+        }
+        if (s.startsWith("UPDATE edges SET workspace_id = ? WHERE workspace_id = ''")) {
+          let n = 0;
+          for (const e of db.edges) {
+            if (!e.workspace_id) { e.workspace_id = args[0]; n++; }
+          }
+          return { meta: { changes: n } };
+        }
         if (s.startsWith("INSERT INTO entries")) {
           const colMatch = s.match(/INSERT INTO entries \(([^)]+)\)/i);
           if (!colMatch) throw new Error("INSERT INTO entries missing column list");
@@ -275,6 +349,52 @@ export class D1Mock {
         return { meta: {} };
       },
       async first() {
+        // ── ensureTenantBootstrap / resolveIdentity (tenancy) ──
+        if (s.startsWith("SELECT id FROM workspaces WHERE kind")) {
+          const kind = s.match(/kind = '(\w+)'/)?.[1];
+          const row = db.workspaces
+            .filter((w: any) => w.kind === kind)
+            .sort((a: any, b: any) => a.created_at - b.created_at)[0];
+          return row ? { id: row.id } : null;
+        }
+        if (s.includes("u.role = 'admin'")) {
+          // findOwner: oldest admin plus their personal workspace.
+          const admin = db.users
+            .filter((u: any) => u.role === "admin")
+            .sort((a: any, b: any) => a.created_at - b.created_at)[0];
+          if (!admin) return null;
+          const pm = db.memberships.find((m: any) =>
+            m.user_id === admin.id &&
+            db.workspaces.some((w: any) => w.id === m.workspace_id && w.kind === "personal"));
+          return pm ? { userId: admin.id, personalWorkspaceId: pm.workspace_id } : null;
+        }
+        if (s.startsWith("SELECT 1 AS ok FROM memberships")) {
+          // ownerHasPersonalWorkspace.
+          const ok = db.memberships.some((m: any) =>
+            m.user_id === args[0] &&
+            db.workspaces.some((w: any) => w.id === m.workspace_id && w.kind === "personal"));
+          return ok ? { ok: 1 } : null;
+        }
+        if (s.includes("u.token_hash = ?")) {
+          // resolveIdentity's IDENTITY_SQL: token hash to user + both workspaces.
+          const user = db.users.find((u: any) => u.token_hash === args[0] && !u.suspended);
+          if (!user) return null;
+          const wsOf = (kind: string) => {
+            const m = db.memberships.find((mm: any) =>
+              mm.user_id === user.id &&
+              db.workspaces.some((w: any) => w.id === mm.workspace_id && w.kind === kind));
+            return m?.workspace_id ?? null;
+          };
+          const personalWorkspaceId = wsOf("personal");
+          const companyWorkspaceId = wsOf("company");
+          if (!personalWorkspaceId || !companyWorkspaceId) return null;
+          return {
+            userId: user.id,
+            role: user.role,
+            personalWorkspaceId,
+            companyWorkspaceId,
+          };
+        }
         // GET /entry. Models the COALESCE alias: a row written before the
         // updated_at column exists carries no value, and the route must see
         // created_at rather than undefined.
@@ -688,10 +808,15 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results: rows };
         }
-        if (s.startsWith("SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC")) {
-          // GET /export: every entry, newest first, no LIMIT. `last_updated` models the
-          // COALESCE, so a row that never had updated_at written exports its created_at.
+        if (s.startsWith("SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries") && s.includes("ORDER BY created_at DESC") && !s.includes("WHERE id = ?")) {
+          // GET /export: the caller's readable set, newest first, no LIMIT. The
+          // route appends `WHERE workspace_id IN (?, ?)` (bound to args), so
+          // rows outside those workspaces are withheld here too. `last_updated`
+          // models the COALESCE, so a row that never had updated_at written
+          // exports its created_at.
+          const workspaces: string[] = args.map((a: any) => String(a));
           const results = [...db.entries]
+            .filter((e: any) => !workspaces.length || workspaces.includes(e.workspace_id ?? ""))
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .map((e: any) => ({
               id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at,
@@ -701,12 +826,18 @@ export class D1Mock {
             }));
           return { results };
         }
-        if (s.startsWith("SELECT source_id, target_id, type, weight, provenance, created_at FROM edges")) {
-          // GET /export: the whole edges table.
-          const results = db.edges.map((e: any) => ({
-            source_id: e.source_id, target_id: e.target_id, type: e.type,
-            weight: e.weight, provenance: e.provenance, created_at: e.created_at,
-          }));
+        if (
+          s.startsWith("SELECT source_id, target_id, type, weight, provenance, created_at FROM edges") &&
+          !s.includes("WHERE source_id IN")
+        ) {
+          // GET /export: the readable set's edges. The scope clause (if any) has been
+          // stripped above along with its bindings; owner-scoped tests see the whole
+          // edge set either way, and isolation is covered against real SQLite.
+          const results = db.edges
+            .map((e: any) => ({
+              source_id: e.source_id, target_id: e.target_id, type: e.type,
+              weight: e.weight, provenance: e.provenance, created_at: e.created_at,
+            }));
           return { results };
         }
         if (s.includes("ORDER BY created_at DESC LIMIT")) {
@@ -731,8 +862,9 @@ export class D1Mock {
           return { results: rows.slice(0, limit) };
         }
         return { results: [] };
-      },
-    });
+      }
+      };
+    };
 
     return {
       bind(...args: any[]) { return makeStmt(args); },
@@ -742,5 +874,11 @@ export class D1Mock {
 
   async exec(_sql: string) { }
   async batch(stmts: any[]) { return Promise.all(stmts.map((s: any) => s.run())); }
-  reset() { this.entries = []; this.edges = []; }
+  reset() {
+    this.entries = [];
+    this.edges = [];
+    this.users = [];
+    this.workspaces = [];
+    this.memberships = [];
+  }
 }

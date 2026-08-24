@@ -9,6 +9,8 @@ import { applyStatus, forgetEntry } from "../capture/lifecycle";
 import { createEdge, deleteEdge, edgeLabel } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
+import type { Identity } from "../lib/identity";
+import { scopeWhere, scopeWrite, type WriteContext } from "../lib/scope";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
@@ -122,8 +124,15 @@ const LIST_RECENT_DESCRIPTION =
   + "memories that match a meaning, use recall. Long entries are shortened: a result ending in a [truncated …] "
   + "marker is PARTIAL, so call get(id) for its full text.";
 
-export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
+export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Identity): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
+
+  // Absent an Identity (direct construction in tests, or a caller that has not
+  // been taught tenancy yet) every write below lands in the legacy owner space
+  // and every read stays corpus-wide — byte-identical to pre-v3 behaviour.
+  const writeCtx: WriteContext = identity
+    ? { workspaceId: scopeWrite(identity), actorId: identity.userId }
+    : { workspaceId: "", actorId: "" };
 
   // ── remember ────────────────────────────────────────────────────────────
   server.registerTool(
@@ -148,7 +157,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       // and the injected one won.
       const baseTags = tags ?? [];
       const withVerdict = volatility ? withVolatility(baseTags, volatility as Volatility) : baseTags;
-      const result = await captureEntry(content, withVerdict, source ?? "claude", env, ctx);
+      const result = await captureEntry(content, withVerdict, source ?? "claude", env, ctx, undefined, writeCtx);
       if (result.status === "blocked") {
         return { content: [{ type: "text", text: `Duplicate detected (${(result.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${result.matchId}` }] };
       }
@@ -210,7 +219,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
 
       let indexed: boolean;
       try {
-        indexed = await appendToEntry(env, id, existingContent, a, tags, source, await resolveConfig(env), volatility as Volatility | undefined);
+        indexed = await appendToEntry(env, id, existingContent, a, tags, source, await resolveConfig(env), volatility as Volatility | undefined, writeCtx);
       } catch (e) {
         console.error("Append failed:", e);
         return {
@@ -258,7 +267,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
         return { content: [{ type: "text", text: mirrorEditError(row.source as string) }] };
       }
 
-      const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), volatility as Volatility | undefined);
+      const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), volatility as Volatility | undefined, undefined, writeCtx);
 
       // Only reachable if the entry was deleted between the guard read and the write.
       if (result.status === "not_found") {
@@ -322,7 +331,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
     },
     async ({ query, topK, tag, after, before, kind, hops }) => {
       const cfg = await resolveConfig(env);
-      const { matches, insight, semanticUnavailable, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx, cfg);
+      const { matches, insight, semanticUnavailable, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx, cfg, { identity });
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
@@ -349,7 +358,16 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ n, tag, after, before }) => {
-      const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+      // Same inline scoping as GET /list (src/routes/recall.ts): the filter
+      // builder has no hook of its own, and its SQL always ends in ORDER BY.
+      let { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+      if (identity) {
+        const scope = scopeWhere(identity);
+        sql = sql.includes("WHERE")
+          ? sql.replace(" ORDER BY", ` AND ${scope.clause} ORDER BY`)
+          : sql.replace(" ORDER BY", ` WHERE ${scope.clause} ORDER BY`);
+        bindings = [...bindings.slice(0, -1), ...scope.bindings, ...bindings.slice(-1)];
+      }
       const { results } = await env.DB.prepare(sql).bind(...bindings).all();
 
       if (!results.length) {
@@ -397,9 +415,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ id }) => {
+      const scope = identity ? scopeWhere(identity) : null;
       const row = await env.DB.prepare(
-        `SELECT id, content, tags, source, created_at FROM entries WHERE id = ?`
-      ).bind(id).first() as Record<string, any> | null;
+        `SELECT id, content, tags, source, created_at FROM entries WHERE id = ?${scope ? ` AND ${scope.clause}` : ""}`
+      ).bind(...(scope ? [id, ...scope.bindings] : [id])).first() as Record<string, any> | null;
       if (!row) {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       }
@@ -477,7 +496,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ id, type }) => {
-      const connections = await getConnections(id, type, env, await resolveConfig(env));
+      const connections = await getConnections(id, type, env, await resolveConfig(env), identity);
       if (!connections.length) {
         return { content: [{ type: "text", text: `No connections found for ${id}.` }] };
       }

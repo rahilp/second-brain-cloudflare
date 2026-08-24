@@ -9,7 +9,7 @@ const ctx = { waitUntil: (_: Promise<unknown>) => {} } as ExecutionContext;
 function mcpPost(body: unknown) {
   return new Request("http://localhost/mcp", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
     body: JSON.stringify(body),
   });
 }

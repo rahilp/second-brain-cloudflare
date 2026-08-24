@@ -1,7 +1,9 @@
 import type { Env } from "../env";
 import { resolveConfig } from "../config";
 import { VECTORIZE_FIX_HINT } from "../constants";
-import { json, requireAuth } from "../lib/http";
+import { json } from "../lib/http";
+import { requireIdentity, type Identity } from "../lib/identity";
+import { scopeWhere, scopeWrite, type WriteContext } from "../lib/scope";
 import { captureEntry } from "../capture/entry";
 import { appendToEntry, updateEntryContent } from "../capture/store";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
@@ -13,6 +15,11 @@ import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/vo
  * that sent "Volatile" or "temporary" a 200 and no verdict, with nothing to tell them
  * the field did not take.
  */
+/** Where this caller's writes land and who gets stamped on them. */
+function writeContextFor(identity: Identity): WriteContext {
+  return { workspaceId: scopeWrite(identity), actorId: identity.userId };
+}
+
 function readVolatility(raw: unknown): { value?: Volatility; error?: string } {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== "string" || !(VOLATILITY_VALUES as readonly string[]).includes(raw)) {
@@ -29,8 +36,9 @@ export async function handleCaptureRoutes(
 ): Promise<Response | null> {
   // POST /capture
   if (url.pathname === "/capture" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    const identity = auth;
 
     let body: { content?: string; tags?: string[]; source?: string; volatility?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
@@ -43,7 +51,7 @@ export async function handleCaptureRoutes(
       ? withVolatility(body.tags ?? [], captureVol.value)
       : body.tags ?? [];
 
-    const result = await captureEntry(body.content, captureTags, body.source ?? "api", env, ctx);
+    const result = await captureEntry(body.content, captureTags, body.source ?? "api", env, ctx, undefined, writeContextFor(identity));
 
     if (result.status === "blocked") {
       return json({
@@ -83,8 +91,9 @@ export async function handleCaptureRoutes(
 
   // POST /append
   if (url.pathname === "/append" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    const identity = auth;
 
     let body: { id?: string; addition?: string; volatility?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
@@ -97,9 +106,12 @@ export async function handleCaptureRoutes(
     const id = body.id.trim();
     const addition = body.addition.trim();
 
+    // Scoped so a member cannot read — and then append to — an entry outside
+    // their personal + company workspaces.
+    const scope = scopeWhere(identity);
     const row = await env.DB.prepare(
-      `SELECT id, content, tags, source FROM entries WHERE id = ?`
-    ).bind(id).first() as Record<string, any> | null;
+      `SELECT id, content, tags, source FROM entries WHERE id = ? AND ${scope.clause}`
+    ).bind(id, ...scope.bindings).first() as Record<string, any> | null;
 
     if (!row) {
       return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
@@ -115,7 +127,7 @@ export async function handleCaptureRoutes(
 
     let indexed: boolean;
     try {
-      indexed = await appendToEntry(env, id, existingContent, addition, tags, source, await resolveConfig(env), appendVol.value);
+      indexed = await appendToEntry(env, id, existingContent, addition, tags, source, await resolveConfig(env), appendVol.value, writeContextFor(identity));
     } catch (e) {
       return json({ ok: false, error: `Append failed: ${(e as Error).message}` }, 500);
     }
@@ -132,8 +144,9 @@ export async function handleCaptureRoutes(
 
   // POST /update
   if (url.pathname === "/update" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    const identity = auth;
 
     let body: { id?: string; content?: string; volatility?: unknown; tags?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
@@ -160,9 +173,12 @@ export async function handleCaptureRoutes(
     // Refuse before anything is written. Only `source` is needed: updateEntryContent reads
     // the rest for itself, and keeping the mirror guard out here is what stops
     // capture/store.ts having to depend on the integrations registry (see #289).
+    // Same scoping as /append: the guard read decides visibility before any
+    // write is attempted.
+    const scope = scopeWhere(identity);
     const row = await env.DB.prepare(
-      `SELECT source FROM entries WHERE id = ?`
-    ).bind(id).first() as Record<string, any> | null;
+      `SELECT source FROM entries WHERE id = ? AND ${scope.clause}`
+    ).bind(id, ...scope.bindings).first() as Record<string, any> | null;
 
     if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
 
@@ -170,7 +186,7 @@ export async function handleCaptureRoutes(
       return json({ ok: false, error: mirrorEditError(row.source as string) }, 409);
     }
 
-    const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), updateVol.value, replaceTags);
+    const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), updateVol.value, replaceTags, writeContextFor(identity));
 
     // Only reachable if the entry was deleted between the guard read and the write.
     if (result.status === "not_found") {

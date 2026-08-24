@@ -1,7 +1,9 @@
 import type { Env } from "../env";
 import { importExportPayload, parseImportBody, parseImportLimit, parseImportOffset } from "../entries/import";
 import { initializeDatabase } from "../db/init";
-import { json, requireAuth } from "../lib/http";
+import { json } from "../lib/http";
+import { requireIdentity } from "../lib/identity";
+import { scopeWhere } from "../lib/scope";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
@@ -15,9 +17,12 @@ export async function handleEntriesRoutes(
 ): Promise<Response | null> {
   // GET /count
   if (url.pathname === "/count" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
-    const row = await env.DB.prepare(`SELECT COUNT(*) as count FROM entries`).first() as Record<string, any> | null;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    const scope = scopeWhere(auth);
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) as count FROM entries WHERE ${scope.clause}`
+    ).bind(...scope.bindings).first() as Record<string, any> | null;
     return json({ count: (row?.count as number) ?? 0 });
   }
 
@@ -27,9 +32,9 @@ export async function handleEntriesRoutes(
   // recall this route has no useful degraded answer, so a cold cache is scanned
   // inline rather than answered empty — see getTagVocabulary.
   if (url.pathname === "/tags" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
-    return json(await getTagVocabulary(env, ctx));
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    return json(await getTagVocabulary(env, ctx, auth));
   }
 
   // GET /export — complete backup: every entry plus the edges table. Single
@@ -37,15 +42,18 @@ export async function handleEntriesRoutes(
   // one read and this route runs on explicit user action only. If response size
   // ever becomes a problem, add ?after= cursor support then, not now.
   if (url.pathname === "/export" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    // A member's backup is their readable set — personal plus company — not the
+    // whole deployment. Same unbounded-SELECT budget note as below applies.
+    const scope = scopeWhere(auth);
 
     const { results: entryRows } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC`
-    ).all() as { results: Record<string, any>[] };
+      `SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries WHERE ${scope.clause} ORDER BY created_at DESC`
+    ).bind(...scope.bindings).all() as { results: Record<string, any>[] };
     const { results: edgeRows } = await env.DB.prepare(
-      `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges`
-    ).all() as { results: Record<string, any>[] };
+      `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE ${scope.clause}`
+    ).bind(...scope.bindings).all() as { results: Record<string, any>[] };
 
     // vector_ids are deliberately excluded — they're deployment-specific and an
     // import tool re-embeds anyway. Tags are parsed so the file holds real arrays.
@@ -94,8 +102,8 @@ export async function handleEntriesRoutes(
   // response until both remaining counts are 0. See importExportPayload for why
   // this is what keeps a large restore inside the D1 free-plan query budget.
   if (url.pathname === "/import" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
 
     // Awaited, not left to ensureDbReady's waitUntil: an import is often a freshly
     // deployed brain's first request, which is exactly when the schema ALTERs have
@@ -118,8 +126,8 @@ export async function handleEntriesRoutes(
 
   // POST /forget — delete-by-id, mirrors the MCP `forget` tool
   if (url.pathname === "/forget" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
 
     let body: { id?: string };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
@@ -139,8 +147,8 @@ export async function handleEntriesRoutes(
   // (/graph ships 80-char labels only; fattening it with full content would bloat
   // every graph load to serve a per-tap need). Dashboard-only, no MCP twin.
   if (url.pathname === "/entry" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
 
     const id = url.searchParams.get("id")?.trim();
     if (!id) return json({ ok: false, error: "id is required" }, 400);
@@ -149,11 +157,14 @@ export async function handleEntriesRoutes(
     // already doing. The dashboard's detail view shows what the pipeline
     // decided — importance, how often this was recalled, whether it has ever
     // lost a contradiction — and none of it was reachable before v2.3.
+    // Scoped like the list above it: an id outside the caller's readable set
+    // reads as a missing entry rather than someone else's memory.
+    const scope = scopeWhere(auth);
     const row = await env.DB.prepare(
       `SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated,
               importance_score, recall_count, contradiction_wins, contradiction_losses, vector_ids
-       FROM entries WHERE id = ?`
-    ).bind(id).first() as Record<string, any> | null;
+       FROM entries WHERE id = ? AND ${scope.clause}`
+    ).bind(id, ...scope.bindings).first() as Record<string, any> | null;
     if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
 
     let vectorIds: unknown[] = [];
@@ -181,8 +192,8 @@ export async function handleEntriesRoutes(
 
   // POST /status — set lifecycle status, mirrors the MCP `set_status` tool
   if (url.pathname === "/status" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
 
     let body: { id?: string; status?: string };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }

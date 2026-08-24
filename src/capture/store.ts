@@ -66,13 +66,13 @@ export async function storeEntry(
 
   const vectorIds = vectors.map(v => v.id);
 
-  // This UPDATE is the tail of a version write (fresh vectors for the row), so it
-  // restamps workspace_id from the write context rather than trusting whatever the
-  // INSERT that created the row carried. Under OWNER_WRITE_CONTEXT that is '' —
-  // legacy semantics, no change.
+  // This UPDATE is the tail of a version write (fresh vectors for the row). It
+  // deliberately does NOT touch workspace_id: an update edits a row in place and
+  // must never move it between workspaces — that is share/unshare's job alone.
+  // Restamping here would let any context-less caller silently reset a row to ''.
   await env.DB.prepare(
-    `UPDATE entries SET vector_ids = ?, workspace_id = ? WHERE id = ?`
-  ).bind(JSON.stringify(vectorIds), writeCtx.workspaceId, id).run();
+    `UPDATE entries SET vector_ids = ? WHERE id = ?`
+  ).bind(JSON.stringify(vectorIds), id).run();
 
   return vectorIds;
 }
@@ -202,11 +202,12 @@ export async function updateEntryContent(
 
   // Safe to commit: either the embed succeeded, or Vectorize is unavailable and the old
   // vectors are kept below rather than retired.
-  // A replacement is a new logical version of the entry, so the commit restamps
-  // workspace_id from the write context. actor_id is left untouched: the original
-  // author of a row being edited is not this call's to decide.
-  await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id = ?`)
-    .bind(finalContent, JSON.stringify(mergedTags), Date.now(), writeCtx.workspaceId, id).run();
+  // A replacement is a new logical version of the entry, but it stays IN PLACE:
+  // workspace_id is never touched here (share/unshare moves rows, nothing else does),
+  // and actor_id is left untouched: the original author of a row being edited is not
+  // this call's to decide.
+  await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
+    .bind(finalContent, JSON.stringify(mergedTags), Date.now(), id).run();
 
   // Rewritten content can carry hashtags the brain has never seen, so this is one of the
   // two places an unknown tag enters the corpus (#288). It sits here rather than in the
@@ -258,10 +259,10 @@ export async function appendToEntry(
     const newVectorIds = await reembedOrDegrade(env, id, newContent, tags, source, config, writeCtx);
     const now = Date.now();
 
-    // Both commits below are new logical versions (rewritten body, fresh index), so
-    // they restamp workspace_id; actor_id stays with the original author.
-    await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id = ?`)
-      .bind(newContent, JSON.stringify(refreshedTags), now, writeCtx.workspaceId, id).run();
+    // Both commits below are new logical versions (rewritten body, fresh index) that
+    // stay in place — workspace_id and actor_id are never altered by an update.
+    await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
+      .bind(newContent, JSON.stringify(refreshedTags), now, id).run();
 
     // Skipped when Vectorize is unavailable: the old vectors are the entry's only
     // remaining semantic index, and retiring them would leave it unsearchable.
@@ -318,8 +319,8 @@ export async function appendToEntry(
   const now = Date.now();
 
   await env.DB.prepare(
-    `UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id = ?`
-  ).bind(newContent, JSON.stringify(indexed ? [...existingVectorIds, newChunkId] : existingVectorIds), JSON.stringify(refreshedTags), now, writeCtx.workspaceId, id).run();
+    `UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ? WHERE id = ?`
+  ).bind(newContent, JSON.stringify(indexed ? [...existingVectorIds, newChunkId] : existingVectorIds), JSON.stringify(refreshedTags), now, id).run();
 
   try {
     await inferEdgesOnWrite(id, await neighborsFromVectorQuery(values, env), env);

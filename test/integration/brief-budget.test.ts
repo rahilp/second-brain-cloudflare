@@ -74,10 +74,14 @@ describe("GET /brief", () => {
     const res = await worker.fetch(req("GET", "/brief"), envOf(sq), ctx);
     expect(res.status).toBe(200);
 
-    // Six reads, run concurrently. If this number goes up, the endpoint got
-    // more expensive for every user on every app open — that is the decision
-    // this assertion is asking you to make deliberately.
-    expect(sq.issued).toHaveLength(6);
+    // Six reads, run concurrently, plus v3's fixed identity cost on this first
+    // request against a fresh database: one token→identity join, and the
+    // one-time tenant bootstrap (two lookups + one provisioning batch — memoised
+    // per database, so later app opens pay only the join). 6 + 1 + 3 = 10. If
+    // this goes up further, the endpoint got more expensive for every user on
+    // every app open — that is the decision this assertion asks you to make
+    // deliberately.
+    expect(sq.issued).toHaveLength(10);
   });
 
   it("reports what arrived and where it came from", async () => {

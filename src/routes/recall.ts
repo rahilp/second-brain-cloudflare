@@ -1,12 +1,31 @@
 import type { Env } from "../env";
 import { resolveConfig } from "../config";
 import { LLM_MODEL, VECTORIZE_FIX_HINT } from "../constants";
-import { CORS_HEADERS, intParam, json, requireAuth } from "../lib/http";
 import { buildEntryFilterQuery } from "../capture/entry";
 import { compressTag } from "../compression/digest";
+import { CORS_HEADERS, intParam, json } from "../lib/http";
+import { requireIdentity, type Identity } from "../lib/identity";
+import { scopeWhere } from "../lib/scope";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { recallEntries } from "../recall/search";
 import { allowanceFor, snippetOf } from "../recall/snippet";
+
+/**
+ * buildEntryFilterQuery always ends `ORDER BY created_at DESC LIMIT ?`, so the
+ * caller's readable-workspace clause goes in ahead of the ORDER BY and its two
+ * bindings splice in ahead of LIMIT's. Without a filter there is no WHERE to
+ * join onto, so the clause arrives as one instead.
+ */
+function scopeEntryFilterQuery(
+  identity: Identity,
+  q: { sql: string; bindings: unknown[] },
+): { sql: string; bindings: unknown[] } {
+  const scope = scopeWhere(identity);
+  const sql = q.sql.includes("WHERE")
+    ? q.sql.replace(" ORDER BY", ` AND ${scope.clause} ORDER BY`)
+    : q.sql.replace(" ORDER BY", ` WHERE ${scope.clause} ORDER BY`);
+  return { sql, bindings: [...q.bindings.slice(0, -1), ...scope.bindings, ...q.bindings.slice(-1)] };
+}
 
 export async function handleRecallRoutes(
   request: Request,
@@ -16,8 +35,9 @@ export async function handleRecallRoutes(
 ): Promise<Response | null> {
   // GET /list
   if (url.pathname === "/list" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    const identity = auth;
     // Floor of 0 as well as the cap: SQLite reads a negative LIMIT as no limit
     // at all, so `?n=-1` used to return the whole entries table.
     const n = intParam(url, "n", { fallback: 20, min: 0, max: 100 });
@@ -28,15 +48,16 @@ export async function handleRecallRoutes(
     const before = intParam(url, "before");
     if (before instanceof Response) return before;
 
-    const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+    const { sql, bindings } = scopeEntryFilterQuery(identity, buildEntryFilterQuery({ n, tag, after, before }));
     const { results } = await env.DB.prepare(sql).bind(...bindings).all();
     return json(results);
   }
 
   // GET /recall — semantic search, mirrors the MCP `recall` tool
   if (url.pathname === "/recall" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    const identity = auth;
 
     const query = url.searchParams.get("query")?.trim();
     if (!query) return json({ ok: false, error: "query is required" }, 400);
@@ -57,7 +78,7 @@ export async function handleRecallRoutes(
     const full = ["1", "true", "yes"].includes((url.searchParams.get("full") ?? "").toLowerCase());
 
     const cfg = await resolveConfig(env);
-    const { matches, insight, semanticUnavailable, queryUsed, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx, cfg);
+    const { matches, insight, semanticUnavailable, queryUsed, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx, cfg, { identity });
 
     if (!matches.length) {
       return json({
@@ -105,8 +126,8 @@ export async function handleRecallRoutes(
 
   // POST /chat
   if (url.pathname === "/chat" && request.method === "POST") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
 
     let body: { query?: string; memories?: string };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
@@ -152,8 +173,8 @@ Be specific and complete. Concision means leaving out filler, never leaving out 
 
   // GET /digest
   if (url.pathname === "/digest" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
     const tag = url.searchParams.get("tag")?.trim();
     if (!tag) return json({ ok: false, error: "tag parameter is required" }, 400);
 

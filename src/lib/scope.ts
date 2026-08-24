@@ -42,7 +42,12 @@ export interface WriteContext {
 export const OWNER_WRITE_CONTEXT: WriteContext = { workspaceId: "", actorId: "" };
 
 export function readableWorkspaces(identity: Identity): string[] {
-  return [identity.personalWorkspaceId, identity.companyWorkspaceId];
+  const workspaces = [identity.personalWorkspaceId, identity.companyWorkspaceId];
+  // The '' sentinel is the legacy/system space — pre-team rows and mixed-provenance
+  // insight output. Admins keep eyes on it so a context-less writer can never create
+  // an invisible row; members must never see it.
+  if (identity.role === "admin") workspaces.push("");
+  return workspaces;
 }
 
 export function scopeWhere(identity: Identity, column = "workspace_id"): ScopeClause {

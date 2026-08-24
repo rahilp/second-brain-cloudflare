@@ -7,6 +7,8 @@ import {
 } from "../constants";
 import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
+import type { Identity } from "../lib/identity";
+import { scopeWhere } from "../lib/scope";
 import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -34,6 +36,7 @@ async function keywordSearch(
   env: Env,
   limit: number,
   bounds: Readonly<TimeBounds> = {},
+  identity?: Identity,
 ): Promise<KeywordRow[]> {
   if (!tokens.length) return [];
   // Capped here rather than at distillation's uncapped exits because this is
@@ -53,10 +56,14 @@ async function keywordSearch(
     timeWhere += " AND created_at < ?";
     timeBindings.push(bounds.before);
   }
+  // Scoped before ORDER BY so LIMIT ranks only readable rows, not readable rows
+  // plus strangers' rows truncated by the window.
+  const scope = identity ? scopeWhere(identity) : null;
+  const scopeSql = scope ? ` AND ${scope.clause}` : "";
   const tokenWhere = timeWhere ? `(${where})` : where;
   const { results } = await env.DB.prepare(
-    `SELECT id, content, tags, source, created_at FROM entries WHERE ${tokenWhere}${timeWhere} ORDER BY created_at DESC LIMIT ?`
-  ).bind(...terms.map(t => `%${t}%`), ...timeBindings, limit).all();
+    `SELECT id, content, tags, source, created_at FROM entries WHERE ${tokenWhere}${timeWhere}${scopeSql} ORDER BY created_at DESC LIMIT ?`
+  ).bind(...terms.map(t => `%${t}%`), ...timeBindings, ...(scope?.bindings ?? []), limit).all();
   return results as unknown as KeywordRow[];
 }
 
@@ -153,6 +160,10 @@ export async function recallEntries(
   const hops = Math.max(0, Math.min(cfg.GRAPH_MAX_HOPS, params.hops ?? cfg.DEFAULT_HOPS));
   const now = Date.now();
   let semanticUnavailable = false;
+  // One clause, computed once: every entries read below ANDs it in when an
+  // Identity rides along, and appends nothing — byte for byte — when one does not.
+  const scope = internal.identity ? scopeWhere(internal.identity) : null;
+  const identity = internal.identity;
 
   let semanticQuery = query;
   if (after === undefined && before === undefined) {
@@ -162,7 +173,7 @@ export async function recallEntries(
     semanticQuery = parsed.cleanQuery;
   }
   const bounds = { after, before };
-  const distilled = await distillToRareTerms(semanticQuery, env, cfg, bounds);
+  const distilled = await distillToRareTerms(semanticQuery, env, cfg, bounds, identity);
   const profile = buildQueryProfile(semanticQuery, distilled);
   const embeddingQueryMode = internal.embeddingQueryMode ?? DEFAULT_EMBEDDING_QUERY_MODE;
   const embedQuery = embeddingInput(profile, embeddingQueryMode);
@@ -173,7 +184,7 @@ export async function recallEntries(
   const tokens = profile.lexicalTokens;
   const [values, queryTags] = await Promise.all([
     embed(embedQuery, env, cfg),
-    inferQueryTags(lexicalQuery, env, cfg, ctx),
+    inferQueryTags(lexicalQuery, env, cfg, ctx, identity),
   ]);
   markStage("querySignals");
 
@@ -184,9 +195,10 @@ export async function recallEntries(
     // the failure is over-broad results rather than the permanent rollup the same bug
     // caused in compressTag — but `?tag=%` silently defeats the filter entirely and
     // returns the whole brain, which is not a recoverable-looking answer either.
+    const tagScopeSql = scope ? ` AND ${scope.clause}` : "";
     const { results: tagRows } = await env.DB.prepare(
-      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}`
-    ).bind(tagLikePattern(tag)).all();
+      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}${tagScopeSql}`
+    ).bind(tagLikePattern(tag), ...(scope?.bindings ?? [])).all();
     if (!tagRows.length) return { matches: [], insight: "", semanticUnavailable };
     keywordRows = tagRows as unknown as KeywordRow[];
 
@@ -226,7 +238,7 @@ export async function recallEntries(
     };
     const [denseResults, kwRows] = await Promise.all([
       denseQuery(),
-      keywordSearch(profile.retrievalTokens, env, cfg.KEYWORD_CANDIDATE_LIMIT, bounds),
+      keywordSearch(profile.retrievalTokens, env, cfg.KEYWORD_CANDIDATE_LIMIT, bounds, identity),
     ]);
     results = denseResults;
     keywordRows = kwRows;
@@ -269,12 +281,19 @@ export async function recallEntries(
   const candidateSignalProjection = hops > 0
     ? `id, content, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses, tags`
     : "id, recall_count, importance_score, contradiction_wins, contradiction_losses, tags";
-  for (let i = 0; i < candidateIds.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = candidateIds.slice(i, i + D1_MAX_BOUND_PARAMS);
+  // Scoped too: this is the leak-catcher for unscoped Vectorize hits — until
+  // namespaces land (P3) the dense arm can surface a stranger's id, and the
+  // scope clause here is what stops that id from hydrating into signals. The
+  // scope's two bindings count toward D1's bound-parameter ceiling exactly as
+  // the ids do, so the batch shrinks by them rather than overrunning.
+  const rcScopeSql = scope ? ` AND ${scope.clause}` : "";
+  const rcBatchSize = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  for (let i = 0; i < candidateIds.length; i += rcBatchSize) {
+    const batch = candidateIds.slice(i, i + rcBatchSize);
     const rcPlaceholders = batch.map(() => "?").join(", ");
     const { results: rows } = await env.DB.prepare(
-      `SELECT ${candidateSignalProjection} FROM entries WHERE id IN (${rcPlaceholders})`
-    ).bind(...batch).all() as { results: CandidateSignalRow[] };
+      `SELECT ${candidateSignalProjection} FROM entries WHERE id IN (${rcPlaceholders})${rcScopeSql}`
+    ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: CandidateSignalRow[] };
     rcRows.push(...rows);
   }
   const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
@@ -329,7 +348,7 @@ export async function recallEntries(
 
   let expanded: GraphNeighbor[] = [];
   if (hops > 0) {
-    expanded = await expandGraph(graphSeedIds, { hops }, env, cfg);
+    expanded = await expandGraph(graphSeedIds, { hops }, env, cfg, identity);
   }
   markStage("graphExpansion");
   if (internal.diagnostics && hops > 0) internal.diagnostics.expandedIds = expanded.map(x => x.id);
@@ -354,6 +373,13 @@ export async function recallEntries(
   }
   if (after !== undefined) { d1Filters += ` AND created_at >= ?`; filterBindings.push(after); }
   if (before !== undefined) { d1Filters += ` AND created_at < ?`; filterBindings.push(before); }
+  // Last filter in, so the scope's bindings are already inside filterBindings
+  // when idBatchSize subtracts them from the bound-parameter ceiling — the same
+  // accounting every other filter's bindings get.
+  if (scope) {
+    d1Filters += ` AND ${scope.clause}`;
+    filterBindings.push(...scope.bindings);
+  }
   const d1Rows: Record<string, any>[] = [];
   const idBatchSize = D1_MAX_BOUND_PARAMS - filterBindings.length;
   for (let i = 0; i < allParentIds.length; i += idBatchSize) {

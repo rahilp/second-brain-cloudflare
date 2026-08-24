@@ -81,16 +81,18 @@ async function bootstrap(env: Env): Promise<TenantRoots> {
   let companyId = await findCompanyId(env);
   if (!companyId) {
     companyId = id("ws");
+    // Every value bound, none inlined: keeps the statement trivially testable
+    // against doubles that match parameters positionally.
     statements.push(
       env.DB.prepare(
-        `INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'company', 'Company', ?)`,
-      ).bind(companyId, now),
+        `INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, ?, ?, ?)`,
+      ).bind(companyId, "company", "Company", now),
     );
   }
   statements.push(
     env.DB.prepare(
-      `INSERT INTO maintenance_cursor (id, workspace_id, advanced_at) VALUES (1, '', ?) ON CONFLICT DO NOTHING`,
-    ).bind(now),
+      `INSERT INTO maintenance_cursor (id, workspace_id, advanced_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+    ).bind(1, "", now),
   );
 
   let owner = await findOwner(env);
@@ -101,8 +103,8 @@ async function bootstrap(env: Env): Promise<TenantRoots> {
     // so AUTH_TOKEN keeps working unchanged and gains an identity it never had.
     statements.push(
       env.DB.prepare(
-        `INSERT INTO users (id, name, email, role, token_hash, suspended, created_at) VALUES (?, 'Owner', NULL, 'admin', ?, 0, ?)`,
-      ).bind(ownerId, await hashToken(env.AUTH_TOKEN), now),
+        `INSERT INTO users (id, name, email, role, token_hash, suspended, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(ownerId, "Owner", null, "admin", await hashToken(env.AUTH_TOKEN), 0, now),
     );
     owner = { userId: ownerId, personalWorkspaceId: "" };
     ownerIsNew = true;
@@ -113,8 +115,8 @@ async function bootstrap(env: Env): Promise<TenantRoots> {
     if (!owner.personalWorkspaceId) {
       statements.push(
         env.DB.prepare(
-          `INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'personal', 'Owner', ?)`,
-        ).bind(personalId, now),
+          `INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, ?, ?, ?)`,
+        ).bind(personalId, "personal", "Owner", now),
       );
     }
     statements.push(
@@ -140,7 +142,14 @@ async function bootstrap(env: Env): Promise<TenantRoots> {
     env.DB.prepare(`UPDATE edges SET workspace_id = ? WHERE workspace_id = ''`).bind(owner.personalWorkspaceId),
   );
 
-  await env.DB.batch(statements);
+  // batch() costs one subrequest for the whole set. The sequential fallback is
+  // for environments without it (minimal test doubles); production D1 always
+  // has it, so the fallback never runs there.
+  if (typeof (env.DB as { batch?: unknown }).batch === "function") {
+    await env.DB.batch(statements);
+  } else {
+    for (const statement of statements) await statement.run();
+  }
   return {
     companyWorkspaceId: companyId,
     ownerUserId: owner.userId,

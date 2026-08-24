@@ -12,7 +12,8 @@
  * default.
  */
 import type { Env } from "../env";
-import { json, requireAuth } from "../lib/http";
+import { json } from "../lib/http";
+import { requireIdentity } from "../lib/identity";
 import {
   DEFAULTS,
   readOverrides,
@@ -30,8 +31,8 @@ export async function handleConfigRoutes(
 ): Promise<Response | null> {
   // GET /config — effective values, what is overridden, and the shipped defaults
   if (url.pathname === "/config" && request.method === "GET") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
 
     const [config, overrides] = await Promise.all([resolveConfig(env), readOverrides(env)]);
     return json({ ok: true, config, overrides, defaults: DEFAULTS });
@@ -39,8 +40,8 @@ export async function handleConfigRoutes(
 
   // PATCH /config — sparse update; the whole patch is rejected if any key fails
   if (url.pathname === "/config" && request.method === "PATCH") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
 
     let patch: Record<string, unknown>;
     try {
@@ -62,8 +63,8 @@ export async function handleConfigRoutes(
 
   // DELETE /config/:key — per-setting reset, independent of every other setting
   if (url.pathname.startsWith("/config/") && request.method === "DELETE") {
-    const authErr = requireAuth(request, env);
-    if (authErr) return authErr;
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
 
     const key = decodeURIComponent(url.pathname.slice("/config/".length));
     if (!(key in DEFAULTS)) {

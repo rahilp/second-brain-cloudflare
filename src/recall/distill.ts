@@ -8,6 +8,8 @@ import {
   QUERY_SATURATION_FRACTION,
 } from "../constants";
 import { readStreamText } from "../lib/ai";
+import type { Identity } from "../lib/identity";
+import { scopeWhere } from "../lib/scope";
 import { extractHashtags } from "../text/hashtags";
 import { isTopicTag } from "../compression/eligibility";
 import { getTagVocabulary } from "../tags/vocabulary";
@@ -17,7 +19,7 @@ import { getTagVocabulary } from "../tags/vocabulary";
  * caller; pass it wherever there is one, or an aged-out vocabulary is rebuilt on the
  * request's own critical path instead of behind it.
  */
-export async function inferQueryTags(query: string, env: Env, config: Readonly<Config> = DEFAULTS, ctx?: ExecutionContext): Promise<string[]> {
+export async function inferQueryTags(query: string, env: Env, config: Readonly<Config> = DEFAULTS, ctx?: ExecutionContext, identity?: Identity): Promise<string[]> {
   const { hashtags } = extractHashtags(query);
   if (hashtags.length) return hashtags;
 
@@ -34,7 +36,7 @@ export async function inferQueryTags(query: string, env: Env, config: Readonly<C
   // count tags in a mature brain and exactly the ones that would crowd real topics
   // out of the 50 the LLM below is shown. The same predicate #278 used to keep them
   // out of digest candidates, so the two agree by construction.
-  const knownTags = (await getTagVocabulary(env, ctx)).filter(isTopicTag);
+  const knownTags = (await getTagVocabulary(env, ctx, identity)).filter(isTopicTag);
 
   const lowerQuery = query.toLowerCase();
   const keywordMatches = knownTags.filter(t =>
@@ -86,6 +88,7 @@ export async function distillToRareTerms(
   env: Env,
   config: Readonly<Config> = DEFAULTS,
   bounds: Readonly<TimeBounds> = {},
+  identity?: Identity,
 ): Promise<DistilledQuery> {
   const words = query.split(/\s+/).filter(Boolean);
   const norm = (w: string) => w.toLowerCase().replace(/^[^\w#.]+|[^\w#.]+$/g, "");
@@ -102,6 +105,10 @@ export async function distillToRareTerms(
   // what makes that true rather than coincidental: the widest set ranked here
   // is the widest set search.ts can carry, in either direction.
   const uniq = [...new Set(content.map(norm))].slice(0, KEYWORD_MAX_TOKENS);
+  // The DF denominator is the caller's readable corpus, not the deployment's:
+  // another workspace's rows must not be able to saturate a term out of (or
+  // inflate a term's rarity within) this caller's query.
+  const scope = identity ? scopeWhere(identity) : null;
   try {
     const sums = uniq.map((_, i) => `SUM(CASE WHEN content LIKE ? THEN 1 ELSE 0 END) AS d${i}`).join(", ");
     let where = "";
@@ -114,8 +121,11 @@ export async function distillToRareTerms(
       where += `${where ? " AND" : ""} created_at < ?`;
       timeBindings.push(bounds.before);
     }
+    if (scope) {
+      where += `${where ? " AND" : ""} ${scope.clause}`;
+    }
     const row = await env.DB.prepare(`SELECT COUNT(*) AS total, ${sums} FROM entries${where ? ` WHERE${where}` : ""}`)
-      .bind(...uniq.map(t => `%${t}%`), ...timeBindings).first() as Record<string, number> | null;
+      .bind(...uniq.map(t => `%${t}%`), ...timeBindings, ...(scope?.bindings ?? [])).first() as Record<string, number> | null;
     if (!row || !row.total) return { query: content.join(" "), df: null, total: null };
     const total = row.total;
     const df = new Map(uniq.map((t, i) => [t, (row[`d${i}`] as number) ?? 0]));
