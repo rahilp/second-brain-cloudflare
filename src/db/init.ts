@@ -39,14 +39,14 @@ export function resetDatabaseInit(): void {
  * is apply order: a table has to exist before the indexes over it.
  */
 const SCHEMA_OBJECTS: Record<string, string> = {
-  entries: `CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL, vector_ids TEXT NOT NULL DEFAULT '[]')`,
+  entries: `CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL, vector_ids TEXT NOT NULL DEFAULT '[]', workspace_id TEXT NOT NULL DEFAULT '', actor_id TEXT NOT NULL DEFAULT '')`,
   idx_entries_created_at: `CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC)`,
   idx_entries_source: `CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source)`,
   // Relationship graph (issue #16). One additive table — never touches existing
   // rows/queries, so old code ignores it and rollback is a no-op. Designed to never
   // need an ALTER: type/provenance are free TEXT validated in code, and metadata is
   // a JSON escape-hatch for any future per-edge attribute.
-  edges: `CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, target_id TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'relates_to', weight REAL NOT NULL DEFAULT 0.5, provenance TEXT NOT NULL DEFAULT 'inferred', metadata TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(source_id, target_id, type))`,
+  edges: `CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, target_id TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'relates_to', weight REAL NOT NULL DEFAULT 0.5, provenance TEXT NOT NULL DEFAULT 'inferred', metadata TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, workspace_id TEXT NOT NULL DEFAULT '', UNIQUE(source_id, target_id, type))`,
   idx_edges_source: `CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id)`,
   idx_edges_target: `CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)`,
   // The graph view picks the strongest edges (ORDER BY weight DESC LIMIT n). Without an
@@ -94,6 +94,19 @@ const SCHEMA_OBJECTS: Record<string, string> = {
   // table before applying the LIMIT, the same shape idx_edges_weight exists to
   // avoid on the graph read path.
   idx_insight_candidates_queue: `CREATE INDEX IF NOT EXISTS idx_insight_candidates_queue ON insight_candidates(status, score DESC)`,
+  // Team edition tenancy (v3). Additive: single-user brains never read these and
+  // rollback is a no-op. See docs/superpowers/specs/2026-08-24-team-edition-design.md.
+  workspaces: `CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'personal', name TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)`,
+  idx_workspaces_kind: `CREATE INDEX IF NOT EXISTS idx_workspaces_kind ON workspaces(kind)`,
+  users: `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT, role TEXT NOT NULL DEFAULT 'member', token_hash TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
+  // Token lookup is the hottest new read (every request resolves identity); UNIQUE
+  // gives it the index for free.
+  idx_users_token_hash: `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash)`,
+  memberships: `CREATE TABLE IF NOT EXISTS memberships (user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', created_at INTEGER NOT NULL, PRIMARY KEY (user_id, workspace_id))`,
+  entry_events: `CREATE TABLE IF NOT EXISTS entry_events (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, actor_id TEXT NOT NULL DEFAULT '', event TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)`,
+  idx_entry_events_entry: `CREATE INDEX IF NOT EXISTS idx_entry_events_entry ON entry_events(entry_id, created_at DESC)`,
+  // Single-row table driving the nightly round-robin over workspaces.
+  maintenance_cursor: `CREATE TABLE IF NOT EXISTS maintenance_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), workspace_id TEXT NOT NULL DEFAULT '', advanced_at INTEGER NOT NULL DEFAULT 0)`,
 };
 
 /**
@@ -117,6 +130,36 @@ const ENTRIES_COLUMNS: Record<string, string> = {
   // test/unit/updated-at-coalesced.test.ts fails if any reader stops coalescing.
   updated_at: `ALTER TABLE entries ADD COLUMN updated_at INTEGER`,
   staleness_checked_at: `ALTER TABLE entries ADD COLUMN staleness_checked_at INTEGER`,
+  // Tenancy (v3). Defaults are the legacy single-owner semantics: '' reads as
+  // "the owner's own rows" so a brain that has not been team-enabled behaves
+  // identically before and after this column exists. The one-time backfill to
+  // real workspace ids happens in ensureTenantBootstrap (src/lib/tenancy.ts),
+  // not here — deliberately, because it rewrites every row and belongs behind
+  // an explicit, memoised bootstrap rather than on the migration path.
+  workspace_id: `ALTER TABLE entries ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`,
+  actor_id: `ALTER TABLE entries ADD COLUMN actor_id TEXT NOT NULL DEFAULT ''`,
+};
+
+/**
+ * Columns added to `edges` after the table shipped. Same shape and reasoning as
+ * ENTRIES_COLUMNS; kept separate because the two tables migrate independently.
+ */
+const EDGES_COLUMNS: Record<string, string> = {
+  // Denormalized from the source entry at write time so graph walks can scope by
+  // workspace without joining back to entries mid-traversal.
+  workspace_id: `ALTER TABLE edges ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`,
+};
+
+/**
+ * Objects that can only be built once the ALTERs above have run — an index over a
+ * column that arrives via ALTER. These must NOT live in SCHEMA_OBJECTS: that loop
+ * runs before the ALTERs on every pass, so on an upgraded brain (table exists,
+ * column missing) the CREATE would throw before the ALTER ever ran, and it would
+ * throw again on every later pass. Applying them after the ALTER loops converges
+ * in one pass on both fresh and upgraded brains.
+ */
+const POST_COLUMN_OBJECTS: Record<string, string> = {
+  idx_entries_workspace_created: `CREATE INDEX IF NOT EXISTS idx_entries_workspace_created ON entries(workspace_id, created_at DESC)`,
 };
 
 /**
@@ -145,7 +188,8 @@ const ENTRIES_COLUMNS: Record<string, string> = {
  */
 const PROBE_SQL =
   `SELECT type AS kind, name FROM sqlite_master WHERE type IN ('table','index') ` +
-  `UNION ALL SELECT 'column' AS kind, name FROM pragma_table_info('entries')`;
+  `UNION ALL SELECT 'column' AS kind, name FROM pragma_table_info('entries')` +
+  `UNION ALL SELECT 'edge_column' AS kind, name FROM pragma_table_info('edges')`;
 
 type ObjectKind = "table" | "index";
 /**
@@ -154,7 +198,7 @@ type ObjectKind = "table" | "index";
  * the name alone would let a user table called `idx_entries_source` stand in for the index,
  * which resolves init successfully and silently never creates it.
  */
-type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string> };
+type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string>; edgeColumns: Set<string> };
 
 /** Which kind of object a CREATE statement makes, so the probe can be asked about it. */
 const kindOf = (ddl: string): ObjectKind => (ddl.startsWith("CREATE TABLE") ? "table" : "index");
@@ -189,12 +233,14 @@ async function probeSchema(env: Env): Promise<ExistingSchema | null> {
 
   const objects = new Map<string, ObjectKind>();
   const columns = new Set<string>();
+  const edgeColumns = new Set<string>();
   for (const row of rows as { kind?: unknown; name?: unknown }[]) {
     if (typeof row?.name !== "string") continue;
     if (row.kind === "column") columns.add(row.name);
+    else if (row.kind === "edge_column") edgeColumns.add(row.name);
     else if (row.kind === "table" || row.kind === "index") objects.set(row.name, row.kind);
   }
-  return { objects, columns };
+  return { objects, columns, edgeColumns };
 }
 
 /**
@@ -234,5 +280,17 @@ async function applySchema(env: Env): Promise<void> {
     } catch (e) {
       if (!isDuplicateColumn(e)) throw e; // column already exists — anything else is real
     }
+  }
+  for (const [column, ddl] of Object.entries(EDGES_COLUMNS)) {
+    if (existing?.edgeColumns.has(column)) continue;
+    try {
+      await env.DB.exec(ddl);
+    } catch (e) {
+      if (!isDuplicateColumn(e)) throw e;
+    }
+  }
+  for (const [name, ddl] of Object.entries(POST_COLUMN_OBJECTS)) {
+    if (existing?.objects.get(name) === kindOf(ddl)) continue;
+    await env.DB.exec(ddl);
   }
 }
