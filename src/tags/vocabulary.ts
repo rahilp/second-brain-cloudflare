@@ -48,6 +48,8 @@
  * an empty brain, not an error.
  */
 import type { Env } from "../env";
+import { scopeWhere } from "../lib/scope";
+import type { Identity } from "../lib/identity";
 
 // Prefixed to coexist with workers-oauth-provider's token:/grant:/client: keys,
 // config:overrides, and the integrations: blobs in the same namespace.
@@ -137,11 +139,15 @@ async function readCache(env: Env): Promise<CachedVocabulary | null> {
  * place. One caveat, unchanged by this: SQLite's BINARY collation orders UTF-8 bytes
  * and JS orders UTF-16 code units, which differ only for astral-plane characters. A
  * tag containing one could sit in a different dropdown position than it used to.
+ *
+ * With an Identity the scan is scoped to the caller's readable workspaces so one
+ * member's tags never surface in another member's query-tag inference or dropdown.
  */
-async function scanTagVocabulary(env: Env): Promise<string[]> {
+async function scanTagVocabulary(env: Env, identity?: Identity): Promise<string[]> {
+  const scope = identity ? ` WHERE ${scopeWhere(identity).clause}` : "";
   const { results } = await env.DB.prepare(
-    `SELECT DISTINCT value FROM entries, json_each(entries.tags)`
-  ).all();
+    `SELECT DISTINCT value FROM entries, json_each(entries.tags)${scope}`
+  ).bind(...(identity ? scopeWhere(identity).bindings : [])).all();
   return (results as { value: unknown }[])
     .map(r => r.value)
     .filter((v): v is string => typeof v === "string")
@@ -152,9 +158,15 @@ async function scanTagVocabulary(env: Env): Promise<string[]> {
  * Scan and store. Throws only if the scan does — a KV write failure still returns
  * the fresh vocabulary, because the caller asked what the tags are, not where they
  * are kept.
+ *
+ * The cache remains a single deployment-wide key. Until the workspace-keyed cache
+ * lands (P5 of the team-edition plan) a scoped scan is therefore only as good as
+ * the key it lands in: callers passing an Identity get an isolated read of D1, but
+ * the blob they populate is shared. Callers that have not been taught Identity yet
+ * keep today's corpus-wide behaviour exactly.
  */
-async function rebuildTagVocabulary(env: Env): Promise<string[]> {
-  const tags = await scanTagVocabulary(env);
+async function rebuildTagVocabulary(env: Env, identity?: Identity): Promise<string[]> {
+  const tags = await scanTagVocabulary(env, identity);
   try {
     await env.OAUTH_KV.put(TAG_VOCABULARY_KEY, JSON.stringify({ tags, rebuiltAt: Date.now() } satisfies CachedVocabulary));
   } catch (e) {
@@ -188,20 +200,20 @@ async function rebuildTagVocabulary(env: Env): Promise<string[]> {
  * rare and its cost is one extra scan, which is what every recall used to cost. Add
  * an isolate-scoped guard if that ever shows up in a bill, not before.
  */
-export async function getTagVocabulary(env: Env, ctx?: ExecutionContext): Promise<string[]> {
+export async function getTagVocabulary(env: Env, ctx?: ExecutionContext, identity?: Identity): Promise<string[]> {
   const cached = await readCache(env);
 
   if (cached && Date.now() - cached.rebuiltAt < TAG_VOCABULARY_MAX_AGE_MS) return cached.tags;
 
   if (cached && ctx) {
     ctx.waitUntil(
-      rebuildTagVocabulary(env).catch(e => console.error("Tag vocabulary rebuild failed (non-fatal):", e))
+      rebuildTagVocabulary(env, identity).catch(e => console.error("Tag vocabulary rebuild failed (non-fatal):", e))
     );
     return cached.tags;
   }
 
   try {
-    return await rebuildTagVocabulary(env);
+    return await rebuildTagVocabulary(env, identity);
   } catch (e) {
     console.error("Tag vocabulary rebuild failed (non-fatal):", e);
     return cached?.tags ?? [];

@@ -17,8 +17,10 @@ export const IMPORT_D1_BATCH_SIZE = 50;
 /** Edge endpoint lookups bind each id twice (source IN + target IN). */
 export const EDGE_ENDPOINT_QUERY_BATCH = Math.floor(D1_MAX_BOUND_PARAMS / 2);
 
+// workspace_id/actor_id bind '' for now: imports land in the importer's personal
+// workspace in P2, and '' preserves legacy owner semantics until then.
 const ENTRY_INSERT_SQL_TEMPLATE =
-  `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, recall_count, importance_score, contradiction_wins, contradiction_losses) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, recall_count, importance_score, contradiction_wins, contradiction_losses, workspace_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 function parseInsertColumns(sql: string): readonly string[] {
   const match = sql.match(/INSERT INTO entries \(([^)]+)\)/i);
@@ -282,6 +284,8 @@ function bindInsert(env: Env, row: PendingInsert) {
     row.importance_score,
     row.contradiction_wins,
     row.contradiction_losses,
+    "",
+    "",
   );
 }
 

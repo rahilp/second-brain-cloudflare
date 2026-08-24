@@ -16,8 +16,13 @@ import { withKind } from "../memory/kind";
 import { withStatus } from "../memory/status";
 import { tagsAfterWrite } from "../memory/stale";
 import { rememberTags } from "../tags/vocabulary";
+import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
 
-export function makeMirrorStore(env: Env): MirrorStore {
+export function makeMirrorStore(env: Env, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): MirrorStore {
+  // The write context is a property of the store rather than of each method because
+  // the MirrorStore interface (integrations/framework.ts) is shared with providers
+  // that must not learn about tenancy. A sync batch is one actor's work, so one
+  // context per store is the right granularity anyway.
   // One config read per store, not one per mirrored item. A store is built once
   // per sync batch, so this is still the per-request scope every other caller
   // resolves at (src/config.ts) — but the batch writes up to SYNC_EVENT_BATCH
@@ -54,8 +59,8 @@ export function makeMirrorStore(env: Env): MirrorStore {
         console.error("Mirror classify failed (non-fatal):", e);
       }
       await env.DB.prepare(
-        `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, importance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(id, content, JSON.stringify(finalTags), source, now, now, "[]", importance).run();
+        `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, importance_score, workspace_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, content, JSON.stringify(finalTags), source, now, now, "[]", importance, writeCtx.workspaceId, writeCtx.actorId).run();
       // Promptness, not correctness (#288). Every tag inserted here is a compile-time
       // constant — a provider id from the registry in integrations/index.ts, plus
       // whatever kind:/status: the classifier added — so the vocabulary's age limit
@@ -67,7 +72,7 @@ export function makeMirrorStore(env: Env): MirrorStore {
       // connected provider.
       await rememberTags(env, finalTags);
       try {
-        await storeEntry(env, id, content, finalTags, source, now, cfg);
+        await storeEntry(env, id, content, finalTags, source, now, cfg, writeCtx);
       } catch (e) {
         console.error("Vectorize insert failed (non-fatal):", e);
       }
@@ -90,7 +95,7 @@ export function makeMirrorStore(env: Env): MirrorStore {
       const cfg = await config();
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, id, content, refreshedTags, row.source as string, now, cfg);
+        newVectorIds = await storeEntry(env, id, content, refreshedTags, row.source as string, now, cfg, writeCtx);
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }

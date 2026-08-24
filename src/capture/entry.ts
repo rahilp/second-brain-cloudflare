@@ -11,6 +11,7 @@ import { tagsAfterWrite } from "../memory/stale";
 import { getVolatility, withVolatility } from "../memory/volatility";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { rememberTags } from "../tags/vocabulary";
+import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
 
 export function buildEntryFilterQuery(params: {
   n: number;
@@ -51,7 +52,8 @@ export async function captureEntry(
   source: string,
   env: Env,
   ctx: ExecutionContext,
-  config?: Readonly<Config>
+  config?: Readonly<Config>,
+  writeCtx: WriteContext = OWNER_WRITE_CONTEXT
 ): Promise<CaptureResult> {
   // Resolved once per capture and threaded through duplicate detection and
   // every embed below. Recall and capture must agree on EMBEDDING_MODEL or the
@@ -126,11 +128,11 @@ export async function captureEntry(
   const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
 
   await env.DB.prepare(
-    `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, c, JSON.stringify(finalTags), source, now, now, "[]").run();
+    `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, c, JSON.stringify(finalTags), source, now, now, "[]", writeCtx.workspaceId, writeCtx.actorId).run();
 
   ctx.waitUntil(
-    storeEntry(env, id, c, finalTags, source, now, cfg)
+    storeEntry(env, id, c, finalTags, source, now, cfg, writeCtx)
       .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
   );
 

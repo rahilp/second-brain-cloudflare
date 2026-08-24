@@ -81,6 +81,12 @@ export class D1Mock {
           db.entries.push(row);
           return { meta: { changes: 1 } };
         }
+        if (s.startsWith("UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id")) {
+          const [content, vector_ids, tags, updated_at, workspace_id, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.content = content; row.vector_ids = vector_ids; row.tags = tags; row.updated_at = updated_at; row.workspace_id = workspace_id; }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
         if (s.startsWith("UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ? WHERE id")) {
           const [content, vector_ids, tags, updated_at, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
@@ -97,6 +103,12 @@ export class D1Mock {
           const [tags, vector_ids, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
           if (row) { row.tags = tags; row.vector_ids = vector_ids; }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET vector_ids = ?, workspace_id")) {
+          const [vector_ids, workspace_id, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.vector_ids = vector_ids; row.workspace_id = workspace_id; }
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("UPDATE entries SET vector_ids")) {
@@ -136,6 +148,12 @@ export class D1Mock {
           const [tags, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
           if (row) row.tags = tags;
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET content = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id")) {
+          const [content, tags, updated_at, workspace_id, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.content = content; row.tags = tags; row.updated_at = updated_at; row.workspace_id = workspace_id; }
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id")) {

@@ -11,6 +11,7 @@ import { extractHashtags } from "../text/hashtags";
 import { isVectorizeUnavailable } from "../vectorize/health";
 import { tagsAfterWrite, tagsAfterAppend } from "../memory/stale";
 import { withVolatility, type Volatility } from "../memory/volatility";
+import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
 
 export async function storeEntry(
   env: Env,
@@ -19,7 +20,8 @@ export async function storeEntry(
   tags: string[],
   source: string,
   now: number,
-  config: Readonly<Config> = DEFAULTS
+  config: Readonly<Config> = DEFAULTS,
+  writeCtx: WriteContext = OWNER_WRITE_CONTEXT
 ): Promise<string[]> {
   // A mirrored record is indexed by its first chunk only. `chunkText` splits at
   // CHUNK_MAX_CHARS and every chunk below gets its own vector, so a long one from
@@ -64,9 +66,13 @@ export async function storeEntry(
 
   const vectorIds = vectors.map(v => v.id);
 
+  // This UPDATE is the tail of a version write (fresh vectors for the row), so it
+  // restamps workspace_id from the write context rather than trusting whatever the
+  // INSERT that created the row carried. Under OWNER_WRITE_CONTEXT that is '' —
+  // legacy semantics, no change.
   await env.DB.prepare(
-    `UPDATE entries SET vector_ids = ? WHERE id = ?`
-  ).bind(JSON.stringify(vectorIds), id).run();
+    `UPDATE entries SET vector_ids = ?, workspace_id = ? WHERE id = ?`
+  ).bind(JSON.stringify(vectorIds), writeCtx.workspaceId, id).run();
 
   return vectorIds;
 }
@@ -77,8 +83,8 @@ export async function deleteStaleVectors(env: Env, oldIds: string[], newIds: str
   if (stale.length) await env.VECTORIZE.deleteByIds(stale);
 }
 
-export async function reembedOrThrow(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS): Promise<string[]> {
-  const ids = await storeEntry(env, id, content, tags, source, Date.now(), config);
+export async function reembedOrThrow(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): Promise<string[]> {
+  const ids = await storeEntry(env, id, content, tags, source, Date.now(), config, writeCtx);
   if (!ids.length) throw new Error("re-embed produced no vectors");
   return ids;
 }
@@ -92,9 +98,9 @@ export async function reembedOrThrow(env: Env, id: string, content: string, tags
  * Callers that get null MUST NOT retire the old vectors — they are the entry's
  * only remaining semantic index until Vectorize returns.
  */
-export async function reembedOrDegrade(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS): Promise<string[] | null> {
+export async function reembedOrDegrade(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): Promise<string[] | null> {
   try {
-    return await reembedOrThrow(env, id, content, tags, source, config);
+    return await reembedOrThrow(env, id, content, tags, source, config, writeCtx);
   } catch (e) {
     if (!(await isVectorizeUnavailable(env))) throw e;
     console.error("Vectorize unavailable — committing content without re-embedding:", e);
@@ -142,7 +148,8 @@ export async function updateEntryContent(
    * the user removed the last one. The two must stay distinguishable — collapsing
    * them would let any caller that omits tags wipe them.
    */
-  replaceTags?: string[]
+  replaceTags?: string[],
+  writeCtx: WriteContext = OWNER_WRITE_CONTEXT
 ): Promise<UpdateEntryResult> {
   // vector_ids has to be read before any mutation: storeEntry overwrites it, and the
   // cleanup below needs to know which vectors the entry had on the way in.
@@ -187,7 +194,7 @@ export async function updateEntryContent(
   // (#270), not that this embed failed.
   let newVectorIds: string[] | null;
   try {
-    newVectorIds = await reembedOrDegrade(env, id, finalContent, mergedTags, source, config);
+    newVectorIds = await reembedOrDegrade(env, id, finalContent, mergedTags, source, config, writeCtx);
   } catch (e) {
     console.error("Re-embed failed — entry left unchanged:", e);
     return { status: "reembed_failed" };
@@ -195,8 +202,11 @@ export async function updateEntryContent(
 
   // Safe to commit: either the embed succeeded, or Vectorize is unavailable and the old
   // vectors are kept below rather than retired.
-  await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
-    .bind(finalContent, JSON.stringify(mergedTags), Date.now(), id).run();
+  // A replacement is a new logical version of the entry, so the commit restamps
+  // workspace_id from the write context. actor_id is left untouched: the original
+  // author of a row being edited is not this call's to decide.
+  await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id = ?`)
+    .bind(finalContent, JSON.stringify(mergedTags), Date.now(), writeCtx.workspaceId, id).run();
 
   // Rewritten content can carry hashtags the brain has never seen, so this is one of the
   // two places an unknown tag enters the corpus (#288). It sits here rather than in the
@@ -223,7 +233,8 @@ export async function appendToEntry(
   tags: string[],
   source: string,
   config: Readonly<Config> = DEFAULTS,
-  volatility?: Volatility
+  volatility?: Volatility,
+  writeCtx: WriteContext = OWNER_WRITE_CONTEXT
 ): Promise<boolean> {
   const row = await env.DB.prepare(
     `SELECT vector_ids FROM entries WHERE id = ?`
@@ -244,11 +255,13 @@ export async function appendToEntry(
   const refreshedTags = volatility ? withVolatility(appendedTags, volatility) : appendedTags;
 
   if (newContent.length > CHUNK_MAX_CHARS) {
-    const newVectorIds = await reembedOrDegrade(env, id, newContent, tags, source, config);
+    const newVectorIds = await reembedOrDegrade(env, id, newContent, tags, source, config, writeCtx);
     const now = Date.now();
 
-    await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
-      .bind(newContent, JSON.stringify(refreshedTags), now, id).run();
+    // Both commits below are new logical versions (rewritten body, fresh index), so
+    // they restamp workspace_id; actor_id stays with the original author.
+    await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id = ?`)
+      .bind(newContent, JSON.stringify(refreshedTags), now, writeCtx.workspaceId, id).run();
 
     // Skipped when Vectorize is unavailable: the old vectors are the entry's only
     // remaining semantic index, and retiring them would leave it unsearchable.
@@ -305,8 +318,8 @@ export async function appendToEntry(
   const now = Date.now();
 
   await env.DB.prepare(
-    `UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ? WHERE id = ?`
-  ).bind(newContent, JSON.stringify(indexed ? [...existingVectorIds, newChunkId] : existingVectorIds), JSON.stringify(refreshedTags), now, id).run();
+    `UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id = ?`
+  ).bind(newContent, JSON.stringify(indexed ? [...existingVectorIds, newChunkId] : existingVectorIds), JSON.stringify(refreshedTags), now, writeCtx.workspaceId, id).run();
 
   try {
     await inferEdgesOnWrite(id, await neighborsFromVectorQuery(values, env), env);

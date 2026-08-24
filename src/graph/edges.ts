@@ -27,12 +27,17 @@ export function allowedKindsFor(type: EdgeType): readonly MemoryKind[] | null {
  *
  * Symmetric-type reordering and the weight clamp live here, not in createEdge,
  * so a batched caller gets them too rather than just the direct one.
+ *
+ * `workspaceId` is the SOURCE entry's workspace, copied rather than left to the
+ * column default: edges.workspace_id is denormalized from the source entry so a
+ * scoped graph walk needs no join (see schema.sql). Callers that know it pass it;
+ * "" keeps the legacy-owner value and changes nothing for pre-tenancy rows.
  */
 export function edgeInsertStatement(
   sourceId: string,
   targetId: string,
   type: string,
-  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown>; created_at?: number },
+  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown>; created_at?: number; workspaceId?: string },
   env: Env,
 ): D1PreparedStatement | null {
   if (!isValidEdgeType(type)) return null;
@@ -49,17 +54,17 @@ export function edgeInsertStatement(
   const createdAt = opts.created_at ?? now;
 
   return env.DB.prepare(
-    `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_id, target_id, type) DO UPDATE SET weight = max(weight, excluded.weight), updated_at = excluded.updated_at`
-  ).bind(crypto.randomUUID(), source, target, type, weight, provenance, metadata, createdAt, now);
+  ).bind(crypto.randomUUID(), source, target, type, weight, provenance, metadata, createdAt, now, opts.workspaceId ?? "");
 }
 
 export async function createEdge(
   sourceId: string,
   targetId: string,
   type: string,
-  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown>; created_at?: number },
+  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown>; created_at?: number; workspaceId?: string },
   env: Env,
 ): Promise<{ source_id: string; target_id: string; type: EdgeType } | null> {
   const stmt = edgeInsertStatement(sourceId, targetId, type, opts, env);
@@ -101,7 +106,19 @@ export async function inferEdgesOnWrite(
     .filter(n => n.id !== newId && n.score >= EDGE_INFER_THRESHOLD)
     .sort((a, b) => b.score - a.score)
     .slice(0, EDGE_INFER_MAX);
+  if (!top.length) return;
+
+  // Edges inherit the SOURCE entry's workspace rather than the column default:
+  // the nightly graph backfill (src/graph/pass.ts) runs corpus-wide by design, and
+  // without this copy every edge it inferred would land in "" no matter which
+  // workspace the entry itself lives in — invisible to that owner's scoped walks.
+  // One read per write batch; ids are globally unique so no scoping is needed.
+  const source = await env.DB.prepare(
+    `SELECT workspace_id FROM entries WHERE id = ?`
+  ).bind(newId).first<{ workspace_id: string | null }>();
+  const workspaceId = source?.workspace_id ?? "";
+
   for (const n of top) {
-    await createEdge(newId, n.id, "relates_to", { weight: n.score, provenance: "inferred" }, env);
+    await createEdge(newId, n.id, "relates_to", { weight: n.score, provenance: "inferred", workspaceId }, env);
   }
 }

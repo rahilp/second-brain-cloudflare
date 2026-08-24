@@ -47,6 +47,8 @@ interface CandidateRow {
   b_content: string;
   a_tags: string;
   b_tags: string;
+  a_workspace_id: string;
+  b_workspace_id: string;
 }
 
 /**
@@ -91,7 +93,8 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // was already selecting these rows, this only widens the column list.
     const { results } = await env.DB.prepare(
       `SELECT c.id, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
-              a.tags AS a_tags, b.tags AS b_tags
+              a.tags AS a_tags, b.tags AS b_tags,
+              a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id
        FROM insight_candidates c
        JOIN entries a ON a.id = c.a_id
        JOIN entries b ON b.id = c.b_id
@@ -136,7 +139,7 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // rejected.map/used.map, immediately before env.DB.batch(statements),
     // keeps the whole batch's statements prepared together — which is what
     // lets it join the status updates as a single subrequest.
-    const drawnFromPairs: { insightId: string; targetId: string }[] = [];
+    const drawnFromPairs: { insightId: string; targetId: string; workspaceId: string }[] = [];
     // Texts to compare a new proposal against: insights still unreviewed from
     // earlier runs, plus (appended below) whatever this run itself accepts.
     // Two different candidate pairs — in this run, or one from weeks back —
@@ -198,8 +201,25 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       }
       writtenThisRun.push(result.text);
 
+      // Where a written insight lives (THE INSIGHT-WORKSPACE RULE):
+      //
+      // An insight inherits its inputs' workspace only when both sides agree —
+      // the synthesis is then that workspace's own content turned back on
+      // itself, and hiding it from the people who wrote it would make insights
+      // unreadable by their owners. When the pair spans two workspaces, no
+      // member may see a row built partly from someone else's private memory,
+      // so the entry is written to "" — owner/system space, outside every
+      // member's readable set. Accrual (src/insight/candidates.ts) already
+      // refuses to pair across workspaces, so this branch only fires for
+      // candidates that predate tenancy.
+      const inputWorkspaces = new Set([candidate.a_workspace_id ?? "", candidate.b_workspace_id ?? ""]);
+      const insightWorkspace = inputWorkspaces.size === 1 ? [...inputWorkspaces][0] : "";
+
       const content = `${result.text}\n\n[Insight: ${result.shape} — drawn from 2 memories]`;
-      const captured = await captureEntry(content, ["auto-insight"], "system", env, ctx, cfg);
+      // actorId stays "": the insight is system-authored regardless of whose
+      // workspace it inherits.
+      const captured = await captureEntry(content, ["auto-insight"], "system", env, ctx, cfg,
+        { workspaceId: insightWorkspace, actorId: "" });
 
       // A non-stored result means the insight duplicated an earlier one. Mark it
       // used anyway, or the pass re-proposes and re-pays for this pair forever.
@@ -207,9 +227,10 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       if (captured.status === "stored") {
         written++;
         // Only on a real, created entry — an edge sourced from a capture that
-        // declined to store would point at a row that never exists.
+        // declined to store would point at a row that never exists. The edge
+        // carries the insight's own workspace so scoped graph walks can see it.
         for (const targetId of [candidate.a_id, candidate.b_id]) {
-          drawnFromPairs.push({ insightId: captured.id, targetId });
+          drawnFromPairs.push({ insightId: captured.id, targetId, workspaceId: insightWorkspace });
         }
       }
     }
@@ -234,8 +255,8 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       ...used.map(id => env.DB.prepare(
         `UPDATE insight_candidates SET status = 'used' WHERE id = ?`).bind(id)),
       ...drawnFromPairs
-        .map(({ insightId, targetId }) => edgeInsertStatement(
-          insightId, targetId, "drawn_from", { provenance: "system", weight: 1 }, env,
+        .map(({ insightId, targetId, workspaceId }) => edgeInsertStatement(
+          insightId, targetId, "drawn_from", { provenance: "system", weight: 1, workspaceId }, env,
         ))
         .filter((stmt): stmt is D1PreparedStatement => stmt !== null),
     ];

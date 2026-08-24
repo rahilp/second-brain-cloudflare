@@ -64,6 +64,7 @@ interface SeedRow {
   created_at: number;
   importance_score: number | null;
   vector_ids: string;
+  workspace_id: string;
 }
 
 /** A neighbour, hydrated live from D1 rather than trusted from vector metadata. */
@@ -74,6 +75,7 @@ interface NeighbourRow {
   source: string;
   created_at: number;
   importance_score: number | null;
+  workspace_id: string;
 }
 
 /** The examined-so-far position. A keyset, not an offset — see `seedSql`. */
@@ -133,7 +135,11 @@ async function writeCursor(env: Env, row: { created_at: number; id: string }): P
  */
 function seedSql(hasCursor: boolean): string {
   const where = hasCursor ? `WHERE created_at > ? OR (created_at = ? AND id > ?)` : "";
-  return `SELECT id, content, tags, source, created_at, importance_score, vector_ids
+  // workspace_id rides along so a candidate pair can be kept inside one workspace:
+  // accrual walks every workspace's rows (it is a maintenance pass), but a pair
+  // spanning two workspaces would have the weekly pass reason over two people's
+  // memories at once, so the cross-workspace match is dropped at pairing time below.
+  return `SELECT id, content, tags, source, created_at, importance_score, vector_ids, workspace_id
             FROM entries
             ${where}
            ORDER BY created_at ASC, id ASC
@@ -260,7 +266,7 @@ export async function runInsightAccrual(env: Env, ctx: ExecutionContext): Promis
       const batch = neighbourIdList.slice(i, i + D1_MAX_BOUND_PARAMS);
       const placeholders = batch.map(() => "?").join(", ");
       const { results: hydrated } = await env.DB.prepare(
-        `SELECT id, content, tags, source, created_at, importance_score
+        `SELECT id, content, tags, source, created_at, importance_score, workspace_id
            FROM entries
           WHERE id IN (${placeholders})`,
       ).bind(...batch).all() as { results: NeighbourRow[] };
@@ -274,6 +280,13 @@ export async function runInsightAccrual(env: Env, ctx: ExecutionContext): Promis
     for (const { seed, parentId, similarity } of pending) {
       const neighbour = neighbourById.get(parentId);
       if (!neighbour) continue;
+
+      // Tenancy: a pair is only ever one workspace's content. The Vectorize query
+      // cannot know about workspaces yet (namespacing is a later phase), so a
+      // match from someone else's personal workspace arrives here routinely and is
+      // dropped once the hydrated rows disagree — before anything about either row
+      // influences a score, an insight, or an edge.
+      if (neighbour.workspace_id !== seed.workspace_id) continue;
 
       const gap = Math.abs(seed.created_at - neighbour.created_at);
       if (gap < MIN_GAP_MS) continue;
@@ -343,6 +356,7 @@ export async function runInsightAccrual(env: Env, ctx: ExecutionContext): Promis
          JOIN entries a ON a.id = e.source_id
          JOIN entries b ON b.id = e.target_id
          WHERE e.type = 'supersedes'
+           AND a.workspace_id = b.workspace_id
            AND ABS(a.created_at - b.created_at) >= ?
            AND a.tags NOT LIKE '%"status:deprecated"%'
            AND b.tags NOT LIKE '%"status:deprecated"%'
