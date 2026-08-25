@@ -129,6 +129,35 @@ function audienceScreen() {
   );
 }
 
+/// Same question as audienceScreen, asked AFTER an existing brain connects:
+/// the v3 Worker provisions tenancy on every brain it runs, so the only open
+/// question is whether this owner will use the team features — which only
+/// decides what the Connection window tells them.
+function existingTeamScreen() {
+  currentScreen = existingTeamScreen;
+  const justMe = h("button", { class: "btn-primary" }, [t("audience.justMe")]);
+  justMe.addEventListener("click", async () => {
+    teamMode = false;
+    await invoke("set_team_mode", { teamMode: false }).catch(() => {});
+    void toolsScreen();
+  });
+  const aTeam = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("audience.aTeam"),
+  ]);
+  aTeam.addEventListener("click", async () => {
+    teamMode = true;
+    await invoke("set_team_mode", { teamMode: true }).catch(() => {});
+    void toolsScreen();
+  });
+  show(
+    brand(),
+    h("h1", {}, [t("audience.existingTitle")]),
+    h("p", { class: "lede" }, [t("audience.existingLede")]),
+    justMe,
+    aTeam,
+  );
+}
+
 function notice(message: string, tone: "error" | "info" = "error"): HTMLElement {
   return h("div", { class: `notice ${tone}` }, [
     tone === "error" ? "⚠️" : "💡",
@@ -299,7 +328,7 @@ function unlockBrainScreen(
         address: brain.url,
         password: password.value,
       });
-      await toolsScreen();
+      await existingTeamScreen();
     } catch (e) {
       unlockBrainScreen(brain, String(e), found);
     }
@@ -360,7 +389,7 @@ function manualEntryScreen(
         address: address.value,
         password: password.value,
       });
-      await toolsScreen();
+      await existingTeamScreen();
     } catch (e) {
       manualEntryScreen(String(e), address.value);
     }

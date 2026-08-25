@@ -321,7 +321,12 @@ export const en: Messages = {
       "Both choices build the same private Second Brain, in your own Cloudflare " +
       "space. This only changes what we explain at the end.",
     justMe: "Just me",
-    aTeam: "A team",
+    aTeam: "With my team",
+    existingTitle: "Will anyone else use this brain?",
+    existingLede:
+      "Your brain now supports teams: each member gets private memories, plus a " +
+      "shared layer everyone can see. You are the admin — invite members from the " +
+      "dashboard's Team tab whenever you're ready.",
     footnote:
       "On a team brain every person gets their own access — and sharing a " +
       "memory is always up to whoever wrote it.",

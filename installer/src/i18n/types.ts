@@ -170,6 +170,8 @@ export type Messages = {
     justMe: string;
     aTeam: string;
     footnote: string;
+    existingTitle: string;
+    existingLede: string;
   };
   connectExisting: {
     title: string;

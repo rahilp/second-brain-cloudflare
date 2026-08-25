@@ -526,6 +526,33 @@ pub struct ConnectionDetailsResponse {
     pub team_mode: bool,
 }
 
+/// Records the personal/team choice for an ALREADY-CONNECTED brain. The new-
+/// brain path writes this inside start_provisioning; connect_existing
+/// deliberately does not (a connected brain's mode is unknown), so the wizard
+/// asks afterwards and lands here. Cosmetic by design: the v3 Worker
+/// provisions tenancy server-side on its own, this only decides what the
+/// Connection window tells the owner.
+#[tauri::command]
+pub fn set_team_mode(
+    team_mode: bool,
+    app: AppHandle,
+    session: State<'_, SetupSession>,
+) -> Result<(), String> {
+    // Dry-run never writes secure storage (#252).
+    if session.dry_run {
+        return Ok(());
+    }
+    let mode = if team_mode {
+        secure_store::MODE_TEAM
+    } else {
+        secure_store::MODE_PERSONAL
+    };
+    secure_store::save_team_mode(mode).map_err(|e| {
+        log::error!("secure store save failed: {e}");
+        user_err(locale_of(&app), Key::ErrorSecureStoreSetup)
+    })
+}
+
 #[tauri::command]
 pub fn get_connection_details(
     app: AppHandle,

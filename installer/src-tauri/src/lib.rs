@@ -207,6 +207,7 @@ pub fn run() {
             commands::outstanding_old_index,
             commands::start_provisioning,
             commands::get_connection_details,
+            commands::set_team_mode,
             commands::detect_tools,
             commands::connect_tool,
             commands::detect_cli,

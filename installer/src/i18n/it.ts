@@ -317,7 +317,12 @@ export const it: Messages = {
       "Entrambe le scelte creano lo stesso Second Brain privato, nel tuo spazio " +
       "Cloudflare. Cambia solo ciò che ti spieghiamo alla fine.",
     justMe: "Solo per me",
-    aTeam: "Per un team",
+    aTeam: "Con il mio team",
+    existingTitle: "Altri useranno questo Second Brain?",
+    existingLede:
+      "Il tuo Second Brain ora supporta i team: ogni membro ha ricordi privati, " +
+      "più un livello condiviso visibile a tutti. Sei l'amministratore — invita i " +
+      "membri dalla scheda Team della dashboard quando vuoi.",
     footnote:
       "In un Second Brain di team ogni persona riceve un accesso proprio — e " +
       "condividere un ricordo è sempre una scelta di chi l'ha scritto.",
