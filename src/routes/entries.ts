@@ -142,6 +142,7 @@ export async function handleEntriesRoutes(
       return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
     }
 
+    auditEvent(env, ctx, { entryId: id, actorId: auth.userId, event: "deleted", payload: { deletedVectors: result.vectorCount } });
     return json({ ok: true, id, deletedVectors: result.vectorCount });
   }
 
@@ -249,6 +250,7 @@ export async function handleEntriesRoutes(
       return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
     }
 
+    auditEvent(env, ctx, { entryId: id, actorId: auth.userId, event: "status_changed", payload: { status } });
     return json({ ok: true, id, status });
   }
 

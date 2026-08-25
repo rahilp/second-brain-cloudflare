@@ -7,6 +7,7 @@ import { scopeWhere, scopeWrite, type WriteContext } from "../lib/scope";
 import { captureEntry } from "../capture/entry";
 import { appendToEntry, updateEntryContent } from "../capture/store";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
+import { auditEvent } from "../lib/audit";
 import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/volatility";
 
 /**
@@ -61,6 +62,18 @@ export async function handleCaptureRoutes(
       : body.tags ?? [];
 
     const result = await captureEntry(body.content, captureTags, body.source ?? "api", env, ctx, undefined, writeContextFor(identity, body.workspace));
+
+    if (result.status !== "blocked") {
+      // Audit at the edge where identity and ctx both live; the domain layer
+      // stays free of request state. "stored"/"flagged" are creations, the
+      // rest are rewrites of an existing row.
+      auditEvent(env, ctx, {
+        entryId: result.id,
+        actorId: identity.userId,
+        event: result.status === "stored" || result.status === "flagged" ? "created" : "updated",
+        payload: { captureStatus: result.status },
+      });
+    }
 
     if (result.status === "blocked") {
       return json({
@@ -141,6 +154,8 @@ export async function handleCaptureRoutes(
       return json({ ok: false, error: `Append failed: ${(e as Error).message}` }, 500);
     }
 
+    auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: "appended" });
+
     return json({
       ok: true,
       id,
@@ -201,6 +216,8 @@ export async function handleCaptureRoutes(
     if (result.status === "not_found") {
       return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
     }
+
+    auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: "updated" });
 
     if (result.status === "reembed_failed") {
       return json({ ok: false, error: "Couldn't update: search re-index failed. Your memory is unchanged — please try again." }, 500);

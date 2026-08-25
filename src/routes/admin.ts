@@ -17,6 +17,7 @@ import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
+import { createMember, listMembers, rotateMemberToken, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -45,6 +46,65 @@ export async function handleAdminRoutes(
   ctx: ExecutionContext,
 ): Promise<Response | null> {
   const cfg = await resolveConfig(env);
+  // ── Team administration (v3). All routes behind requireAdmin. ──────────
+  if (url.pathname === "/team/members" && request.method === "GET") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    return json({ ok: true, members: await listMembers(env), you: auth.userId });
+  }
+
+  if (url.pathname === "/team/members" && request.method === "POST") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { name?: string; email?: string; role?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (body.role !== undefined && body.role !== "admin" && body.role !== "member") {
+      return json({ ok: false, error: 'role must be "admin" or "member"' }, 400);
+    }
+    try {
+      const { member, token } = await createMember(env, {
+        name: body.name,
+        email: body.email,
+        role: body.role as "admin" | "member" | undefined,
+      });
+      // The token is returned exactly once — only its hash is stored.
+      return json({ ok: true, member, token }, 201);
+    } catch (e) {
+      if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
+      throw e;
+    }
+  }
+
+  if (url.pathname === "/team/members/token" && request.method === "POST") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { id?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+    try {
+      const token = await rotateMemberToken(env, body.id.trim());
+      return json({ ok: true, id: body.id.trim(), token });
+    } catch (e) {
+      if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
+      throw e;
+    }
+  }
+
+  if (url.pathname === "/team/members/suspend" && request.method === "POST") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { id?: string; suspended?: boolean };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+    try {
+      await setMemberSuspended(env, auth.userId, body.id.trim(), body.suspended !== false);
+      return json({ ok: true, id: body.id.trim(), suspended: body.suspended !== false });
+    } catch (e) {
+      if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
+      throw e;
+    }
+  }
+
   // GET /stats
   if (url.pathname === "/stats" && request.method === "GET") {
     const auth = await requireAdmin(request, env);
