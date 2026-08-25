@@ -27,6 +27,7 @@ import { localEvidenceOf } from "./root-candidate";
 import { selectGraphRoots, type RootCandidate } from "./root-selector";
 import type { KeywordRow, RecallInternalOptions, RecallMatch, RecallSearchResult, RecallStage } from "./types";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
+import { workspaceFilter, queryVectorizeScoped } from "../vectorize/scope";
 import { observeRecallEnv } from "./diagnostics";
 import { chooseEvidenceSlot, type EvidenceSlotCandidate } from "./evidence-rescue";
 import { queryRelevantWindow } from "./snippet";
@@ -227,8 +228,19 @@ export async function recallEntries(
     };
   } else {
     const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
+    // Scoped when an Identity is in play: the workspace filter keeps foreign
+    // candidates out of the result slots. queryVectorizeScoped retries
+    // unfiltered if Vectorize rejects the filter; hydration below is scoped at
+    // the SQL layer either way, so correctness never rides on this.
+    const wsFilter = identity ? workspaceFilter(identity)?.filter : undefined;
     const denseQuery = async (): Promise<{ matches: VectorizeMatch[] }> => {
       try {
+        if (wsFilter) {
+          const { matches } = await queryVectorizeScoped<VectorizeMatch>(
+            env.VECTORIZE, values, { topK: vectorizeTopK, filter: wsFilter },
+          );
+          return { matches };
+        }
         return await env.VECTORIZE.query(values, { topK: vectorizeTopK, returnMetadata: "all", returnValues: true });
       } catch (e) {
         console.error("Vectorize query failed (degrading to keyword-only):", e);
@@ -248,7 +260,14 @@ export async function recallEntries(
     // retuned recall widening.
     if (!semanticUnavailable && results.matches.length && results.matches[0].score < cfg.RECALL_WIDEN_THRESHOLD) {
       try {
-        results = await env.VECTORIZE.query(values, { topK: 50, returnMetadata: "all", returnValues: true });
+        if (wsFilter) {
+          const { matches } = await queryVectorizeScoped<VectorizeMatch>(
+            env.VECTORIZE, values, { topK: 50, filter: wsFilter },
+          );
+          results = { matches };
+        } else {
+          results = await env.VECTORIZE.query(values, { topK: 50, returnMetadata: "all", returnValues: true });
+        }
       } catch (e) {
         console.error("Vectorize widen-query failed (non-fatal, keeping narrow results):", e);
       }

@@ -9,6 +9,7 @@ import {
   SMART_MERGE_MAX_TOKENS,
 } from "../constants";
 import { embed, readStreamText } from "../lib/ai";
+import { queryVectorizeScoped, singleWorkspaceFilter } from "../vectorize/scope";
 
 type DuplicateResult =
   | { status: "unique" }
@@ -41,6 +42,7 @@ export async function checkDuplicateAndContradiction(
   content: string,
   env: Env,
   config: Readonly<Config> = DEFAULTS,
+  workspaceId?: string,
 ): Promise<{
   duplicate: DuplicateResult;
   contradiction: ContradictionResult;
@@ -56,7 +58,17 @@ export async function checkDuplicateAndContradiction(
   // on deployments the read path already serves keyword-only (recall/search.ts).
   let matches: VectorizeMatch[] = [];
   try {
-    ({ matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" }));
+    if (workspaceId !== undefined) {
+      // Dedupe/contradiction compare against the WRITE TARGET's workspace only:
+      // a private note must not collide with a colleague's shared one, and
+      // vice versa. Falls back to unfiltered when Vectorize rejects the filter.
+      const { matches: filtered } = await queryVectorizeScoped<VectorizeMatch>(
+        env.VECTORIZE, values, { topK: 5, filter: singleWorkspaceFilter(workspaceId).filter },
+      );
+      matches = filtered;
+    } else {
+      ({ matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" }));
+    }
   } catch (e) {
     console.error("Vectorize query failed (capturing without duplicate/contradiction checks):", e);
   }

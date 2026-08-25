@@ -48,6 +48,10 @@ export async function storeEntry(
         tags,
         source,
         created_at: now,
+        // Which workspace this vector belongs to. User-facing queries filter on
+        // it (with a graceful fallback — see src/vectorize/scope.ts); system
+        // passes query unfiltered.
+        workspace_id: writeCtx.workspaceId,
       };
 
       tags.forEach(t => {
@@ -294,6 +298,7 @@ export async function appendToEntry(
     tags,
     source,
     created_at: Date.now(),
+    workspace_id: writeCtx.workspaceId,
   };
 
   tags.forEach(t => {
