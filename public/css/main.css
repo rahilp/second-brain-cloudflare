@@ -3366,11 +3366,11 @@
         margin-top: 10px;
       }
 
-      /* Mode pill and layer dropdown read as one controls cluster on the left;
-         the send button owns the far edge. space-between used to strand the
-         layer dropdown mid-box, which read as floating. */
-      .home-row .send-btn {
-        margin-left: auto;
+      /* Mode pill anchors left; the layer target and send button anchor right,
+         as one cluster. A middle-anchored dropdown in a full-width box reads
+         as floating — this way the wide middle is just the textarea's space. */
+      .home-row #home-mode {
+        margin-right: auto;
       }
 
       /* The prediction, always visible and always one tap from being overridden.
