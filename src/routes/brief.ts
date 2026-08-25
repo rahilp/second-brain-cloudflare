@@ -61,7 +61,7 @@ export async function handleBriefRoutes(
   // workspace plus the company one. The clauses bind positionally, so each
   // query's bindings below carry them in statement order.
   const scope = scopeWhere(auth);
-  const entryScope = scopeWhere(auth, "entries.workspace_id");
+  const entryScope = scopeWhere(auth, undefined, "entries.workspace_id");
 
   const now = Date.now();
   const since = now - RECENT_WINDOW_MS;

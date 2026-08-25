@@ -50,8 +50,20 @@ export function readableWorkspaces(identity: Identity): string[] {
   return workspaces;
 }
 
-export function scopeWhere(identity: Identity, column = "workspace_id"): ScopeClause {
-  const workspaces = readableWorkspaces(identity);
+/**
+ * The workspace ids a read should cover: the readable set, or just one layer of
+ * it when the caller asked to scope ("personal" | "company"). Requesting a
+ * single layer can only ever narrow — both ids come from the identity, so a
+ * caller can never name a workspace it does not belong to.
+ */
+export function scopeWorkspaces(identity: Identity, only?: "personal" | "company"): string[] {
+  if (only === "personal") return [identity.personalWorkspaceId];
+  if (only === "company") return [identity.companyWorkspaceId];
+  return readableWorkspaces(identity);
+}
+
+export function scopeWhere(identity: Identity, only?: "personal" | "company", column = "workspace_id"): ScopeClause {
+  const workspaces = scopeWorkspaces(identity, only);
   return { clause: `${column} IN (${workspaces.map(() => "?").join(", ")})`, bindings: workspaces };
 }
 

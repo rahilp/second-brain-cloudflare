@@ -93,12 +93,14 @@ describe("recallEntries with an Identity", () => {
     const { ctx } = makeCtx();
     const keywordSql = () => sqlite.issued.find(s => s.includes("ORDER BY created_at DESC LIMIT"));
 
-    // Absent identity: the pre-tenancy string, verbatim.
+    // Absent identity: the pre-tenancy string, verbatim. (The hydration
+    // projection now carries workspace_id so matches can report their layer —
+    // what must never appear unscoped is the workspace_id *clause*.)
     await recallEntries({ query: "alpha", topK: 10, synthesize: false }, env, ctx);
     expect(keywordSql()).toBe(
       `SELECT id, content, tags, source, created_at FROM entries WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?`,
     );
-    expect(sqlite.issued.some(s => s.includes("FROM entries") && s.includes("workspace_id"))).toBe(false);
+    expect(sqlite.issued.some(s => s.includes("FROM entries") && s.includes("workspace_id IN"))).toBe(false);
 
     // With identity: the same statement plus the AND'd clause, nothing else moved.
     sqlite.issued.length = 0;

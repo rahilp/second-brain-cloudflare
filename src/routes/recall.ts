@@ -19,12 +19,27 @@ import { allowanceFor, snippetOf } from "../recall/snippet";
 function scopeEntryFilterQuery(
   identity: Identity,
   q: { sql: string; bindings: unknown[] },
+  only?: "personal" | "company",
 ): { sql: string; bindings: unknown[] } {
-  const scope = scopeWhere(identity);
+  const scope = scopeWhere(identity, only);
   const sql = q.sql.includes("WHERE")
     ? q.sql.replace(" ORDER BY", ` AND ${scope.clause} ORDER BY`)
     : q.sql.replace(" ORDER BY", ` WHERE ${scope.clause} ORDER BY`);
   return { sql, bindings: [...q.bindings.slice(0, -1), ...scope.bindings, ...q.bindings.slice(-1)] };
+}
+
+/**
+ * The ?workspace= layer filter shared by /list and /recall. Only narrows the
+ * caller's readable set — "personal" and "company" both resolve from the
+ * identity, so a caller can never name a workspace it does not belong to.
+ */
+function readWorkspaceParam(url: URL): "personal" | "company" | undefined | Response {
+  const raw = url.searchParams.get("workspace")?.trim();
+  if (!raw) return undefined;
+  if (raw !== "personal" && raw !== "company") {
+    return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
+  }
+  return raw;
 }
 
 export async function handleRecallRoutes(
@@ -47,10 +62,18 @@ export async function handleRecallRoutes(
     if (after instanceof Response) return after;
     const before = intParam(url, "before");
     if (before instanceof Response) return before;
+    const workspace = readWorkspaceParam(url);
+    if (workspace instanceof Response) return workspace;
 
-    const { sql, bindings } = scopeEntryFilterQuery(identity, buildEntryFilterQuery({ n, tag, after, before }));
+    const { sql, bindings } = scopeEntryFilterQuery(identity, buildEntryFilterQuery({ n, tag, after, before }), workspace);
     const { results } = await env.DB.prepare(sql).bind(...bindings).all();
-    return json(results);
+    // Each row reports its layer so the dashboard can badge cards and offer
+    // share/unshare without knowing the caller's workspace ids itself.
+    const layerOf = (wid: unknown): string =>
+      wid === identity.personalWorkspaceId ? "personal"
+      : wid === identity.companyWorkspaceId ? "company"
+      : "system";
+    return json((results as Record<string, unknown>[]).map((r) => ({ ...r, workspace: layerOf(r.workspace_id) })));
   }
 
   // GET /recall — semantic search, mirrors the MCP `recall` tool
@@ -73,12 +96,14 @@ export async function handleRecallRoutes(
     const kind = kindParam && (KIND_VALUES as readonly string[]).includes(kindParam) ? kindParam as MemoryKind : undefined;
     const hops = intParam(url, "hops", { fallback: 0, min: 0, max: 3 });
     if (hops instanceof Response) return hops;
+    const workspace = readWorkspaceParam(url);
+    if (workspace instanceof Response) return workspace;
     // Long memories are shortened by default so API/CLI consumers get a bounded
     // payload. Renderers that show the whole memory (the dashboard) pass full=1.
     const full = ["1", "true", "yes"].includes((url.searchParams.get("full") ?? "").toLowerCase());
 
     const cfg = await resolveConfig(env);
-    const { matches, insight, semanticUnavailable, queryUsed, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx, cfg, { identity });
+    const { matches, insight, semanticUnavailable, queryUsed, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx, cfg, { identity, workspaceFilter: workspace });
 
     if (!matches.length) {
       return json({
@@ -113,6 +138,7 @@ export async function handleRecallRoutes(
           stale_as_of: m.staleAsOf,
           updated: m.isUpdate,
           hop: m.hop,
+          workspace: m.workspace ?? null,
           via_provenance: m.viaProvenance ?? null,
           via_type: m.viaType ?? null,
           linked_at: m.viaLinkedAt ?? null,

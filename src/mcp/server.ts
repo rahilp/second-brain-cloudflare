@@ -98,6 +98,13 @@ const REMEMBER_DESCRIPTION =
   + "One memory per thing worth retrieving on its own. Before adding another memory about a subject you have "
   + "already stored, consider whether this is really an update to that memory: when it continues the same "
   + "thread — progress, a follow-up, a refinement, a later outcome — call append on the existing entry instead "
+  + "of creating a near-duplicate.\n\n"
+  + "VISIBILITY: on a team brain every memory lands in one of two layers. Personal = visible only to its "
+  + "author. Company = visible to the whole team. If the user says \"share this\", \"the team should know\", "
+  + "or similar, pass workspace: \"company\". If they say \"keep this private\", pass workspace: \"personal\". "
+  + "With no workspace argument the member's configured default decides (personal unless their admin said "
+  + "otherwise), so when policy matters to the user, be explicit. recall marks each result 'shared' or "
+  + "'personal', and the share tool moves an existing memory between layers at any time. "
   + "of creating a near-duplicate. Do not create a new durable memory for a repeated no-op observation, an "
   + "unchanged status, or a restatement of something already stored.\n\n"
   + "Do store separately when the information is genuinely its own retrieval target: a distinct event, a new "
@@ -358,11 +365,12 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp. Useful for narrowing a recovery search to a period the conversation identified"),
         kind: z.enum([...KIND_VALUES] as [string, ...string[]]).optional().describe("Filter to episodic (events) or semantic (facts/knowledge). Useful as a recovery filter when a mixed result set buried the kind you needed"),
         hops: z.number().int().min(0).max(3).default(0).describe("Graph expansion depth: 0 = direct matches only (default); 1–2 also surfaces related memories linked in the graph. Raise it for why/how, chronology, causes, outcomes, or what came before or after; leave it at 0 when direct matches already answer the question"),
+        workspace: z.enum(["personal", "company"]).optional().describe("Restrict the search to one layer: the user's private workspace or the shared company layer. Omit to search both — the default, and right for most questions"),
       },
     },
-    async ({ query, topK, tag, after, before, kind, hops }) => {
+    async ({ query, topK, tag, after, before, kind, hops, workspace }) => {
       const cfg = await resolveConfig(env);
-      const { matches, insight, semanticUnavailable, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx, cfg, { identity });
+      const { matches, insight, semanticUnavailable, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx, cfg, { identity, workspaceFilter: workspace });
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
@@ -386,14 +394,15 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         tag: z.string().optional(),
         after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
+        workspace: z.enum(["personal", "company"]).optional().describe("Restrict the listing to one layer: the user's private workspace or the shared company layer. Omit to list both"),
       },
     },
-    async ({ n, tag, after, before }) => {
+    async ({ n, tag, after, before, workspace }) => {
       // Same inline scoping as GET /list (src/routes/recall.ts): the filter
       // builder has no hook of its own, and its SQL always ends in ORDER BY.
       let { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
       if (identity) {
-        const scope = scopeWhere(identity);
+        const scope = scopeWhere(identity, workspace);
         sql = sql.includes("WHERE")
           ? sql.replace(" ORDER BY", ` AND ${scope.clause} ORDER BY`)
           : sql.replace(" ORDER BY", ` WHERE ${scope.clause} ORDER BY`);

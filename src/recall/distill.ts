@@ -19,7 +19,7 @@ import { getTagVocabulary } from "../tags/vocabulary";
  * caller; pass it wherever there is one, or an aged-out vocabulary is rebuilt on the
  * request's own critical path instead of behind it.
  */
-export async function inferQueryTags(query: string, env: Env, config: Readonly<Config> = DEFAULTS, ctx?: ExecutionContext, identity?: Identity): Promise<string[]> {
+export async function inferQueryTags(query: string, env: Env, config: Readonly<Config> = DEFAULTS, ctx?: ExecutionContext, identity?: Identity, only?: "personal" | "company"): Promise<string[]> {
   const { hashtags } = extractHashtags(query);
   if (hashtags.length) return hashtags;
 
@@ -89,6 +89,7 @@ export async function distillToRareTerms(
   config: Readonly<Config> = DEFAULTS,
   bounds: Readonly<TimeBounds> = {},
   identity?: Identity,
+  only?: "personal" | "company",
 ): Promise<DistilledQuery> {
   const words = query.split(/\s+/).filter(Boolean);
   const norm = (w: string) => w.toLowerCase().replace(/^[^\w#.]+|[^\w#.]+$/g, "");
@@ -108,7 +109,7 @@ export async function distillToRareTerms(
   // The DF denominator is the caller's readable corpus, not the deployment's:
   // another workspace's rows must not be able to saturate a term out of (or
   // inflate a term's rarity within) this caller's query.
-  const scope = identity ? scopeWhere(identity) : null;
+  const scope = identity ? scopeWhere(identity, only) : null;
   try {
     const sums = uniq.map((_, i) => `SUM(CASE WHEN content LIKE ? THEN 1 ELSE 0 END) AS d${i}`).join(", ");
     let where = "";

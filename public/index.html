@@ -109,6 +109,17 @@
                     <button class="home-mode" id="home-mode" onclick="toggleHomeMode()" title="Switch between asking and remembering" data-i18n="home.modeTitle" data-i18n-attr="title">
                       <span class="home-mode-dot"></span><span id="home-mode-label" data-i18n="home.willSearch">will search</span>
                     </button>
+                    <!-- Team-layer target for captures. Hidden on solo brains;
+                         Auto defers to the member's configured default. -->
+                    <span id="home-layer-wrap" style="display: none">
+                      <span class="team-select-wrap">
+                        <select class="team-select" id="home-layer" onchange="onHomeLayerChange(this.value)" title="Where memories land when you save">
+                          <option value="" data-i18n="home.layerAuto">Auto layer</option>
+                          <option value="personal" data-i18n="home.layerPersonal">Personal</option>
+                          <option value="company" data-i18n="home.layerShared">Shared</option>
+                        </select><i class="ti ti-chevron-down"></i>
+                      </span>
+                    </span>
                     <button class="send-btn" onclick="submitHome()"><i class="ti ti-arrow-up"></i></button>
                   </div>
                 </div>
@@ -159,6 +170,13 @@
                   onkeydown="handleRecallKey(event)"
                   oninput="autoResize(this)"
                 ></textarea>
+                <span id="recall-layer-wrap" style="display: none">
+                  <span class="team-select-wrap"><select class="team-select" id="recall-layer" onchange="onRecallLayerChange(this.value)" title="Search everywhere, or just one layer">
+                    <option value="" data-i18n="memories.allLayers">All layers</option>
+                    <option value="personal" data-i18n="memories.personalLayer">Personal</option>
+                    <option value="company" data-i18n="memories.sharedLayer">Shared</option>
+                  </select><i class="ti ti-chevron-down"></i></span>
+                </span>
                 <button class="send-btn" onclick="sendRecall()"><i class="ti ti-arrow-up"></i></button>
               </div>
             </div>
@@ -183,6 +201,13 @@
                   <option value="30" data-i18n="memories.last30">Last 30 days</option>
                   <option value="month" data-i18n="memories.thisMonth">This month</option>
                 </select>
+                <span id="layer-filter-wrap" style="display: none">
+                  <span class="team-select-wrap"><select class="team-select" id="layer-filter-recent" onchange="onLayerFilterChange(this.value)">
+                    <option value="" data-i18n="memories.allLayers">All layers</option>
+                    <option value="personal" data-i18n="memories.personalLayer">Personal</option>
+                    <option value="company" data-i18n="memories.sharedLayer">Shared</option>
+                  </select><i class="ti ti-chevron-down"></i></span>
+                </span>
               </div>
               <!-- This used to read "Knowledge / Events / Unsorted", which stopped
                    being true when the canvas moved to per-cluster colours from a

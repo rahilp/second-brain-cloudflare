@@ -2,6 +2,18 @@
 // tags, which made it the de-facto "refresh the app" call and left everything
 // it did not know about — the brief, and so the greeting's count — permanently
 // stale. Refreshing the shell is refreshAll()'s job now; this owns one list.
+
+/** Layer filter for the memories screen: null = all layers. */
+let memoryLayerFilter = null
+
+function maybeRevealMemoryLayerFilter(health) {
+  // The outer span is what carries display:none — the select's immediate
+  // parent is the inner chevron wrapper. Both branches, so the filter's
+  // visibility always tracks TEAM_MODE rather than just being revealed once.
+  const wrap = document.getElementById('layer-filter-wrap')
+  if (wrap) wrap.style.display = TEAM_MODE ? '' : 'none'
+}
+
 async function loadRecent() {
   const list = document.getElementById('recent-list')
   // Only show the loading state on a cold list. A refresh after a capture
@@ -10,7 +22,7 @@ async function loadRecent() {
     list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>${escHtml(t('memories.loadingShort'))}</span></div>`
   }
   try {
-    allEntries = await apiList(50)
+    allEntries = await apiList(50, memoryLayerFilter)
     // Through the filters, not straight to render: reloading used to reset the
     // list to everything while the filter controls still read "work" and
     // "past 7 days", which now happens after every capture rather than only
@@ -21,6 +33,23 @@ async function loadRecent() {
     if (!allEntries.length) {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-wifi-off"></i><span>${escHtml(t('memories.loadFailed'))}</span></div>`
     }
+  }
+}
+
+function onLayerFilterChange(value) {
+  memoryLayerFilter = value || null
+  loadRecent()
+}
+
+/** Share/unshare from a memory card, then refresh so the badge tells the truth. */
+async function toggleEntryLayer(id, currentLayer) {
+  const target = currentLayer === 'company' ? 'personal' : 'company'
+  try {
+    const r = await apiShare(id, target)
+    if (!r.ok) throw new Error(r.error || t('team.actionFailed'))
+    await loadRecent()
+  } catch (e) {
+    alert(e.message || t('team.actionFailed'))
   }
 }
 
@@ -117,6 +146,11 @@ function makeRecentCard(entry) {
       : vec === 'pending'
         ? `<span class="tag-chip vec-chip vec-chip--pending" title="${escAttr(t('memories.vecPendingTitle'))}"><i class="ti ti-clock"></i></span>`
         : `<span class="tag-chip vec-chip vec-chip--off" title="${escAttr(t('memories.vecOffTitle'))}">${escHtml(t('memories.vecNotIndexed'))}</span>`
+  // Layer badge: shared memories are the team's — say so. Personal is the
+  // quiet default and system rows (digests, insights) carry no badge.
+  const layerChip = TEAM_MODE && entry.workspace === 'company'
+    ? `<span class="tag-chip" style="color: var(--accent); border-color: var(--accent);" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(t('memories.sharedChip'))}</span>`
+    : ''
 
   const title = titleLine(entry.content)
   const preview = previewAfterTitle(entry.content, title)
@@ -136,13 +170,14 @@ function makeRecentCard(entry) {
     <span class="card-source"><i class="ti ${badge.icon}"></i>${escHtml(badge.label)}</span>
     ${created ? `<span class="card-time" title="${escAttr(new Date(created).toLocaleString(localeTag()))}">${escHtml(relativeTime(created))}</span>` : ''}
   </div>
-  <div class="card-tags">${shown.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}${vecChip}</div>
+  <div class="card-tags">${shown.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}${layerChip}${vecChip}</div>
   <div class="card-actions">
     <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> ${escHtml(t('memories.append'))}</button>
     <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> ${escHtml(t('memories.edit'))}</button>
     <div class="card-overflow">
       <button class="card-action-btn overflow-btn" aria-label="${escAttr(t('memories.moreActions'))}" aria-haspopup="true" aria-expanded="false"><i class="ti ti-dots"></i></button>
       <div class="card-overflow-menu" hidden>
+        ${TEAM_MODE ? `<button class="card-overflow-item share-btn"><i class="ti ti-users-group"></i> ${escHtml(entry.workspace === 'company' ? t('memories.makePrivate') : t('memories.shareWithTeam'))}</button>` : ''}
         <button class="card-overflow-item danger forget-btn"><i class="ti ti-trash"></i> ${escHtml(t('memories.forgetThis'))}</button>
       </div>
     </div>
@@ -168,6 +203,15 @@ function makeRecentCard(entry) {
     overflowMenu.hidden = true
     card.classList.remove('card--menu-open')
     openConfirm(entry.id, overflowBtn)
+  }
+  const shareBtn = card.querySelector('.share-btn')
+  if (shareBtn) {
+    shareBtn.onclick = (ev) => {
+      ev.stopPropagation()
+      overflowMenu.hidden = true
+      card.classList.remove('card--menu-open')
+      toggleEntryLayer(entry.id, entry.workspace)
+    }
   }
   overflow.addEventListener('click', (ev) => ev.stopPropagation())
   card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card)

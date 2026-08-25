@@ -1,5 +1,5 @@
 import type { Identity } from "../lib/identity";
-import { readableWorkspaces } from "../lib/scope";
+import { scopeWorkspaces } from "../lib/scope";
 
 /**
  * Workspace scoping for Vectorize queries. Vectors carry workspace_id in their
@@ -18,8 +18,8 @@ export interface VectorizeWorkspaceFilter {
   filter: { workspace_id: { $in: string[] } };
 }
 
-export function workspaceFilter(identity: Identity): VectorizeWorkspaceFilter | undefined {
-  return { filter: { workspace_id: { $in: readableWorkspaces(identity) } } };
+export function workspaceFilter(identity: Identity, only?: "personal" | "company"): VectorizeWorkspaceFilter | undefined {
+  return { filter: { workspace_id: { $in: scopeWorkspaces(identity, only) } } };
 }
 
 /** Single-workspace variant for write-path checks (dedupe within the target). */

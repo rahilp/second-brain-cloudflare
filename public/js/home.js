@@ -16,6 +16,24 @@ let homeMode = null
 /** Set once the user overrides, after which typing never changes it back. */
 let homeModeLocked = false
 
+// ── Capture layer (team edition) ──────────────────────────────────────────
+// null/"" = Auto: no workspace in the request body, so the member's configured
+// default decides. The dropdown only exists on team brains — /health says so
+// and checkVectorize() reveals it; solo brains never see layer UI anywhere.
+
+function onHomeLayerChange(value) {
+  homeLayer = value || null
+}
+
+/** /health reports whether more than one member exists; solo brains never see layer UI. */
+function maybeRevealHomeLayer(health) {
+  TEAM_MODE = !!(health && health.team)
+  // Every layer control states both branches: the flag is the single source of
+  // truth, so a re-probe can always correct a stale reveal.
+  const wrap = document.getElementById('home-layer-wrap')
+  if (wrap) wrap.style.display = TEAM_MODE ? '' : 'none'
+}
+
 /** Leading words that make a sentence a question even without a question mark. */
 const ASK_OPENERS_EN =
   /^(who|what|when|where|why|how|which|whose|did|do|does|is|are|was|were|can|could|should|would|will|have|has|had|am|tell me|show me|find|search|remind me what|list)\b/i
@@ -120,7 +138,7 @@ async function submitHome() {
     while ((m = tagRe.exec(text)) !== null) tags.push(m[1])
     const content = text.replace(/#[a-zA-Z][\w-]*/g, '').trim() || text
 
-    const result = await apiCapture(content, tags, 'web-ui')
+    const result = await apiCapture(content, tags, 'web-ui', homeLayer)
     field.value = ''
     autoResize(field)
     if (result.duplicate) {
@@ -129,7 +147,9 @@ async function submitHome() {
       receipts.innerHTML = ''
       receipts.appendChild(captureReceipt(result, tags))
     }
-    refreshAll()
+    // Outside the try: a refresh hiccup must never rewrite a successful
+    // capture's receipt as "could not save" — that lie cost a user trust once.
+    Promise.resolve(refreshAll()).catch((e) => console.error('refresh after capture failed:', e))
   } catch {
     receipts.innerHTML = `<div class="receipt"><div class="receipt-headline"><span class="receipt-dot"></span>${escHtml(t('home.receiptCouldNotSave'))}</div><div class="receipt-note">${escHtml(t('home.receiptCouldNotSaveNote'))}</div></div>`
   } finally {

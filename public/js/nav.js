@@ -148,6 +148,11 @@ async function checkVectorize() {
     const res = await fetch(`${WORKER_URL}/health`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
     const data = await res.json()
     renderVectorizeBanner(vectorizeHealthBanner(data))
+    // The composer's layer toggle and the memories filters only exist when
+    // this brain actually has members — solo brains keep the quiet UI.
+    maybeRevealHomeLayer(data)
+    maybeRevealMemoryLayerFilter(data)
+    maybeRevealRecallLayer(data)
   } catch {}
 }
 

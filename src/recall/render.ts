@@ -24,6 +24,9 @@ export function renderRecallText(
     const date = new Date(m.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
     const tagList = m.tags.length ? ` [${m.tags.join(", ")}]` : "";
     const src = m.source ? ` · ${m.source}` : "";
+    // Layer badge: only when it carries information. Single-user brains (no
+    // team) and system-space rows stay unbadged rather than decorating every line.
+    const layerLabel = m.workspace === "company" ? " · shared" : m.workspace === "personal" ? " · personal" : "";
     const score = (m.score * 100).toFixed(0);
     const updateLabel = m.isUpdate ? " [updated]" : "";
     const hopLabel = m.hop > 0 ? ` [related · ${hopProvenance(m, contentById)}]` : "";
@@ -33,7 +36,7 @@ export function renderRecallText(
       ? { text: (m.content ?? "").trim(), truncated: false, fullLength: (m.content ?? "").length }
       : snippetOf(m.content, allowanceFor(i, m.score, cfg), { queryTokens: opts.queryTokens });
     const body = s.truncated ? `${s.text}${truncationNote(m.id, s)}` : s.text;
-    const block = `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}${staleLabel}\nID: ${m.id}\n${body}`;
+    const block = `${i + 1}. [${date}${src}${layerLabel}${tagList}] (${score}% match)${updateLabel}${hopLabel}${staleLabel}\nID: ${m.id}\n${body}`;
 
     // Stop once the budget is spent, but always return at least one match.
     if (!opts.full && blocks.length && used + block.length > cfg.RECALL_OUTPUT_BUDGET) {

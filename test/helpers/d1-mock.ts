@@ -642,7 +642,7 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags }));
           return { results };
         }
-        if (s.includes("SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN")) {
+        if (s.includes("SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN") || s.includes("SELECT id, content, tags, source, created_at, updated_at, workspace_id FROM entries WHERE id IN")) {
           const inMatch = s.match(/WHERE id IN \(([^)]*)\)/);
           const idCount = inMatch ? inMatch[1].split(",").length : 0;
           const ids = args.slice(0, idCount);

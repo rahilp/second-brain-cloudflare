@@ -42,7 +42,7 @@ function allSourceFiles(dir: string): string[] {
  */
 const HYDRATION_EXEMPTION = {
   file: "src/recall/search.ts",
-  marker: "SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN",
+  marker: "SELECT id, content, tags, source, created_at, updated_at, workspace_id FROM entries WHERE id IN",
 };
 
 type Finding = { kind: string; detail: string };

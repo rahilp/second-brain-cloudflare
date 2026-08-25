@@ -143,11 +143,11 @@ async function readCache(env: Env): Promise<CachedVocabulary | null> {
  * With an Identity the scan is scoped to the caller's readable workspaces so one
  * member's tags never surface in another member's query-tag inference or dropdown.
  */
-async function scanTagVocabulary(env: Env, identity?: Identity): Promise<string[]> {
-  const scope = identity ? ` WHERE ${scopeWhere(identity).clause}` : "";
+async function scanTagVocabulary(env: Env, identity?: Identity, only?: "personal" | "company"): Promise<string[]> {
+  const scope = identity ? ` WHERE ${scopeWhere(identity, only).clause}` : "";
   const { results } = await env.DB.prepare(
     `SELECT DISTINCT value FROM entries, json_each(entries.tags)${scope}`
-  ).bind(...(identity ? scopeWhere(identity).bindings : [])).all();
+  ).bind(...(identity ? scopeWhere(identity, only).bindings : [])).all();
   return (results as { value: unknown }[])
     .map(r => r.value)
     .filter((v): v is string => typeof v === "string")
@@ -165,8 +165,8 @@ async function scanTagVocabulary(env: Env, identity?: Identity): Promise<string[
  * the blob they populate is shared. Callers that have not been taught Identity yet
  * keep today's corpus-wide behaviour exactly.
  */
-async function rebuildTagVocabulary(env: Env, identity?: Identity): Promise<string[]> {
-  const tags = await scanTagVocabulary(env, identity);
+async function rebuildTagVocabulary(env: Env, identity?: Identity, only?: "personal" | "company"): Promise<string[]> {
+  const tags = await scanTagVocabulary(env, identity, only);
   try {
     await env.OAUTH_KV.put(TAG_VOCABULARY_KEY, JSON.stringify({ tags, rebuiltAt: Date.now() } satisfies CachedVocabulary));
   } catch (e) {
@@ -200,20 +200,20 @@ async function rebuildTagVocabulary(env: Env, identity?: Identity): Promise<stri
  * rare and its cost is one extra scan, which is what every recall used to cost. Add
  * an isolate-scoped guard if that ever shows up in a bill, not before.
  */
-export async function getTagVocabulary(env: Env, ctx?: ExecutionContext, identity?: Identity): Promise<string[]> {
+export async function getTagVocabulary(env: Env, ctx?: ExecutionContext, identity?: Identity, only?: "personal" | "company"): Promise<string[]> {
   const cached = await readCache(env);
 
   if (cached && Date.now() - cached.rebuiltAt < TAG_VOCABULARY_MAX_AGE_MS) return cached.tags;
 
   if (cached && ctx) {
     ctx.waitUntil(
-      rebuildTagVocabulary(env, identity).catch(e => console.error("Tag vocabulary rebuild failed (non-fatal):", e))
+      rebuildTagVocabulary(env, identity, only).catch(e => console.error("Tag vocabulary rebuild failed (non-fatal):", e))
     );
     return cached.tags;
   }
 
   try {
-    return await rebuildTagVocabulary(env, identity);
+    return await rebuildTagVocabulary(env, identity, only);
   } catch (e) {
     console.error("Tag vocabulary rebuild failed (non-fatal):", e);
     return cached?.tags ?? [];

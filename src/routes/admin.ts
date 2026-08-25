@@ -221,7 +221,12 @@ export async function handleAdminRoutes(
     const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
     const vectorize = await checkVectorizeHealth(env);
-    return json({ ok: vectorize.ok, version: SB_VERSION, vectorize });
+    // "team" is the dashboard's signal to show the layer controls (capture
+    // target, share actions, layer filters). Layers exist on every v3 brain,
+    // but until a second member is invited the toggle is noise for a solo
+    // owner, so the flag reads actual membership, not provisioning.
+    const members = await env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
+    return json({ ok: vectorize.ok, version: SB_VERSION, vectorize, team: (members?.n ?? 0) > 1 });
   }
 
   // GET /patterns — the whole review queue, paged.

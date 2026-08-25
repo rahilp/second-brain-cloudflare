@@ -162,8 +162,9 @@ export async function recallEntries(
   const now = Date.now();
   let semanticUnavailable = false;
   // One clause, computed once: every entries read below ANDs it in when an
-  // Identity rides along, and appends nothing — byte for byte — when one does not.
-  const scope = internal.identity ? scopeWhere(internal.identity) : null;
+  // Identity rides along, and appends nothing — byte for byte — when one does
+  // not. workspaceFilter narrows the same clause to a single layer.
+  const scope = internal.identity ? scopeWhere(internal.identity, internal.workspaceFilter) : null;
   const identity = internal.identity;
 
   let semanticQuery = query;
@@ -174,7 +175,7 @@ export async function recallEntries(
     semanticQuery = parsed.cleanQuery;
   }
   const bounds = { after, before };
-  const distilled = await distillToRareTerms(semanticQuery, env, cfg, bounds, identity);
+  const distilled = await distillToRareTerms(semanticQuery, env, cfg, bounds, identity, internal.workspaceFilter);
   const profile = buildQueryProfile(semanticQuery, distilled);
   const embeddingQueryMode = internal.embeddingQueryMode ?? DEFAULT_EMBEDDING_QUERY_MODE;
   const embedQuery = embeddingInput(profile, embeddingQueryMode);
@@ -185,7 +186,7 @@ export async function recallEntries(
   const tokens = profile.lexicalTokens;
   const [values, queryTags] = await Promise.all([
     embed(embedQuery, env, cfg),
-    inferQueryTags(lexicalQuery, env, cfg, ctx, identity),
+    inferQueryTags(lexicalQuery, env, cfg, ctx, identity, internal.workspaceFilter),
   ]);
   markStage("querySignals");
 
@@ -232,7 +233,7 @@ export async function recallEntries(
     // candidates out of the result slots. queryVectorizeScoped retries
     // unfiltered if Vectorize rejects the filter; hydration below is scoped at
     // the SQL layer either way, so correctness never rides on this.
-    const wsFilter = identity ? workspaceFilter(identity)?.filter : undefined;
+    const wsFilter = identity ? workspaceFilter(identity, internal.workspaceFilter)?.filter : undefined;
     const denseQuery = async (): Promise<{ matches: VectorizeMatch[] }> => {
       try {
         if (wsFilter) {
@@ -298,8 +299,8 @@ export async function recallEntries(
   type CandidateSignalRow = { id: string; content?: string; source?: string; created_at?: number; last_updated?: number; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number; tags: string };
   const rcRows: CandidateSignalRow[] = [];
   const candidateSignalProjection = hops > 0
-    ? `id, content, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses, tags`
-    : "id, recall_count, importance_score, contradiction_wins, contradiction_losses, tags";
+    ? `id, content, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses, tags, workspace_id`
+    : "id, recall_count, importance_score, contradiction_wins, contradiction_losses, tags, workspace_id";
   // Scoped too: this is the leak-catcher for unscoped Vectorize hits — until
   // namespaces land (P3) the dense arm can surface a stranger's id, and the
   // scope clause here is what stops that id from hydrating into signals. The
@@ -367,7 +368,7 @@ export async function recallEntries(
 
   let expanded: GraphNeighbor[] = [];
   if (hops > 0) {
-    expanded = await expandGraph(graphSeedIds, { hops }, env, cfg, identity);
+    expanded = await expandGraph(graphSeedIds, { hops, only: internal.workspaceFilter }, env, cfg, identity);
   }
   markStage("graphExpansion");
   if (internal.diagnostics && hops > 0) internal.diagnostics.expandedIds = expanded.map(x => x.id);
@@ -405,12 +406,20 @@ export async function recallEntries(
     const batch = allParentIds.slice(i, i + idBatchSize);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN (${placeholders})${d1Filters}`
+      `SELECT id, content, tags, source, created_at, updated_at, workspace_id FROM entries WHERE id IN (${placeholders})${d1Filters}`
     ).bind(...batch, ...filterBindings).all() as { results: Record<string, any>[] };
     d1Rows.push(...results);
   }
 
   const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
+  // Which layer a memory lives in, resolved against the caller's own workspace
+  // ids: personal and company map to themselves, anything else ('' legacy rows,
+  // system insights) reads as "system". Clients use this to offer share/unshare
+  // and to badge results.
+  const layerOf = (wid: unknown): "personal" | "company" | "system" =>
+    wid === identity?.personalWorkspaceId ? "personal"
+    : wid === identity?.companyWorkspaceId ? "company"
+    : "system";
   const candidateSignalById = new Map(rcRows.map(row => [row.id, row]));
   markStage("finalHydration");
 
@@ -429,6 +438,7 @@ export async function recallEntries(
       source: row.source as string,
       isUpdate: !!meta?.isUpdate,
       hop: 0,
+      workspace: layerOf(row.workspace_id),
       staleAsOf: hasStaleAsOf(JSON.parse(row.tags ?? "[]")),
     }];
   }).sort((a, b) => b.score - a.score);
@@ -488,6 +498,7 @@ export async function recallEntries(
         source: row.source as string,
         isUpdate: false,
         hop: e.hop,
+        workspace: layerOf(row.workspace_id),
         staleAsOf: hasStaleAsOf(JSON.parse(row.tags ?? "[]")),
         viaProvenance: e.viaProvenance,
         viaType: e.viaType,
@@ -559,6 +570,7 @@ export async function recallEntries(
         source: row.source as string,
         isUpdate: false,
         hop: 0,
+        workspace: layerOf((row as Record<string, unknown>).workspace_id),
         staleAsOf: hasStaleAsOf(rowTags),
       };
       matchById.set(match.id, match);

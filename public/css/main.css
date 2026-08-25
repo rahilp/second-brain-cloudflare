@@ -3362,9 +3362,15 @@
       .home-row {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 10px;
+        gap: 8px;
         margin-top: 10px;
+      }
+
+      /* Mode pill and layer dropdown read as one controls cluster on the left;
+         the send button owns the far edge. space-between used to strand the
+         layer dropdown mid-box, which read as floating. */
+      .home-row .send-btn {
+        margin-left: auto;
       }
 
       /* The prediction, always visible and always one tap from being overridden.

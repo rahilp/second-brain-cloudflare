@@ -63,8 +63,8 @@ export const GRAPH_HOP_DECAY = 0.6;
 
 // Scoped to the caller's readable workspaces when an Identity is supplied, so the
 // deprecation verdict is not read off rows the caller cannot see.
-async function deprecatedIdsAmong(ids: string[], env: Env, identity?: Identity): Promise<Set<string>> {
-  const scope = identity ? scopeWhere(identity) : null;
+async function deprecatedIdsAmong(ids: string[], env: Env, identity?: Identity, only?: "personal" | "company"): Promise<Set<string>> {
+  const scope = identity ? scopeWhere(identity, only) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
   // Scope bindings share the statement's bound-parameter budget with the ids.
   const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
@@ -90,7 +90,7 @@ async function deprecatedIdsAmong(ids: string[], env: Env, identity?: Identity):
  */
 export async function expandGraph(
   seedIds: string[],
-  opts: { hops: number; fanoutCap?: number; maxNodes?: number; includeDeprecated?: boolean },
+  opts: { hops: number; fanoutCap?: number; maxNodes?: number; includeDeprecated?: boolean; only?: "personal" | "company" },
   env: Env,
   config: Readonly<Config> = DEFAULTS,
   identity?: Identity,
@@ -99,7 +99,7 @@ export async function expandGraph(
   if (hops === 0 || seedIds.length === 0) return [];
   const fanoutCap = opts.fanoutCap ?? GRAPH_FANOUT_CAP;
   const maxNodes = opts.maxNodes ?? GRAPH_MAX_NODES;
-  const scope = identity ? scopeWhere(identity) : null;
+  const scope = identity ? scopeWhere(identity, opts.only) : null;
 
   const visited = new Set(seedIds);
   const out: GraphNeighbor[] = [];
@@ -141,7 +141,7 @@ export async function expandGraph(
 
     let allowed = candidates;
     if (!opts.includeDeprecated && candidates.length) {
-      const deprecated = await deprecatedIdsAmong([...new Set(candidates.map(c => c.id))], env, identity);
+      const deprecated = await deprecatedIdsAmong([...new Set(candidates.map(c => c.id))], env, identity, opts.only);
       allowed = candidates.filter(c => !deprecated.has(c.id));
     }
 
@@ -159,9 +159,9 @@ export async function expandGraph(
   return out;
 }
 
-async function hydrateGraphEntries(ids: string[], env: Env, identity?: Identity): Promise<Map<string, Record<string, any>>> {
+async function hydrateGraphEntries(ids: string[], env: Env, identity?: Identity, only?: "personal" | "company"): Promise<Map<string, Record<string, any>>> {
   const map = new Map<string, Record<string, any>>();
-  const scope = identity ? scopeWhere(identity) : null;
+  const scope = identity ? scopeWhere(identity, only) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
   // Scope bindings share the statement's bound-parameter budget with the ids.
   const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);

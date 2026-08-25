@@ -29,7 +29,7 @@ export function buildEntryFilterQuery(params: {
   if (params.after !== undefined) { conds.push(`created_at >= ?`); bindings.push(params.after); }
   if (params.before !== undefined) { conds.push(`created_at <= ?`); bindings.push(params.before); }
 
-  let sql = `SELECT id, content, tags, source, created_at, vector_ids FROM entries`;
+  let sql = `SELECT id, content, tags, source, created_at, vector_ids, workspace_id FROM entries`;
   if (conds.length) sql += ` WHERE ` + conds.join(` AND `);
   sql += ` ORDER BY created_at DESC LIMIT ?`;
   bindings.push(params.n);
