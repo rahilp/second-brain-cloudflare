@@ -6,6 +6,8 @@ import { requireIdentity } from "../lib/identity";
 import { scopeWhere } from "../lib/scope";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
+import { moveEntry, type ShareTarget } from "../capture/share";
+import { auditEvent } from "../lib/audit";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
 import { getTagVocabulary } from "../tags/vocabulary";
 
@@ -188,6 +190,43 @@ export async function handleEntriesRoutes(
         indexed: Array.isArray(vectorIds) && vectorIds.length > 0,
       },
     });
+  }
+
+  // POST /share — move an entry between the caller's personal and the company
+  // workspace (the two-layer visibility model). MOVE semantics: one canonical
+  // row, edges follow it, audited. Mirrors the MCP `share` tool.
+  if (url.pathname === "/share" && request.method === "POST") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+
+    let body: { id?: string; workspace?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+    if (body.workspace !== undefined && body.workspace !== "personal" && body.workspace !== "company") {
+      return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
+    }
+    const target = (body.workspace ?? "company") as ShareTarget;
+
+    const id = body.id.trim();
+    const result = await moveEntry(id, target, env, auth);
+
+    if (result.status === "not_found") {
+      return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+    }
+    if (result.status === "forbidden") {
+      return json({ ok: false, error: "Only the entry's author or an admin can un-share it" }, 403);
+    }
+    if (result.status === "no_change") {
+      return json({ ok: true, id, status: "no_change" });
+    }
+
+    auditEvent(env, ctx, {
+      entryId: id,
+      actorId: auth.userId,
+      event: result.status,
+      payload: { workspaceId: result.workspaceId },
+    });
+    return json({ ok: true, id, status: result.status, workspaceId: result.workspaceId });
   }
 
   // POST /status — set lifecycle status, mirrors the MCP `set_status` tool

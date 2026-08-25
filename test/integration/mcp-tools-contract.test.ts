@@ -19,6 +19,7 @@ const EXPECTED_TOOLS = [
   "update",
   "set_status",
   "forget",
+  "share",
   "link",
   "unlink",
   "connections",

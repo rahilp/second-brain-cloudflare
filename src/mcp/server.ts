@@ -6,6 +6,8 @@ import { VECTORIZE_FIX_HINT } from "../constants";
 import { buildEntryFilterQuery, captureEntry } from "../capture/entry";
 import { appendToEntry, updateEntryContent } from "../capture/store";
 import { applyStatus, forgetEntry } from "../capture/lifecycle";
+import { moveEntry } from "../capture/share";
+import { auditEvent } from "../lib/audit";
 import { createEdge, deleteEdge, edgeLabel } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
@@ -144,9 +146,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         tags: z.array(z.string()).optional().describe("Optional tags for filtering and later retrieval"),
         source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
         volatility: volatilityParam,
+        workspace: z.enum(["personal", "company"]).optional().describe("Where to store it: your private workspace (default) or the shared company layer"),
       },
     },
-    async ({ content, tags, source, volatility }) => {
+    async ({ content, tags, source, volatility, workspace }) => {
       // Folded into the tag list rather than threaded through captureEntry: tags are
       // already the carrier for every other reserved namespace (kind:, status:).
       // withVolatility clears the namespace case-insensitively before appending, so a
@@ -157,7 +160,12 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       // and the injected one won.
       const baseTags = tags ?? [];
       const withVerdict = volatility ? withVolatility(baseTags, volatility as Volatility) : baseTags;
-      const result = await captureEntry(content, withVerdict, source ?? "claude", env, ctx, undefined, writeCtx);
+      // Explicit company targeting resolves a fresh context; the precomputed one
+      // (personal) covers every other case, including absent identity.
+      const targetCtx = workspace === "company" && identity
+        ? { workspaceId: scopeWrite(identity, "company"), actorId: identity.userId }
+        : writeCtx;
+      const result = await captureEntry(content, withVerdict, source ?? "claude", env, ctx, undefined, targetCtx);
       if (result.status === "blocked") {
         return { content: [{ type: "text", text: `Duplicate detected (${(result.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${result.matchId}` }] };
       }
@@ -311,6 +319,27 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       const ok = await applyStatus(id, status as MemoryStatus, env);
       if (!ok) return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       return { content: [{ type: "text", text: status === "deprecated" ? `Entry ${id} deprecated — removed from recall, kept for audit.` : `Entry ${id} marked ${status}.` }] };
+    }
+  );
+
+  // ── share ────────────────────────────────────────────────────────────────
+  server.registerTool(
+    "share",
+    {
+      description: "Move a memory between your private workspace and the company workspace. MOVE semantics: one canonical row; edges follow it; audited. Only the entry's author or an admin can un-share. Get the entry ID from recall or list_recent first.",
+      inputSchema: {
+        id: z.string().describe("Entry ID — from recall or list_recent"),
+        workspace: z.enum(["personal", "company"]).optional().describe("Target layer, company by default"),
+      },
+    },
+    async ({ id, workspace }) => {
+      if (!identity) return { content: [{ type: "text", text: "Sharing requires an authenticated team identity." }] };
+      const result = await moveEntry(id, workspace ?? "company", env, identity);
+      if (result.status === "not_found") return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      if (result.status === "forbidden") return { content: [{ type: "text", text: `Only the entry's author or an admin can un-share ${id}.` }] };
+      if (result.status === "no_change") return { content: [{ type: "text", text: `Entry ${id} is already in the ${workspace ?? "company"} workspace.` }] };
+      auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: result.status, payload: { workspaceId: result.workspaceId } });
+      return { content: [{ type: "text", text: `Entry ${id} ${result.status} — now in the ${workspace ?? "company"} workspace.` }] };
     }
   );
 

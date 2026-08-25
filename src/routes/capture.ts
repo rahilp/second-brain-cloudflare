@@ -16,8 +16,14 @@ import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/vo
  * the field did not take.
  */
 /** Where this caller's writes land and who gets stamped on them. */
-function writeContextFor(identity: Identity): WriteContext {
-  return { workspaceId: scopeWrite(identity), actorId: identity.userId };
+function writeContextFor(identity: Identity, target?: unknown): WriteContext {
+  // Only an explicit, exact "company" targets the shared layer; anything else —
+  // absent, personal, or a typo — stays private. scopeWrite resolves the id from
+  // the identity, so no request value can name an arbitrary workspace.
+  return {
+    workspaceId: scopeWrite(identity, target === "company" ? "company" : undefined),
+    actorId: identity.userId,
+  };
 }
 
 function readVolatility(raw: unknown): { value?: Volatility; error?: string } {
@@ -40,9 +46,12 @@ export async function handleCaptureRoutes(
     if (auth instanceof Response) return auth;
     const identity = auth;
 
-    let body: { content?: string; tags?: string[]; source?: string; volatility?: unknown };
+    let body: { content?: string; tags?: string[]; source?: string; volatility?: unknown; workspace?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.content?.trim()) return json({ ok: false, error: "content is required" }, 400);
+    if (body.workspace !== undefined && body.workspace !== "personal" && body.workspace !== "company") {
+      return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
+    }
 
     const captureVol = readVolatility(body.volatility);
     if (captureVol.error) return json({ ok: false, error: captureVol.error }, 400);
@@ -51,7 +60,7 @@ export async function handleCaptureRoutes(
       ? withVolatility(body.tags ?? [], captureVol.value)
       : body.tags ?? [];
 
-    const result = await captureEntry(body.content, captureTags, body.source ?? "api", env, ctx, undefined, writeContextFor(identity));
+    const result = await captureEntry(body.content, captureTags, body.source ?? "api", env, ctx, undefined, writeContextFor(identity, body.workspace));
 
     if (result.status === "blocked") {
       return json({
