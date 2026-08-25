@@ -129,12 +129,27 @@ function audienceScreen() {
   );
 }
 
-/// Same question as audienceScreen, asked AFTER an existing brain connects:
-/// the v3 Worker provisions tenancy on every brain it runs, so the only open
-/// question is whether this owner will use the team features — which only
-/// decides what the Connection window tells them.
-function existingTeamScreen() {
-  currentScreen = existingTeamScreen;
+/// Same question as audienceScreen, asked AFTER an existing brain connects.
+/// ONE-TIME by two independent locks, either of which settles it:
+///   1. this machine already recorded a choice (keychain via details.teamMode);
+///   2. the brain itself already has members (/health team:true — server truth;
+///      going back to solo would mean destroying other people's memories, so
+///      there is deliberately no downgrade path and no second question).
+/// The question only ever runs on a solo brain whose mode was never recorded.
+async function existingTeamScreen(brainUrl: string, brainPassword: string) {
+  currentScreen = () => existingTeamScreen(brainUrl, brainPassword);
+  if (details?.teamMode) return void toolsScreen();
+  try {
+    const res = await fetch(`${brainUrl}/health`, {
+      headers: { Authorization: `Bearer ${brainPassword}` },
+    })
+    if (await res.json().then((d) => !!d.team).catch(() => false)) {
+      teamMode = true;
+      await invoke("set_team_mode", { teamMode: true }).catch(() => {});
+      return void toolsScreen();
+    }
+  } catch {}
+
   const justMe = h("button", { class: "btn-primary" }, [t("audience.justMe")]);
   justMe.addEventListener("click", async () => {
     teamMode = false;
@@ -155,6 +170,7 @@ function existingTeamScreen() {
     h("p", { class: "lede" }, [t("audience.existingLede")]),
     justMe,
     aTeam,
+    h("p", { class: "footnote" }, [t("audience.existingFootnote")]),
   );
 }
 
@@ -328,7 +344,7 @@ function unlockBrainScreen(
         address: brain.url,
         password: password.value,
       });
-      await existingTeamScreen();
+      await existingTeamScreen(brain.url, password.value);
     } catch (e) {
       unlockBrainScreen(brain, String(e), found);
     }
@@ -389,7 +405,7 @@ function manualEntryScreen(
         address: address.value,
         password: password.value,
       });
-      await existingTeamScreen();
+      await existingTeamScreen(address.value.trim(), password.value);
     } catch (e) {
       manualEntryScreen(String(e), address.value);
     }

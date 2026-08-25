@@ -327,6 +327,9 @@ export const en: Messages = {
       "Your brain now supports teams: each member gets private memories, plus a " +
       "shared layer everyone can see. You are the admin — invite members from the " +
       "dashboard's Team tab whenever you're ready.",
+    existingFootnote:
+      "One-time choice: once members have joined, the brain stays a team brain. " +
+      "Your own memories are never affected.",
     footnote:
       "On a team brain every person gets their own access — and sharing a " +
       "memory is always up to whoever wrote it.",

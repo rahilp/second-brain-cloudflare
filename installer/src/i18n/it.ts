@@ -323,6 +323,9 @@ export const it: Messages = {
       "Il tuo Second Brain ora supporta i team: ogni membro ha ricordi privati, " +
       "più un livello condiviso visibile a tutti. Sei l'amministratore — invita i " +
       "membri dalla scheda Team della dashboard quando vuoi.",
+    existingFootnote:
+      "Scelta una sola volta: quando entrano i membri, il brain resta un brain di " +
+      "team. I tuoi ricordi non vengono mai coinvolti.",
     footnote:
       "In un Second Brain di team ogni persona riceve un accesso proprio — e " +
       "condividere un ricordo è sempre una scelta di chi l'ha scritto.",

@@ -172,6 +172,7 @@ export type Messages = {
     footnote: string;
     existingTitle: string;
     existingLede: string;
+    existingFootnote: string;
   };
   connectExisting: {
     title: string;
