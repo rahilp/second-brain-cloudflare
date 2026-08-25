@@ -242,10 +242,13 @@ export async function appendToEntry(
   writeCtx: WriteContext = OWNER_WRITE_CONTEXT
 ): Promise<boolean> {
   const row = await env.DB.prepare(
-    `SELECT vector_ids FROM entries WHERE id = ?`
+    `SELECT vector_ids, workspace_id FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
 
   const existingVectorIds: string[] = JSON.parse(row?.vector_ids ?? "[]");
+  // The appended chunk's vector must live in the ROW's workspace, not the
+  // caller's default target — an append edits in place and never moves.
+  const rowWorkspaceId: string = row?.workspace_id ?? "";
 
   // Spelled month, like every other date this app hands to a reader or a
   // model: "8/2/2026" is two different days depending on where you live.
@@ -298,7 +301,7 @@ export async function appendToEntry(
     tags,
     source,
     created_at: Date.now(),
-    workspace_id: writeCtx.workspaceId,
+    workspace_id: rowWorkspaceId,
   };
 
   tags.forEach(t => {

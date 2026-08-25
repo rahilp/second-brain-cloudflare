@@ -17,7 +17,7 @@ import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
-import { createMember, listMembers, rotateMemberToken, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
+import { createMember, listMembers, rotateMemberToken, setMemberDefaultShare, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -99,6 +99,27 @@ export async function handleAdminRoutes(
     try {
       await setMemberSuspended(env, auth.userId, body.id.trim(), body.suspended !== false);
       return json({ ok: true, id: body.id.trim(), suspended: body.suspended !== false });
+    } catch (e) {
+      if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
+      throw e;
+    }
+  }
+
+  // POST /team/members/default-share — per-member capture-visibility override.
+  // "inherit" clears it; the org-level default lives in config
+  // (TEAM_DEFAULT_WORKSPACE) and is what "inherit" falls back to.
+  if (url.pathname === "/team/members/default-share" && request.method === "POST") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { id?: string; default?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+    if (body.default !== "personal" && body.default !== "company" && body.default !== "inherit") {
+      return json({ ok: false, error: 'default must be "personal", "company", or "inherit"' }, 400);
+    }
+    try {
+      await setMemberDefaultShare(env, body.id.trim(), body.default as "personal" | "company" | "inherit");
+      return json({ ok: true, id: body.id.trim(), default: body.default });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
       throw e;

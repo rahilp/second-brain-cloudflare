@@ -151,6 +151,15 @@ const EDGES_COLUMNS: Record<string, string> = {
 };
 
 /**
+ * Columns added to `users` after the table shipped.
+ */
+const USERS_COLUMNS: Record<string, string> = {
+  // Per-member capture-visibility override. '' inherits the org-level
+  // TEAM_DEFAULT_WORKSPACE config; "personal" and "company" pin the member.
+  default_share: `ALTER TABLE users ADD COLUMN default_share TEXT NOT NULL DEFAULT ''`,
+};
+
+/**
  * Objects that can only be built once the ALTERs above have run — an index over a
  * column that arrives via ALTER. These must NOT live in SCHEMA_OBJECTS: that loop
  * runs before the ALTERs on every pass, so on an upgraded brain (table exists,
@@ -189,7 +198,8 @@ const POST_COLUMN_OBJECTS: Record<string, string> = {
 const PROBE_SQL =
   `SELECT type AS kind, name FROM sqlite_master WHERE type IN ('table','index') ` +
   `UNION ALL SELECT 'column' AS kind, name FROM pragma_table_info('entries')` +
-  `UNION ALL SELECT 'edge_column' AS kind, name FROM pragma_table_info('edges')`;
+  `UNION ALL SELECT 'edge_column' AS kind, name FROM pragma_table_info('edges')` +
+  `UNION ALL SELECT 'user_column' AS kind, name FROM pragma_table_info('users')`;
 
 type ObjectKind = "table" | "index";
 /**
@@ -198,7 +208,7 @@ type ObjectKind = "table" | "index";
  * the name alone would let a user table called `idx_entries_source` stand in for the index,
  * which resolves init successfully and silently never creates it.
  */
-type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string>; edgeColumns: Set<string> };
+type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string>; edgeColumns: Set<string>; userColumns: Set<string> };
 
 /** Which kind of object a CREATE statement makes, so the probe can be asked about it. */
 const kindOf = (ddl: string): ObjectKind => (ddl.startsWith("CREATE TABLE") ? "table" : "index");
@@ -234,13 +244,15 @@ async function probeSchema(env: Env): Promise<ExistingSchema | null> {
   const objects = new Map<string, ObjectKind>();
   const columns = new Set<string>();
   const edgeColumns = new Set<string>();
+  const userColumns = new Set<string>();
   for (const row of rows as { kind?: unknown; name?: unknown }[]) {
     if (typeof row?.name !== "string") continue;
     if (row.kind === "column") columns.add(row.name);
     else if (row.kind === "edge_column") edgeColumns.add(row.name);
+    else if (row.kind === "user_column") userColumns.add(row.name);
     else if (row.kind === "table" || row.kind === "index") objects.set(row.name, row.kind);
   }
-  return { objects, columns, edgeColumns };
+  return { objects, columns, edgeColumns, userColumns };
 }
 
 /**
@@ -283,6 +295,14 @@ async function applySchema(env: Env): Promise<void> {
   }
   for (const [column, ddl] of Object.entries(EDGES_COLUMNS)) {
     if (existing?.edgeColumns.has(column)) continue;
+    try {
+      await env.DB.exec(ddl);
+    } catch (e) {
+      if (!isDuplicateColumn(e)) throw e;
+    }
+  }
+  for (const [column, ddl] of Object.entries(USERS_COLUMNS)) {
+    if (existing?.userColumns.has(column)) continue;
     try {
       await env.DB.exec(ddl);
     } catch (e) {

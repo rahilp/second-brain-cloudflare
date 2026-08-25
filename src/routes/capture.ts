@@ -3,7 +3,7 @@ import { resolveConfig } from "../config";
 import { VECTORIZE_FIX_HINT } from "../constants";
 import { json } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
-import { scopeWhere, scopeWrite, type WriteContext } from "../lib/scope";
+import { scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
 import { captureEntry } from "../capture/entry";
 import { appendToEntry, updateEntryContent } from "../capture/store";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
@@ -17,12 +17,14 @@ import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/vo
  * the field did not take.
  */
 /** Where this caller's writes land and who gets stamped on them. */
-function writeContextFor(identity: Identity, target?: unknown): WriteContext {
-  // Only an explicit, exact "company" targets the shared layer; anything else —
-  // absent, personal, or a typo — stays private. scopeWrite resolves the id from
-  // the identity, so no request value can name an arbitrary workspace.
+async function writeContextFor(env: Env, identity: Identity, target?: unknown): Promise<WriteContext> {
+  // Precedence lives in effectiveWriteTarget: explicit request value, then the
+  // member's own default_share override, then the org's TEAM_DEFAULT_WORKSPACE,
+  // then personal. scopeWrite resolves the id from the identity, so no request
+  // value can name an arbitrary workspace.
+  const orgDefault = (await resolveConfig(env)).TEAM_DEFAULT_WORKSPACE;
   return {
-    workspaceId: scopeWrite(identity, target === "company" ? "company" : undefined),
+    workspaceId: scopeWrite(identity, effectiveWriteTarget(identity, target, orgDefault)),
     actorId: identity.userId,
   };
 }
@@ -61,7 +63,7 @@ export async function handleCaptureRoutes(
       ? withVolatility(body.tags ?? [], captureVol.value)
       : body.tags ?? [];
 
-    const result = await captureEntry(body.content, captureTags, body.source ?? "api", env, ctx, undefined, writeContextFor(identity, body.workspace));
+    const result = await captureEntry(body.content, captureTags, body.source ?? "api", env, ctx, undefined, await writeContextFor(env, identity, body.workspace));
 
     if (result.status !== "blocked") {
       // Audit at the edge where identity and ctx both live; the domain layer
@@ -149,7 +151,7 @@ export async function handleCaptureRoutes(
 
     let indexed: boolean;
     try {
-      indexed = await appendToEntry(env, id, existingContent, addition, tags, source, await resolveConfig(env), appendVol.value, writeContextFor(identity));
+      indexed = await appendToEntry(env, id, existingContent, addition, tags, source, await resolveConfig(env), appendVol.value, await writeContextFor(env, identity));
     } catch (e) {
       return json({ ok: false, error: `Append failed: ${(e as Error).message}` }, 500);
     }
@@ -210,7 +212,7 @@ export async function handleCaptureRoutes(
       return json({ ok: false, error: mirrorEditError(row.source as string) }, 409);
     }
 
-    const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), updateVol.value, replaceTags, writeContextFor(identity));
+    const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), updateVol.value, replaceTags, await writeContextFor(env, identity));
 
     // Only reachable if the entry was deleted between the guard read and the write.
     if (result.status === "not_found") {

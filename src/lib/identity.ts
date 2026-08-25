@@ -16,6 +16,12 @@ export interface Identity {
   role: "admin" | "member";
   personalWorkspaceId: string;
   companyWorkspaceId: string;
+  /**
+   * The member's capture-visibility override: "personal", "company", or ""
+   * (inherit the org-level TEAM_DEFAULT_WORKSPACE config). Resolved with the
+   * identity so the write path never needs a second lookup.
+   */
+  defaultShare: "personal" | "company" | "";
 }
 
 /**
@@ -36,7 +42,7 @@ export function extractToken(request: Request): string | null {
 }
 
 const IDENTITY_SQL =
-  `SELECT u.id AS userId, u.role AS role,` +
+  `SELECT u.id AS userId, u.role AS role, u.default_share AS defaultShare,` +
   ` p.id AS personalWorkspaceId, c.id AS companyWorkspaceId` +
   ` FROM users u` +
   ` JOIN memberships mp ON mp.user_id = u.id` +
@@ -65,13 +71,16 @@ export async function resolveIdentity(request: Request, env: Env): Promise<Ident
   await ensureTenantBootstrap(env);
   const row = await env.DB.prepare(IDENTITY_SQL)
     .bind(await hashToken(token))
-    .first<{ userId: string; role: string; personalWorkspaceId: string; companyWorkspaceId: string }>();
+    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaceId: string }>();
   if (!row) return null;
   return {
     userId: row.userId,
     role: row.role === "admin" ? "admin" : "member",
     personalWorkspaceId: row.personalWorkspaceId,
     companyWorkspaceId: row.companyWorkspaceId,
+    // Rows written before the column existed read NULL — same legacy tolerance
+    // as every runtime-ALTER column.
+    defaultShare: row.defaultShare === "company" ? "company" : row.defaultShare === "personal" ? "personal" : "",
   };
 }
 

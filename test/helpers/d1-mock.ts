@@ -47,6 +47,7 @@ const SCHEMA_PROBE_RESULTS = [
   // edges.workspace_id arrives by ALTER on upgraded brains and lives in the base
   // CREATE on fresh ones — either way a migrated brain reports it.
   { kind: "edge_column", name: "workspace_id" },
+  { kind: "user_column", name: "default_share" },
 ];
 
 export class D1Mock {

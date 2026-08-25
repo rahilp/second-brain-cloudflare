@@ -43,6 +43,7 @@ describe("share semantics", () => {
       role: "admin" as const,
       personalWorkspaceId: roots.ownerPersonalWorkspaceId,
       companyWorkspaceId: roots.companyWorkspaceId,
+      defaultShare: "" as const,
     };
     await captureEntry("Q3 pricing decision", ["work"], "api", env, ctx, undefined, {
       workspaceId: owner.personalWorkspaceId,
@@ -80,6 +81,7 @@ describe("share semantics", () => {
       role: "member" as const,
       personalWorkspaceId: "ws-u-b",
       companyWorkspaceId: roots.companyWorkspaceId,
+      defaultShare: "" as const,
     };
 
     // B captures privately...
@@ -104,6 +106,7 @@ describe("share semantics", () => {
       role: "member" as const,
       personalWorkspaceId: "ws-u-c",
       companyWorkspaceId: roots.companyWorkspaceId,
+      defaultShare: "" as const,
     };
     await seedMember(env, "u-c", "c-token", roots.companyWorkspaceId);
     expect((await moveEntry(id!, "personal", env, memberC)).status).toBe("forbidden");
@@ -113,6 +116,7 @@ describe("share semantics", () => {
       role: "admin" as const,
       personalWorkspaceId: roots.ownerPersonalWorkspaceId,
       companyWorkspaceId: roots.companyWorkspaceId,
+      defaultShare: "" as const,
     };
     const byAdmin = await moveEntry(id!, "personal", env, owner);
     expect(byAdmin.status).toBe("unshared");
@@ -136,6 +140,7 @@ describe("share semantics", () => {
       role: "member" as const,
       personalWorkspaceId: "ws-u-b",
       companyWorkspaceId: roots.companyWorkspaceId,
+      defaultShare: "" as const,
     };
     // Invisible ids read as absent — existence is not leaked through the error.
     expect((await moveEntry(id!, "company", env, memberB)).status).toBe("not_found");
@@ -149,6 +154,7 @@ describe("share semantics", () => {
       role: "admin" as const,
       personalWorkspaceId: roots.ownerPersonalWorkspaceId,
       companyWorkspaceId: roots.companyWorkspaceId,
+      defaultShare: "" as const,
     };
     await captureEntry("to be shared", [], "api", env, ctx, undefined, {
       workspaceId: owner.personalWorkspaceId,

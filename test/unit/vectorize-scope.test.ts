@@ -12,6 +12,7 @@ const identity: Identity = {
   role: "member",
   personalWorkspaceId: "ws-p",
   companyWorkspaceId: "ws-c",
+  defaultShare: "" as const,
 };
 
 describe("vectorize workspace scoping", () => {

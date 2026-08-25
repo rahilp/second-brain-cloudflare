@@ -247,6 +247,13 @@
               </div>
 
               <div class="digest-section-label" data-i18n="team.membersLabel">Members</div>
+              <div class="filter-inner" style="max-width: 640px; margin-bottom: 14px; flex-wrap: wrap;">
+                <span class="digest-note" data-i18n="team.orgDefaultLabel">New captures default to</span>
+                <select class="filter-field" id="team-org-default" style="flex: 0 1 auto;" onchange="setTeamOrgDefault(this.value)" title="Org-wide default; members with their own override ignore this">
+                  <option value="personal" data-i18n="team.sharePersonal">Personal (private)</option>
+                  <option value="company" data-i18n="team.shareCompany">Company (shared)</option>
+                </select>
+              </div>
               <div id="team-list"></div>
 
               <div class="digest-section-label" style="margin-top: 24px;" data-i18n="team.addTitle">Add member</div>

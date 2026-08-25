@@ -17,6 +17,9 @@ const MIGRATION: [column: string, alter: string][] = [
 const TENANCY_EDGE_ALTERS: [column: string, alter: string][] = [
   ["workspace_id", `ALTER TABLE edges ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`],
 ];
+const USERS_ALTERS: [column: string, alter: string][] = [
+  ["default_share", `ALTER TABLE users ADD COLUMN default_share TEXT NOT NULL DEFAULT ''`],
+];
 const ALL_COLUMNS = MIGRATION.map(([column]) => column);
 const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue",
   // Team edition (v3). idx_entries_workspace_created is deliberately last-applied
@@ -29,6 +32,7 @@ const FULLY_MIGRATED = {
   objects: ALL_OBJECTS,
   entryColumns: ALL_COLUMNS,
   edgeColumns: TENANCY_EDGE_ALTERS.map(([c]) => c),
+  userColumns: USERS_ALTERS.map(([c]) => c),
 };
 
 /** The catalogue read that opens every init. Spelled out so tests can exclude it by name. */
@@ -46,9 +50,10 @@ type Row = { created_at: number; updated_at?: number | null };
 // `objects` defaults from the columns: a brain carrying migration columns necessarily has
 // the table they sit on, and a brain carrying none is the fresh case where nothing exists.
 // Pass it explicitly for anything in between.
-function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], existingObjects?: string[], existingEdgeColumns: string[] = []) {
+function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], existingObjects?: string[], existingEdgeColumns: string[] = [], existingUserColumns: string[] = []) {
   const columns = new Set(existingColumns.length ? [...BASE_COLUMNS, ...existingColumns] : []);
   const edgeColumns = new Set(existingEdgeColumns);
+  const userColumns = new Set(existingUserColumns);
   const objects = new Set(existingObjects ?? (existingColumns.length ? ALL_OBJECTS : []));
   const execd: string[] = [];
   const prepared: string[] = [];
@@ -59,7 +64,7 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
       const altered = sql.match(/ALTER TABLE (\w+) ADD COLUMN (\w+)/);
       if (altered) {
         const [, table, column] = altered;
-        const target = table === "edges" ? edgeColumns : columns;
+        const target = table === "edges" ? edgeColumns : table === "users" ? userColumns : columns;
         if (target.has(column)) throw new Error(`D1_EXEC_ERROR: duplicate column name: ${column}`);
         target.add(column);
         if (table === "entries" && column === "updated_at") rows.forEach(r => { r.updated_at = null; });
@@ -70,6 +75,7 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
         objects.add(created[1]);
         if (created[1] === "entries") BASE_COLUMNS.forEach(c => columns.add(c));
         if (created[1] === "edges") TENANCY_EDGE_ALTERS.forEach(([c]) => edgeColumns.add(c));
+        if (created[1] === "users") userColumns.add("default_share");
       }
     },
     prepare(sql: string) {
@@ -83,6 +89,7 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
               ...[...objects].map(name => ({ kind: name.startsWith("idx_") ? "index" : "table", name })),
               ...[...columns].map(name => ({ kind: "column", name })),
               ...[...edgeColumns].map(name => ({ kind: "edge_column", name })),
+              ...[...userColumns].map(name => ({ kind: "user_column", name })),
             ]
             : [],
         }),
@@ -136,7 +143,7 @@ describe("initializeDatabase updated_at migration", () => {
   describe("cost on a migrated brain", () => {
     it("costs one statement and issues no DDL when the schema is already complete", async () => {
       const { env, execd, prepared } = makeMigrationDb(
-        FULLY_MIGRATED.entryColumns, rowsAged(1), FULLY_MIGRATED.objects, FULLY_MIGRATED.edgeColumns,
+        FULLY_MIGRATED.entryColumns, rowsAged(1), FULLY_MIGRATED.objects, FULLY_MIGRATED.edgeColumns, FULLY_MIGRATED.userColumns,
       );
 
       await initializeDatabase(env);
@@ -157,7 +164,7 @@ describe("initializeDatabase updated_at migration", () => {
       resetDatabaseInit();
       await initializeDatabase(env);
 
-      expect(migrated).toBe(27); // one-off cost of creating a brain: 17 objects + 9 ALTERs + 1 post-column index
+      expect(migrated).toBe(28); // one-off cost of creating a brain: 17 objects + 10 ALTERs + 1 post-column index
       expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
       expect(prepared).toHaveLength(3); // one probe each, and nothing else
       expect(touchesEntries(execd)).toEqual([]);
@@ -172,6 +179,7 @@ describe("initializeDatabase updated_at migration", () => {
       const missingAlters: string[] = [
         ...MIGRATION.filter(([column]) => !present.includes(column)),
         ...TENANCY_EDGE_ALTERS,
+        ...USERS_ALTERS,
       ].map(([, alter]) => alter);
       expect(execd).toEqual(missingAlters);
       expect(prepared).toHaveLength(1);
@@ -396,7 +404,7 @@ describe("initializeDatabase against real SQLite", () => {
     resetDatabaseInit(); // a second cold isolate against the brain the first one migrated
     await initializeDatabase(envFor(d1));
 
-    expect(cold).toBe(28); // one probe, then the 27 statements a new brain needs (17 objects + 9 ALTERs + 1 post-column index)
+    expect(cold).toBe(29); // one probe, then the 28 statements a new brain needs (17 objects + 10 ALTERs + 1 post-column index)
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });

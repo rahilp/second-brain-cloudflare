@@ -64,3 +64,23 @@ export function scopeWhere(identity: Identity, column = "workspace_id"): ScopeCl
 export function scopeWrite(identity: Identity, target?: "personal" | "company"): string {
   return target === "company" ? identity.companyWorkspaceId : identity.personalWorkspaceId;
 }
+
+/**
+ * Capture-visibility precedence, in order:
+ *   1. The request's explicit target ("personal" | "company") — always wins.
+ *   2. The member's own override (users.default_share, carried on Identity).
+ *   3. The org-level default (config TEAM_DEFAULT_WORKSPACE, admin-set).
+ *   4. "personal" — private until shared, the shipped behaviour.
+ * Only the resolved enum ever reaches scopeWrite, so no request value can name
+ * a workspace the caller does not belong to.
+ */
+export function effectiveWriteTarget(
+  identity: Identity,
+  explicit?: unknown,
+  orgDefault?: string,
+): "personal" | "company" {
+  if (explicit === "company" || explicit === "personal") return explicit;
+  if (identity.defaultShare) return identity.defaultShare;
+  if (orgDefault === "company") return "company";
+  return "personal";
+}

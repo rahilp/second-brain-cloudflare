@@ -384,6 +384,11 @@ const I18N_EN = {
     copy: 'Copy',
     copied: 'Copied',
     done: 'Done',
+    orgDefaultLabel: 'New captures default to',
+    defaultShareTitle: 'Where this member’s new captures land when they don’t say',
+    sharePersonal: 'Personal (private)',
+    shareCompany: 'Company (shared)',
+    shareInherit: 'Org default',
   },
   brief: {
     eyebrow: 'Your brain, lately',
@@ -861,6 +866,11 @@ const I18N_IT = {
     copy: 'Copia',
     copied: 'Copiato',
     done: 'Fatto',
+    orgDefaultLabel: 'Le nuove acquisizioni finiscono in',
+    defaultShareTitle: 'Dove finiscono le nuove acquisizioni di questo membro se non specificato',
+    sharePersonal: 'Personale (privato)',
+    shareCompany: 'Azienda (condiviso)',
+    shareInherit: 'Predefinito organizzazione',
   },
   brief: {
     eyebrow: 'Il tuo cervello, di recente',

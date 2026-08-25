@@ -69,6 +69,12 @@ export const DEFAULTS = {
   // else above keeps using LLM_MODEL. See the cost comment on
   // constants.INSIGHT_LLM_MODEL for why this is a separate setting.
   INSIGHT_LLM_MODEL: "@cf/openai/gpt-oss-120b",
+
+  // ── Team edition (src/lib/scope.ts) ──
+  // Where a capture lands when neither the request nor the member's own
+  // override says. Org-level policy, set by an admin via PATCH /config;
+  // per-member overrides live on users.default_share and win over this.
+  TEAM_DEFAULT_WORKSPACE: "personal",
 } as const;
 
 // DEFAULTS is `as const` so the shipped values are pinned and a typo shows up
@@ -129,6 +135,7 @@ export const RULES: Record<ConfigKey, Rule> = {
   LLM_MODEL: { kind: "string" },
   EMBEDDING_MODEL: { kind: "string" },
   INSIGHT_LLM_MODEL: { kind: "string" },
+  TEAM_DEFAULT_WORKSPACE: { kind: "string" },
 };
 
 /**

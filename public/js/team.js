@@ -89,15 +89,19 @@ function teamMemberRow(m) {
     .filter(Boolean)
     .map(escHtml)
     .join(' · ')
+  const defaultSel = `
+    <select class="filter-field" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)" title="${escAttr(t('team.defaultShareTitle'))}">
+      ${['personal', 'company', 'inherit']
+        .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
+        .join('')}
+    </select>`
   return `
     <div class="digest-candidate-row">
       <div class="digest-candidate-label">
-        <div>
-          <div>${escHtml(teamMemberLabel(m))} ${chips}</div>
-          ${subline ? `<div class="digest-candidate-count">${subline}</div>` : ''}
-        </div>
+        <div>${escHtml(teamMemberLabel(m))} ${chips}</div>
+        ${subline ? `<div class="digest-candidate-count">${subline}</div>` : ''}
       </div>
-      ${actions.length ? `<div class="card-actions">${actions.join('')}</div>` : ''}
+      <div class="card-actions">${defaultSel}${actions.length ? actions.join('') : ''}</div>
     </div>`
 }
 
@@ -109,6 +113,7 @@ function renderTeam() {
   body.style.display = ''
   const list = document.getElementById('team-list')
   if (list) list.innerHTML = teamMembers.map(teamMemberRow).join('')
+  loadTeamOrgDefault()
 }
 
 async function postTeam(path, body) {
@@ -229,5 +234,57 @@ async function setTeamSuspended(id, suspended) {
     await loadTeam()
   } catch (e) {
     alert(e.message || t('team.actionFailed'))
+  }
+}
+
+// ── Capture-visibility defaults ───────────────────────────────────────────
+//
+// Where a member's new captures land when neither they nor their client say:
+// the org default (config TEAM_DEFAULT_WORKSPACE), unless the member has their
+// own override. Both controls live here so the policy is visible in one place.
+
+function teamDefaultShareLabel(value) {
+  return value === 'company' ? t('team.shareCompany') : value === 'personal' ? t('team.sharePersonal') : t('team.shareInherit')
+}
+
+async function setMemberDefaultShare(id, value) {
+  const m = teamMembers.find((x) => x.userId === id)
+  if (!m) return
+  try {
+    const r = await postTeam('/team/members/default-share', { id, default: value })
+    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+    m.defaultShare = value === 'inherit' ? '' : value
+    renderTeam()
+  } catch (e) {
+    alert(e.message || t('team.actionFailed'))
+    await loadTeam()
+  }
+}
+
+async function loadTeamOrgDefault() {
+  const sel = document.getElementById('team-org-default')
+  if (!sel) return
+  try {
+    const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    sel.value = data?.config?.TEAM_DEFAULT_WORKSPACE === 'company' ? 'company' : 'personal'
+  } catch {
+    sel.value = 'personal'
+  }
+}
+
+async function setTeamOrgDefault(value) {
+  try {
+    // PATCH /config is a sparse key→value patch for the whole settings blob.
+    const res = await fetch(`${WORKER_URL}/config`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ TEAM_DEFAULT_WORKSPACE: value }),
+    })
+    if (!res.ok) throw new Error(t('team.actionFailed'))
+  } catch (e) {
+    alert(e.message || t('team.actionFailed'))
+    await loadTeamOrgDefault()
   }
 }

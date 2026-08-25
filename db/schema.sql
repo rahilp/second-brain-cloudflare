@@ -89,13 +89,14 @@ CREATE TABLE IF NOT EXISTS workspaces (
 CREATE INDEX IF NOT EXISTS idx_workspaces_kind ON workspaces(kind);
 
 CREATE TABLE IF NOT EXISTS users (
-  id          TEXT PRIMARY KEY,
-  name        TEXT NOT NULL DEFAULT '',
-  email       TEXT,
-  role        TEXT NOT NULL DEFAULT 'member',    -- admin | member (validated in app code)
-  token_hash  TEXT NOT NULL,                     -- SHA-256 hex of the bearer token (the token itself is never stored)
-  suspended   INTEGER NOT NULL DEFAULT 0,
-  created_at  INTEGER NOT NULL
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL DEFAULT '',
+  email         TEXT,
+  role          TEXT NOT NULL DEFAULT 'member',    -- admin | member (validated in app code)
+  token_hash    TEXT NOT NULL,                     -- SHA-256 hex of the bearer token (the token itself is never stored)
+  suspended     INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL,
+  default_share TEXT NOT NULL DEFAULT ''           -- capture-visibility override ('' = inherit org TEAM_DEFAULT_WORKSPACE)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash);

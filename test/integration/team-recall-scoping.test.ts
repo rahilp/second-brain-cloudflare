@@ -27,6 +27,7 @@ const memberOf = (personal: string): Identity => ({
   role: "member",
   personalWorkspaceId: personal,
   companyWorkspaceId: "ws-co",
+  defaultShare: "" as const,
 });
 
 function makeCtx() {

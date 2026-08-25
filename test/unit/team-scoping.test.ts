@@ -25,6 +25,7 @@ const identity = (personal: string): Identity => ({
   role: "member",
   personalWorkspaceId: personal,
   companyWorkspaceId: "ws-co",
+  defaultShare: "" as const,
 });
 
 /** Insert an edge row directly, workspace_id included — the unit under test IS that column. */

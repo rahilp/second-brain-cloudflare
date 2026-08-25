@@ -22,6 +22,8 @@ export interface TeamMember {
   personalWorkspaceId: string;
   /** Entries living in the member's personal workspace. */
   privateEntries: number;
+  /** Capture-visibility override: "personal", "company", or "" (inherit org default). */
+  defaultShare: "personal" | "company" | "";
 }
 
 export async function generateToken(): Promise<{ token: string; tokenHash: string }> {
@@ -38,14 +40,19 @@ export async function generateToken(): Promise<{ token: string; tokenHash: strin
 export async function listMembers(env: Env): Promise<TeamMember[]> {
   const { results } = await env.DB.prepare(
     `SELECT u.id AS userId, u.name, u.email, u.role, u.suspended, u.created_at AS createdAt,
+            u.default_share AS defaultShare,
             w.id AS personalWorkspaceId,
             (SELECT COUNT(*) FROM entries e WHERE e.workspace_id = w.id) AS privateEntries
      FROM users u
      JOIN memberships m ON m.user_id = u.id
      JOIN workspaces w ON w.id = m.workspace_id AND w.kind = 'personal'
      ORDER BY u.created_at ASC, u.id ASC`
-  ).all<TeamMember>();
-  return (results ?? []).map((r) => ({ ...r, suspended: !!r.suspended }));
+  ).all<TeamMember & { defaultShare: string | null }>();
+  return (results ?? []).map((r) => ({
+    ...r,
+    suspended: !!r.suspended,
+    defaultShare: r.defaultShare === "company" ? "company" : r.defaultShare === "personal" ? "personal" : "",
+  }));
 }
 
 export class TeamAdminError extends Error {
@@ -88,7 +95,7 @@ export async function createMember(
   return {
     member: {
       userId, name, email, role, suspended: false, createdAt: now,
-      personalWorkspaceId: workspaceId, privateEntries: 0,
+      personalWorkspaceId: workspaceId, privateEntries: 0, defaultShare: "",
     },
     token,
   };
@@ -124,6 +131,24 @@ export async function setMemberSuspended(env: Env, actorId: string, userId: stri
   }
   const result = await env.DB.prepare(`UPDATE users SET suspended = ? WHERE id = ?`)
     .bind(suspended ? 1 : 0, userId).run();
+  const changed = (result.meta as Record<string, number>).changes
+    ?? (result.meta as Record<string, number>).rows_written ?? 0;
+  if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
+}
+
+/**
+ * Sets one member's capture-visibility override. "inherit" clears it, falling
+ * back to the org's TEAM_DEFAULT_WORKSPACE config. Existing rows are untouched:
+ * this governs where NEW captures land.
+ */
+export async function setMemberDefaultShare(
+  env: Env,
+  userId: string,
+  value: "personal" | "company" | "inherit",
+): Promise<void> {
+  const stored = value === "inherit" ? "" : value;
+  const result = await env.DB.prepare(`UPDATE users SET default_share = ? WHERE id = ?`)
+    .bind(stored, userId).run();
   const changed = (result.meta as Record<string, number>).changes
     ?? (result.meta as Record<string, number>).rows_written ?? 0;
   if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);

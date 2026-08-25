@@ -12,7 +12,7 @@ import { createEdge, deleteEdge, edgeLabel } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
 import type { Identity } from "../lib/identity";
-import { scopeWhere, scopeWrite, type WriteContext } from "../lib/scope";
+import { scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
@@ -160,9 +160,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       // and the injected one won.
       const baseTags = tags ?? [];
       const withVerdict = volatility ? withVolatility(baseTags, volatility as Volatility) : baseTags;
-      // Explicit company targeting resolves a fresh context; the precomputed one
-      // (personal) covers every other case, including absent identity.
-      const targetCtx = workspace === "company" && identity
+      // Precedence: explicit workspace arg, then the member's default_share
+      // override, then the org's TEAM_DEFAULT_WORKSPACE, then personal.
+      const orgDefault = (await resolveConfig(env)).TEAM_DEFAULT_WORKSPACE;
+      const target = identity ? effectiveWriteTarget(identity, workspace, orgDefault) : undefined;
+      const targetCtx = identity && target === "company"
         ? { workspaceId: scopeWrite(identity, "company"), actorId: identity.userId }
         : writeCtx;
       const result = await captureEntry(content, withVerdict, source ?? "claude", env, ctx, undefined, targetCtx);
