@@ -159,6 +159,18 @@ export type Messages = {
     alreadyHave: string;
     footnote: string;
   };
+  /**
+   * Who the fresh brain is for (v3 team edition). Both answers provision
+   * identically; the fork exists so the setup can record the mode and let the
+   * closing screens address the right reader.
+   */
+  audience: {
+    title: string;
+    lede: string;
+    justMe: string;
+    aTeam: string;
+    footnote: string;
+  };
   connectExisting: {
     title: string;
     lede: string;
@@ -422,6 +434,10 @@ export type Messages = {
     updateButton: string;
     allSetTitle: string;
     allSetLede: string;
+    /** Team setups only: replaces allSetLede, and the team card below appears. */
+    allSetTeamLede: string;
+    teamCardLabel: string;
+    teamCardBody: string;
     openDashboard: string;
   };
   integrations: {

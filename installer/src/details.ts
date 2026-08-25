@@ -10,6 +10,7 @@ import {
   detailCards,
   emailButton,
   h,
+  teamCard,
 } from "./shared";
 import { integrationRows, toolRows } from "./shared";
 import { initI18n, settingsSection, t } from "./i18n";
@@ -87,9 +88,10 @@ async function boot() {
         h("h2", { class: "pane-title" }, [t("details.navConnection")]),
         h("p", { class: "pane-desc" }, [t("details.lede")]),
         ...detailCards(details),
-        // After both URL cards, never between them: "Copy both" copies exactly
-        // those two values, so anything inserted between them makes its label
-        // wrong.
+        // Team setups only, and before the password card: it is what the owner
+        // is expected to do next. "Copy both" below still copies exactly the
+        // two URL cards above, so nothing lands between them.
+        ...(details.teamMode ? [teamCard()] : []),
         passwordCard(rotationBlocked),
         h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
         disconnectSection(),

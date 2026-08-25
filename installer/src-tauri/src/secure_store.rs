@@ -23,6 +23,15 @@ const KEY_CF_SUBDOMAIN: &str = "cf-subdomain";
 /// browser store is lost on a reset and cannot be trusted to name something whose
 /// deletion is irreversible.
 const KEY_CF_PREVIOUS_INDEX: &str = "cf-previous-index";
+/// Which kind of fresh setup this was: [`MODE_PERSONAL`] or [`MODE_TEAM`].
+///
+/// Not a credential — a flag the Connection window reads to decide whether the
+/// team card is shown. Written only by the provisioning path; the "Already have
+/// a Second Brain?" path never touches it, because a connected brain's mode is
+/// whatever its deployment says, not something this computer gets to guess.
+const KEY_TEAM_MODE: &str = "team-mode";
+pub const MODE_PERSONAL: &str = "personal";
+pub const MODE_TEAM: &str = "team";
 
 #[derive(Debug, Clone)]
 pub struct SetupInfo {
@@ -183,12 +192,31 @@ pub fn clear_previous_index() {
     backend::delete(KEY_CF_PREVIOUS_INDEX);
 }
 
+/// Records whether provisioning was for one person or a team. Read by the
+/// Connection window to decide whether the team card is shown.
+pub fn save_team_mode(mode: &str) -> Result<(), StoreError> {
+    backend::set(KEY_TEAM_MODE, mode)
+}
+
+/// The mode recorded at setup, if any. Absent for brains connected without
+/// provisioning — their mode is unknown, and unknown reads as personal.
+pub fn load_team_mode() -> Option<String> {
+    backend::get(KEY_TEAM_MODE).filter(|s| !s.is_empty())
+}
+
+/// The UI gate. Team is opt-in, so anything not explicitly [`MODE_TEAM`] is
+/// personal.
+pub fn is_team_mode() -> bool {
+    load_team_mode().as_deref() == Some(MODE_TEAM)
+}
+
 pub fn clear_setup() {
     backend::delete(KEY_WORKER_URL);
     backend::delete(KEY_AUTH_TOKEN);
     backend::delete(KEY_CF_ACCOUNT_ID);
     backend::delete(KEY_CF_SUBDOMAIN);
     backend::delete(KEY_CF_PREVIOUS_INDEX);
+    backend::delete(KEY_TEAM_MODE);
 }
 
 #[cfg(test)]
@@ -256,6 +284,22 @@ mod tests {
 
         clear_setup();
         assert!(load_previous_index().is_none(), "disconnect clears the note too");
+
+        // ── The setup-mode note ─────────────────────────────────────────────
+        // Written by provisioning only; connect-existing never sets it, so a
+        // fresh map (as after clear_setup) reads as unknown → personal.
+        assert!(load_team_mode().is_none());
+        save_team_mode(MODE_TEAM).unwrap();
+        assert_eq!(load_team_mode().as_deref(), Some(MODE_TEAM));
+        assert!(is_team_mode());
+
+        // An empty value is not a team, exactly as an empty index note names
+        // nothing.
+        backend::set(super::KEY_TEAM_MODE, "").unwrap();
+        assert!(!is_team_mode(), "an empty note is not a team");
+
+        clear_setup();
+        assert!(load_team_mode().is_none(), "disconnect clears the mode too");
     }
 
     /// The Cloudflare OAuth token is not persisted anywhere.
@@ -266,7 +310,7 @@ mod tests {
     /// act that forces a second look at what is being stored — as it did for
     /// `cf-previous-index`, which is an index name and not a credential.
     #[test]
-    fn the_stored_key_set_is_exactly_these_five() {
+    fn the_stored_key_set_is_exactly_these_six() {
         let src = include_str!("secure_store.rs");
         let keys: Vec<&str> = src
             .lines()
@@ -281,6 +325,9 @@ mod tests {
                 "cf-account-id",
                 "cf-subdomain",
                 "cf-previous-index",
+                // Deliberate addition (v3 team edition): a setup-mode flag, not
+                // a credential — see KEY_TEAM_MODE above.
+                "team-mode",
             ],
             "secure_store gained or lost a key. A Cloudflare access or refresh \
              token must never be one of them: the AUTH_TOKEN unlocks one brain, \

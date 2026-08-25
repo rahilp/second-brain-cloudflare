@@ -9,6 +9,7 @@ import { runNightlyCompression } from "./compression/nightly";
 import { runGraphPass } from "./graph/pass";
 import { INTEGRATION_SYNC_CRON, runScheduledIntegrationSync } from "./integrations/mirror";
 import { runStalenessPass } from "./staleness/pass";
+import { nextWorkspace } from "./runtime/rotation";
 import { runInsightAccrual } from "./insight/candidates";
 import { runWeeklyInsights } from "./insight/weekly";
 import { INSIGHT_ACCRUAL_CRON, INSIGHT_WEEKLY_CRON } from "./insight/schedule";
@@ -68,6 +69,11 @@ export default {
     // D1 and CPU budget. They must be routed explicitly: the fallthrough below
     // is maintenance, so without these each new trigger would run compression,
     // the graph pass and staleness a second and third time every day.
+    //
+    // The insight passes deliberately stay WHOLE-CORPUS — they are not given a
+    // workspace slice. They are already budget-managed on their own invocations
+    // (#290), and cross-workspace candidate pairs were handled in P1a, so slicing
+    // them would only stretch coverage over K nights without buying headroom.
     if (event.cron === INSIGHT_ACCRUAL_CRON) {
       job("insight accrual", runInsightAccrual(env, ctx));
       return;
@@ -81,8 +87,15 @@ export default {
     // do not recognise (a hand-fired trigger, or a schedule added to wrangler.jsonc and
     // not yet routed here). Maintenance is the safe default — skipping it degrades recall
     // quality silently, whereas a skipped mirror sync is picked up on the next hour.
-    job("nightly compression", runNightlyCompression(env, ctx));
-    job("graph pass", runGraphPass(env, ctx));
-    job("staleness pass", runStalenessPass(env, ctx));
+    //
+    // One workspace slice per night (v3 Team Edition): the three passes share a single
+    // resolved slice so the whole deployment moves through the ring together, one
+    // workspace per night. A null slice (empty corpus, or the rotation read failed)
+    // means every pass scans the whole corpus exactly as it did pre-v3. Direct and
+    // manual callers — admin routes that re-trigger these passes — never pass a slice.
+    const slice = await nextWorkspace(env);
+    job("nightly compression", runNightlyCompression(env, ctx, slice));
+    job("graph pass", runGraphPass(env, ctx, slice));
+    job("staleness pass", runStalenessPass(env, ctx, slice));
   },
 };

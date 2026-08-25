@@ -311,6 +311,17 @@ export const it: Messages = {
     alreadyHave: "Hai già un Second Brain?",
     footnote: "Gratuito · I tuoi dati restano tuoi",
   },
+  audience: {
+    title: "Per chi è questo Second Brain?",
+    lede:
+      "Entrambe le scelte creano lo stesso Second Brain privato, nel tuo spazio " +
+      "Cloudflare. Cambia solo ciò che ti spieghiamo alla fine.",
+    justMe: "Solo per me",
+    aTeam: "Per un team",
+    footnote:
+      "In un Second Brain di team ogni persona riceve un accesso proprio — e " +
+      "condividere un ricordo è sempre una scelta di chi l'ha scritto.",
+  },
   connectExisting: {
     title: "Collega il tuo Second Brain",
     lede:
@@ -684,6 +695,14 @@ export const it: Messages = {
     updateButton: "Aggiorna il Second Brain",
     allSetTitle: "Tutto pronto",
     allSetLede: "Due link da conservare. Li trovi sempre qui in Dettagli connessione.",
+    allSetTeamLede:
+      "Due link da conservare — e un team da invitare. Li trovi sempre qui in Dettagli connessione.",
+    teamCardLabel: "Il Second Brain del tuo team",
+    teamCardBody:
+      "Hai effettuato l'accesso come proprietario-amministratore di questo brain. " +
+      "Apri la dashboard e usa il pannello Team per invitare le persone: ogni " +
+      "membro riceve il suo token. I ricordi privati di ciascuno restano privati, " +
+      "e ciò che viene condiviso finisce nel livello aziendale, visibile a tutti.",
     openDashboard: "Apri il mio Second Brain",
   },
   integrations: {

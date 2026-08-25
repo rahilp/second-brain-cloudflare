@@ -78,6 +78,9 @@ function switchTab(tab) {
   // back at it is exactly when they are most likely to be out of date. Rate
   // limited, so tab-flicking does not re-run the brief's queries each time.
   if (tab === 'home') refreshIfStale()
+  // Suspensions and rotations can happen while the window sits open, so the
+  // roster refetches on every visit rather than trusting the last one.
+  if (tab === 'team' && typeof loadTeam === 'function') loadTeam()
 }
 
 /**

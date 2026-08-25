@@ -32,6 +32,9 @@ function showApp() {
   if (typeof renderHome === 'function') renderHome(null) // greeting before the network
   refreshAll()
   checkVectorize()
+  // Doubles as the admin check: the Team nav entries stay hidden unless this
+  // probe answers 200. See js/team.js.
+  if (typeof loadTeam === 'function') loadTeam()
 }
 
 function logout() {

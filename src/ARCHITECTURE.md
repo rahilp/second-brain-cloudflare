@@ -41,6 +41,7 @@ Incremental split of the former monolithic `index.ts`. Entry point remains `src/
 | MCP server + sanitize | `mcp/*` |
 | REST routes | `routes/*` |
 | dbReady | `runtime/state.ts` |
+| maintenance workspace rotation | `runtime/rotation.ts` |
 
 ## Tests
 

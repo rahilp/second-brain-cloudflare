@@ -59,10 +59,23 @@ async function selectTagsForRun(env: Env, tags: string[]): Promise<string[]> {
   return picked;
 }
 
-export async function runNightlyCompression(env: Env, ctx: ExecutionContext): Promise<void> {
+/**
+ * `workspaceId` narrows this run to one workspace's slice of the ring (v3 Team Edition,
+ * see src/runtime/rotation.ts). Undefined/null — every direct and manual caller, plus a
+ * scheduled run whose rotation read failed — keeps the pre-v3 whole-corpus scan, whose
+ * SQL must stay byte-for-byte identical.
+ */
+export async function runNightlyCompression(
+  env: Env,
+  ctx: ExecutionContext,
+  workspaceId?: string | null,
+): Promise<void> {
   const cfg = await resolveConfig(env);
   await initializeDatabase(env);
 
+  // The slice clause goes last in the WHERE so its placeholder binds after the
+  // eligibility cutoff.
+  const sliceSql = workspaceId != null ? `\n      AND entries.workspace_id = ?` : "";
   const { results } = await env.DB.prepare(`
     SELECT value as tag, COUNT(*) as count
     FROM entries, json_each(entries.tags)
@@ -71,11 +84,13 @@ export async function runNightlyCompression(env: Env, ctx: ExecutionContext): Pr
       AND entries.tags NOT LIKE '%"synthesized"%'
       AND entries.tags NOT LIKE '%"auto-pattern"%'
       AND entries.tags NOT LIKE '%"auto-insight"%'
-      AND ${compressionEligibilitySql("entries.", cfg)}
+      AND ${compressionEligibilitySql("entries.", cfg)}${sliceSql}
     GROUP BY value
     HAVING count > 10
     ORDER BY count DESC
-  `).bind(Date.now() - cfg.COMPRESSION_MIN_AGE_MS).all();
+  `).bind(...(workspaceId != null
+    ? [Date.now() - cfg.COMPRESSION_MIN_AGE_MS, workspaceId]
+    : [Date.now() - cfg.COMPRESSION_MIN_AGE_MS])).all();
 
   const tags = await selectTagsForRun(env, results.map(r => r.tag as string));
 

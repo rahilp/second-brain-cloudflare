@@ -45,10 +45,11 @@ describe("team member administration", () => {
     const { env } = await makeEnv();
     await createMember(env, { name: "Ada" });
     const members = await listMembers(env);
-    // Owner + Ada.
+    // Owner + Ada. Same-ms creation makes list order a tie — assert by identity.
     expect(members).toHaveLength(2);
-    expect(members[0].role).toBe("admin");
-    expect(members[1].name).toBe("Ada");
+    expect(members.find((m) => m.role === "admin")?.name).toBe("Owner");
+    const ada = members.find((m) => m.name === "Ada");
+    expect(ada?.role).toBe("member");
     expect(members.every((m) => typeof m.privateEntries === "number")).toBe(true);
   });
 

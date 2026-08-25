@@ -294,6 +294,9 @@ pub async fn discover_brains(
 #[tauri::command]
 pub async fn start_provisioning(
     account_id: String,
+    // The wizard's personal/team fork. Provisioning is identical either way;
+    // this only decides what gets recorded alongside the credentials.
+    team_mode: Option<bool>,
     app: AppHandle,
     session: State<'_, SetupSession>,
 ) -> Result<ProvisionOutcome, String> {
@@ -381,6 +384,19 @@ pub async fn start_provisioning(
 
     if !session.dry_run {
         secure_store::save_setup(&outcome.worker_url, &password).map_err(|e| {
+            log::error!("secure store save failed: {e}");
+            user_err(locale, Key::ErrorSecureStoreSetup)
+        })?;
+        // The wizard's choice lands beside the credentials it describes, with
+        // the same failure handling: without it the Connection window would
+        // silently show the wrong surface. connect_existing deliberately never
+        // writes this key — a connected brain's mode is unknown.
+        let mode = if team_mode.unwrap_or(false) {
+            secure_store::MODE_TEAM
+        } else {
+            secure_store::MODE_PERSONAL
+        };
+        secure_store::save_team_mode(mode).map_err(|e| {
             log::error!("secure store save failed: {e}");
             user_err(locale, Key::ErrorSecureStoreSetup)
         })?;
@@ -496,12 +512,34 @@ fn details_from_anywhere(session: &SetupSession) -> Option<ProvisionOutcome> {
     })
 }
 
+/// What the Connections window renders, plus whether this brain was set up for
+/// a team — the team card is gated on it. A separate response rather than
+/// `ProvisionOutcome`: the mode is read from secure storage at read time and
+/// provisioning itself knows nothing about it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionDetailsResponse {
+    pub worker_url: String,
+    pub mcp_url: String,
+    /// True only when setup provisioned in team mode. Absent/unknown reads as
+    /// false — brains connected without provisioning are personal by default.
+    pub team_mode: bool,
+}
+
 #[tauri::command]
 pub fn get_connection_details(
     app: AppHandle,
     session: State<'_, SetupSession>,
-) -> Result<ProvisionOutcome, String> {
-    details_from_anywhere(&session).ok_or_else(|| user_err(locale_of(&app), Key::ErrorSetupNotFinished))
+) -> Result<ConnectionDetailsResponse, String> {
+    let outcome = details_from_anywhere(&session)
+        .ok_or_else(|| user_err(locale_of(&app), Key::ErrorSetupNotFinished))?;
+    // Dry-run never reads secure storage (#252): a demo brain is personal.
+    let team_mode = !session.dry_run && secure_store::is_team_mode();
+    Ok(ConnectionDetailsResponse {
+        worker_url: outcome.worker_url,
+        mcp_url: outcome.mcp_url,
+        team_mode,
+    })
 }
 
 #[derive(serde::Serialize)]

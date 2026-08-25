@@ -43,7 +43,7 @@ export async function listMembers(env: Env): Promise<TeamMember[]> {
      FROM users u
      JOIN memberships m ON m.user_id = u.id
      JOIN workspaces w ON w.id = m.workspace_id AND w.kind = 'personal'
-     ORDER BY u.created_at ASC`
+     ORDER BY u.created_at ASC, u.id ASC`
   ).all<TeamMember>();
   return (results ?? []).map((r) => ({ ...r, suspended: !!r.suspended }));
 }

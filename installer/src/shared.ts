@@ -7,6 +7,8 @@ import { t } from "./i18n";
 export interface ConnectionDetails {
   workerUrl: string;
   mcpUrl: string;
+  /** True only when setup provisioned in team mode; absent reads as personal. */
+  teamMode: boolean;
 }
 
 export interface ToolStatus {
@@ -83,6 +85,17 @@ export function detailCards(details: ConnectionDetails): HTMLElement[] {
     urlCard(t("details.addressLabel"), t("details.addressDesc"), details.workerUrl),
     urlCard(t("details.mcpLabel"), t("details.mcpDesc"), details.mcpUrl),
   ];
+}
+
+/// Shown when setup chose team mode — on the setup's last screen and in the
+/// Connection pane. Pure copy: what the owner can do that members cannot, and
+/// where to do it. Administration itself lives in the dashboard's Team panel,
+/// so there is nothing to invoke here.
+export function teamCard(): HTMLElement {
+  return h("div", { class: "card url-card" }, [
+    h("div", { class: "url-label" }, [t("details.teamCardLabel")]),
+    h("div", { class: "url-desc" }, [t("details.teamCardBody")]),
+  ]);
 }
 
 export function copyBothButton(details: ConnectionDetails): HTMLButtonElement {

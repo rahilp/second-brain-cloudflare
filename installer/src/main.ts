@@ -11,6 +11,7 @@ import {
   emailButton,
   h,
   secretCard,
+  teamCard,
   toolRows,
 } from "./shared";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -52,6 +53,14 @@ let accounts: Account[] = [];
 let chosenAccount: Account | null = null;
 let details: ConnectionDetails | null = null;
 
+/**
+ * The wizard's personal/team fork. Personal is today's flow verbatim; team
+ * provisions identically and only decides what is recorded with the setup and
+ * what the closing screens say. The "Already have a Second Brain?" path never
+ * sets it — a connected brain's mode is unknown.
+ */
+let teamMode = false;
+
 /** Which setup screen is visible — used to re-render on locale change. */
 let currentScreen: (() => void) | null = null;
 
@@ -66,7 +75,7 @@ function brand(): HTMLElement {
 function welcomeScreen() {
   currentScreen = welcomeScreen;
   const start = h("button", { class: "btn-primary" }, [t("welcome.getStarted")]);
-  start.addEventListener("click", passwordScreen);
+  start.addEventListener("click", audienceScreen);
   const existing = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
     t("welcome.alreadyHave"),
   ]);
@@ -85,6 +94,39 @@ function welcomeScreen() {
 interface DiscoveredBrain {
   name: string;
   url: string;
+}
+
+/// Who the fresh brain is for. Both answers run the same provisioning; the
+/// choice is recorded with the setup and shapes the closing copy. "Just me" is
+/// the primary because it is the path almost everyone takes, mirroring how the
+/// welcome screen ranks its own two doors.
+function audienceScreen() {
+  currentScreen = audienceScreen;
+  const justMe = h("button", { class: "btn-primary" }, [t("audience.justMe")]);
+  justMe.addEventListener("click", () => {
+    teamMode = false;
+    passwordScreen();
+  });
+  const aTeam = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("audience.aTeam"),
+  ]);
+  aTeam.addEventListener("click", () => {
+    teamMode = true;
+    passwordScreen();
+  });
+  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("common.back"),
+  ]);
+  back.addEventListener("click", welcomeScreen);
+  show(
+    brand(),
+    h("h1", {}, [t("audience.title")]),
+    h("p", { class: "lede" }, [t("audience.lede")]),
+    justMe,
+    aTeam,
+    back,
+    h("p", { class: "footnote" }, [t("audience.footnote")]),
+  );
 }
 
 function notice(message: string, tone: "error" | "info" = "error"): HTMLElement {
@@ -593,6 +635,7 @@ function progressScreen() {
     try {
       details = await invoke<ConnectionDetails>("start_provisioning", {
         accountId: chosenAccount!.id,
+        teamMode,
       });
       unlisten?.();
       toolsScreen();
@@ -629,7 +672,10 @@ function detailsScreen() {
   show(
     brand(),
     h("h1", {}, [t("details.allSetTitle")]),
-    h("p", { class: "lede" }, [t("details.allSetLede")]),
+    h("p", { class: "lede" }, [t(teamMode ? "details.allSetTeamLede" : "details.allSetLede")]),
+    // Before the URL cards: it is the one thing a team owner is expected to do
+    // next, and the links below it are for keeping, not acting on.
+    ...(teamMode ? [teamCard()] : []),
     ...detailCards(details!),
     h("div", { class: "actions-spread" }, [copyBothButton(details!), emailButton(details!)]),
     h("div", { style: "height:14px" }),
