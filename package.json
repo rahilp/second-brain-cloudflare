@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
+    "dev:demo": "wrangler dev -c wrangler.demo.jsonc --port 8799",
     "predeploy": "node scripts/predeploy-guard.mjs",
     "deploy": "wrangler deploy",
     "deploy:worker": "node scripts/release.mjs worker",
