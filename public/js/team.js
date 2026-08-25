@@ -98,13 +98,15 @@ function teamMemberRow(m) {
         <div class="team-name">${escHtml(teamMemberLabel(m))} ${chips}</div>
         ${subline ? `<div class="team-sub">${subline}</div>` : ''}
       </div>
-      <label style="display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap;" title="${escAttr(t('team.defaultShareTitle'))}">
+      <label class="team-capture-label" title="${escAttr(t('team.defaultShareTitle'))}">
         ${escHtml(t('team.defaultShareLabel'))}
-        <select class="filter-field team-capture-select" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)">
-          ${['personal', 'company', 'inherit']
-            .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
-            .join('')}
-        </select>
+        <span class="team-select-wrap">
+          <select class="team-select" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)">
+            ${['personal', 'company', 'inherit']
+              .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
+              .join('')}
+          </select><i class="ti ti-chevron-down"></i>
+        </span>
       </label>
       <div class="team-actions">${actions.join('')}</div>
     </div>`

@@ -3710,11 +3710,6 @@
         margin-top: 2px;
       }
 
-      .team-capture-select {
-        flex: 0 0 auto;
-        min-width: 0;
-      }
-
       .team-actions {
         display: flex;
         align-items: center;
@@ -3742,4 +3737,58 @@
       .team-icon-btn.danger:hover {
         background: var(--danger-soft);
         color: var(--danger);
+      }
+
+      /* Team panel dropdowns: native select behaviour, dressed like the rest
+         of the panel. The chevron is a sibling icon (not a background image)
+         so it follows the theme's text color in light and dark mode. */
+      .team-select-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+
+      .team-select-wrap select {
+        appearance: none;
+        -webkit-appearance: none;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        background: var(--surface);
+        border: 0.5px solid var(--border-input);
+        border-radius: 9px;
+        padding: 5px 26px 5px 11px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+
+      .team-select-wrap select:hover {
+        border-color: var(--text-tertiary);
+      }
+
+      .team-select-wrap select:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+
+      .team-select-wrap .ti {
+        position: absolute;
+        right: 9px;
+        font-size: 12px;
+        color: var(--text-tertiary);
+        pointer-events: none;
+        transition: color 0.15s;
+      }
+
+      .team-select-wrap select:hover + .ti {
+        color: var(--text-secondary);
+      }
+
+      .team-capture-label {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11.5px;
+        color: var(--text-tertiary);
+        white-space: nowrap;
       }
