@@ -357,6 +357,8 @@ const I18N_EN = {
   team: {
     title: 'Team',
     membersLabel: 'Members',
+    colMember: 'Member',
+    colCaptures: 'Captures',
     adminsOnly: 'Only workspace admins can manage team members.',
     roleAdmin: 'Admin',
     roleMember: 'Member',
@@ -842,6 +844,8 @@ const I18N_IT = {
   team: {
     title: 'Team',
     membersLabel: 'Membri',
+    colMember: 'Membro',
+    colCaptures: 'Acquisizioni',
     adminsOnly: 'Solo gli amministratori possono gestire i membri del team.',
     roleAdmin: 'Amministratore',
     roleMember: 'Membro',

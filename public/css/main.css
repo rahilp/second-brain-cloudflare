@@ -3657,3 +3657,89 @@
         transform: translateY(1px);
         box-shadow: 0 1px 1px rgba(22, 22, 22, 0.16);
       }
+
+      /* ── Team panel (public/js/team.js) ─────────────────────────────
+         A roster that reads like a table without being one: hairline
+         rows in a single rounded container, an aligned header, and
+         quiet icon actions that only speak on hover. */
+      .team-table {
+        border: 0.5px solid var(--border-input);
+        border-radius: 13px;
+        overflow: hidden;
+        background: var(--surface);
+      }
+
+      .team-head,
+      .team-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 16px;
+        align-items: center;
+        padding: 10px 14px;
+      }
+
+      .team-head {
+        font-size: 10.5px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        background: var(--surface-2);
+        border-bottom: 0.5px solid var(--border-input);
+      }
+
+      .team-row + .team-row {
+        border-top: 0.5px solid var(--border-input);
+      }
+
+      .team-row.suspended .team-name {
+        color: var(--text-tertiary);
+      }
+
+      .team-name {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+
+      .team-sub {
+        font-size: 11.5px;
+        color: var(--text-tertiary);
+        margin-top: 2px;
+      }
+
+      .team-capture-select {
+        flex: 0 0 auto;
+        min-width: 0;
+      }
+
+      .team-actions {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .team-icon-btn {
+        border: none;
+        background: none;
+        padding: 6px;
+        border-radius: 8px;
+        cursor: pointer;
+        color: var(--text-tertiary);
+        font-size: 15px;
+        line-height: 1;
+        display: inline-flex;
+        transition: background 0.15s, color 0.15s;
+      }
+
+      .team-icon-btn:hover {
+        background: var(--surface-2);
+        color: var(--text-secondary);
+      }
+
+      .team-icon-btn.danger:hover {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }

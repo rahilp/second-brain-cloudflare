@@ -67,19 +67,19 @@ function teamMemberRow(m) {
   const actions = []
   if (!isSelf) {
     actions.push(
-      `<button class="digest-btn" onclick="rotateTeamToken('${escAttr(m.userId)}')">${escHtml(t('team.rotateToken'))}</button>`,
+      `<button class="team-icon-btn" title="${escAttr(t('team.rotateToken'))}" aria-label="${escAttr(t('team.rotateToken'))}" onclick="rotateTeamToken('${escAttr(m.userId)}')"><i class="ti ti-key"></i></button>`,
     )
     if (m.suspended) {
       actions.push(
-        `<button class="digest-btn" onclick="setTeamSuspended('${escAttr(m.userId)}', false)">${escHtml(t('team.restore'))}</button>`,
+        `<button class="team-icon-btn" title="${escAttr(t('team.restore'))}" aria-label="${escAttr(t('team.restore'))}" onclick="setTeamSuspended('${escAttr(m.userId)}', false)"><i class="ti ti-player-play"></i></button>`,
       )
     } else {
       actions.push(
-        `<button class="digest-btn danger" onclick="setTeamSuspended('${escAttr(m.userId)}', true)">${escHtml(t('team.suspend'))}</button>`,
+        `<button class="team-icon-btn" title="${escAttr(t('team.suspend'))}" aria-label="${escAttr(t('team.suspend'))}" onclick="setTeamSuspended('${escAttr(m.userId)}', true)"><i class="ti ti-user-pause"></i></button>`,
       )
     }
     actions.push(
-      `<button class="digest-btn danger" onclick="removeTeamMember('${escAttr(m.userId)}')">${escHtml(t('team.remove'))}</button>`,
+      `<button class="team-icon-btn danger" title="${escAttr(t('team.remove'))}" aria-label="${escAttr(t('team.remove'))}" onclick="removeTeamMember('${escAttr(m.userId)}')"><i class="ti ti-trash"></i></button>`,
     )
   }
   const chips = [
@@ -92,22 +92,21 @@ function teamMemberRow(m) {
     .filter(Boolean)
     .map(escHtml)
     .join(' · ')
-  const defaultSel = `
-    <label style="display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap;">
-      ${escHtml(t('team.defaultShareLabel'))}
-      <select class="filter-field" style="flex: 0 0 auto" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)" title="${escAttr(t('team.defaultShareTitle'))}">
-        ${['personal', 'company', 'inherit']
-          .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
-          .join('')}
-      </select>
-    </label>`
   return `
-    <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
+    <div class="team-row${m.suspended ? ' suspended' : ''}">
       <div style="min-width: 0">
-        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">${escHtml(teamMemberLabel(m))} ${chips}</div>
-        ${subline ? `<div class="digest-candidate-count" style="margin-top: 3px;">${subline}</div>` : ''}
+        <div class="team-name">${escHtml(teamMemberLabel(m))} ${chips}</div>
+        ${subline ? `<div class="team-sub">${subline}</div>` : ''}
       </div>
-      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;">${defaultSel}${actions.join('')}</div>
+      <label style="display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap;" title="${escAttr(t('team.defaultShareTitle'))}">
+        ${escHtml(t('team.defaultShareLabel'))}
+        <select class="filter-field team-capture-select" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)">
+          ${['personal', 'company', 'inherit']
+            .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
+            .join('')}
+        </select>
+      </label>
+      <div class="team-actions">${actions.join('')}</div>
     </div>`
 }
 
@@ -118,7 +117,17 @@ function renderTeam() {
   if (!body) return
   body.style.display = ''
   const list = document.getElementById('team-list')
-  if (list) list.innerHTML = teamMembers.map(teamMemberRow).join('')
+  if (list) {
+    list.innerHTML = `
+      <div class="team-table">
+        <div class="team-head">
+          <span>${escHtml(t('team.colMember'))}</span>
+          <span>${escHtml(t('team.colCaptures'))}</span>
+          <span></span>
+        </div>
+        ${teamMembers.map(teamMemberRow).join('')}
+      </div>`
+  }
   loadTeamOrgDefault()
 }
 
