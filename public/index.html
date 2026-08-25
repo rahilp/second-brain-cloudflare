@@ -232,43 +232,52 @@
               <span data-i18n="team.adminsOnly">Only workspace admins can manage team members.</span>
             </div>
 
-            <div id="team-body" style="display: none; flex: 1; overflow-y: auto; padding: 18px;">
-              <!-- One-time token reveal. A section rather than a dialog: the
-                   token must stay on screen until it has been copied, and a
-                   modal invites dismissing it by accident. -->
-              <div id="team-token-reveal" style="display: none; margin-bottom: 20px; padding: 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
-                <div class="digest-section-label"><i class="ti ti-key"></i> <span data-i18n="team.tokenTitle">One-time sign-in token</span> <span id="team-token-for"></span></div>
-                <p class="digest-note" data-i18n="team.tokenWarning">Copy it now — you will not see this again.</p>
-                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                  <code id="team-token-value" style="font-size: 12px; word-break: break-all;"></code>
-                  <button class="digest-btn" id="team-copy-btn" type="button" onclick="copyTeamToken()" data-i18n="team.copy">Copy</button>
-                  <button class="digest-btn danger" type="button" onclick="closeTeamTokenReveal()" data-i18n="team.done">Done</button>
+            <div id="team-body" style="display: none; flex: 1; overflow-y: auto; padding: 24px 28px;">
+              <div style="max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px;">
+                <!-- One-time token reveal. A section rather than a dialog: the
+                     token must stay on screen until it has been copied, and a
+                     modal invites dismissing it by accident. -->
+                <div id="team-token-reveal" style="display: none; padding: 14px 16px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
+                  <div class="digest-section-label"><i class="ti ti-key"></i> <span data-i18n="team.tokenTitle">One-time sign-in token</span> <span id="team-token-for"></span></div>
+                  <p class="digest-note" data-i18n="team.tokenWarning">Copy it now — you will not see this again.</p>
+                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <code id="team-token-value" style="font-size: 12px; word-break: break-all;"></code>
+                    <button class="digest-btn" id="team-copy-btn" type="button" onclick="copyTeamToken()" data-i18n="team.copy">Copy</button>
+                    <button class="digest-btn danger" type="button" onclick="closeTeamTokenReveal()" data-i18n="team.done">Done</button>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.membersLabel">Members</div>
+                  <!-- Org-wide capture default. Its own pill, label and control
+                       on one centered line — this was the cramped pair. -->
+                  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
+                    <i class="ti ti-eye" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                    <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.orgDefaultLabel">New captures default to</span>
+                    <select class="filter-field" id="team-org-default" style="flex: 0 0 auto; min-width: 0" onchange="setTeamOrgDefault(this.value)" title="Org-wide default; members with their own override ignore this">
+                      <option value="personal" data-i18n="team.sharePersonal">Personal (private)</option>
+                      <option value="company" data-i18n="team.shareCompany">Company (shared)</option>
+                    </select>
+                  </div>
+                  <div id="team-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                </div>
+
+                <div>
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.addTitle">Add member</div>
+                  <form id="team-add-form" onsubmit="submitNewMember(); return false">
+                    <div class="filter-inner" style="flex-wrap: wrap;">
+                      <input class="filter-field" id="team-add-name" placeholder="Name" data-i18n="team.namePlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+                      <input class="filter-field" id="team-add-email" placeholder="Email (optional)" data-i18n="team.emailPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+                      <select class="filter-field" id="team-add-role" style="flex: 0 1 auto;">
+                        <option value="member" data-i18n="team.roleMember">Member</option>
+                        <option value="admin" data-i18n="team.roleAdmin">Admin</option>
+                      </select>
+                      <button class="digest-btn" id="team-add-btn" type="submit" data-i18n="team.addAction">Add member</button>
+                    </div>
+                    <p class="integration-error" id="team-add-error" style="display: none; margin-top: 8px;"></p>
+                  </form>
                 </div>
               </div>
-
-              <div class="digest-section-label" data-i18n="team.membersLabel">Members</div>
-              <div class="filter-inner" style="max-width: 640px; margin-bottom: 14px; flex-wrap: wrap;">
-                <span class="digest-note" data-i18n="team.orgDefaultLabel">New captures default to</span>
-                <select class="filter-field" id="team-org-default" style="flex: 0 1 auto;" onchange="setTeamOrgDefault(this.value)" title="Org-wide default; members with their own override ignore this">
-                  <option value="personal" data-i18n="team.sharePersonal">Personal (private)</option>
-                  <option value="company" data-i18n="team.shareCompany">Company (shared)</option>
-                </select>
-              </div>
-              <div id="team-list"></div>
-
-              <div class="digest-section-label" style="margin-top: 24px;" data-i18n="team.addTitle">Add member</div>
-              <form id="team-add-form" onsubmit="submitNewMember(); return false">
-                <div class="filter-inner" style="max-width: 640px; flex-wrap: wrap;">
-                  <input class="filter-field" id="team-add-name" placeholder="Name" data-i18n="team.namePlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
-                  <input class="filter-field" id="team-add-email" placeholder="Email (optional)" data-i18n="team.emailPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
-                  <select class="filter-field" id="team-add-role" style="flex: 0 1 auto;">
-                    <option value="member" data-i18n="team.roleMember">Member</option>
-                    <option value="admin" data-i18n="team.roleAdmin">Admin</option>
-                  </select>
-                  <button class="digest-btn" id="team-add-btn" type="submit" data-i18n="team.addAction">Add member</button>
-                </div>
-                <p class="integration-error" id="team-add-error" style="display: none; margin-top: 8px;"></p>
-              </form>
             </div>
           </div>
         </div>

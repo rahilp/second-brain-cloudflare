@@ -153,3 +153,67 @@ export async function setMemberDefaultShare(
     ?? (result.meta as Record<string, number>).rows_written ?? 0;
   if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
 }
+
+/**
+ * Hard offboarding: deletes the member's identity, personal workspace, and
+ * everything in it. Company-layer entries they authored STAY — they are the
+ * team's shared memory now, and actor_id remains as history. The caller (route
+ * layer) owns the confirmation UX; this function owns the guardrails:
+ *   - you cannot remove yourself (suspending yourself is already blocked, and
+ *     removal is strictly more final);
+ *   - the last active admin cannot be removed.
+ * Vectors for removed entries are returned so the caller can drop them from
+ * Vectorize the same way forget does.
+ */
+export async function removeMember(
+  env: Env,
+  actorId: string,
+  userId: string,
+): Promise<{ removedEntries: number; vectorIds: string[] }> {
+  if (userId === actorId) {
+    throw new TeamAdminError(400, "You cannot remove your own account");
+  }
+  const target = await env.DB.prepare(`SELECT role FROM users WHERE id = ?`).bind(userId).first<{ role: string }>();
+  if (!target) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
+  if (target.role === "admin") {
+    const otherAdmins = await env.DB.prepare(
+      `SELECT id FROM users WHERE role = 'admin' AND suspended = 0 AND id != ?`,
+    ).bind(userId).all<{ id: string }>();
+    if (!(otherAdmins.results ?? []).length) {
+      throw new TeamAdminError(400, "Cannot remove the last active admin");
+    }
+  }
+
+  const personal = await env.DB.prepare(
+    `SELECT w.id AS wid FROM memberships m JOIN workspaces w ON w.id = m.workspace_id AND w.kind = 'personal' WHERE m.user_id = ?`,
+  ).bind(userId).first<{ wid: string }>();
+  if (!personal) throw new TeamAdminError(404, "Member has no personal workspace");
+
+  // Collect the doomed rows' vectors first: D1 rows go in one batch, the
+  // Vectorize delete is the caller's (it may be absent entirely).
+  const { results: vectorRows } = await env.DB.prepare(
+    `SELECT vector_ids FROM entries WHERE workspace_id = ? AND vector_ids != '[]'`,
+  ).bind(personal.wid).all<{ vector_ids: string }>();
+  const vectorIds = (vectorRows ?? []).flatMap((r) => {
+    try { return JSON.parse(r.vector_ids) as string[]; } catch { return []; }
+  });
+
+  const { results: counts } = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM entries WHERE workspace_id = ?`,
+  ).bind(personal.wid).all<{ n: number }>();
+  const removedEntries = counts?.[0]?.n ?? 0;
+
+  await env.DB.batch([
+    // Edges before entries: the edge delete resolves endpoints through the
+    // entries table, so it has to run while the rows still exist.
+    env.DB.prepare(
+      `DELETE FROM edges WHERE source_id IN (SELECT id FROM entries WHERE workspace_id = ?) OR target_id IN (SELECT id FROM entries WHERE workspace_id = ?)`,
+    ).bind(personal.wid, personal.wid),
+    env.DB.prepare(`DELETE FROM entries WHERE workspace_id = ?`).bind(personal.wid),
+    env.DB.prepare(`DELETE FROM memberships WHERE user_id = ?`).bind(userId),
+    env.DB.prepare(`DELETE FROM workspaces WHERE id = ?`).bind(personal.wid),
+    env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(userId),
+  ]);
+
+  return { removedEntries, vectorIds };
+}

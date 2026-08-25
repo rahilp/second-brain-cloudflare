@@ -78,6 +78,9 @@ function teamMemberRow(m) {
         `<button class="digest-btn danger" onclick="setTeamSuspended('${escAttr(m.userId)}', true)">${escHtml(t('team.suspend'))}</button>`,
       )
     }
+    actions.push(
+      `<button class="digest-btn danger" onclick="removeTeamMember('${escAttr(m.userId)}')">${escHtml(t('team.remove'))}</button>`,
+    )
   }
   const chips = [
     `<span class="tag-chip">${escHtml(teamRoleLabel(m.role))}</span>`,
@@ -90,18 +93,21 @@ function teamMemberRow(m) {
     .map(escHtml)
     .join(' · ')
   const defaultSel = `
-    <select class="filter-field" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)" title="${escAttr(t('team.defaultShareTitle'))}">
-      ${['personal', 'company', 'inherit']
-        .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
-        .join('')}
-    </select>`
+    <label style="display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap;">
+      ${escHtml(t('team.defaultShareLabel'))}
+      <select class="filter-field" style="flex: 0 0 auto" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)" title="${escAttr(t('team.defaultShareTitle'))}">
+        ${['personal', 'company', 'inherit']
+          .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
+          .join('')}
+      </select>
+    </label>`
   return `
-    <div class="digest-candidate-row">
-      <div class="digest-candidate-label">
-        <div>${escHtml(teamMemberLabel(m))} ${chips}</div>
-        ${subline ? `<div class="digest-candidate-count">${subline}</div>` : ''}
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
+      <div style="min-width: 0">
+        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">${escHtml(teamMemberLabel(m))} ${chips}</div>
+        ${subline ? `<div class="digest-candidate-count" style="margin-top: 3px;">${subline}</div>` : ''}
       </div>
-      <div class="card-actions">${defaultSel}${actions.length ? actions.join('') : ''}</div>
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;">${defaultSel}${actions.join('')}</div>
     </div>`
 }
 
@@ -230,6 +236,28 @@ async function setTeamSuspended(id, suspended) {
   if (!confirm(question)) return
   try {
     const r = await postTeam('/team/members/suspend', { id, suspended })
+    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+    await loadTeam()
+  } catch (e) {
+    alert(e.message || t('team.actionFailed'))
+  }
+}
+
+/**
+ * Hard offboarding. The server refuses self-removal and last-admin removal;
+ * the confirm here carries the destructive detail — the member's PRIVATE
+ * memories die with the account, shared ones stay.
+ */
+async function removeTeamMember(id) {
+  const m = teamMembers.find((x) => x.userId === id)
+  if (!m) return
+  const question = t('team.removeConfirm', {
+    name: teamMemberLabel(m),
+    n: Number(m.privateEntries) || 0,
+  })
+  if (!confirm(question)) return
+  try {
+    const r = await postTeam('/team/members/remove', { id })
     if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
     await loadTeam()
   } catch (e) {

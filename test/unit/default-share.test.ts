@@ -7,7 +7,8 @@ import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { effectiveWriteTarget, scopeWrite } from "../../src/lib/scope";
 import { createMember, setMemberDefaultShare } from "../../src/lib/team-admin";
 import { resolveIdentity } from "../../src/lib/identity";
-import type { Env, Identity } from "../../src/env";
+import type { Env } from "../../src/env";
+import type { Identity } from "../../src/lib/identity";
 
 const identity = (overrides: Partial<Identity> = {}): Identity => ({
   userId: "u1",

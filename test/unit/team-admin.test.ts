@@ -4,7 +4,7 @@ import { makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
 import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
-import { createMember, listMembers, rotateMemberToken, setMemberSuspended, TeamAdminError } from "../../src/lib/team-admin";
+import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDefaultShare, setMemberSuspended, TeamAdminError } from "../../src/lib/team-admin";
 import { hashToken } from "../../src/lib/identity";
 import type { Env } from "../../src/env";
 
@@ -88,5 +88,51 @@ describe("team member administration", () => {
   it("surfaces unknown members as 404-class errors", async () => {
     const { env } = await makeEnv();
     await expect(rotateMemberToken(env, "usr-none")).rejects.toBeInstanceOf(TeamAdminError);
+  });
+
+  describe("removeMember", () => {
+    it("deletes the identity, workspace, and private entries — but keeps shared ones", async () => {
+      const { env, roots } = await makeEnv();
+      const { member } = await createMember(env, { name: "Ada" });
+      // One private memory, one shared to company, one vector id on each.
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id) VALUES ('p1', 'private', '[]', 'api', 1, '["v-p1"]', ?, ?)`,
+        ).bind(member.personalWorkspaceId, member.userId),
+        env.DB.prepare(
+          `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id) VALUES ('c1', 'shared', '[]', 'api', 2, '["v-c1"]', ?, ?)`,
+        ).bind(roots.companyWorkspaceId, member.userId),
+        env.DB.prepare(
+          `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id) VALUES ('e1', 'p1', 'c1', 'relates_to', 0.5, 'explicit', '{}', 1, 1, ?)`,
+        ).bind(member.personalWorkspaceId),
+      ]);
+
+      const result = await removeMember(env, roots.ownerUserId, member.userId);
+      expect(result.removedEntries).toBe(1);
+      expect(result.vectorIds).toEqual(["v-p1"]);
+
+      // Identity, workspace, memberships: gone.
+      const user = await env.DB.prepare(`SELECT id FROM users WHERE id = ?`).bind(member.userId).first();
+      expect(user).toBeNull();
+      const ws = await env.DB.prepare(`SELECT id FROM workspaces WHERE id = ?`).bind(member.personalWorkspaceId).first();
+      expect(ws).toBeNull();
+      // Private row and its edge: gone. Shared row: stays, with its author on record.
+      const shared = await env.DB.prepare(`SELECT actor_id FROM entries WHERE id = 'c1'`).first<{ actor_id: string }>();
+      expect(shared?.actor_id).toBe(member.userId);
+      const orphanEdge = await env.DB.prepare(`SELECT id FROM edges WHERE id = 'e1'`).first();
+      expect(orphanEdge).toBeNull();
+      const danglingShared = await env.DB.prepare(`SELECT id FROM entries WHERE id = 'p1'`).first();
+      expect(danglingShared).toBeNull();
+    });
+
+    it("refuses self-removal and last-active-admin removal", async () => {
+      const { env, roots } = await makeEnv();
+      await expect(removeMember(env, roots.ownerUserId, roots.ownerUserId)).rejects.toMatchObject({ status: 400 });
+      const { member } = await createMember(env, { name: "Ada", role: "admin" });
+      // Make the owner inactive directly (the suspension route blocks self-
+      // suspension by design) so Ada becomes the only active admin.
+      await env.DB.prepare(`UPDATE users SET suspended = 1 WHERE id = ?`).bind(roots.ownerUserId).run();
+      await expect(removeMember(env, roots.ownerUserId, member.userId)).rejects.toMatchObject({ status: 400 });
+    });
   });
 });

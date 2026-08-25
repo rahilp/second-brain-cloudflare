@@ -17,7 +17,7 @@ import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
-import { createMember, listMembers, rotateMemberToken, setMemberDefaultShare, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
+import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDefaultShare, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -120,6 +120,28 @@ export async function handleAdminRoutes(
     try {
       await setMemberDefaultShare(env, body.id.trim(), body.default as "personal" | "company" | "inherit");
       return json({ ok: true, id: body.id.trim(), default: body.default });
+    } catch (e) {
+      if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
+      throw e;
+    }
+  }
+
+  // POST /team/members/remove — hard offboarding. Deletes the identity, the
+  // personal workspace and everything in it; company-layer entries the member
+  // authored stay (they are shared memory now). Guardrails inside removeMember:
+  // not self, not the last active admin. The confirmation UX is the dashboard's.
+  if (url.pathname === "/team/members/remove" && request.method === "POST") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { id?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+    try {
+      const result = await removeMember(env, auth.userId, body.id.trim());
+      if (result.vectorIds.length) {
+        await env.VECTORIZE.deleteByIds(result.vectorIds);
+      }
+      return json({ ok: true, id: body.id.trim(), removedEntries: result.removedEntries, removedVectors: result.vectorIds.length });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
       throw e;

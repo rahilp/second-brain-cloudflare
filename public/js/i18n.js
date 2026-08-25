@@ -363,7 +363,10 @@ const I18N_EN = {
     you: 'you',
     suspendedChip: 'suspended',
     privateEntries: { one: '{n} private entry', other: '{n} private entries' },
-    rotateToken: 'Rotate token',
+    rotateToken: 'Reset token',
+    remove: 'Remove',
+    removeConfirm: 'Remove {name}? Their {n} private memories are deleted for good. Memories they shared with the team stay.',
+    defaultShareLabel: 'Captures:',
     suspend: 'Suspend',
     restore: 'Restore',
     rotateConfirm:
@@ -845,7 +848,10 @@ const I18N_IT = {
     you: 'tu',
     suspendedChip: 'sospeso',
     privateEntries: { one: '{n} voce privata', other: '{n} voci private' },
-    rotateToken: 'Ruota token',
+    rotateToken: 'Reimposta token',
+    remove: 'Rimuovi',
+    removeConfirm: 'Rimuovere {name}? Le sue {n} memorie private verranno eliminate per sempre. Quelle condivise con il team restano.',
+    defaultShareLabel: 'Acquisizioni:',
     suspend: 'Sospendi',
     restore: 'Ripristina',
     rotateConfirm:
