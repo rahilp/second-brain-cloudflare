@@ -48,12 +48,40 @@
  * an empty brain, not an error.
  */
 import type { Env } from "../env";
-import { scopeWhere } from "../lib/scope";
+import { scopeWorkspaces } from "../lib/scope";
 import type { Identity } from "../lib/identity";
 
 // Prefixed to coexist with workers-oauth-provider's token:/grant:/client: keys,
 // config:overrides, and the integrations: blobs in the same namespace.
 export const TAG_VOCABULARY_KEY = "tags:vocabulary";
+
+/**
+ * One blob per workspace, unioned on read.
+ *
+ * The cache shipped as a single deployment-wide key while the *scan* under it was
+ * already workspace-scoped, which made the scoping cosmetic: whichever member's
+ * request last rebuilt the key served its result to everyone until it aged out, so
+ * a member saw their colleagues' tag vocabulary in the dashboard filter, and one
+ * member's private tags fed another member's query-tag boost in `inferQueryTags`.
+ * Reproduced on two members of one brain: both `GET /tags` responses were the union
+ * of both workspaces.
+ *
+ * Keying per workspace fixes it at the storage layer rather than at each caller, and
+ * it makes write-through correct rather than merely prompt: a tag written into the
+ * company workspace lands in the company blob, which every member's read already
+ * unions in, so colleagues see it immediately instead of at their next rebuild.
+ *
+ * Costs one KV get per readable workspace — two for a member, three for an admin
+ * (who also reads the '' legacy/system space) — against one before. KV reads are a
+ * separate quota from the D1 rows this cache exists to save, edge-cached, and
+ * constant in the size of the brain, which is the same reason the cache is in KV at
+ * all.
+ */
+export function tagVocabularyKey(workspaceId: string): string {
+  // '' is the legacy/system space and a legal workspace id, so it needs a name of
+  // its own rather than collapsing onto the un-suffixed key.
+  return `${TAG_VOCABULARY_KEY}:${workspaceId || "system"}`;
+}
 
 /**
  * How long a scanned vocabulary is trusted before it is rebuilt.
@@ -84,9 +112,9 @@ interface CachedVocabulary {
 }
 
 /** Any failure reads as "nothing cached", which costs a scan rather than a request. */
-async function readCache(env: Env): Promise<CachedVocabulary | null> {
+async function readCache(env: Env, key: string = TAG_VOCABULARY_KEY): Promise<CachedVocabulary | null> {
   try {
-    const raw = await env.OAUTH_KV.get(TAG_VOCABULARY_KEY);
+    const raw = await env.OAUTH_KV.get(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== "object" || parsed === null) return null;
@@ -143,11 +171,10 @@ async function readCache(env: Env): Promise<CachedVocabulary | null> {
  * With an Identity the scan is scoped to the caller's readable workspaces so one
  * member's tags never surface in another member's query-tag inference or dropdown.
  */
-async function scanTagVocabulary(env: Env, identity?: Identity, only?: "personal" | "company"): Promise<string[]> {
-  const scope = identity ? ` WHERE ${scopeWhere(identity, only).clause}` : "";
+async function scanTagVocabulary(env: Env): Promise<string[]> {
   const { results } = await env.DB.prepare(
-    `SELECT DISTINCT value FROM entries, json_each(entries.tags)${scope}`
-  ).bind(...(identity ? scopeWhere(identity, only).bindings : [])).all();
+    `SELECT DISTINCT value FROM entries, json_each(entries.tags)`
+  ).all();
   return (results as { value: unknown }[])
     .map(r => r.value)
     .filter((v): v is string => typeof v === "string")
@@ -155,24 +182,65 @@ async function scanTagVocabulary(env: Env, identity?: Identity, only?: "personal
 }
 
 /**
- * Scan and store. Throws only if the scan does — a KV write failure still returns
- * the fresh vocabulary, because the caller asked what the tags are, not where they
- * are kept.
+ * The workspace-partitioned scan: every (workspace, tag) pair for the named
+ * workspaces, in ONE statement.
  *
- * The cache remains a single deployment-wide key. Until the workspace-keyed cache
- * lands (P5 of the team-edition plan) a scoped scan is therefore only as good as
- * the key it lands in: callers passing an Identity get an isolated read of D1, but
- * the blob they populate is shared. Callers that have not been taught Identity yet
- * keep today's corpus-wide behaviour exactly.
+ * One statement is the whole point. Rebuilding N blobs with N scoped scans is the
+ * obvious shape and it is three times the cost: `workspace_id = ?` does not give
+ * SQLite an ordered path into `json_each`, so each scoped scan still plans as
+ * `SCAN entries` and reads the whole table. On a 20,000-entry brain that turns a
+ * 100,000-row rebuild into 300,000 — against the same D1 free-tier budget (#288)
+ * this cache exists to defend, and for identical output. Projecting workspace_id
+ * alongside value and splitting the rows in JS reads the table once, exactly as
+ * the corpus-wide scan did.
  */
-async function rebuildTagVocabulary(env: Env, identity?: Identity, only?: "personal" | "company"): Promise<string[]> {
-  const tags = await scanTagVocabulary(env, identity, only);
+async function scanTagVocabularyByWorkspace(
+  env: Env,
+  workspaceIds: string[],
+): Promise<Map<string, string[]>> {
+  const placeholders = workspaceIds.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT workspace_id, value FROM entries, json_each(entries.tags) WHERE workspace_id IN (${placeholders})`
+  ).bind(...workspaceIds).all();
+
+  // Seed every requested workspace so one with no entries yet caches an empty
+  // vocabulary rather than re-scanning on every read.
+  const byWorkspace = new Map<string, string[]>(workspaceIds.map(w => [w, []]));
+  for (const row of results as { workspace_id: unknown; value: unknown }[]) {
+    if (typeof row.value !== "string") continue;
+    const wid = typeof row.workspace_id === "string" ? row.workspace_id : "";
+    byWorkspace.get(wid)?.push(row.value);
+  }
+  for (const [wid, tags] of byWorkspace) byWorkspace.set(wid, [...new Set(tags)].sort());
+  return byWorkspace;
+}
+
+/** Store one workspace's freshly scanned vocabulary. Never throws. */
+async function writeCache(env: Env, key: string, tags: string[]): Promise<void> {
   try {
-    await env.OAUTH_KV.put(TAG_VOCABULARY_KEY, JSON.stringify({ tags, rebuiltAt: Date.now() } satisfies CachedVocabulary));
+    await env.OAUTH_KV.put(key, JSON.stringify({ tags, rebuiltAt: Date.now() } satisfies CachedVocabulary));
   } catch (e) {
     console.error("Tag vocabulary cache write failed (non-fatal):", e);
   }
+}
+
+/**
+ * Scan and store, corpus-wide. Throws only if the scan does — a KV write failure
+ * still returns the fresh vocabulary, because the caller asked what the tags are,
+ * not where they are kept. Used by the no-identity path only; identified callers
+ * go through `rebuildWorkspaces`, which partitions.
+ */
+async function rebuildTagVocabulary(env: Env, key: string): Promise<string[]> {
+  const tags = await scanTagVocabulary(env);
+  await writeCache(env, key, tags);
   return tags;
+}
+
+/** Scan the named workspaces in one statement and store each one's blob. */
+async function rebuildWorkspaces(env: Env, workspaceIds: string[]): Promise<Map<string, string[]>> {
+  const scanned = await scanTagVocabularyByWorkspace(env, workspaceIds);
+  await Promise.all([...scanned].map(([wid, tags]) => writeCache(env, tagVocabularyKey(wid), tags)));
+  return scanned;
 }
 
 /**
@@ -201,22 +269,59 @@ async function rebuildTagVocabulary(env: Env, identity?: Identity, only?: "perso
  * an isolate-scoped guard if that ever shows up in a bill, not before.
  */
 export async function getTagVocabulary(env: Env, ctx?: ExecutionContext, identity?: Identity, only?: "personal" | "company"): Promise<string[]> {
-  const cached = await readCache(env);
-
-  if (cached && Date.now() - cached.rebuiltAt < TAG_VOCABULARY_MAX_AGE_MS) return cached.tags;
-
-  if (cached && ctx) {
-    ctx.waitUntil(
-      rebuildTagVocabulary(env, identity, only).catch(e => console.error("Tag vocabulary rebuild failed (non-fatal):", e))
-    );
-    return cached.tags;
+  // No identity means system code with no reader to leak to — background jobs and
+  // the pre-team single-owner path. Keep the corpus-wide key and scan they had.
+  if (!identity) {
+    const cached = await readCache(env, TAG_VOCABULARY_KEY);
+    if (cached && Date.now() - cached.rebuiltAt < TAG_VOCABULARY_MAX_AGE_MS) return cached.tags;
+    if (cached && ctx) {
+      ctx.waitUntil(
+        rebuildTagVocabulary(env, TAG_VOCABULARY_KEY)
+          .catch(e => console.error("Tag vocabulary rebuild failed (non-fatal):", e)),
+      );
+      return cached.tags;
+    }
+    try {
+      return await rebuildTagVocabulary(env, TAG_VOCABULARY_KEY);
+    } catch (e) {
+      console.error("Tag vocabulary rebuild failed (non-fatal):", e);
+      return cached?.tags ?? [];
+    }
   }
 
+  const workspaces = scopeWorkspaces(identity, only);
+  const cached = await Promise.all(
+    workspaces.map(async w => [w, await readCache(env, tagVocabularyKey(w))] as const),
+  );
+
+  const fresh = Date.now();
+  const stale = cached.filter(([, c]) => !c || fresh - c.rebuiltAt >= TAG_VOCABULARY_MAX_AGE_MS);
+  const union = (lists: string[][]) => [...new Set(lists.flat())].sort();
+
+  // Everything current: no D1 at all, which is the steady state this cache is for.
+  if (!stale.length) return union(cached.map(([, c]) => c!.tags));
+
+  // Something aged out but every workspace still has a last-good value, and there is
+  // somewhere to hang the work: serve what we have and refresh behind the response.
+  // One statement covers all the stale workspaces together.
+  const staleIds = stale.map(([w]) => w);
+  if (stale.every(([, c]) => c) && ctx) {
+    ctx.waitUntil(
+      rebuildWorkspaces(env, staleIds)
+        .catch(e => console.error("Tag vocabulary rebuild failed (non-fatal):", e)),
+    );
+    return union(cached.map(([, c]) => c!.tags));
+  }
+
+  // A workspace with nothing cached at all — a brain's first request, or KV having
+  // lost a key — has to scan inline: an empty answer from `GET /tags` is not a
+  // degraded answer, it is a wrong one.
   try {
-    return await rebuildTagVocabulary(env, identity, only);
+    const rebuilt = await rebuildWorkspaces(env, staleIds);
+    return union(cached.map(([w, c]) => rebuilt.get(w) ?? c?.tags ?? []));
   } catch (e) {
     console.error("Tag vocabulary rebuild failed (non-fatal):", e);
-    return cached?.tags ?? [];
+    return union(cached.map(([, c]) => c?.tags ?? []));
   }
 }
 
@@ -252,9 +357,29 @@ export async function getTagVocabulary(env: Env, ctx?: ExecutionContext, identit
  * actively used brain postpone its rebuild forever, so a deleted tag would never be
  * pruned.
  */
-export async function rememberTags(env: Env, tags: string[]): Promise<void> {
+export async function rememberTags(env: Env, tags: string[], workspaceId?: string): Promise<void> {
+  // Exactly one blob, chosen to match the reader that will look for this tag —
+  // still one KV get per capture, as before the cache was partitioned.
+  //
+  // A write with a real workspace came from an identified caller, and identified
+  // callers read workspace blobs, so that is where the tag has to land. Every
+  // member who can read that workspace unions it in, which is why a company tag
+  // now reaches colleagues immediately rather than at their next rebuild.
+  //
+  // `undefined` and '' are both the context-free writer: no write context at all,
+  // or OWNER_WRITE_CONTEXT's pre-team sentinel. Their reader is the context-free
+  // `getTagVocabulary(env)`, which serves the corpus-wide key, so that is the blob
+  // to admit into. Writing both blobs on every capture was the tempting version and
+  // it buys nothing: no production path reads the corpus-wide key on a v3 brain
+  // (recallEntries' only two callers, the /recall route and the MCP tool, both
+  // resolve an Identity first), so the second KV get was pure cost — three extra
+  // subrequests a night against the weekly insight cron's 50-subrequest budget.
+  await admitInto(env, workspaceId ? tagVocabularyKey(workspaceId) : TAG_VOCABULARY_KEY, tags);
+}
+
+async function admitInto(env: Env, key: string, tags: string[]): Promise<void> {
   try {
-    const cached = await readCache(env);
+    const cached = await readCache(env, key);
     if (!cached) return;
 
     const known = new Set(cached.tags);
@@ -273,13 +398,13 @@ export async function rememberTags(env: Env, tags: string[]): Promise<void> {
     // narrows both windows to the put itself — KV has no compare-and-set, so they
     // cannot be closed, and the residual cost is one scan, which is what every recall
     // used to cost.
-    const latest = (await readCache(env)) ?? cached;
+    const latest = (await readCache(env, key)) ?? cached;
     const merged = new Set(latest.tags);
     for (const tag of additions) merged.add(tag);
     if (merged.size === latest.tags.length) return;
 
     await env.OAUTH_KV.put(
-      TAG_VOCABULARY_KEY,
+      key,
       JSON.stringify({
         tags: [...merged].sort(),
         rebuiltAt: Math.max(cached.rebuiltAt, latest.rebuiltAt),

@@ -217,7 +217,7 @@ export async function updateEntryContent(
   // two places an unknown tag enters the corpus (#288). It sits here rather than in the
   // route because #289 made this the single update path — putting it in the caller would
   // have left the MCP tool introducing tags the cache never learned about.
-  await rememberTags(env, mergedTags);
+  await rememberTags(env, mergedTags, writeCtx.workspaceId);
 
   if (newVectorIds) {
     try {

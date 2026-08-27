@@ -16,3 +16,7 @@ worker-configuration.d.ts
 # config users deploy from; these carry real account resource IDs and stay local.
 wrangler.*.jsonc
 deploy-personal.sh
+
+# Local end-to-end harness (wraps the real Worker with stub AI/Vectorize for
+# `wrangler dev`). Local tooling, like wrangler.*.jsonc above.
+devharness/

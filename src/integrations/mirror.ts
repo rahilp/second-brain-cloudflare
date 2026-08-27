@@ -72,7 +72,7 @@ export function makeMirrorStore(env: Env, writeCtx: WriteContext = OWNER_WRITE_C
       // Awaited because the scheduled sync has no ExecutionContext to defer to. Costs
       // one KV get per created entry; the put fires only on the first item of a newly
       // connected provider.
-      await rememberTags(env, finalTags);
+      await rememberTags(env, finalTags, writeCtx.workspaceId);
       try {
         await storeEntry(env, id, content, finalTags, source, now, cfg, writeCtx);
       } catch (e) {

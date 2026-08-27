@@ -36,6 +36,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { recallEntries } from "../../src/recall/search";
 import { inferQueryTags } from "../../src/recall/distill";
+import { resolveIdentityFromToken } from "../../src/lib/identity";
 import { captureEntry } from "../../src/capture/entry";
 import { handleEntriesRoutes } from "../../src/routes/entries";
 import {
@@ -49,8 +50,13 @@ import { makeTestEnv, makeMemoryKV, makeKVMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 import type { Env } from "../../src/env";
 
-/** The one statement this issue is about. */
-const TAG_SCAN = /SELECT DISTINCT value FROM entries, json_each/;
+/**
+ * The one statement this issue is about, in both its shapes: the corpus-wide scan
+ * the no-identity path still uses, and the workspace-partitioned scan an identified
+ * caller's rebuild issues (one statement covering every stale workspace, so the
+ * rows-read budget is the same either way).
+ */
+const TAG_SCAN = /SELECT DISTINCT (?:workspace_id, )?value FROM entries, json_each/;
 
 let sqlite: SqliteD1 | null = null;
 afterEach(() => { sqlite?.close(); sqlite = null; });
@@ -448,9 +454,18 @@ describe("system tags", () => {
 });
 
 describe("GET /tags", () => {
+  // Both consumers reach the vocabulary as an identified caller in production —
+  // `/recall` resolves an Identity and hands it to recallEntries, `/tags` resolves
+  // one of its own — and the cache is keyed per workspace, so the shared warm
+  // vocabulary these two tests are about is the identified one. Driving recall
+  // bare here would put the two consumers in different key spaces and buy a second
+  // scan that no real request pays.
+  const identify = (h: Harness) => resolveIdentityFromToken("test-token", h.env);
+
   it("reads the vocabulary a recall warmed, and scans nothing of its own", async () => {
     const h = harness(CORPUS);
-    await recallEntries({ query: "office lease renewal", topK: 5 }, h.env, h.ctx);
+    const identity = (await identify(h))!;
+    await recallEntries({ query: "office lease renewal", topK: 5 }, h.env, h.ctx, undefined, { identity });
     await h.ctx.settle();
     expect(h.scans()).toHaveLength(1);
 
@@ -465,7 +480,7 @@ describe("GET /tags", () => {
     await handleEntriesRoutes(req("GET", "/tags"), new URL("http://localhost/tags"), h.env, h.ctx);
     expect(h.scans()).toHaveLength(1);
 
-    await inferQueryTags("notes about legal work", h.env);
+    await inferQueryTags("notes about legal work", h.env, undefined, h.ctx, (await identify(h))!);
 
     expect(h.scans()).toHaveLength(1);
   });

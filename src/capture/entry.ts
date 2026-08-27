@@ -141,7 +141,7 @@ export async function captureEntry(
   // the capture does not wait on KV — which means the tag is admitted once this
   // settles rather than by the time the response lands, and a `GET /tags` fired
   // straight off the back of the save can miss it by one refresh.
-  ctx.waitUntil(rememberTags(env, finalTags));
+  ctx.waitUntil(rememberTags(env, finalTags, writeCtx.workspaceId));
 
   scheduleClassifyAndTag(id, c, env, ctx, cfg);
 

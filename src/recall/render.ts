@@ -24,11 +24,14 @@ export function renderRecallText(
     const date = new Date(m.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
     const tagList = m.tags.length ? ` [${m.tags.join(", ")}]` : "";
     const src = m.source ? ` · ${m.source}` : "";
-    // Layer badge: only when it carries information. Single-user brains (no
-    // team) and system-space rows stay unbadged rather than decorating every line.
+    // Layer badge: only when it carries information — which means only on the
+    // company layer. "personal" is the default home of every memory a caller can
+    // see, so badging it says nothing: on a single-user brain it decorated 100% of
+    // results, and even inside a team the absence of " · shared" already means the
+    // row is the reader's own. System-space rows stay unbadged for the same reason.
     const layerLabel = m.workspace === "company"
       ? ` · shared${m.actorName ? ` · ${m.actorName}` : ""}`
-      : m.workspace === "personal" ? " · personal" : "";
+      : "";
     const score = (m.score * 100).toFixed(0);
     const updateLabel = m.isUpdate ? " [updated]" : "";
     const hopLabel = m.hop > 0 ? ` [related · ${hopProvenance(m, contentById)}]` : "";
