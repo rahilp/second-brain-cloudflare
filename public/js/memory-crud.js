@@ -302,7 +302,31 @@ async function hydrateView(id) {
     if (viewOpenId !== id) return // the sheet moved on while this was in flight
     renderViewMeta(data.entry)
     renderViewBrain(data.entry)
+    renderViewTimeline(data.entry)
   } catch {}
+}
+
+function renderViewTimeline(entry) {
+  const el = document.getElementById('view-timeline')
+  if (!el) return
+  const items = entry.timeline || []
+  if (!items.length && !entry.actor_name) {
+    el.style.display = 'none'
+    el.innerHTML = ''
+    return
+  }
+  const lines = []
+  if (entry.workspace === 'company' && entry.actor_name) {
+    lines.push(`<div class="view-timeline-item">${escHtml(t('memories.authorLabel', { name: entry.actor_name }))}</div>`)
+  }
+  for (const item of items) {
+    const when = item.created_at
+      ? formatDateUI(item.created_at, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : ''
+    lines.push(`<div class="view-timeline-item">${escHtml(item.actor_name || '')} · ${escHtml(item.event || '')}${when ? ` · ${escHtml(when)}` : ''}</div>`)
+  }
+  el.style.display = ''
+  el.innerHTML = `<div class="view-timeline-label">${escHtml(t('memories.timelineLabel'))}</div>${lines.join('')}`
 }
 
 /** Which memory the sheet is currently showing, so a late response can tell. */

@@ -163,12 +163,19 @@ function renderIntegrationCard(info) {
       )
       inputs = `<input type="password" id="tok-${p}" placeholder="${placeholder}" aria-label="${label}" autocomplete="off" />`
     }
+    const mirrorLayer = TEAM_MODE
+      ? `<span class="team-select-wrap"><select class="team-select" id="ws-${p}" title="${escAttr(t('integrations.mirrorLayerTitle'))}">
+          <option value="personal">${escHtml(t('team.sharePersonal'))}</option>
+          <option value="company">${escHtml(t('team.shareCompany'))}</option>
+        </select><i class="ti ti-chevron-down"></i></span>`
+      : ''
     return `
       <div class="integration-row">
         <div class="integration-head"><i class="ti ${icon}"></i><span>${escHtml(info.name)}</span><span class="integration-state">${escHtml(t('integrations.notConnected'))}</span></div>
         <p class="digest-note">${hint}</p>
         <div class="integration-connect-row${isEmail ? ' integration-connect-col' : ''}">
           ${inputs}
+          ${mirrorLayer}
           <button class="digest-btn" onclick="connectIntegration('${p}', this)">${escHtml(t('auth.connect'))}</button>
         </div>
         <div class="integration-error" id="err-${p}"></div>
@@ -207,6 +214,8 @@ async function connectIntegration(provider, btn) {
     token = (document.getElementById(`tok-${provider}`).value || '').trim()
     if (!token) { errEl.textContent = t('integrations.needSecret'); return }
   }
+  const wsEl = document.getElementById(`ws-${provider}`)
+  const workspace = wsEl && TEAM_MODE ? wsEl.value : 'personal'
   btn.disabled = true
   btn.textContent = t('auth.connectingEllipsis')
   errEl.textContent = ''
@@ -214,7 +223,7 @@ async function connectIntegration(provider, btn) {
     const res = await fetch(`${WORKER_URL}/integrations/${provider}/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token, workspace }),
     })
     const data = await res.json()
     if (!res.ok || !data.ok) throw new Error(data.error || t('integrations.couldNotConnectShort'))

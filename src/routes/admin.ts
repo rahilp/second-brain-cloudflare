@@ -17,7 +17,7 @@ import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
-import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDefaultShare, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
+import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -126,10 +126,11 @@ export async function handleAdminRoutes(
     }
   }
 
-  // POST /team/members/remove — hard offboarding. Deletes the identity, the
-  // personal workspace and everything in it; company-layer entries the member
-  // authored stay (they are shared memory now). Guardrails inside removeMember:
-  // not self, not the last active admin. The confirmation UX is the dashboard's.
+  // POST /team/members/remove — soft offboarding. Marks the member removed,
+  // deletes the personal workspace and everything in it; company-layer entries
+  // the member authored stay (they are shared memory now). Guardrails inside
+  // removeMember: not self, not the last active admin. The confirmation UX is
+  // the dashboard's.
   if (url.pathname === "/team/members/remove" && request.method === "POST") {
     const auth = await requireAdmin(request, env);
     if (auth instanceof Response) return auth;
@@ -142,6 +143,36 @@ export async function handleAdminRoutes(
         await env.VECTORIZE.deleteByIds(result.vectorIds);
       }
       return json({ ok: true, id: body.id.trim(), removedEntries: result.removedEntries, removedVectors: result.vectorIds.length });
+    } catch (e) {
+      if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
+      throw e;
+    }
+  }
+
+  // GET /team/me — caller's own profile row (any signed-in identity).
+  if (url.pathname === "/team/me" && request.method === "GET") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    const row = await env.DB.prepare(
+      `SELECT id AS userId, name, email, role FROM users WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
+    ).bind(auth.userId).first<{ userId: string; name: string; email: string | null; role: string }>();
+    if (!row) return json({ ok: false, error: "Not found" }, 404);
+    return json({ ok: true, profile: row });
+  }
+
+  // POST /team/profile — rename self, or any member when caller is admin.
+  if (url.pathname === "/team/profile" && request.method === "POST") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { id?: string; name?: string; email?: string | null };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    const targetId = body.id?.trim() || auth.userId;
+    if (targetId !== auth.userId && auth.role !== "admin") {
+      return json({ ok: false, error: "Forbidden" }, 403);
+    }
+    try {
+      await setMemberProfile(env, targetId, { name: body.name, email: body.email });
+      return json({ ok: true, id: targetId });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
       throw e;

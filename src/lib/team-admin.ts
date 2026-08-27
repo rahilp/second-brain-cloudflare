@@ -46,6 +46,7 @@ export async function listMembers(env: Env): Promise<TeamMember[]> {
      FROM users u
      JOIN memberships m ON m.user_id = u.id
      JOIN workspaces w ON w.id = m.workspace_id AND w.kind = 'personal'
+     WHERE u.removed_at IS NULL OR u.removed_at = 0
      ORDER BY u.created_at ASC, u.id ASC`
   ).all<TeamMember & { defaultShare: string | null }>();
   return (results ?? []).map((r) => ({
@@ -121,7 +122,7 @@ export async function setMemberSuspended(env: Env, actorId: string, userId: stri
     // Guardrail against locking the deployment out: at least one active admin
     // must remain after this suspension.
     const admins = await env.DB.prepare(
-      `SELECT id FROM users WHERE role = 'admin' AND suspended = 0 AND id != ?`,
+      `SELECT id FROM users WHERE role = 'admin' AND suspended = 0 AND (removed_at IS NULL OR removed_at = 0) AND id != ?`,
     ).bind(userId).all<{ id: string }>();
     const target = await env.DB.prepare(`SELECT role FROM users WHERE id = ?`).bind(userId).first<{ role: string }>();
     if (!target) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
@@ -155,8 +156,8 @@ export async function setMemberDefaultShare(
 }
 
 /**
- * Hard offboarding: deletes the member's identity, personal workspace, and
- * everything in it. Company-layer entries they authored STAY — they are the
+ * Soft offboarding: marks the member removed, deletes their personal workspace
+ * and everything in it. Company-layer entries they authored STAY — they are the
  * team's shared memory now, and actor_id remains as history. The caller (route
  * layer) owns the confirmation UX; this function owns the guardrails:
  *   - you cannot remove yourself (suspending yourself is already blocked, and
@@ -173,11 +174,13 @@ export async function removeMember(
   if (userId === actorId) {
     throw new TeamAdminError(400, "You cannot remove your own account");
   }
-  const target = await env.DB.prepare(`SELECT role FROM users WHERE id = ?`).bind(userId).first<{ role: string }>();
+  const target = await env.DB.prepare(
+    `SELECT role FROM users WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
+  ).bind(userId).first<{ role: string }>();
   if (!target) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
   if (target.role === "admin") {
     const otherAdmins = await env.DB.prepare(
-      `SELECT id FROM users WHERE role = 'admin' AND suspended = 0 AND id != ?`,
+      `SELECT id FROM users WHERE role = 'admin' AND suspended = 0 AND (removed_at IS NULL OR removed_at = 0) AND id != ?`,
     ).bind(userId).all<{ id: string }>();
     if (!(otherAdmins.results ?? []).length) {
       throw new TeamAdminError(400, "Cannot remove the last active admin");
@@ -203,6 +206,7 @@ export async function removeMember(
   ).bind(personal.wid).all<{ n: number }>();
   const removedEntries = counts?.[0]?.n ?? 0;
 
+  const now = Date.now();
   await env.DB.batch([
     // Edges before entries: the edge delete resolves endpoints through the
     // entries table, so it has to run while the rows still exist.
@@ -212,8 +216,40 @@ export async function removeMember(
     env.DB.prepare(`DELETE FROM entries WHERE workspace_id = ?`).bind(personal.wid),
     env.DB.prepare(`DELETE FROM memberships WHERE user_id = ?`).bind(userId),
     env.DB.prepare(`DELETE FROM workspaces WHERE id = ?`).bind(personal.wid),
-    env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(userId),
+    env.DB.prepare(`UPDATE users SET removed_at = ? WHERE id = ?`).bind(now, userId),
   ]);
 
   return { removedEntries, vectorIds };
+}
+
+/** Rename a member. At least one of name or email must be supplied. */
+export async function setMemberProfile(
+  env: Env,
+  userId: string,
+  input: { name?: string; email?: string | null },
+): Promise<void> {
+  const name = input.name?.trim();
+  const email = input.email === undefined ? undefined : (input.email?.trim() || null);
+  if (name === undefined && email === undefined) {
+    throw new TeamAdminError(400, "name or email is required");
+  }
+  if (email) {
+    const existing = await env.DB.prepare(
+      `SELECT id FROM users WHERE email = ? AND id != ? AND (removed_at IS NULL OR removed_at = 0)`,
+    ).bind(email, userId).first();
+    if (existing) throw new TeamAdminError(409, "A member with that email already exists");
+  }
+
+  const sets: string[] = [];
+  const bindings: (string | null)[] = [];
+  if (name !== undefined) { sets.push("name = ?"); bindings.push(name || "Member"); }
+  if (email !== undefined) { sets.push("email = ?"); bindings.push(email); }
+  bindings.push(userId);
+
+  const result = await env.DB.prepare(
+    `UPDATE users SET ${sets.join(", ")} WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
+  ).bind(...bindings).run();
+  const changed = (result.meta as Record<string, number>).changes
+    ?? (result.meta as Record<string, number>).rows_written ?? 0;
+  if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
 }

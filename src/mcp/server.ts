@@ -12,6 +12,7 @@ import { createEdge, deleteEdge, edgeLabel } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
 import type { Identity } from "../lib/identity";
+import { assertCanEditContent, assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
 import { scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -209,14 +210,17 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       },
     },
     async ({ id, addition, volatility }) => {
-      const row = await env.DB.prepare(
-        `SELECT id, content, tags, source FROM entries WHERE id = ?`
-      ).bind(id).first() as Record<string, any> | null;
+      const row = await getReadableEntry(env, identity, id, "id, workspace_id, actor_id, content, tags, source");
 
       if (!row) {
         return {
           content: [{ type: "text", text: `No entry found with ID: ${id}` }],
         };
+      }
+
+      const denied = assertCanEditContent(identity, row);
+      if (denied) {
+        return { content: [{ type: "text", text: denied.message }] };
       }
 
       const existingContent = row.content as string;
@@ -272,12 +276,15 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       }
 
       // Refuse before anything is written — same guard, same read, as POST /update.
-      const row = await env.DB.prepare(
-        `SELECT source FROM entries WHERE id = ?`
-      ).bind(id).first() as Record<string, any> | null;
+      const row = await getReadableEntry(env, identity, id, "id, workspace_id, actor_id, source");
 
       if (!row) {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      }
+
+      const denied = assertCanEditContent(identity, row);
+      if (denied) {
+        return { content: [{ type: "text", text: denied.message }] };
       }
 
       if (await isManagedMirror(row.source as string, env)) {
@@ -325,6 +332,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       },
     },
     async ({ id, status }) => {
+      const row = await getReadableEntry(env, identity, id);
+      if (!row) return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      const denied = assertCanMutateEntry(identity, row);
+      if (denied) return { content: [{ type: "text", text: denied.message }] };
+
       const ok = await applyStatus(id, status as MemoryStatus, env);
       if (!ok) return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       return { content: [{ type: "text", text: status === "deprecated" ? `Entry ${id} deprecated — removed from recall, kept for audit.` : `Entry ${id} marked ${status}.` }] };
@@ -481,6 +493,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       },
     },
     async ({ id }) => {
+      const row = await getReadableEntry(env, identity, id);
+      if (!row) return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      const denied = assertCanMutateEntry(identity, row);
+      if (denied) return { content: [{ type: "text", text: denied.message }] };
+
       const result = await forgetEntry(id, env);
       if (result.status === "not_found") {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
@@ -501,6 +518,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       },
     },
     async ({ source_id, target_id, type }) => {
+      const source = await getReadableEntry(env, identity, source_id);
+      if (!source) return { content: [{ type: "text", text: `No entry found with ID: ${source_id}` }] };
+      const target = await getReadableEntry(env, identity, target_id);
+      if (!target) return { content: [{ type: "text", text: `No entry found with ID: ${target_id}` }] };
+
       const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0 }, env);
       if (!edge) return { content: [{ type: "text", text: "Cannot link an entry to itself." }] };
       return { content: [{ type: "text", text: `Linked ${edge.source_id} → ${edge.target_id} (${edgeLabel(edge.type)}).` }] };
@@ -519,6 +541,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       },
     },
     async ({ source_id, target_id, type }) => {
+      const source = await getReadableEntry(env, identity, source_id);
+      if (!source) return { content: [{ type: "text", text: `No entry found with ID: ${source_id}` }] };
+      const target = await getReadableEntry(env, identity, target_id);
+      if (!target) return { content: [{ type: "text", text: `No entry found with ID: ${target_id}` }] };
+
       const deleted = await deleteEdge(source_id, target_id, type, env);
       if (!deleted) return { content: [{ type: "text", text: "No link found between those entries." }] };
       return { content: [{ type: "text", text: `Removed ${deleted} link(s) between ${source_id} and ${target_id}.` }] };

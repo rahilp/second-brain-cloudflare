@@ -26,7 +26,9 @@ export function renderRecallText(
     const src = m.source ? ` · ${m.source}` : "";
     // Layer badge: only when it carries information. Single-user brains (no
     // team) and system-space rows stay unbadged rather than decorating every line.
-    const layerLabel = m.workspace === "company" ? " · shared" : m.workspace === "personal" ? " · personal" : "";
+    const layerLabel = m.workspace === "company"
+      ? ` · shared${m.actorName ? ` · ${m.actorName}` : ""}`
+      : m.workspace === "personal" ? " · personal" : "";
     const score = (m.score * 100).toFixed(0);
     const updateLabel = m.isUpdate ? " [updated]" : "";
     const hopLabel = m.hop > 0 ? ` [related · ${hopProvenance(m, contentById)}]` : "";

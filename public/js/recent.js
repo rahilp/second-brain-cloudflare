@@ -41,17 +41,7 @@ function onLayerFilterChange(value) {
   loadRecent()
 }
 
-/** Share/unshare from a memory card, then refresh so the badge tells the truth. */
-async function toggleEntryLayer(id, currentLayer) {
-  const target = currentLayer === 'company' ? 'personal' : 'company'
-  try {
-    const r = await apiShare(id, target)
-    if (!r.ok) throw new Error(r.error || t('team.actionFailed'))
-    await loadRecent()
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
-  }
-}
+// toggleEntryLayer lives in api.js (confirm + undo toast)
 
 // A brand-new brain has nothing to recall, so the usual prompt and its
 // suggestions would all come back empty. Say where things live instead.
@@ -149,7 +139,7 @@ function makeRecentCard(entry) {
   // Layer badge: shared memories are the team's — say so. Personal is the
   // quiet default and system rows (digests, insights) carry no badge.
   const layerChip = TEAM_MODE && entry.workspace === 'company'
-    ? `<span class="tag-chip" style="color: var(--accent); border-color: var(--accent);" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(t('memories.sharedChip'))}</span>`
+    ? `<span class="tag-chip" style="color: var(--accent); border-color: var(--accent);" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(entry.actor_name ? `${t('memories.sharedChip')} · ${entry.actor_name}` : t('memories.sharedChip'))}</span>`
     : ''
 
   const title = titleLine(entry.content)

@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS users (
   token_hash    TEXT NOT NULL,                     -- SHA-256 hex of the bearer token (the token itself is never stored)
   suspended     INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL,
-  default_share TEXT NOT NULL DEFAULT ''           -- capture-visibility override ('' = inherit org TEAM_DEFAULT_WORKSPACE)
+  default_share TEXT NOT NULL DEFAULT '',          -- capture-visibility override ('' = inherit org TEAM_DEFAULT_WORKSPACE)
+  removed_at    INTEGER                             -- soft offboarding; NULL/0 = active member
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash);

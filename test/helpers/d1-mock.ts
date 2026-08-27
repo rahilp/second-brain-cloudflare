@@ -48,6 +48,7 @@ const SCHEMA_PROBE_RESULTS = [
   // CREATE on fresh ones — either way a migrated brain reports it.
   { kind: "edge_column", name: "workspace_id" },
   { kind: "user_column", name: "default_share" },
+  { kind: "user_column", name: "removed_at" },
 ];
 
 export class D1Mock {

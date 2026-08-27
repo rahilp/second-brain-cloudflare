@@ -1,9 +1,41 @@
 function openMenu() {
   document.getElementById('menu-sheet').classList.add('open')
   loadMenuStats()
+  loadProfileName()
 }
 function closeMenu() {
   document.getElementById('menu-sheet').classList.remove('open')
+}
+
+async function loadProfileName() {
+  const input = document.getElementById('profile-name')
+  if (!input || !WORKER_URL || !AUTH_TOKEN) return
+  try {
+    const res = await fetch(`${WORKER_URL}/team/me`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    if (data.profile?.name) input.value = data.profile.name
+  } catch {}
+}
+
+async function saveProfileName() {
+  const input = document.getElementById('profile-name')
+  const name = (input?.value || '').trim()
+  if (!name) return
+  try {
+    const res = await fetch(`${WORKER_URL}/team/profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ name }),
+    })
+    const data = await res.json()
+    if (!res.ok || !data.ok) throw new Error(data.error || t('team.actionFailed'))
+    showToast(t('team.profileSaved'))
+  } catch (e) {
+    alert(e.message || t('team.actionFailed'))
+  }
 }
 
 function openIntegrations() {

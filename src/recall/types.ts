@@ -21,6 +21,8 @@ export interface RecallMatch {
   staleAsOf?: boolean;
   /** Which layer this memory lives in, so clients can show or act on it. */
   workspace?: "personal" | "company" | "system";
+  /** Resolved author label on company-layer matches (shared memories). */
+  actorName?: string;
   // Set only on graph-expanded matches (hop > 0): why / when / whence the edge that surfaced this memory.
   viaProvenance?: EdgeProvenance; // "explicit" (you linked) / "inferred" (auto) / "system"
   viaType?: EdgeType;

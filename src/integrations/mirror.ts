@@ -16,7 +16,9 @@ import { withKind } from "../memory/kind";
 import { withStatus } from "../memory/status";
 import { tagsAfterWrite } from "../memory/stale";
 import { rememberTags } from "../tags/vocabulary";
-import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
+import { OWNER_WRITE_CONTEXT, scopeWrite, type WriteContext } from "../lib/scope";
+import { resolveIdentityByUserId } from "../lib/identity";
+import { ensureTenantBootstrap } from "../lib/tenancy";
 
 export function makeMirrorStore(env: Env, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): MirrorStore {
   // The write context is a property of the store rather than of each method because
@@ -187,7 +189,19 @@ export async function runScheduledIntegrationSync(env: Env): Promise<void> {
   if (!due) return;
 
   await initializeDatabase(env);
-  const store = makeMirrorStore(env);
+  const record = await loadIntegration(env, due.id);
+  const mirrorWorkspace = record?.config?.mirrorWorkspace === "company" ? "company" : "personal";
+  let writeCtx: WriteContext = OWNER_WRITE_CONTEXT;
+  try {
+    const roots = await ensureTenantBootstrap(env);
+    const admin = await resolveIdentityByUserId(env, roots.ownerUserId);
+    if (admin) {
+      writeCtx = { workspaceId: scopeWrite(admin, mirrorWorkspace), actorId: admin.userId };
+    }
+  } catch (e) {
+    console.error("Integration cron identity resolve failed (non-fatal):", e);
+  }
+  const store = makeMirrorStore(env, writeCtx);
   try {
     for (let i = 0; i < CRON_SYNC_MAX_BATCHES; i++) {
       const result = await due.sync(env, store);

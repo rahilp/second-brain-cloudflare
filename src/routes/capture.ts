@@ -3,7 +3,8 @@ import { resolveConfig } from "../config";
 import { VECTORIZE_FIX_HINT } from "../constants";
 import { json } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
-import { scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
+import { assertCanEditContent, getReadableEntry } from "../lib/entry-access";
+import { scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
 import { captureEntry } from "../capture/entry";
 import { appendToEntry, updateEntryContent } from "../capture/store";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
@@ -130,16 +131,10 @@ export async function handleCaptureRoutes(
     const id = body.id.trim();
     const addition = body.addition.trim();
 
-    // Scoped so a member cannot read — and then append to — an entry outside
-    // their personal + company workspaces.
-    const scope = scopeWhere(identity);
-    const row = await env.DB.prepare(
-      `SELECT id, content, tags, source FROM entries WHERE id = ? AND ${scope.clause}`
-    ).bind(id, ...scope.bindings).first() as Record<string, any> | null;
-
-    if (!row) {
-      return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
-    }
+    const row = await getReadableEntry(env, identity, id, "id, workspace_id, actor_id, content, tags, source");
+    if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+    const denied = assertCanEditContent(identity, row);
+    if (denied) return json({ ok: false, error: denied.message }, 403);
 
     const existingContent = row.content as string;
     const tags: string[] = JSON.parse(row.tags ?? "[]");
@@ -199,14 +194,10 @@ export async function handleCaptureRoutes(
     // Refuse before anything is written. Only `source` is needed: updateEntryContent reads
     // the rest for itself, and keeping the mirror guard out here is what stops
     // capture/store.ts having to depend on the integrations registry (see #289).
-    // Same scoping as /append: the guard read decides visibility before any
-    // write is attempted.
-    const scope = scopeWhere(identity);
-    const row = await env.DB.prepare(
-      `SELECT source FROM entries WHERE id = ? AND ${scope.clause}`
-    ).bind(id, ...scope.bindings).first() as Record<string, any> | null;
-
+    const row = await getReadableEntry(env, identity, id, "id, workspace_id, actor_id, source");
     if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+    const denied = assertCanEditContent(identity, row);
+    if (denied) return json({ ok: false, error: denied.message }, 403);
 
     if (await isManagedMirror(row.source as string, env)) {
       return json({ ok: false, error: mirrorEditError(row.source as string) }, 409);

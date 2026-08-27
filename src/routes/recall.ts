@@ -6,6 +6,7 @@ import { compressTag } from "../compression/digest";
 import { CORS_HEADERS, intParam, json } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
 import { scopeWhere } from "../lib/scope";
+import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { recallEntries } from "../recall/search";
 import { allowanceFor, snippetOf } from "../recall/snippet";
@@ -67,13 +68,29 @@ export async function handleRecallRoutes(
 
     const { sql, bindings } = scopeEntryFilterQuery(identity, buildEntryFilterQuery({ n, tag, after, before }), workspace);
     const { results } = await env.DB.prepare(sql).bind(...bindings).all();
+    const rows = results as Record<string, unknown>[];
     // Each row reports its layer so the dashboard can badge cards and offer
     // share/unshare without knowing the caller's workspace ids itself.
     const layerOf = (wid: unknown): string =>
       wid === identity.personalWorkspaceId ? "personal"
       : wid === identity.companyWorkspaceId ? "company"
       : "system";
-    return json((results as Record<string, unknown>[]).map((r) => ({ ...r, workspace: layerOf(r.workspace_id) })));
+    const companyRows = rows.filter((r) => layerOf(r.workspace_id) === "company");
+    const labelMap = await lookupActorLabels(
+      env,
+      companyRows.map((r) => String(r.actor_id ?? "")),
+    );
+    return json(rows.map((r) => {
+      const layer = layerOf(r.workspace_id);
+      const out: Record<string, unknown> = { ...r, workspace: layer };
+      if (layer === "company") {
+        out.actor_name = resolveActorLabel(String(r.actor_id ?? ""), labelMap, {
+          viewerId: identity.userId,
+          source: String(r.source ?? ""),
+        });
+      }
+      return out;
+    }));
   }
 
   // GET /recall — semantic search, mirrors the MCP `recall` tool
@@ -139,6 +156,7 @@ export async function handleRecallRoutes(
           updated: m.isUpdate,
           hop: m.hop,
           workspace: m.workspace ?? null,
+          actor_name: m.workspace === "company" ? (m.actorName ?? null) : null,
           via_provenance: m.viaProvenance ?? null,
           via_type: m.viaType ?? null,
           linked_at: m.viaLinkedAt ?? null,

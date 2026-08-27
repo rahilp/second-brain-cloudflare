@@ -49,6 +49,9 @@ describe("GET /entry", () => {
       contradiction_wins: 0,
       contradiction_losses: 0,
       indexed: true,
+      workspace: "personal",
+      actor_name: "Owner",
+      timeline: [],
     });
   });
 

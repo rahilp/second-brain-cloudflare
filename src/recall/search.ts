@@ -8,6 +8,7 @@ import {
 import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
 import type { Identity } from "../lib/identity";
+import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { scopeWhere } from "../lib/scope";
 import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
@@ -299,8 +300,8 @@ export async function recallEntries(
   type CandidateSignalRow = { id: string; content?: string; source?: string; created_at?: number; last_updated?: number; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number; tags: string };
   const rcRows: CandidateSignalRow[] = [];
   const candidateSignalProjection = hops > 0
-    ? `id, content, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses, tags, workspace_id`
-    : "id, recall_count, importance_score, contradiction_wins, contradiction_losses, tags, workspace_id";
+    ? `id, content, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses, tags, workspace_id, actor_id`
+    : "id, recall_count, importance_score, contradiction_wins, contradiction_losses, tags, workspace_id, actor_id";
   // Scoped too: this is the leak-catcher for unscoped Vectorize hits — until
   // namespaces land (P3) the dense arm can surface a stranger's id, and the
   // scope clause here is what stops that id from hydrating into signals. The
@@ -406,7 +407,7 @@ export async function recallEntries(
     const batch = allParentIds.slice(i, i + idBatchSize);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at, updated_at, workspace_id FROM entries WHERE id IN (${placeholders})${d1Filters}`
+      `SELECT id, content, tags, source, created_at, updated_at, workspace_id, actor_id FROM entries WHERE id IN (${placeholders})${d1Filters}`
     ).bind(...batch, ...filterBindings).all() as { results: Record<string, any>[] };
     d1Rows.push(...results);
   }
@@ -627,6 +628,18 @@ export async function recallEntries(
 
   const maxScore = matches.reduce((mx, m) => Math.max(mx, m.score), 0);
   if (maxScore > 0) for (const m of matches) m.score = m.score / maxScore;
+
+  if (identity) {
+    const actorIdFor = (id: string): string =>
+      (d1Map.get(id)?.actor_id as string | undefined)
+      ?? (candidateSignalById.get(id) as { actor_id?: string } | undefined)?.actor_id
+      ?? "";
+    const companyMatches = matches.filter((m) => m.workspace === "company");
+    const labelMap = await lookupActorLabels(env, companyMatches.map((m) => actorIdFor(m.id)));
+    for (const m of companyMatches) {
+      m.actorName = resolveActorLabel(actorIdFor(m.id), labelMap, { viewerId: identity.userId, source: m.source });
+    }
+  }
 
   const compoundStale = computeCompoundStale(matches);
 

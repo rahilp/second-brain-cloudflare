@@ -49,7 +49,7 @@ const IDENTITY_SQL =
   ` JOIN workspaces p ON p.id = mp.workspace_id AND p.kind = 'personal'` +
   ` JOIN memberships mc ON mc.user_id = u.id` +
   ` JOIN workspaces c ON c.id = mc.workspace_id AND c.kind = 'company'` +
-  ` WHERE u.token_hash = ? AND u.suspended = 0`;
+  ` WHERE u.token_hash = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)`;
 
 /**
  * Resolve the caller's identity from their token, bootstrapping the tenancy rows
@@ -61,27 +61,90 @@ const IDENTITY_SQL =
  * very first request against a freshly created database the schema must actually
  * be there, not merely scheduled. The memo makes the await free after first use.
  */
-export async function resolveIdentity(request: Request, env: Env): Promise<Identity | null> {
-  const token = extractToken(request);
-  if (!token) return null;
-  const { initializeDatabase } = await import("../db/init");
-  await initializeDatabase(env);
-  // Idempotent and memoised per isolate; on every request after the first this is
-  // two cheap reads (one marker probe, one join).
-  await ensureTenantBootstrap(env);
-  const row = await env.DB.prepare(IDENTITY_SQL)
-    .bind(await hashToken(token))
-    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaceId: string }>();
-  if (!row) return null;
+const IDENTITY_BY_ID_SQL =
+  `SELECT u.id AS userId, u.role AS role, u.default_share AS defaultShare,` +
+  ` p.id AS personalWorkspaceId, c.id AS companyWorkspaceId` +
+  ` FROM users u` +
+  ` JOIN memberships mp ON mp.user_id = u.id` +
+  ` JOIN workspaces p ON p.id = mp.workspace_id AND p.kind = 'personal'` +
+  ` JOIN memberships mc ON mc.user_id = u.id` +
+  ` JOIN workspaces c ON c.id = mc.workspace_id AND c.kind = 'company'` +
+  ` WHERE u.id = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)`;
+
+function rowToIdentity(row: {
+  userId: string;
+  role: string;
+  defaultShare: string | null;
+  personalWorkspaceId: string;
+  companyWorkspaceId: string;
+}): Identity {
   return {
     userId: row.userId,
     role: row.role === "admin" ? "admin" : "member",
     personalWorkspaceId: row.personalWorkspaceId,
     companyWorkspaceId: row.companyWorkspaceId,
-    // Rows written before the column existed read NULL — same legacy tolerance
-    // as every runtime-ALTER column.
     defaultShare: row.defaultShare === "company" ? "company" : row.defaultShare === "personal" ? "personal" : "",
   };
+}
+
+async function ensureIdentityReady(env: Env): Promise<void> {
+  const { initializeDatabase } = await import("../db/init");
+  await initializeDatabase(env);
+  await ensureTenantBootstrap(env);
+}
+
+/** Resolve identity from a bearer token string (no Request wrapper). */
+export async function resolveIdentityFromToken(token: string, env: Env): Promise<Identity | null> {
+  if (!token) return null;
+  await ensureIdentityReady(env);
+  const row = await env.DB.prepare(IDENTITY_SQL)
+    .bind(await hashToken(token))
+    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaceId: string }>();
+  if (!row) return null;
+  return rowToIdentity(row);
+}
+
+/**
+ * Resolve a user id to a full Identity. Maps the OAuth legacy sentinel "owner"
+ * to the bootstrap admin row so browser OAuth grants keep working after P1b.
+ */
+export async function resolveIdentityByUserId(env: Env, userId: string): Promise<Identity | null> {
+  if (!userId) return null;
+  await ensureIdentityReady(env);
+  let id = userId;
+  if (userId === "owner") {
+    const roots = await ensureTenantBootstrap(env);
+    id = roots.ownerUserId;
+  }
+  const row = await env.DB.prepare(IDENTITY_BY_ID_SQL)
+    .bind(id)
+    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaceId: string }>();
+  if (!row) return null;
+  return rowToIdentity(row);
+}
+
+export async function resolveIdentity(request: Request, env: Env): Promise<Identity | null> {
+  const token = extractToken(request);
+  if (!token) return null;
+  return resolveIdentityFromToken(token, env);
+}
+
+/**
+ * MCP/OAuth edge resolver: bearer hash first, then OAuth grant props when the
+ * access token is the provider's internal 3-part form (not stored in users).
+ */
+export async function resolveIdentityForRequest(
+  request: Request,
+  env: Env,
+  oauthUserId?: string,
+): Promise<Identity | Response | null> {
+  const fromToken = await resolveIdentity(request, env);
+  if (fromToken) return fromToken;
+  if (oauthUserId) {
+    const fromGrant = await resolveIdentityByUserId(env, oauthUserId);
+    if (fromGrant) return fromGrant;
+  }
+  return null;
 }
 
 /**
@@ -91,5 +154,16 @@ export async function resolveIdentity(request: Request, env: Env): Promise<Ident
 export async function requireIdentity(request: Request, env: Env): Promise<Identity | Response> {
   const identity = await resolveIdentity(request, env);
   if (identity) return identity;
+  return json({ ok: false, error: "Unauthorized" }, 401);
+}
+
+/** MCP handler twin: also accepts OAuth grant props when the bearer is not in users. */
+export async function requireIdentityForMcp(
+  request: Request,
+  env: Env,
+  oauthUserId?: string,
+): Promise<Identity | Response> {
+  const identity = await resolveIdentityForRequest(request, env, oauthUserId);
+  if (identity && !(identity instanceof Response)) return identity;
   return json({ ok: false, error: "Unauthorized" }, 401);
 }

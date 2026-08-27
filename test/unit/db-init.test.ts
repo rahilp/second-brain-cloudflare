@@ -19,6 +19,7 @@ const TENANCY_EDGE_ALTERS: [column: string, alter: string][] = [
 ];
 const USERS_ALTERS: [column: string, alter: string][] = [
   ["default_share", `ALTER TABLE users ADD COLUMN default_share TEXT NOT NULL DEFAULT ''`],
+  ["removed_at", `ALTER TABLE users ADD COLUMN removed_at INTEGER`],
 ];
 const ALL_COLUMNS = MIGRATION.map(([column]) => column);
 const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue",
@@ -75,7 +76,10 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
         objects.add(created[1]);
         if (created[1] === "entries") BASE_COLUMNS.forEach(c => columns.add(c));
         if (created[1] === "edges") TENANCY_EDGE_ALTERS.forEach(([c]) => edgeColumns.add(c));
-        if (created[1] === "users") userColumns.add("default_share");
+        if (created[1] === "users") {
+          userColumns.add("default_share");
+          userColumns.add("removed_at");
+        }
       }
     },
     prepare(sql: string) {
@@ -164,7 +168,7 @@ describe("initializeDatabase updated_at migration", () => {
       resetDatabaseInit();
       await initializeDatabase(env);
 
-      expect(migrated).toBe(28); // one-off cost of creating a brain: 17 objects + 10 ALTERs + 1 post-column index
+      expect(migrated).toBe(29); // one-off cost of creating a brain: 17 objects + 11 ALTERs + 1 post-column index
       expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
       expect(prepared).toHaveLength(3); // one probe each, and nothing else
       expect(touchesEntries(execd)).toEqual([]);
@@ -404,7 +408,7 @@ describe("initializeDatabase against real SQLite", () => {
     resetDatabaseInit(); // a second cold isolate against the brain the first one migrated
     await initializeDatabase(envFor(d1));
 
-    expect(cold).toBe(29); // one probe, then the 28 statements a new brain needs (17 objects + 10 ALTERs + 1 post-column index)
+    expect(cold).toBe(30); // one probe, then the 29 statements a new brain needs (17 objects + 11 ALTERs + 1 post-column index)
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });
@@ -421,10 +425,17 @@ describe("initializeDatabase against real SQLite", () => {
     expect(d1.issued.filter(s => /^ALTER/.test(s))).toEqual([
       `ALTER TABLE entries ADD COLUMN updated_at INTEGER`,
       `ALTER TABLE entries ADD COLUMN staleness_checked_at INTEGER`,
+      // users ships in schema.sql, but this facade silently skips DDL that fails
+      // outside entries — init's base CREATE may stand in, owing these ALTERs.
+      `ALTER TABLE users ADD COLUMN default_share TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE users ADD COLUMN removed_at INTEGER`,
     ]);
-    expect(d1.issued.filter(s => /^CREATE/.test(s))).toEqual([]);
-    // db/schema.sql already carries the v3 tenancy columns, so a brain installed
-    // from it is owed nothing there — only the two ALTERs above.
+    expect(d1.issued.filter(s => /^CREATE/.test(s))).toEqual([
+      `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT, role TEXT NOT NULL DEFAULT 'member', token_hash TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash)`,
+    ]);
+    // db/schema.sql already carries the v3 tenancy columns on entries; users is
+    // created here by init because the test facade may skip non-entries DDL.
     expect(sameColumns(d1.columns())).toBe(true);
   });
 

@@ -91,7 +91,7 @@ describe("team member administration", () => {
   });
 
   describe("removeMember", () => {
-    it("deletes the identity, workspace, and private entries — but keeps shared ones", async () => {
+    it("deletes the personal workspace and private entries — but keeps shared ones and soft-deletes the identity", async () => {
       const { env, roots } = await makeEnv();
       const { member } = await createMember(env, { name: "Ada" });
       // One private memory, one shared to company, one vector id on each.
@@ -111,9 +111,9 @@ describe("team member administration", () => {
       expect(result.removedEntries).toBe(1);
       expect(result.vectorIds).toEqual(["v-p1"]);
 
-      // Identity, workspace, memberships: gone.
-      const user = await env.DB.prepare(`SELECT id FROM users WHERE id = ?`).bind(member.userId).first();
-      expect(user).toBeNull();
+      // Personal workspace: gone. User row: soft-deleted, not erased.
+      const user = await env.DB.prepare(`SELECT removed_at FROM users WHERE id = ?`).bind(member.userId).first<{ removed_at: number | null }>();
+      expect(user?.removed_at).toBeTruthy();
       const ws = await env.DB.prepare(`SELECT id FROM workspaces WHERE id = ?`).bind(member.personalWorkspaceId).first();
       expect(ws).toBeNull();
       // Private row and its edge: gone. Shared row: stays, with its author on record.

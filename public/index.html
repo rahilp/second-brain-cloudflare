@@ -375,6 +375,7 @@
           <div class="view-content" id="view-content-text"></div>
           <div class="view-tags" id="view-tags-container"></div>
           <div class="view-brain" id="view-brain" style="display: none"></div>
+          <div class="view-timeline" id="view-timeline" style="display: none"></div>
           <div class="view-related" id="view-related" style="display: none"></div>
         </div>
         <div class="view-actions">
@@ -421,6 +422,14 @@
         <div class="menu-group">
           <div class="menu-group-label" data-i18n="menu.groupConnections">Connections</div>
           <button class="menu-item" onclick="openIntegrations()"><i class="ti ti-plug"></i> <span data-i18n="menu.integrations">Integrations</span></button>
+        </div>
+
+        <div class="menu-group" id="profile-group">
+          <div class="menu-group-label" data-i18n="team.profileTitle">Your display name</div>
+          <div style="display: flex; gap: 8px; padding: 0 4px 8px;">
+            <input class="filter-field" id="profile-name" autocomplete="name" data-i18n="team.namePlaceholder" data-i18n-attr="placeholder" placeholder="Name" />
+            <button class="digest-btn" type="button" onclick="saveProfileName()" data-i18n="team.profileSave">Save name</button>
+          </div>
         </div>
 
         <div class="menu-group">
@@ -504,6 +513,7 @@
     <script src="utils.js"></script>
     <script src="credits.js"></script>
     <script src="js/state.js"></script>
+    <script src="js/toast.js"></script>
     <script src="js/api.js"></script>
     <script src="js/theme.js"></script>
     <script src="js/ui-chat.js"></script>

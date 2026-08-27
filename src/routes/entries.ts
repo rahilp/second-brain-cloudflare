@@ -3,7 +3,9 @@ import { importExportPayload, parseImportBody, parseImportLimit, parseImportOffs
 import { initializeDatabase } from "../db/init";
 import { json } from "../lib/http";
 import { requireIdentity } from "../lib/identity";
+import { assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
 import { scopeWhere } from "../lib/scope";
+import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
 import { moveEntry, type ShareTarget } from "../capture/share";
@@ -136,6 +138,11 @@ export async function handleEntriesRoutes(
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
 
     const id = body.id.trim();
+    const row = await getReadableEntry(env, auth, id);
+    if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+    const denied = assertCanMutateEntry(auth, row);
+    if (denied) return json({ ok: false, error: denied.message }, 403);
+
     const result = await forgetEntry(id, env);
 
     if (result.status === "not_found") {
@@ -165,13 +172,38 @@ export async function handleEntriesRoutes(
     const scope = scopeWhere(auth);
     const row = await env.DB.prepare(
       `SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated,
-              importance_score, recall_count, contradiction_wins, contradiction_losses, vector_ids
+              importance_score, recall_count, contradiction_wins, contradiction_losses, vector_ids,
+              workspace_id, actor_id
        FROM entries WHERE id = ? AND ${scope.clause}`
     ).bind(id, ...scope.bindings).first() as Record<string, any> | null;
     if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
 
     let vectorIds: unknown[] = [];
     try { vectorIds = JSON.parse(row.vector_ids ?? "[]"); } catch { vectorIds = []; }
+
+    const { results: eventRows } = await env.DB.prepare(
+      `SELECT actor_id, event, payload, created_at FROM entry_events WHERE entry_id = ? ORDER BY created_at ASC`,
+    ).bind(id).all<{ actor_id: string; event: string; payload: string; created_at: number }>();
+
+    const actorIds = [
+      String(row.actor_id ?? ""),
+      ...(eventRows ?? []).map((e) => e.actor_id),
+    ];
+    const labelMap = await lookupActorLabels(env, actorIds);
+    const layer =
+      row.workspace_id === auth.personalWorkspaceId ? "personal"
+      : row.workspace_id === auth.companyWorkspaceId ? "company"
+      : "system";
+    const actorName = resolveActorLabel(String(row.actor_id ?? ""), labelMap, {
+      viewerId: auth.userId,
+      source: row.source as string,
+    });
+    const timeline = (eventRows ?? []).map((e) => ({
+      event: e.event,
+      created_at: e.created_at,
+      actor_name: resolveActorLabel(e.actor_id, labelMap, { viewerId: auth.userId }),
+      payload: (() => { try { return JSON.parse(e.payload ?? "{}"); } catch { return {}; } })(),
+    }));
 
     return json({
       ok: true,
@@ -189,6 +221,9 @@ export async function handleEntriesRoutes(
         // Whether recall can see it at all — the dashboard already surfaces
         // "not indexed" in lists, and the detail view should agree.
         indexed: Array.isArray(vectorIds) && vectorIds.length > 0,
+        workspace: layer,
+        actor_name: actorName,
+        timeline,
       },
     });
   }
@@ -244,6 +279,11 @@ export async function handleEntriesRoutes(
 
     const id = body.id.trim();
     const status = body.status as MemoryStatus;
+    const row = await getReadableEntry(env, auth, id);
+    if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+    const denied = assertCanMutateEntry(auth, row);
+    if (denied) return json({ ok: false, error: denied.message }, 403);
+
     const ok = await applyStatus(id, status, env);
 
     if (!ok) {

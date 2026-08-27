@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { intParam, json } from "../lib/http";
+import { getReadableEntry } from "../lib/entry-access";
 import { requireIdentity } from "../lib/identity";
 import { createEdge, deleteEdge, isValidEdgeType } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
@@ -26,6 +27,12 @@ export async function handleGraphRoutes(
     if (!isValidEdgeType(type)) {
       return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
     }
+    if (sourceId === targetId) return json({ ok: false, error: "Cannot link an entry to itself" }, 400);
+
+    const source = await getReadableEntry(env, auth, sourceId);
+    if (!source) return json({ ok: false, error: `No entry found with ID: ${sourceId}` }, 404);
+    const target = await getReadableEntry(env, auth, targetId);
+    if (!target) return json({ ok: false, error: `No entry found with ID: ${targetId}` }, 404);
 
     const edge = await createEdge(sourceId, targetId, type, { provenance: "explicit", weight: 1.0 }, env);
     if (!edge) return json({ ok: false, error: "Cannot link an entry to itself" }, 400);
@@ -48,6 +55,11 @@ export async function handleGraphRoutes(
     if (type && !isValidEdgeType(type)) {
       return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
     }
+
+    const source = await getReadableEntry(env, auth, sourceId);
+    if (!source) return json({ ok: false, error: `No entry found with ID: ${sourceId}` }, 404);
+    const target = await getReadableEntry(env, auth, targetId);
+    if (!target) return json({ ok: false, error: `No entry found with ID: ${targetId}` }, 404);
 
     const deleted = await deleteEdge(sourceId, targetId, type, env);
     return json({ ok: true, deleted });

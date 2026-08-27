@@ -13,6 +13,7 @@ import { nextWorkspace } from "./runtime/rotation";
 import { runInsightAccrual } from "./insight/candidates";
 import { runWeeklyInsights } from "./insight/weekly";
 import { INSIGHT_ACCRUAL_CRON, INSIGHT_WEEKLY_CRON } from "./insight/schedule";
+import { resolveIdentityFromToken } from "./lib/identity";
 import { apiHandler } from "./mcp/handler";
 import { augmentOAuthRegistrationRequest } from "./oauth/register";
 import { defaultHandler } from "./routes";
@@ -28,9 +29,12 @@ const oauthProvider = new OAuthProvider({
   clientRegistrationEndpoint: "/oauth/register",
   // Accept the static AUTH_TOKEN for Claude Desktop + mcp-remote (no browser flow).
   resolveExternalToken: async ({ token, env }) => {
-    if (token === (env as Env).AUTH_TOKEN) {
+    const e = env as Env;
+    if (token === e.AUTH_TOKEN) {
       return { props: { userId: "owner" } };
     }
+    const identity = await resolveIdentityFromToken(token, e);
+    if (identity) return { props: { userId: identity.userId } };
     return null;
   },
 });

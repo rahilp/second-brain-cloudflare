@@ -36,7 +36,6 @@ export async function handleIntegrationsRoutes(
   if (integrationRoute && request.method === "POST") {
     const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
-    const writeCtx = { workspaceId: scopeWrite(auth), actorId: auth.userId };
     const provider = getProvider(integrationRoute[1]);
     if (!provider) return json({ ok: false, error: `Unknown integration: ${integrationRoute[1]}` }, 404);
     const action = integrationRoute[2];
@@ -45,10 +44,11 @@ export async function handleIntegrationsRoutes(
     // (server-side; the browser can't for CORS reasons) and store it only if
     // it works.
     if (action === "connect") {
-      let body: { token?: string };
+      let body: { token?: string; workspace?: string };
       try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
       const token = body.token?.trim();
       if (!token) return json({ ok: false, error: "token is required" }, 400);
+      const mirrorWorkspace = body.workspace === "company" ? "company" : "personal";
 
       let workspaceName: string;
       try {
@@ -65,7 +65,7 @@ export async function handleIntegrationsRoutes(
         provider: provider.id,
         authKind: "token",
         credentials: { token },
-        config: existing?.config ?? {},
+        config: { ...(existing?.config ?? {}), mirrorWorkspace },
         status: "connected",
         workspaceName,
         lastSyncedAt: existing?.lastSyncedAt ?? null,
@@ -75,15 +75,21 @@ export async function handleIntegrationsRoutes(
         updatedAt: now,
       };
       await saveIntegration(env, record);
-      return json({ ok: true, provider: provider.id, workspaceName });
+      return json({ ok: true, provider: provider.id, workspaceName, mirrorWorkspace });
     }
 
     // sync — one bounded batch; callers loop while `remaining` > 0 (same
     // pattern as POST /vectorize-pending).
     if (action === "sync") {
-      if (!(await loadIntegration(env, provider.id))) {
+      const record = await loadIntegration(env, provider.id);
+      if (!record) {
         return json({ ok: false, error: `${provider.name} is not connected` }, 404);
       }
+      const mirrorWorkspace = record.config?.mirrorWorkspace === "company" ? "company" : "personal";
+      const writeCtx = {
+        workspaceId: scopeWrite(auth, mirrorWorkspace),
+        actorId: auth.userId,
+      };
       const result = await provider.sync(env, makeMirrorStore(env, writeCtx));
       return json(result, result.ok ? 200 : 502);
     }

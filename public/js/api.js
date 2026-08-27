@@ -48,3 +48,29 @@ async function apiShare(id, workspace) {
   })
   return res.json()
 }
+
+/** Share/unshare with confirm + undo toast; refreshes via optional callback. */
+async function toggleEntryLayer(id, currentLayer, onDone) {
+  const goingShared = currentLayer !== 'company'
+  const target = goingShared ? 'company' : 'personal'
+  const previous = currentLayer === 'company' ? 'company' : 'personal'
+  const question = goingShared ? t('team.shareConfirm') : t('team.unshareConfirm')
+  if (!confirm(question)) return
+  try {
+    const r = await apiShare(id, target)
+    if (!r.ok) throw new Error(r.error || t('team.actionFailed'))
+    showToast(goingShared ? t('team.sharedToast') : t('team.unsharedToast'), {
+      action: t('team.undo'),
+      onAction: async () => {
+        await apiShare(id, previous)
+        if (typeof onDone === 'function') onDone()
+        else if (typeof refreshAll === 'function') refreshAll()
+      },
+    })
+    if (typeof onDone === 'function') onDone()
+    else if (typeof loadRecent === 'function') loadRecent()
+    else if (typeof refreshAll === 'function') refreshAll()
+  } catch (e) {
+    alert(e.message || t('team.actionFailed'))
+  }
+}

@@ -157,6 +157,9 @@ const USERS_COLUMNS: Record<string, string> = {
   // Per-member capture-visibility override. '' inherits the org-level
   // TEAM_DEFAULT_WORKSPACE config; "personal" and "company" pin the member.
   default_share: `ALTER TABLE users ADD COLUMN default_share TEXT NOT NULL DEFAULT ''`,
+  // Soft offboarding timestamp. Identity and actor-label lookups ignore rows
+  // where this is set; company entries keep actor_id as history.
+  removed_at: `ALTER TABLE users ADD COLUMN removed_at INTEGER`,
 };
 
 /**

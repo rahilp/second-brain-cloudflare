@@ -30,6 +30,11 @@ describe("renderRecallText", () => {
     expect(out).toContain("Hello world");
   });
 
+  it("shows the author on company-layer rows", () => {
+    const out = renderRecallText([m({ workspace: "company", actorName: "Ada" })], "");
+    expect(out).toContain(" · shared · Ada");
+  });
+
   describe("graph-expanded (hop) provenance (#225)", () => {
     it("labels an auto-inferred hop 'auto-linked' and names the memory it came from", () => {
       const seed = m({ id: "seed", content: "Pricing decision for Q3", hop: 0 });
