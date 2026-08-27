@@ -190,18 +190,7 @@ export async function runScheduledIntegrationSync(env: Env): Promise<void> {
 
   await initializeDatabase(env);
   const record = await loadIntegration(env, due.id);
-  const mirrorWorkspace = record?.config?.mirrorWorkspace === "company" ? "company" : "personal";
-  let writeCtx: WriteContext = OWNER_WRITE_CONTEXT;
-  try {
-    const roots = await ensureTenantBootstrap(env);
-    const admin = await resolveIdentityByUserId(env, roots.ownerUserId);
-    if (admin) {
-      writeCtx = { workspaceId: scopeWrite(admin, mirrorWorkspace), actorId: admin.userId };
-    }
-  } catch (e) {
-    console.error("Integration cron identity resolve failed (non-fatal):", e);
-  }
-  const store = makeMirrorStore(env, writeCtx);
+  const store = makeMirrorStore(env, await mirrorWriteContext(env, record));
   try {
     for (let i = 0; i < CRON_SYNC_MAX_BATCHES; i++) {
       const result = await due.sync(env, store);
@@ -210,6 +199,37 @@ export async function runScheduledIntegrationSync(env: Env): Promise<void> {
   } finally {
     await advanceRotationCursor(env, due.id);
   }
+}
+
+/**
+ * Where a mirrored item lands, for BOTH sync paths.
+ *
+ * An integration is one connection for the whole deployment
+ * (`integrations:<provider>` in KV), so the memories it mirrors have to have one
+ * home. This used to be decided in two places that disagreed: the cron resolved
+ * the owner and wrote to the owner's workspace, while POST
+ * /integrations/:provider/sync built a context from whoever called it. The same
+ * connection therefore mirrored into different people's private workspaces
+ * depending on who last pressed "Sync now" — and a member's manual sync put the
+ * org's Notion pages somewhere the admin could not see them.
+ *
+ * One function, called by both, resolving the owner either way. Falls back to
+ * OWNER_WRITE_CONTEXT's pre-team sentinel if identity cannot be resolved, which
+ * is the behaviour a v2 brain had.
+ */
+export async function mirrorWriteContext(
+  env: Env,
+  record: { config?: { mirrorWorkspace?: string } } | null,
+): Promise<WriteContext> {
+  const mirrorWorkspace = record?.config?.mirrorWorkspace === "company" ? "company" : "personal";
+  try {
+    const roots = await ensureTenantBootstrap(env);
+    const owner = await resolveIdentityByUserId(env, roots.ownerUserId);
+    if (owner) return { workspaceId: scopeWrite(owner, mirrorWorkspace), actorId: owner.userId };
+  } catch (e) {
+    console.error("Integration identity resolve failed (non-fatal):", e);
+  }
+  return OWNER_WRITE_CONTEXT;
 }
 
 /**

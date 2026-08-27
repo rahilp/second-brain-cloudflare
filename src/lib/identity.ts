@@ -157,6 +157,25 @@ export async function requireIdentity(request: Request, env: Env): Promise<Ident
   return json({ ok: false, error: "Unauthorized" }, 401);
 }
 
+/**
+ * requireIdentity's twin for surfaces that administer the deployment rather than
+ * serve one member: team administration, the cross-workspace repair counts in
+ * /stats, the bulk backfills behind /vectorize-pending and /classify-pending, and
+ * the integration connections, which are one blob per provider for the whole
+ * brain. A signed-in member gets 403 rather than the data.
+ *
+ * It is a gate, not a scope. Routes behind it that return memory CONTENT still
+ * scope to the caller's readable set — "admin" has never meant permission to read
+ * a member's personal workspace anywhere else in this codebase, and the review
+ * queues that once did are why that is worth saying twice.
+ */
+export async function requireAdmin(request: Request, env: Env): Promise<Identity | Response> {
+  const auth = await requireIdentity(request, env);
+  if (auth instanceof Response) return auth;
+  if (auth.role !== "admin") return json({ ok: false, error: "Forbidden" }, 403);
+  return auth;
+}
+
 /** MCP handler twin: also accepts OAuth grant props when the bearer is not in users. */
 export async function requireIdentityForMcp(
   request: Request,

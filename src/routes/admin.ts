@@ -4,7 +4,7 @@ import { SB_VERSION } from "../env";
 import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "../compression/eligibility";
 import { intParam, json } from "../lib/http";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
-import { requireIdentity, type Identity } from "../lib/identity";
+import { requireAdmin, requireIdentity, type Identity } from "../lib/identity";
 import { scopeWhere } from "../lib/scope";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
@@ -30,19 +30,6 @@ import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDe
 // plus the caller's workspace scope, so its cap is derived per request rather
 // than fixed: three workspaces for an admin would otherwise put a full page at
 // 103 bindings and fail the whole batch.
-
-/**
- * The admin surface's twin of requireIdentity: everything here is deployment-wide
- * (cross-workspace stats, bulk backfills, insight review), so a signed-in member
- * gets 403 rather than the data. The spec carves these queries out of the
- * scope-helper rule exactly because this gate is what stands in front of them.
- */
-async function requireAdmin(request: Request, env: Env): Promise<Identity | Response> {
-  const auth = await requireIdentity(request, env);
-  if (auth instanceof Response) return auth;
-  if (auth.role !== "admin") return json({ ok: false, error: "Forbidden" }, 403);
-  return auth;
-}
 
 export async function handleAdminRoutes(
   request: Request,

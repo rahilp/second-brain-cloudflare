@@ -9,11 +9,10 @@ import {
 import type { IntegrationRecord } from "../integrations";
 import type { Env } from "../env";
 import { json } from "../lib/http";
-import { requireIdentity } from "../lib/identity";
-import { scopeWrite } from "../lib/scope";
+import { requireAdmin, requireIdentity } from "../lib/identity";
 import { forgetEntry } from "../capture/lifecycle";
 import { getReadableEntry, assertCanMutateEntry } from "../lib/entry-access";
-import { makeMirrorStore } from "../integrations/mirror";
+import { makeMirrorStore, mirrorWriteContext } from "../integrations/mirror";
 
 export async function handleIntegrationsRoutes(
   request: Request,
@@ -29,13 +28,27 @@ export async function handleIntegrationsRoutes(
     for (const provider of Object.values(INTEGRATION_PROVIDERS)) {
       integrations.push(integrationStatus(provider, await loadIntegration(env, provider.id)));
     }
-    return json({ ok: true, integrations });
+    // Read is open to every member; the write actions below are not. The flag
+    // lets the dashboard render a member the connection state without also
+    // rendering Connect and Disconnect buttons that can only answer 403.
+    return json({ ok: true, integrations, admin: auth.role === "admin" });
   }
 
   // POST /integrations/:provider/(connect|sync|disconnect)
+  //
+  // Admin-only, because an integration is one connection for the whole
+  // deployment: `integrations:<provider>` is a single KV blob, so "connect" is
+  // not a member adding their own Notion but a member REPLACING the org's, token
+  // and all, with nothing in the response to either party saying so. Disconnect
+  // removed it for everyone. Read stays open below — a member can see what is
+  // connected and when it last synced, just not change it.
+  //
+  // If per-member connections land later, this gate is what comes off, together
+  // with the storage key. test/integration/integrations-tenancy.test.ts pins the
+  // current contract either way.
   const integrationRoute = url.pathname.match(/^\/integrations\/([a-z0-9-]+)\/(connect|sync|disconnect)$/);
   if (integrationRoute && request.method === "POST") {
-    const auth = await requireIdentity(request, env);
+    const auth = await requireAdmin(request, env);
     if (auth instanceof Response) return auth;
     const provider = getProvider(integrationRoute[1]);
     if (!provider) return json({ ok: false, error: `Unknown integration: ${integrationRoute[1]}` }, 404);
@@ -86,12 +99,14 @@ export async function handleIntegrationsRoutes(
       if (!record) {
         return json({ ok: false, error: `${provider.name} is not connected` }, 404);
       }
-      const mirrorWorkspace = record.config?.mirrorWorkspace === "company" ? "company" : "personal";
-      const writeCtx = {
-        workspaceId: scopeWrite(auth, mirrorWorkspace),
-        actorId: auth.userId,
-      };
-      const result = await provider.sync(env, makeMirrorStore(env, writeCtx));
+      // The same context the nightly cron uses. Built from the caller before,
+      // which meant one connection mirrored into different workspaces depending
+      // on who pressed "Sync now" — so a page synced by hand and the same page
+      // synced overnight landed in two different people's private space.
+      const result = await provider.sync(
+        env,
+        makeMirrorStore(env, await mirrorWriteContext(env, record)),
+      );
       return json(result, result.ok ? 200 : 502);
     }
 

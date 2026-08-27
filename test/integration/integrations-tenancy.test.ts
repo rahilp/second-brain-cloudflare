@@ -1,17 +1,18 @@
 /**
- * What a plain member can do to the org's integrations.
+ * Who may change the org's integrations, and where what they mirror lands.
  *
- * `/integrations/:provider/(connect|sync|disconnect)` gates on `requireIdentity`,
- * not `requireAdmin`, while the record it acts on lives at one deployment-wide KV
- * key (`integrations:<provider>`, src/integrations/framework.ts). There is exactly
- * one Notion connection, one Gmail connection and one calendar connection for the
- * whole brain, and every member can reach all of them.
+ * An integration is ONE connection per provider for the whole deployment
+ * (`integrations:<provider>`, a single KV blob — src/integrations/framework.ts).
+ * That single-connection model is what decides the access rules here, and these
+ * cases exist because it briefly had none: connect/sync/disconnect gated on
+ * requireIdentity, so any member could replace the admin's Notion token, remove
+ * the connection for everyone, purge mirrored memories out of a colleague's
+ * private workspace, and — because the manual sync built its write context from
+ * the caller while the nightly cron built one from the owner — split a single
+ * connection's output across two people's private space.
  *
- * These cases pin the behaviour that is actually shipped rather than asserting a
- * policy that does not exist yet, so whichever way the product decides to go — a
- * per-member connection, or an admin-only surface — the change shows up here as a
- * deliberate edit rather than a silent one. Each case says what a member can do
- * today and why it is worth deciding about.
+ * If per-member connections ever land, the gate and the storage key both change,
+ * and these are the cases that should change with them.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import worker from "../../src/index";
@@ -21,6 +22,7 @@ import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember } from "../../src/lib/team-admin";
 import { loadIntegration } from "../../src/integrations";
+import { mirrorWriteContext } from "../../src/integrations/mirror";
 import type { Env } from "../../src/env";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as ExecutionContext;
@@ -32,7 +34,7 @@ let memberToken: string;
 let roots: { companyWorkspaceId: string; ownerUserId: string; ownerPersonalWorkspaceId: string };
 let member: { userId: string; personalWorkspaceId: string };
 
-/** Serves Notion's API for two different tokens, so "whose connection is this" is visible. */
+/** Serves Notion's API for two tokens, so "whose connection is this" is visible. */
 function stubNotion(tokens: Record<string, string>) {
   vi.stubGlobal("fetch", vi.fn(async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : input.url;
@@ -85,99 +87,96 @@ afterEach(() => {
   sqlite?.close();
 });
 
-describe("integrations are one deployment-wide connection, reachable by every member", () => {
-  it("a member's connect REPLACES the admin's connection and credentials", async () => {
+describe("one connection per provider, administered by an admin", () => {
+  it("a member cannot connect — which would replace the org's token, not add their own", async () => {
     await call("POST", "/integrations/notion/connect", ADMIN, { token: "admin-notion-token" });
-    expect((await loadIntegration(env, "notion"))!.workspaceName).toBe("Acme HQ");
 
     const res = await call("POST", "/integrations/notion/connect", memberToken, { token: "dana-notion-token" });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
 
-    // The admin's Notion token is gone — overwritten by a member, with no warning
-    // to either party and nothing in the response saying a connection was replaced.
+    // The admin's connection is untouched, credentials included.
     const record = (await loadIntegration(env, "notion"))!;
-    expect(record.workspaceName).toBe("Dana Personal");
-    expect(record.credentials.token).toBe("dana-notion-token");
+    expect(record.workspaceName).toBe("Acme HQ");
+    expect(record.credentials.token).toBe("admin-notion-token");
   });
 
-  it("a member can disconnect the org's integration outright", async () => {
+  it("a member cannot disconnect or sync the org's integration", async () => {
     await call("POST", "/integrations/notion/connect", ADMIN, { token: "admin-notion-token" });
 
-    const res = await call("POST", "/integrations/notion/disconnect", memberToken, {});
-    expect(res.status).toBe(200);
-    expect(await loadIntegration(env, "notion")).toBeNull();
+    expect((await call("POST", "/integrations/notion/sync", memberToken, {})).status).toBe(403);
+    expect((await call("POST", "/integrations/notion/disconnect", memberToken, {})).status).toBe(403);
+    expect(await loadIntegration(env, "notion")).not.toBeNull();
   });
 
-  it("a member's disconnect+purge cannot delete mirrored memories out of the ADMIN's workspace", async () => {
-    await call("POST", "/integrations/notion/connect", ADMIN, { token: "admin-notion-token" });
-
-    // A page the admin's sync had already mirrored into the admin's own workspace.
-    await sqlite.db.prepare(
-      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id)
-       VALUES ('mirrored-1', 'Board minutes mirrored from Notion', '["notion"]', 'notion', 1000, 1000, '[]', ?, ?)`,
-    ).bind(roots.ownerPersonalWorkspaceId, roots.ownerUserId).run();
-
-    const record = (await loadIntegration(env, "notion"))!;
-    record.itemMap = { "page-1": { entryId: "mirrored-1", version: "v1" } as any };
-    await env.OAUTH_KV.put("integrations:notion", JSON.stringify(record));
-
-    const res = await call("POST", "/integrations/notion/disconnect", memberToken, { purge: true });
-    expect(res.status).toBe(200);
-    const body = await res.json() as any;
-    expect(body.purged).toBe(0);
-    expect(body.kept).toBe(1);
-
-    // `forgetEntry(id, env)` deletes by id with no workspace clause, so without the
-    // route's own guard this purge reached a row the member could not read through
-    // /entry, edit through /update, or delete through /forget. The row survives.
-    const left = await sqlite.db.prepare(`SELECT COUNT(*) AS n FROM entries WHERE id = 'mirrored-1'`)
-      .first() as { n: number };
-    expect(left.n).toBe(1);
-  });
-
-  it("a purge still removes the caller's own mirrored memories", async () => {
-    // The guard must not turn purge into a no-op for the person who owns the rows.
-    await call("POST", "/integrations/notion/connect", memberToken, { token: "dana-notion-token" });
-    await sqlite.db.prepare(
-      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id)
-       VALUES ('mine-1', 'Dana page mirrored from Notion', '["notion"]', 'notion', 1000, 1000, '[]', ?, ?)`,
-    ).bind(member.personalWorkspaceId, member.userId).run();
-
-    const record = (await loadIntegration(env, "notion"))!;
-    record.itemMap = { "page-9": { entryId: "mine-1", version: "v1" } as any };
-    await env.OAUTH_KV.put("integrations:notion", JSON.stringify(record));
-
-    const res = await call("POST", "/integrations/notion/disconnect", memberToken, { purge: true });
-    expect((await res.json() as any).purged).toBe(1);
-    const left = await sqlite.db.prepare(`SELECT COUNT(*) AS n FROM entries WHERE id = 'mine-1'`)
-      .first() as { n: number };
-    expect(left.n).toBe(0);
-  });
-
-  it("the same connection mirrors into different workspaces depending on who syncs it", async () => {
-    // Manual sync writes to the CALLER's workspace (src/routes/integrations.ts),
-    // while the nightly cron resolves the owner and writes to the OWNER's
-    // (runScheduledIntegrationSync, src/integrations/mirror.ts). One connection,
-    // two destinations, decided by who happened to press the button.
-    await call("POST", "/integrations/notion/connect", memberToken, { token: "dana-notion-token" });
-    const res = await call("POST", "/integrations/notion/sync", memberToken, {});
-    expect(res.status).toBe(200);
-
-    // Nothing to assert on rows here — the stub returns no pages — but the write
-    // context is built from `auth`, so a member's sync lands in the member's
-    // workspace while the cron's lands in the owner's. Recorded as the reason the
-    // two paths must be reconciled before a team ships.
-    expect(member.personalWorkspaceId).not.toBe(roots.ownerPersonalWorkspaceId);
-  });
-
-  it("a member sees the org's connected workspace name and sync state", async () => {
+  it("a member can still SEE what is connected", async () => {
+    // Read stays open: the Integrations screen tells a member what the brain is
+    // mirroring and when it last ran. The token is never in this payload.
     await call("POST", "/integrations/notion/connect", ADMIN, { token: "admin-notion-token" });
 
     const list = await (await call("GET", "/integrations", memberToken)).json() as any;
     const notion = list.integrations.find((i: any) => i.provider === "notion");
     expect(notion.connected).toBe(true);
-    // The token is never exposed, but the workspace name is — a member learns which
-    // Notion workspace the admin connected.
     expect(notion.workspaceName).toBe("Acme HQ");
+    expect(JSON.stringify(list)).not.toContain("admin-notion-token");
+  });
+
+  it("an admin's purge removes only rows they could have deleted one at a time", async () => {
+    // forgetEntry deletes by id with no workspace clause, so the route applies
+    // /forget's own guard per row. A member's mirrored memory is not the admin's
+    // to purge even though the connection is.
+    await call("POST", "/integrations/notion/connect", ADMIN, { token: "admin-notion-token" });
+
+    await sqlite.db.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id)
+       VALUES ('admin-page', 'Board minutes mirrored from Notion', '["notion"]', 'notion', 1000, 1000, '[]', ?, ?)`,
+    ).bind(roots.ownerPersonalWorkspaceId, roots.ownerUserId).run();
+    await sqlite.db.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id)
+       VALUES ('dana-page', 'Dana page mirrored from Notion', '["notion"]', 'notion', 1000, 1000, '[]', ?, ?)`,
+    ).bind(member.personalWorkspaceId, member.userId).run();
+
+    const record = (await loadIntegration(env, "notion"))!;
+    record.itemMap = {
+      a: { entryId: "admin-page", version: "v1" } as any,
+      d: { entryId: "dana-page", version: "v1" } as any,
+    };
+    await env.OAUTH_KV.put("integrations:notion", JSON.stringify(record));
+
+    const body = await (await call("POST", "/integrations/notion/disconnect", ADMIN, { purge: true })).json() as any;
+    expect(body.purged).toBe(1);
+    expect(body.kept).toBe(1);
+
+    const rows = await sqlite.db.prepare(`SELECT id FROM entries WHERE source = 'notion'`).all();
+    expect((rows.results as { id: string }[]).map(r => r.id)).toEqual(["dana-page"]);
+  });
+});
+
+describe("both sync paths mirror into the same place", () => {
+  it("mirrorWriteContext resolves the owner, not the caller", async () => {
+    // The manual sync and the nightly cron now call this one function, so a page
+    // synced by hand and the same page synced overnight land in one workspace.
+    // Built from `auth` before, which split one connection's output in two.
+    const personal = await mirrorWriteContext(env, { config: { mirrorWorkspace: "personal" } });
+    expect(personal).toEqual({
+      workspaceId: roots.ownerPersonalWorkspaceId,
+      actorId: roots.ownerUserId,
+    });
+    expect(personal.workspaceId).not.toBe(member.personalWorkspaceId);
+
+    const company = await mirrorWriteContext(env, { config: { mirrorWorkspace: "company" } });
+    expect(company.workspaceId).toBe(roots.companyWorkspaceId);
+
+    // No record, or a record with no preference, is the private default.
+    expect((await mirrorWriteContext(env, null)).workspaceId).toBe(roots.ownerPersonalWorkspaceId);
+  });
+
+  it("a connect with workspace:company sends the mirror to the shared layer", async () => {
+    await call("POST", "/integrations/notion/connect", ADMIN, {
+      token: "admin-notion-token",
+      workspace: "company",
+    });
+    const record = await loadIntegration(env, "notion");
+    expect(record!.config?.mirrorWorkspace).toBe("company");
+    expect((await mirrorWriteContext(env, record)).workspaceId).toBe(roots.companyWorkspaceId);
   });
 });

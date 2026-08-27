@@ -293,6 +293,9 @@ const I18N_EN = {
     backList: 'Back to integrations',
     loadFailed: 'Could not load integrations.',
     none: 'No integrations available.',
+    // A connection is one per provider for the whole brain, so changing it is an
+    // admin action. Members still see what is connected and when it last synced.
+    adminsOnly: 'Only workspace admins can change connections.',
     emptyCategory: 'Nothing here yet.',
     categoryKnowledge: 'Knowledge',
     categoryCalendars: 'Calendars',
@@ -798,6 +801,7 @@ const I18N_IT = {
     backSettings: 'Torna alle impostazioni',
     backList: 'Torna alle integrazioni',
     loadFailed: 'Impossibile caricare le integrazioni.',
+    adminsOnly: 'Solo gli amministratori possono modificare le connessioni.',
     none: 'Nessuna integrazione disponibile.',
     emptyCategory: 'Ancora nulla qui.',
     categoryKnowledge: 'Conoscenza',

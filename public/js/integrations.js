@@ -16,6 +16,9 @@ const INTEGRATION_ICONS = {
   'calendar-icloud': 'ti-brand-apple',
 }
 
+/** Whether this caller may change connections; see loadIntegrations. */
+let integrationsAdmin = true
+
 function integrationCategoryName(id) {
   const keys = {
     knowledge: 'integrations.categoryKnowledge',
@@ -50,6 +53,10 @@ async function loadIntegrations() {
     const res = await fetch(`${WORKER_URL}/integrations`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
     const data = await res.json()
     integrationsInfo = data.integrations || []
+    // Connections are one per provider for the whole brain, so only an admin can
+    // change them. Absent (an older Worker) reads as admin, which is what a
+    // single-user brain is.
+    integrationsAdmin = data.admin !== false
     renderIntegrations()
   } catch {
     el.innerHTML = `<p class="digest-note">${escHtml(t('integrations.loadFailed'))}</p>`
@@ -169,16 +176,19 @@ function renderIntegrationCard(info) {
           <option value="company">${escHtml(t('team.shareCompany'))}</option>
         </select><i class="ti ti-chevron-down"></i></span>`
       : ''
-    return `
-      <div class="integration-row">
-        <div class="integration-head"><i class="ti ${icon}"></i><span>${escHtml(info.name)}</span><span class="integration-state">${escHtml(t('integrations.notConnected'))}</span></div>
-        <p class="digest-note">${hint}</p>
-        <div class="integration-connect-row${isEmail ? ' integration-connect-col' : ''}">
+    const connectRow = integrationsAdmin
+      ? `<div class="integration-connect-row${isEmail ? ' integration-connect-col' : ''}">
           ${inputs}
           ${mirrorLayer}
           <button class="digest-btn" onclick="connectIntegration('${p}', this)">${escHtml(t('auth.connect'))}</button>
         </div>
-        <div class="integration-error" id="err-${p}"></div>
+        <div class="integration-error" id="err-${p}"></div>`
+      : `<p class="digest-note">${escHtml(t('integrations.adminsOnly'))}</p>`
+    return `
+      <div class="integration-row">
+        <div class="integration-head"><i class="ti ${icon}"></i><span>${escHtml(info.name)}</span><span class="integration-state">${escHtml(t('integrations.notConnected'))}</span></div>
+        <p class="digest-note">${hint}</p>
+        ${connectRow}
       </div>`
   }
   const last = info.lastSyncedAt
@@ -195,10 +205,12 @@ function renderIntegrationCard(info) {
       <div class="integration-head"><i class="ti ${icon}"></i><span>${escHtml(info.name)}</span><span class="integration-state connected">${escHtml(info.workspaceName || t('integrations.connected'))}</span></div>
       <p class="digest-note" id="note-${p}">${escHtml(count)} &middot; ${escHtml(t('integrations.lastSync', { when: last }))}</p>
       ${err}
-      <div class="integration-actions">
+      ${integrationsAdmin
+        ? `<div class="integration-actions">
         <button class="digest-btn" onclick="syncIntegration('${p}', this)"><i class="ti ti-refresh"></i> ${escHtml(t('integrations.syncNow'))}</button>
         <button class="digest-btn danger" onclick="disconnectIntegration('${p}', this)">${escHtml(t('menu.disconnect'))}</button>
-      </div>
+      </div>`
+        : `<p class="digest-note">${escHtml(t('integrations.adminsOnly'))}</p>`}
     </div>`
 }
 
