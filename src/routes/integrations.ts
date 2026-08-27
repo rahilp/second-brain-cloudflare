@@ -12,6 +12,7 @@ import { json } from "../lib/http";
 import { requireIdentity } from "../lib/identity";
 import { scopeWrite } from "../lib/scope";
 import { forgetEntry } from "../capture/lifecycle";
+import { getReadableEntry, assertCanMutateEntry } from "../lib/entry-access";
 import { makeMirrorStore } from "../integrations/mirror";
 
 export async function handleIntegrationsRoutes(
@@ -102,9 +103,19 @@ export async function handleIntegrationsRoutes(
     if (!record) return json({ ok: false, error: `${provider.name} is not connected` }, 404);
 
     let purged = 0;
+    let skipped = 0;
     if (body.purge) {
       for (const mapped of Object.values(record.itemMap)) {
         try {
+          // Same guard /forget applies, for the same reason. `forgetEntry` deletes
+          // by id with no workspace clause, and the integration record is one
+          // deployment-wide blob every member can reach, so an unguarded purge let
+          // any member delete mirrored rows out of a colleague's private workspace —
+          // rows they could not read through /entry, edit through /update, or delete
+          // through /forget. A purge now removes only what this caller could have
+          // deleted one at a time; anything else is left standing and counted.
+          const row = await getReadableEntry(env, auth, mapped.entryId);
+          if (!row || assertCanMutateEntry(auth, row)) { skipped++; continue; }
           const r = await forgetEntry(mapped.entryId, env);
           if (r.status === "deleted") purged++;
         } catch (e) {
@@ -113,7 +124,13 @@ export async function handleIntegrationsRoutes(
       }
     }
     await deleteIntegration(env, provider.id);
-    return json({ ok: true, purged, kept: body.purge ? 0 : Object.keys(record.itemMap).length });
+    // `kept` counts what is deliberately left behind: everything, when no purge was
+    // asked for, plus anything a purge was not allowed to touch.
+    return json({
+      ok: true,
+      purged,
+      kept: body.purge ? skipped : Object.keys(record.itemMap).length,
+    });
   }
 
   return null;
