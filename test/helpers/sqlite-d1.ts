@@ -96,27 +96,59 @@ export interface SqliteD1 {
  * column rename breaks these tests, which is the point — the migration's SQL
  * names columns.
  */
+/**
+ * Remove `-- …` line comments, respecting single-quoted string literals so a
+ * "--" inside a default value is not mistaken for a comment.
+ */
+function stripSqlComments(sql: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (inString) {
+      out += ch;
+      if (ch === "'") inString = false;
+      continue;
+    }
+    if (ch === "'") {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "-" && sql[i + 1] === "-") {
+      // Skip to end of line, keeping the newline so line structure survives.
+      while (i < sql.length && sql[i] !== "\n") i++;
+      out += "\n";
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 export function makeSqliteD1({ schema: applySchema = true }: { schema?: boolean } = {}): SqliteD1 {
   const raw = new DatabaseSync(":memory:");
   // The schema uses D1-flavoured DDL; execute it statement by statement so one
   // unsupported pragma cannot take the whole file down silently.
   const schema = applySchema ? readFileSync(SCHEMA, "utf8") : "";
-  for (const statement of schema.split(";")) {
-    // Strip comment lines rather than skipping any chunk that starts with one:
-    // splitting on ";" leaves the preceding comment attached to the statement
-    // after it, so a "starts with --" test silently drops real DDL.
-    const sql = statement
-      .split("\n")
-      .filter(line => !line.trim().startsWith("--"))
-      .join("\n")
-      .trim();
+  // Strip comments BEFORE splitting, not after. Splitting the raw file on ";"
+  // and filtering comment lines out of each chunk looks equivalent but is not:
+  // a ";" inside a trailing `-- comment` cuts the statement it is attached to
+  // in half, and the two halves then fail to parse. Wrangler's own splitter is
+  // comment-aware, so such a file migrates fine in production while silently
+  // losing tables here — which is exactly how the whole `users` table (and with
+  // it every tenancy test) went missing without a single red test.
+  for (const statement of stripSqlComments(schema).split(";")) {
+    const sql = statement.trim();
     if (!sql) continue;
     try {
       raw.exec(sql);
     } catch (e) {
-      // Indexes on tables this facade does not need, or D1-only syntax. Fail
-      // loudly for anything touching `entries`, which the migration reads.
-      if (/\bentries\b/i.test(sql)) {
+      // A CREATE TABLE that does not apply leaves tests asserting against a
+      // database that is missing the thing under test, so no table creation is
+      // ever allowed to fail quietly. Indexes are the tolerated case: some use
+      // D1-only syntax this facade does not need.
+      if (/^\s*CREATE\s+TABLE\b/i.test(sql) || /\bentries\b/i.test(sql)) {
         throw new Error(`schema.sql statement failed:\n${sql}\n${String(e)}`);
       }
     }

@@ -425,17 +425,16 @@ describe("initializeDatabase against real SQLite", () => {
     expect(d1.issued.filter(s => /^ALTER/.test(s))).toEqual([
       `ALTER TABLE entries ADD COLUMN updated_at INTEGER`,
       `ALTER TABLE entries ADD COLUMN staleness_checked_at INTEGER`,
-      // users ships in schema.sql, but this facade silently skips DDL that fails
-      // outside entries — init's base CREATE may stand in, owing these ALTERs.
-      `ALTER TABLE users ADD COLUMN default_share TEXT NOT NULL DEFAULT ''`,
-      `ALTER TABLE users ADD COLUMN removed_at INTEGER`,
     ]);
-    expect(d1.issued.filter(s => /^CREATE/.test(s))).toEqual([
-      `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT, role TEXT NOT NULL DEFAULT 'member', token_hash TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash)`,
-    ]);
-    // db/schema.sql already carries the v3 tenancy columns on entries; users is
-    // created here by init because the test facade may skip non-entries DDL.
+    // schema.sql ships the whole v3 tenancy set — users (with default_share and
+    // removed_at), workspaces, memberships, entry_events, maintenance_cursor — so
+    // init has no table left to create against a brain installed from it. This
+    // list read differently while a ";" inside a schema.sql comment was splitting
+    // the `users` DDL in half: the table never applied, init's narrower base
+    // CREATE stood in for it, and two ALTERs it should never have owed showed up
+    // here. Anything reappearing in this list means schema.sql and init.ts have
+    // drifted apart again.
+    expect(d1.issued.filter(s => /^CREATE/.test(s))).toEqual([]);
     expect(sameColumns(d1.columns())).toBe(true);
   });
 

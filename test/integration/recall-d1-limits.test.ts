@@ -86,7 +86,7 @@ const keywordStatements = (executed: Executed[]) =>
   executed.filter(e => /FROM entries WHERE \(?content LIKE/.test(e.sql));
 
 const hydrationStatements = (executed: Executed[]) =>
-  executed.filter(e => e.sql.includes("created_at, updated_at, workspace_id FROM entries WHERE id IN"));
+  executed.filter(e => e.sql.includes("created_at, updated_at, workspace_id, actor_id FROM entries WHERE id IN"));
 
 describe("recall stays inside D1's statement limits", () => {
   let sqlite: SqliteD1;
