@@ -14,7 +14,10 @@ async function main() {
   let data;
   try {
     const url = new URL('/recall', baseUrl);
-    url.searchParams.set('q', query);
+    // GET /recall reads `query`. It shipped as `q`, which the route answers 400
+    // for — and the `if (!res.ok) return` below swallowed it, so this hook printed
+    // nothing on every session start rather than failing visibly.
+    url.searchParams.set('query', query);
     url.searchParams.set('topK', '5');
     const res = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${token}` },
