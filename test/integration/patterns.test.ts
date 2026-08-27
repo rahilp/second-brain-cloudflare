@@ -318,13 +318,22 @@ describe("POST /patterns/resolve — in bulk", () => {
 
   it("refuses a batch larger than D1 can bind, rather than truncating it", async () => {
     // Silent truncation would report "resolved" for patterns still waiting.
+    //
+    // The cap is D1's 100 bound parameters MINUS the caller's workspace scope,
+    // which the SELECT binds alongside the ids — three for an admin (personal,
+    // company, and the '' legacy space), so 97 here. Asserted as the number the
+    // route reports rather than a literal, because the point is that the reply
+    // names the real limit: a client that trusted a hardcoded 100 would send a
+    // batch D1 rejects outright.
     sq = await migrated();
     const res = await worker.fetch(
       req("POST", "/patterns/resolve", { body: { ids: Array.from({ length: 101 }, (_, i) => `p${i}`), action: "dismiss" } }),
       envOf(sq), ctx,
     );
     expect(res.status).toBe(400);
-    expect((await res.json() as any).error).toMatch(/100/);
+    const limit = Number((await res.json() as any).error.match(/exceed (\d+) per request/)![1]);
+    expect(limit).toBeLessThanOrEqual(100);
+    expect(limit).toBe(100 - 3);
   });
 
   it("rejects a malformed ids list", async () => {

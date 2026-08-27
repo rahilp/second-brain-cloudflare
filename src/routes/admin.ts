@@ -3,6 +3,7 @@ import { resolveConfig } from "../config";
 import { SB_VERSION } from "../env";
 import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "../compression/eligibility";
 import { intParam, json } from "../lib/http";
+import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { requireIdentity, type Identity } from "../lib/identity";
 import { scopeWhere } from "../lib/scope";
 import { graceMs } from "../lib/ai";
@@ -25,7 +26,10 @@ import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDe
  * statement and the id list is the whole of the SELECT's binding, so this is
  * the hard limit rather than a policy. The client pages against it.
  */
-const MAX_PATTERN_BULK = 100;
+// /patterns/resolve's SELECT spends D1's bound-parameter budget on the id list
+// plus the caller's workspace scope, so its cap is derived per request rather
+// than fixed: three workspaces for an admin would otherwise put a full page at
+// 103 bindings and fail the whole batch.
 
 /**
  * The admin surface's twin of requireIdentity: everything here is deployment-wide
@@ -289,8 +293,19 @@ export async function handleAdminRoutes(
   // proposals keep their tag forever, so once there are more than a page of
   // them the filter throws away every row and the panel renders empty while
   // real proposals wait behind them. Filtering belongs in the query.
+  // The three review surfaces below are per-caller, not administration: each
+  // member confirms or dismisses their OWN pending insights and stale claims, and
+  // every query is scoped to their readable set.
+  //
+  // They were requireAdmin, which cost nothing while a brain had one user and two
+  // things once it had more. A member's Home screen calls /patterns on every load
+  // (public/js/brief.js) and got a 403, so the insight feature was invisible to
+  // everyone but the admin; and the admin's queues were unscoped, so they printed
+  // colleagues' private memories in full — the same rows GET /entry answers 404
+  // for with the same token. Scoping alone would have left members' flagged
+  // memories reviewable by nobody at all.
   if (url.pathname === "/patterns" && request.method === "GET") {
-    const auth = await requireAdmin(request, env);
+    const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
 
     const limit = intParam(url, "limit", { fallback: 50, min: 1, max: 100 });
@@ -298,17 +313,24 @@ export async function handleAdminRoutes(
     const offset = intParam(url, "offset", { fallback: 0, min: 0 });
     if (offset instanceof Response) return offset;
 
+    // Scoped, like every other route that returns memory content. This queue is
+    // admin-only, but "admin" does not mean "may read a member's personal
+    // workspace" anywhere else in this codebase: the same token gets a 404 from
+    // GET /entry for the very row this queue was printing in full. An insight is
+    // drawn from the memories it cites, so an unscoped queue handed the admin a
+    // member's private material verbatim.
+    const scope = scopeWhere(auth);
     const [rows, countRow] = await Promise.all([
       env.DB.prepare(
         `SELECT id, content, created_at FROM entries
-         WHERE ${PENDING_INSIGHT_SQL}
+         WHERE ${PENDING_INSIGHT_SQL} AND ${scope.clause}
          ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      ).bind(limit, offset).all(),
+      ).bind(...scope.bindings, limit, offset).all(),
       // The total drives "N waiting" and the pager. It is a second query rather
       // than a window function so the shape survives D1's SQLite build.
       env.DB.prepare(
-        `SELECT COUNT(*) AS n FROM entries WHERE ${PENDING_INSIGHT_SQL}`,
-      ).first() as Promise<Record<string, any> | null>,
+        `SELECT COUNT(*) AS n FROM entries WHERE ${PENDING_INSIGHT_SQL} AND ${scope.clause}`,
+      ).bind(...scope.bindings).first() as Promise<Record<string, any> | null>,
     ]);
 
     const pageIds = (rows.results as Record<string, any>[]).map(r => r.id as string);
@@ -363,7 +385,7 @@ export async function handleAdminRoutes(
   // before /patterns existed, and it renders an empty list rather than a wrong
   // one. Filtering belongs in the query.
   if (url.pathname === "/stale" && request.method === "GET") {
-    const auth = await requireAdmin(request, env);
+    const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
 
     const limit = intParam(url, "limit", { fallback: 50, min: 1, max: 100 });
@@ -371,16 +393,20 @@ export async function handleAdminRoutes(
     const offset = intParam(url, "offset", { fallback: 0, min: 0 });
     if (offset instanceof Response) return offset;
 
+    // Scoped for the same reason as /patterns: this queue prints memory content,
+    // and an admin gets a 404 from GET /entry for a member's personal row. The
+    // reviewer confirms or corrects their own claims, not a colleague's.
+    const scope = scopeWhere(auth);
     const [rows, countRow] = await Promise.all([
       env.DB.prepare(
         `SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated
          FROM entries
-         WHERE ${STALE_REVIEW_SQL}
+         WHERE ${STALE_REVIEW_SQL} AND ${scope.clause}
          ORDER BY COALESCE(updated_at, created_at) ASC LIMIT ? OFFSET ?`,
-      ).bind(limit, offset).all(),
+      ).bind(...scope.bindings, limit, offset).all(),
       env.DB.prepare(
-        `SELECT COUNT(*) AS n FROM entries WHERE ${STALE_REVIEW_SQL}`,
-      ).first() as Promise<Record<string, any> | null>,
+        `SELECT COUNT(*) AS n FROM entries WHERE ${STALE_REVIEW_SQL} AND ${scope.clause}`,
+      ).bind(...scope.bindings).first() as Promise<Record<string, any> | null>,
     ]);
 
     return json({
@@ -411,7 +437,7 @@ export async function handleAdminRoutes(
   // the actual complaint this answers, and doing it as N single requests would
   // be N round trips against a Worker that gets ~50 D1 queries per invocation.
   if (url.pathname === "/patterns/resolve" && request.method === "POST") {
-    const auth = await requireAdmin(request, env);
+    const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
 
     let body: { id?: string; ids?: unknown; action?: string };
@@ -421,6 +447,13 @@ export async function handleAdminRoutes(
     if (action !== "confirm" && action !== "dismiss") {
       return json({ ok: false, error: `action must be "confirm" or "dismiss"` }, 400);
     }
+
+    // Scoped like the /patterns queue these ids come from. Confirm promotes a
+    // memory and dismiss deprecates it and drops its vectors, so an unscoped
+    // lookup let an admin rewrite rows in a member's personal workspace — rows
+    // the same token cannot read through GET /entry.
+    const scope = scopeWhere(auth);
+    const bulkLimit = D1_MAX_BOUND_PARAMS - scope.bindings.length;
 
     const single = body.id?.trim();
     let ids: string[];
@@ -436,8 +469,8 @@ export async function handleAdminRoutes(
       // whole of the SELECT's binding. The client pages; this refuses rather
       // than silently truncating, because a silent truncation here reads as
       // "those patterns were resolved" when they were not.
-      if (ids.length > MAX_PATTERN_BULK) {
-        return json({ ok: false, error: `ids must not exceed ${MAX_PATTERN_BULK} per request` }, 400);
+      if (ids.length > bulkLimit) {
+        return json({ ok: false, error: `ids must not exceed ${bulkLimit} per request` }, 400);
       }
     } else {
       if (!single) return json({ ok: false, error: "id is required" }, 400);
@@ -446,8 +479,8 @@ export async function handleAdminRoutes(
 
     const placeholders = ids.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, tags, vector_ids FROM entries WHERE id IN (${placeholders})`,
-    ).bind(...ids).all();
+      `SELECT id, tags, vector_ids FROM entries WHERE id IN (${placeholders}) AND ${scope.clause}`,
+    ).bind(...ids, ...scope.bindings).all();
     const found = results as Record<string, any>[];
 
     // The single-id form keeps its precise errors, because a client asking about

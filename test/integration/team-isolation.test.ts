@@ -93,6 +93,12 @@ beforeEach(async () => {
     "Bob private: interviewing elsewhere next week", ["job-hunting"]);
   seed(ids.shared, roots.companyWorkspaceId, roots.ownerUserId,
     "Company handbook: all releases ship behind a flag", ["handbook"]);
+
+  // Two rows of Bob's that only the maintenance queues would ever surface.
+  seed("bob-stale", bob.member.personalWorkspaceId, bob.member.userId,
+    "Bob private: my therapist appointment is Tuesdays at 4", ["stale:as-of", "health"]);
+  seed("bob-insight", bob.member.personalWorkspaceId, bob.member.userId,
+    "Bob private insight: considering leaving the company", ["auto-insight"]);
 });
 
 afterEach(() => sqlite?.close());
@@ -109,8 +115,9 @@ describe("cross-user isolation — read surfaces", () => {
   });
 
   it("GET /count counts only the readable set", async () => {
-    // Bob: his own row plus the company row. Not Alice's.
-    expect((await jsonOf(await call("GET", "/count", bobToken))).count).toBe(2);
+    // Bob: his three own rows (private, stale-flagged, pending insight) plus the
+    // company row. Not Alice's.
+    expect((await jsonOf(await call("GET", "/count", bobToken))).count).toBe(4);
   });
 
   it("GET /entry refuses a colleague's id outright", async () => {
@@ -150,7 +157,7 @@ describe("cross-user isolation — read surfaces", () => {
     // last, so an absence check could pass by luck on a run that was still broken.
     await call("GET", "/tags", ALICE);
     expect(await jsonOf(await call("GET", "/tags", bobToken)))
-      .toEqual(["handbook", "job-hunting"]);
+      .toEqual(["auto-insight", "handbook", "health", "job-hunting", "stale:as-of"]);
 
     // And the reverse order, for the same reason.
     expect(await jsonOf(await call("GET", "/tags", ALICE)))
@@ -186,7 +193,43 @@ describe("cross-user isolation — read surfaces", () => {
     // The repair counts stay corpus-wide: POST /vectorize-pending and
     // /classify-pending act on every workspace, so a scoped backlog would leave
     // rows unrepairable with nothing on screen to say so. Three entries exist.
-    expect(stats.unclassified).toBe(3);
+    expect(stats.unclassified).toBe(5);
+  });
+
+  it("the admin's review queues never print a member's private memory", async () => {
+    // The sharpest form of the rule: the SAME admin token gets a 404 from
+    // /entry for these rows, and both queues were handing back their full text.
+    // /stale prints the memory so it can be re-confirmed; /patterns prints an
+    // insight drawn from the memories it cites. Neither is a licence to read a
+    // colleague's personal workspace — nothing else in this codebase treats
+    // "admin" that way.
+    expect((await call("GET", "/entry?id=bob-stale", ALICE)).status).toBe(404);
+
+    const stale = await jsonOf(await call("GET", "/stale", ALICE));
+    expect(JSON.stringify(stale)).not.toContain("therapist");
+    expect(stale.total).toBe(0);
+
+    const patterns = await jsonOf(await call("GET", "/patterns", ALICE));
+    expect(JSON.stringify(patterns)).not.toContain("leaving the company");
+    expect(patterns.total).toBe(0);
+  });
+
+  it("the queues still show the caller their OWN flagged memories", async () => {
+    // The guard must not empty the queue for the person it is built for.
+    const stale = await jsonOf(await call("GET", "/stale", bobToken));
+    expect(stale.total).toBe(1);
+    expect(JSON.stringify(stale)).toContain("therapist");
+  });
+
+  it("POST /patterns/resolve cannot confirm or dismiss a member's insight", async () => {
+    // Dismiss deprecates the row and drops its vectors; confirm promotes it into
+    // recall. Both are writes into a workspace the caller cannot read.
+    const res = await call("POST", "/patterns/resolve", ALICE, { id: "bob-insight", action: "dismiss" });
+    expect(res.status).toBe(404);
+
+    const tags = await sqlite.db.prepare(`SELECT tags FROM entries WHERE id = 'bob-insight'`)
+      .first() as { tags: string };
+    expect(tags.tags).not.toContain("status:deprecated");
   });
 
   it("GET /graph draws only nodes the caller can read", async () => {
