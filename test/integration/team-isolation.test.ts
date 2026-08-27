@@ -48,14 +48,22 @@ let sqlite: SqliteD1;
 let env: Env;
 let ids: { alicePrivate: string; bobPrivate: string; shared: string };
 
-/** Insert directly: the unit under test is who can read the row, not how it got there. */
+/**
+ * Insert directly: the unit under test is who can read the row, not how it got
+ * there. Written as of an hour ago, not the epoch — /brief's topic query is
+ * windowed on created_at, and epoch-dated rows fall outside it, which would make
+ * the topic-chip assertion below pass against an empty list whether the query was
+ * scoped or not.
+ */
+const SEEDED_AT = Date.now() - 3600_000;
+
 function seed(id: string, workspaceId: string, actorId: string, content: string, tags: string[]) {
   sqlite.db
     .prepare(
       `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id)
-       VALUES (?, ?, ?, 'test', 1000, 1000, '[]', ?, ?)`,
+       VALUES (?, ?, ?, 'test', ?, ?, '[]', ?, ?)`,
     )
-    .bind(id, content, JSON.stringify(tags), workspaceId, actorId)
+    .bind(id, content, JSON.stringify(tags), SEEDED_AT, SEEDED_AT, workspaceId, actorId)
     .run();
 }
 
@@ -147,6 +155,38 @@ describe("cross-user isolation — read surfaces", () => {
     // And the reverse order, for the same reason.
     expect(await jsonOf(await call("GET", "/tags", ALICE)))
       .toEqual(["handbook", "legal", "sensitive"]);
+  });
+
+  it("GET /brief's topic chips name only the caller's own tags", async () => {
+    // The Home screen renders `topics` straight into chips. This was the one query
+    // in /brief's block without a scope clause, so a member's front page listed
+    // colleagues' private tag names beside counts that came from scoped queries.
+    const brief = await jsonOf(await call("GET", "/brief", bobToken));
+    const tags = (brief.topics ?? []).map((t: any) => t.tag);
+    // Positive first: an empty list would satisfy every negative below while
+    // proving nothing, and the window this query applies makes that easy to hit.
+    expect(tags).toEqual(expect.arrayContaining(["job-hunting", "handbook"]));
+    expect(tags).not.toContain("legal");
+    expect(tags).not.toContain("sensitive");
+
+    const adminBrief = await jsonOf(await call("GET", "/brief", ALICE));
+    expect((adminBrief.topics ?? []).map((t: any) => t.tag)).not.toContain("job-hunting");
+  });
+
+  it("GET /stats reports the admin's own content, and the deployment's repair backlog", async () => {
+    // Two questions, two scopes. `brain stats` in the CLI prints top_tags under
+    // "Top tags" and count under "Total memories", so both are content and are
+    // scoped — an admin's terminal must not list a member's private tag names,
+    // and the total must agree with the /count the same token gets.
+    const stats = await jsonOf(await call("GET", "/stats", ALICE));
+    expect(stats.top_tags).not.toContain("job-hunting");
+    expect(stats.top_tags).toEqual(expect.arrayContaining(["legal", "sensitive"]));
+    expect(stats.count).toBe((await jsonOf(await call("GET", "/count", ALICE))).count);
+
+    // The repair counts stay corpus-wide: POST /vectorize-pending and
+    // /classify-pending act on every workspace, so a scoped backlog would leave
+    // rows unrepairable with nothing on screen to say so. Three entries exist.
+    expect(stats.unclassified).toBe(3);
   });
 
   it("GET /graph draws only nodes the caller can read", async () => {

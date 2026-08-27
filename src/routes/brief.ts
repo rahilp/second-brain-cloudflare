@@ -122,6 +122,12 @@ export async function handleBriefRoutes(
     // What the brain has been about this week, in the user's own vocabulary.
     // Same exclusions as /stats: the reserved namespaces are bookkeeping, and
     // hex-shaped tags are commit SHAs and colour codes a #token scan collected.
+    // Scoped like every sibling query here. It was the one in this block that
+    // was not, and the omission was visible on the front page: the topic chips
+    // are rendered straight from this list, so a member's Home screen named
+    // their colleagues' private tags back at them — "job-hunting" and
+    // "confidential" alongside their own — while the counts beside them came
+    // from correctly scoped queries and said something different.
     env.DB.prepare(
       `SELECT value AS tag, COUNT(*) AS n FROM entries, json_each(entries.tags)
        WHERE entries.created_at >= ?
@@ -129,8 +135,9 @@ export async function handleBriefRoutes(
          AND value NOT LIKE 'volatility:%' AND value NOT LIKE 'stale:%'
          AND value NOT IN ('auto-pattern', 'auto-insight', 'synthesized', 'rolled-up', 'duplicate-candidate')
          AND value NOT GLOB '[0-9]*'
+         AND ${scope.clause}
        GROUP BY value ORDER BY n DESC LIMIT 6`,
-    ).bind(now - TOPIC_WINDOW_MS).all(),
+    ).bind(now - TOPIC_WINDOW_MS, ...scope.bindings).all(),
 
     // The two things that make recall quietly worse, counted together so they
     // cost one query: memories recall cannot see, and memories the staleness

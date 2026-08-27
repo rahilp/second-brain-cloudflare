@@ -4,6 +4,7 @@ import { SB_VERSION } from "../env";
 import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "../compression/eligibility";
 import { intParam, json } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
+import { scopeWhere } from "../lib/scope";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
 import { storeEntry } from "../capture/store";
@@ -184,16 +185,35 @@ export async function handleAdminRoutes(
     const auth = await requireAdmin(request, env);
     if (auth instanceof Response) return auth;
     const graceCutoff = Date.now() - graceMs(env);
+    // This route answers two different questions and they need two different
+    // scopes, which is why the first query carries the scope as a CASE rather
+    // than a WHERE.
+    //
+    //  - Deployment health — `unvectorized`, `unclassified`, `digest_candidates`
+    //    — stays corpus-wide. They drive repairs (POST /vectorize-pending,
+    //    /classify-pending) and the nightly compression pass, all of which act on
+    //    every workspace, so a scoped count would under-report the work and leave
+    //    rows unrepairable with no sign of it.
+    //
+    //  - "What is my brain about" — `count`, `avg_importance`, `top_tags` — is
+    //    content, and is scoped to the admin's own readable set. Unscoped, it
+    //    reported colleagues' memories as the admin's own: `brain stats` in the
+    //    CLI prints `top_tags` under "Top tags", so an admin's terminal listed
+    //    members' private tag names, and "Total memories" disagreed with the
+    //    /count and /list the same token got back.
+    const scope = scopeWhere(auth);
     const [summary, tagRows, candidateRows] = await Promise.all([
       env.DB.prepare(
         // unvectorized skips deprecated entries: their vectors were deleted
         // deliberately, so counting them here offered the user a repair for
         // something that is not broken.
-        `SELECT COUNT(*) as count, AVG(importance_score) as avg_importance,
-         SUM(CASE WHEN vector_ids = '[]' AND created_at < ? AND ${INDEXABLE_SQL} THEN 1 ELSE 0 END) as unvectorized,
-         SUM(CASE WHEN tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%' THEN 1 ELSE 0 END) as unclassified
+        `SELECT
+           SUM(CASE WHEN ${scope.clause} THEN 1 ELSE 0 END) as count,
+           AVG(CASE WHEN ${scope.clause} THEN importance_score END) as avg_importance,
+           SUM(CASE WHEN vector_ids = '[]' AND created_at < ? AND ${INDEXABLE_SQL} THEN 1 ELSE 0 END) as unvectorized,
+           SUM(CASE WHEN tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%' THEN 1 ELSE 0 END) as unclassified
          FROM entries`
-      ).bind(graceCutoff).first() as Promise<Record<string, any> | null>,
+      ).bind(...scope.bindings, ...scope.bindings, graceCutoff).first() as Promise<Record<string, any> | null>,
       // Reserved namespaces and pipeline markers are excluded here rather than
       // hidden in the client: this panel answers "what is my brain about?", and
       // kind:episodic outranked every real topic on a production brain. Numeric
@@ -205,8 +225,9 @@ export async function handleAdminRoutes(
            AND value NOT LIKE 'volatility:%' AND value NOT LIKE 'stale:%'
            AND value NOT IN ('auto-pattern', 'auto-insight', 'synthesized', 'rolled-up', 'duplicate-candidate')
            AND value NOT GLOB '[0-9]*'
+           AND ${scope.clause}
          GROUP BY value ORDER BY n DESC LIMIT 5`,
-      ).all(),
+      ).bind(...scope.bindings).all(),
       env.DB.prepare(`
         SELECT value as tag, COUNT(*) as count
         FROM entries, json_each(entries.tags)

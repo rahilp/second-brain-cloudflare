@@ -413,13 +413,24 @@ export class D1Mock {
         // rather than a row — pre-existing, and those paths are covered against real SQLite
         // in test/integration/embedding-migration.test.ts. Worth knowing before adding a
         // fourth caller and trusting the double.
-        if (s.includes("COUNT(*) as count") && s.includes("AVG(importance_score)")) {
+        // GET /stats's summary. Matched on the two aggregate names that are stable
+        // across its scoped and unscoped halves: `count`/`avg_importance` carry a
+        // `CASE WHEN workspace_id IN (…)` so the admin's content totals agree with
+        // /count, while unvectorized/unclassified stay corpus-wide for the repair
+        // panel. This double ignores bindings, so it cannot see that scoping at all
+        // — the assertion that it works lives in test/integration/team-isolation.ts
+        // against real SQLite. Here the brain is single-user, where both halves
+        // agree, so counting every entry is the faithful answer.
+        if (s.includes("as unvectorized") && s.includes("as unclassified") && s.includes("AVG(")) {
           const count = db.entries.length;
           const scored = db.entries.filter((e: any) => typeof e.importance_score === "number");
           const avg_importance = scored.length > 0
             ? scored.reduce((sum: number, e: any) => sum + e.importance_score, 0) / scored.length
             : null;
-          const cutoff = args.length > 0 ? Number(args[0]) : undefined;
+          // The grace cutoff is the only numeric bind in this statement; the scope
+          // bindings around it are workspace-id strings.
+          const numeric = args.filter((a: any) => typeof a === "number");
+          const cutoff = numeric.length > 0 ? Number(numeric[numeric.length - 1]) : undefined;
           const unvectorized = cutoff !== undefined
             ? db.entries.filter((e: any) => e.vector_ids === '[]' && e.created_at < cutoff).length
             : 0;
