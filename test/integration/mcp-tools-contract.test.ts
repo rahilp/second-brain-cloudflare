@@ -341,3 +341,23 @@ describe("tool definitions have a single source of truth", () => {
     expect(source.match(/registerTool\(/g) ?? []).toHaveLength(EXPECTED_TOOLS.length);
   });
 });
+
+/**
+ * The README's "Memory tools" table is the first thing a new user reads, and it
+ * is the one place the tool list is written out by hand. It described six tools
+ * for the whole of v3's development while the server exposed twelve — `share`,
+ * the tool the team edition is built around, was never mentioned. Nothing failed,
+ * because nothing was looking.
+ */
+describe("README's memory-tools table matches the server", () => {
+  const README = resolve(import.meta.dirname, "../../README.md");
+
+  it("names every tool the MCP server exposes, and no others", () => {
+    const readme = readFileSync(README, "utf8");
+    const table = readme.slice(readme.indexOf("### Memory tools"));
+    const documented = [...table.matchAll(/^\| `([a-z_]+)`\s*\|/gm)].map(m => m[1]);
+
+    expect(documented.length).toBeGreaterThan(0);
+    expect([...documented].sort()).toEqual([...EXPECTED_TOOLS].sort());
+  });
+});

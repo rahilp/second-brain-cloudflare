@@ -25,6 +25,26 @@ Prefer to run it yourself? Use the one-click **[Deploy to Cloudflare](https://de
 >
 > <a href="https://www.producthunt.com/products/second-brain-cloudflare?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_campaign=badge-second-brain-for-ai" target="_blank" rel="noopener noreferrer"><img alt="Second Brain for AI: Persistent memory for Claude, ChatGPT, and Cursor" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1151393&theme=light&period=daily&t=1780357463637"></a>
 
+## What's new in v3 — Team Edition
+
+Second Brain has always been one person's memory. It can now be a team's, without stopping being yours.
+
+* **Two layers, not one shared pile.** Every member gets a **personal** workspace nobody else can read, plus one **company** layer everyone on the brain can see. A memory is private by default and becomes shared only when someone deliberately shares it. Recall, the memory list, the graph, backups, and the tag filter all show you your own layer plus the shared one — never a colleague's private memories.
+
+* **Sharing is a move, not a copy.** Share a memory and it moves to the company layer as one canonical row, so there is never a second copy drifting out of date. Its connections move with it. Only the person who wrote it — or an admin — can move it back. Every share and un-share is recorded.
+
+* **Attribution on shared memories.** A memory from the company layer shows who wrote it, in the dashboard and in recall results your AI tools see. Your own memories stay unlabelled, because there is nothing to disambiguate.
+
+* **Shared memories have an author lock.** Anyone on the team can read a shared memory. Editing, deleting, or un-sharing it stays with its author and admins, so a shared decision cannot be quietly rewritten by someone who did not make it.
+
+* **A Team tab in the dashboard.** Admins add members, issue and reset sign-in tokens, suspend and restore access, and remove people. Each member's row shows how many private memories they hold — a count, never the contents. The tab only appears if you are an admin.
+
+* **Capture visibility is a policy, not a habit.** Admins set where new captures land by default for the whole org — personal or company — and can override it per member. Anyone can still say explicitly where a given memory goes, and an explicit choice always wins.
+
+* **Every client signs in as a person.** Members get their own token and use it everywhere the owner uses theirs: the dashboard, the CLI, the browser extension, the Obsidian plugin, and any MCP client through the normal OAuth flow. What each of them can see is decided by who signed in, not by which tool asked.
+
+* **Upgrading keeps everything private.** A brain from v2 becomes a team brain of one. Every existing memory moves into the owner's personal workspace, visible to nobody else, and nothing changes on screen until you add a member. The choice to run a team brain is offered once, in the desktop app, and it is one-way.
+
 ## What's new in v2.3
 
 * **A home screen instead of an empty search box.** Open the dashboard and it shows what your brain has been doing: what arrived in the last 48 hours and where it came from, a two-week activity strip, the topics you have been writing about, and one older memory worth re-reading. On a quiet day it says almost nothing rather than inventing news.
@@ -96,7 +116,18 @@ can surface the correct memory even when the original note used completely diffe
 | `update`      | Replace an existing memory                               |
 | `recall`      | Find memories by meaning rather than exact wording       |
 | `list_recent` | Browse recently saved memories                           |
+| `get`         | Read one memory by id                                    |
 | `forget`      | Permanently delete a memory                              |
+| `set_status`  | Mark a memory current, superseded, or retired            |
+| `link`        | Connect two memories explicitly                          |
+| `unlink`      | Remove a connection                                      |
+| `connections` | List what a memory is connected to                       |
+| `share`       | Move a memory between your private and the company layer |
+
+On a team brain, `remember`, `recall`, and `list_recent` also take a `workspace`
+argument (`personal` or `company`) when you want to be explicit about where a
+memory goes or where to look. Leave it off and your team's configured default
+decides where captures land, while searches cover both layers.
 
 ## Save from anywhere
 
@@ -344,6 +375,83 @@ npm run deploy
 
 `npm run vectors:create` creates the Vectorize index (384 dimensions, cosine). Wrangler then provisions the remaining Cloudflare resources automatically and fills in the required values in `wrangler.jsonc`. Then connect your AI clients using the same steps as Option 2, step 3.
 
+## Running it with your team
+
+A Second Brain is a team brain from the moment it has a second member. There is
+nothing to buy and nothing separate to deploy — the same Worker in the same
+Cloudflare account serves everyone.
+
+### The two layers
+
+Every member has a **personal** workspace and shares one **company** layer with
+everyone else.
+
+| | Who can read it | Who can edit or delete it |
+| --- | --- | --- |
+| **Personal** | Only you | Only you |
+| **Company** | Everyone on the brain | The author, or an admin |
+
+Nothing crosses between members except through the company layer, and nothing
+reaches the company layer except by someone putting it there. An admin
+administers the team — they do not get a window into anyone's personal
+workspace.
+
+### Adding someone
+
+1. Open the dashboard and go to the **Team** tab. (It only appears if you are an
+   admin.)
+2. **Add member** — a name, and an email if you want one for your own reference.
+3. Copy the **one-time sign-in token** it shows you and send it to them. It is
+   shown once and never again; if it goes missing, use **Reset token**.
+
+That token is theirs everywhere yours is yours: the dashboard, the CLI, the
+browser extension, the Obsidian plugin, and any MCP client through the normal
+connect flow. Each of them sees their own memories plus the shared layer.
+
+### Sharing a memory
+
+* **In the dashboard** — the share control on any memory card.
+* **From an AI client** — the `share` tool, or `workspace: "company"` when you
+  first save it.
+* **Un-sharing** moves it back to personal, and is limited to the memory's author
+  or an admin.
+
+Sharing **moves** a memory rather than copying it, so a shared decision is one
+row everyone reads, not several that drift apart. Connections move with it.
+
+### Where new captures land
+
+Private by default. Three things decide it, in order:
+
+1. What the request said (`workspace: "personal" | "company"`), which always wins.
+2. That member's own setting, if an admin set one for them (**Team → Captures**).
+3. The org default, set by an admin under **New captures default to**.
+
+### Managing people
+
+* **Suspend** cuts off access immediately and keeps everything; **Restore**
+  returns it.
+* **Reset token** issues a new one and stops the old one working.
+* **Remove** deletes that person's private memories for good. Anything they
+  shared with the team stays, because it belongs to the team now. You cannot
+  remove yourself, or the last remaining admin.
+
+### Integrations on a team brain
+
+Notion, calendar, and email connections are one connection per provider for the
+whole brain, so connecting, syncing and disconnecting are admin actions. Members
+can see what is connected and when it last synced. What a connection mirrors goes
+to the owner's personal workspace by default; an admin can send it to the company
+layer instead when connecting it.
+
+### Coming from v2
+
+Your existing brain becomes a team brain of one. Every memory you already have
+moves into your personal workspace, where nobody else can read it, and nothing
+looks different until you add someone. The desktop app asks once whether anyone
+else will use this brain; that choice is one-way, and it never touches your
+memories either way.
+
 ## Documentation
 
 * [Setup Guide](../../wiki/Setup-Guide): Deploy the Worker, configure authentication, and connect AI clients
@@ -353,6 +461,7 @@ npm run deploy
 * [Web UI](../../wiki/Web-UI): Dashboard and mobile interface
 * [Obsidian Plugin](../../wiki/Obsidian-Plugin): Installation, configuration, and sync modes
 * [API Reference](../../wiki/API-Reference): REST and MCP endpoints
+* [Running it with your team](#running-it-with-your-team): Layers, members, sharing, and capture visibility
 
 ## Technology
 
