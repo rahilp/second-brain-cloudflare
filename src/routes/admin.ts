@@ -19,6 +19,7 @@ import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
+import { adminAuditEvent } from "../lib/admin-audit";
 import { createMember, listMembers, listTeamWorkspaces, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
@@ -59,6 +60,15 @@ export async function handleAdminRoutes(
         email: body.email,
         role: body.role as "admin" | "member" | undefined,
       });
+      // Never the token or its hash: this trail is read by more people than the
+      // token is, and a role plus "was an email supplied" is the whole of what an
+      // auditor needs to reconstruct the decision.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: member.userId,
+        event: "member_created",
+        payload: { role: member.role, hasEmail: !!member.email },
+      });
       // The token is returned exactly once — only its hash is stored.
       return json({ ok: true, member, token }, 201);
     } catch (e) {
@@ -75,6 +85,13 @@ export async function handleAdminRoutes(
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     try {
       const token = await rotateMemberToken(env, body.id.trim());
+      // Deliberately an empty payload: that the rotation happened, to whom and by
+      // whom is the whole record. The new secret is not part of it.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: body.id.trim(),
+        event: "member_token_rotated",
+      });
       return json({ ok: true, id: body.id.trim(), token });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
@@ -89,8 +106,16 @@ export async function handleAdminRoutes(
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     try {
-      await setMemberSuspended(env, auth.userId, body.id.trim(), body.suspended !== false);
-      return json({ ok: true, id: body.id.trim(), suspended: body.suspended !== false });
+      const suspended = body.suspended !== false;
+      await setMemberSuspended(env, auth.userId, body.id.trim(), suspended);
+      // Two event names rather than one with a boolean: an auditor scanning for
+      // "who lost access" should not have to read a payload to find out.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: body.id.trim(),
+        event: suspended ? "member_suspended" : "member_unsuspended",
+      });
+      return json({ ok: true, id: body.id.trim(), suspended });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
       throw e;
@@ -111,6 +136,14 @@ export async function handleAdminRoutes(
     }
     try {
       await setMemberDefaultShare(env, body.id.trim(), body.default as "personal" | "company" | "inherit");
+      // Where a member's future captures land is a visibility decision, so the
+      // value set is the point of the record.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: body.id.trim(),
+        event: "member_default_share_set",
+        payload: { default: body.default },
+      });
       return json({ ok: true, id: body.id.trim(), default: body.default });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
@@ -131,6 +164,17 @@ export async function handleAdminRoutes(
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     try {
       const result = await removeMember(env, auth.userId, body.id.trim());
+      // Audited before the Vectorize delete, not after: the D1 rows are already
+      // gone by here, so a Vectorize failure must not also cost the record of the
+      // destruction. The counts, never the content — this is the one
+      // administration action that destroys memories, so how many is what a later
+      // reader needs.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: body.id.trim(),
+        event: "member_removed",
+        payload: { removedEntries: result.removedEntries, removedVectors: result.vectorIds.length },
+      });
       if (result.vectorIds.length) {
         await env.VECTORIZE.deleteByIds(result.vectorIds);
       }
@@ -184,6 +228,15 @@ export async function handleAdminRoutes(
     }
     try {
       const name = await renameTeamWorkspace(env, id, body.name ?? "");
+      // The only administration event whose subject is a workspace rather than a
+      // member, so target_user_id stays empty and workspace_id carries the team.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: "",
+        workspaceId: id,
+        event: "team_renamed",
+        payload: { name },
+      });
       return json({ ok: true, id, name });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
@@ -203,6 +256,15 @@ export async function handleAdminRoutes(
     }
     try {
       await setMemberProfile(env, targetId, { name: body.name, email: body.email });
+      // `self` separates a member renaming themselves — routine, and the common
+      // case — from an admin renaming someone else, which is administration.
+      // The new name and email are omitted: they are member-supplied content.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: targetId,
+        event: "member_profile_updated",
+        payload: { self: targetId === auth.userId },
+      });
       return json({ ok: true, id: targetId });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
