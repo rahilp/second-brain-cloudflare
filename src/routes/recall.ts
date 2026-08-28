@@ -82,14 +82,22 @@ export async function handleRecallRoutes(
     );
     return json(rows.map((r) => {
       const layer = layerOf(r.workspace_id);
-      const out: Record<string, unknown> = { ...r, workspace: layer };
-      if (layer === "company") {
-        out.actor_name = resolveActorLabel(String(r.actor_id ?? ""), labelMap, {
-          viewerId: identity.userId,
-          source: String(r.source ?? ""),
-        });
-      }
-      return out;
+      // actor_name is always present, null where there is no author to name —
+      // the same contract GET /recall's results carry. It used to be added only
+      // on company rows, which made the KEY's existence depend on whether the
+      // page happened to contain a shared memory: on a personal brain it never
+      // appeared at all, so a client could not tell "nobody wrote this" from
+      // "this deployment does not report authors".
+      return {
+        ...r,
+        workspace: layer,
+        actor_name: layer === "company"
+          ? resolveActorLabel(String(r.actor_id ?? ""), labelMap, {
+              viewerId: identity.userId,
+              source: String(r.source ?? ""),
+            })
+          : null,
+      };
     }));
   }
 

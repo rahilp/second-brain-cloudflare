@@ -8,18 +8,19 @@ import { appendToEntry, updateEntryContent } from "../capture/store";
 import { applyStatus, forgetEntry } from "../capture/lifecycle";
 import { moveEntry } from "../capture/share";
 import { auditEvent } from "../lib/audit";
+import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { createEdge, deleteEdge, edgeLabel } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
 import type { Identity } from "../lib/identity";
 import { assertCanEditContent, assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
-import { scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
+import { isCompanyWorkspace, scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
 import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/volatility";
 import { recallEntries } from "../recall/search";
-import { renderRecallText } from "../recall/render";
+import { renderRecallText, memoryHeader } from "../recall/render";
 import { RECALL_OUTPUT_BUDGET, SNIPPET_MAX_CHARS, snippetOf, truncationNote } from "../recall/snippet";
 
 // Asking the calling model for this is the whole point: it has already read the content
@@ -133,6 +134,42 @@ const LIST_RECENT_DESCRIPTION =
   + "or to locate an entry by time. It returns entries by recency, not by semantic relevance — when you want "
   + "memories that match a meaning, use recall. Long entries are shortened: a result ending in a [truncated …] "
   + "marker is PARTIAL, so call get(id) for its full text.";
+
+/** Which layer a raw entries row is in, from the caller's point of view. */
+function layerOfRow(
+  identity: Identity | undefined,
+  row: Record<string, any>,
+): "personal" | "company" | "system" {
+  if (!identity) return "system";
+  if (row.workspace_id === identity.personalWorkspaceId) return "personal";
+  return isCompanyWorkspace(identity, row.workspace_id) ? "company" : "system";
+}
+
+/**
+ * Resolve author names for a page of rows, in one query, and only when a company
+ * row is actually present.
+ *
+ * The name is information only on the shared layer — a personal row is the
+ * reader's own by definition — so a listing with nothing shared on it must not
+ * spend a subrequest to learn that. These tools run inside the same 50-subrequest
+ * invocation budget as everything else.
+ */
+async function labelsForRows(
+  env: Env,
+  identity: Identity | undefined,
+  rows: Record<string, any>[],
+): Promise<(row: Record<string, any>) => string | null> {
+  const company = rows.filter((r) => layerOfRow(identity, r) === "company");
+  if (!company.length) return () => null;
+  const map = await lookupActorLabels(env, company.map((r) => String(r.actor_id ?? "")));
+  return (row) =>
+    layerOfRow(identity, row) === "company"
+      ? resolveActorLabel(String(row.actor_id ?? ""), map, {
+          viewerId: identity?.userId,
+          source: String(row.source ?? ""),
+        })
+      : null;
+}
 
 export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Identity): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
@@ -412,6 +449,8 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
     async ({ n, tag, after, before, workspace }) => {
       // Same inline scoping as GET /list (src/routes/recall.ts): the filter
       // builder has no hook of its own, and its SQL always ends in ORDER BY.
+      // workspace_id and actor_id come back so the header can say which layer a
+      // row is in and who wrote it — the same two facts recall reports.
       let { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
       if (identity) {
         const scope = scopeWhere(identity, workspace);
@@ -433,14 +472,21 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       let used = 0;
       let omitted = 0;
       const rows = results as Record<string, any>[];
+      // One lookup for the page, and only when a company row is actually on it —
+      // a personal-only listing must not spend a subrequest naming nobody.
+      const labels = await labelsForRows(env, identity, rows);
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
-        const date = new Date(row.created_at as number).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
         const tags: string[] = JSON.parse(row.tags ?? "[]");
-        const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
         const s = snippetOf(row.content as string, (await resolveConfig(env)).SNIPPET_MAX_CHARS);
         const body = s.truncated ? `${s.text}${truncationNote(row.id as string, s)}` : s.text;
-        const block = `${i + 1}. [${date} · ${row.source}${tagStr}]\nID: ${row.id as string}\n${body}`;
+        const block = `${i + 1}. [${memoryHeader({
+          createdAt: row.created_at as number,
+          source: row.source as string,
+          tags,
+          workspace: layerOfRow(identity, row),
+          actorName: labels(row),
+        })}]\nID: ${row.id as string}\n${body}`;
         if (blocks.length && used + block.length > budgetCfg.RECALL_OUTPUT_BUDGET) {
           omitted = rows.length - i;
           break;
@@ -469,16 +515,24 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
     async ({ id }) => {
       const scope = identity ? scopeWhere(identity) : null;
       const row = await env.DB.prepare(
-        `SELECT id, content, tags, source, created_at FROM entries WHERE id = ?${scope ? ` AND ${scope.clause}` : ""}`
+        `SELECT id, content, tags, source, created_at, workspace_id, actor_id FROM entries WHERE id = ?${scope ? ` AND ${scope.clause}` : ""}`
       ).bind(...(scope ? [id, ...scope.bindings] : [id])).first() as Record<string, any> | null;
       if (!row) {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       }
       const tags: string[] = JSON.parse(row.tags ?? "[]");
-      const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
-      const date = new Date(row.created_at as number).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+      // get is the tool an agent calls before acting on a memory, so it is the
+      // one that can least afford to omit "this is shared, and someone else
+      // wrote it".
+      const labels = await labelsForRows(env, identity, [row]);
       return {
-        content: [{ type: "text", text: `[${date} · ${row.source}${tagStr}]\nID: ${row.id}\n${row.content}` }],
+        content: [{ type: "text", text: `[${memoryHeader({
+          createdAt: row.created_at as number,
+          source: row.source as string,
+          tags,
+          workspace: layerOfRow(identity, row),
+          actorName: labels(row),
+        })}]\nID: ${row.id}\n${row.content}` }],
       };
     }
   );
