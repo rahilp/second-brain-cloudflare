@@ -25,7 +25,8 @@ const ALL_COLUMNS = MIGRATION.map(([column]) => column);
 const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue",
   // Team edition (v3). idx_entries_workspace_created is deliberately last-applied
   // (POST_COLUMN_OBJECTS): it indexes a column that arrives via ALTER.
-  "workspaces", "idx_workspaces_kind", "users", "idx_users_token_hash", "memberships", "entry_events", "idx_entry_events_entry", "maintenance_cursor", "idx_entries_workspace_created"];
+  "workspaces", "idx_workspaces_kind", "users", "idx_users_token_hash", "memberships", "entry_events", "idx_entry_events_entry",
+  "admin_events", "idx_admin_events_created", "maintenance_cursor", "idx_entries_workspace_created"];
 // Columns in the base CREATE of entries since v3 — present on every brain init touches.
 const BASE_COLUMNS = ["id", "content", "tags", "source", "created_at", "vector_ids", "workspace_id", "actor_id"];
 /** Every object + column a fully-migrated brain reports through the probe. */
@@ -168,7 +169,7 @@ describe("initializeDatabase updated_at migration", () => {
       resetDatabaseInit();
       await initializeDatabase(env);
 
-      expect(migrated).toBe(29); // one-off cost of creating a brain: 17 objects + 11 ALTERs + 1 post-column index
+      expect(migrated).toBe(31); // one-off cost of creating a brain: 19 objects + 11 ALTERs + 1 post-column index
       expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
       expect(prepared).toHaveLength(3); // one probe each, and nothing else
       expect(touchesEntries(execd)).toEqual([]);
@@ -408,7 +409,7 @@ describe("initializeDatabase against real SQLite", () => {
     resetDatabaseInit(); // a second cold isolate against the brain the first one migrated
     await initializeDatabase(envFor(d1));
 
-    expect(cold).toBe(30); // one probe, then the 29 statements a new brain needs (17 objects + 11 ALTERs + 1 post-column index)
+    expect(cold).toBe(32); // one probe, then the 31 statements a new brain needs (19 objects + 11 ALTERs + 1 post-column index)
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });

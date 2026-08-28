@@ -124,6 +124,20 @@ CREATE TABLE IF NOT EXISTS entry_events (
 
 CREATE INDEX IF NOT EXISTS idx_entry_events_entry ON entry_events(entry_id, created_at DESC);
 
+-- Immutable administration audit trail. Same contract as entry_events:
+-- application code only ever INSERTs here. Consumed by Phase 4.2.
+CREATE TABLE IF NOT EXISTS admin_events (
+  id             TEXT PRIMARY KEY,
+  actor_id       TEXT NOT NULL DEFAULT '',
+  target_user_id TEXT NOT NULL DEFAULT '',
+  workspace_id   TEXT NOT NULL DEFAULT '',
+  event          TEXT NOT NULL,
+  payload        TEXT NOT NULL DEFAULT '{}',
+  created_at     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_events_created ON admin_events(created_at DESC);
+
 -- Single-row table driving the nightly round-robin over workspaces so free-plan
 -- invocations stay inside their subrequest budget. P6 wires the readers.
 CREATE TABLE IF NOT EXISTS maintenance_cursor (
