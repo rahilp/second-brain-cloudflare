@@ -111,6 +111,15 @@ function setMemoryView(mode) {
   listBtn.setAttribute('aria-selected', String(!graphing))
   graphBtn.setAttribute('aria-selected', String(graphing))
 
+  // Nothing is fetched before the page has credentials. initMemoryView() runs
+  // from init() to restore the remembered projection before first paint, and
+  // that happens a few lines BEFORE WORKER_URL and AUTH_TOKEN are read out of
+  // localStorage — so this branch fired an unauthenticated GET /list?n=50 on
+  // every single load, took a 401, and left one in every user's console before
+  // showApp() re-issued the same request properly. The restore still happens;
+  // only the fetch waits for showApp(), which loads the screen anyway.
+  if (!AUTH_TOKEN) return
+
   // A user whose stored choice is the graph never triggers a list load, so
   // switching over would otherwise land on an empty list that looks like an
   // empty brain. Re-filtering is enough once the entries are in hand.

@@ -63,6 +63,7 @@ const TEAM_ELEMENT_IDS = [
   "team-add-btn",
   "team-add-error",
   "sb-team-name",
+  "topbar-team-name",
   "team-name-input",
   "team-name-btn",
 ];
@@ -78,6 +79,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     "team-token-reveal",
     "team-add-error",
     "sb-team-name",
+    "topbar-team-name",
   ]);
   for (const id of TEAM_ELEMENT_IDS) {
     const el = makeEl();
@@ -293,6 +295,17 @@ describe("team panel", () => {
 describe("team name", () => {
   const NAMED = { ok: true, admin: false, teams: [{ id: "ws-co", name: "Acme Engineering", memberCount: 3 }] };
 
+  it("renders into the sidebar AND the mobile topbar", async () => {
+    // Two renderings of one header; the sidebar is hidden at phone widths, so a
+    // member on their phone would otherwise never see which team they are in.
+    const { ctx, els } = setup(async () => ({ ok: true, json: async () => NAMED }));
+    await ctx.loadTeamName();
+    for (const id of ["sb-team-name", "topbar-team-name"]) {
+      expect(els.get(id).textContent).toBe("Acme Engineering");
+      expect(els.get(id).style.display).toBe("");
+    }
+  });
+
   it("shows the name to a member, who cannot load the roster at all", async () => {
     const { ctx, els } = setup(async (url: string) => {
       if (url.includes("/team/workspaces")) return { ok: true, json: async () => NAMED };
@@ -308,8 +321,10 @@ describe("team name", () => {
     const { ctx, els } = setup(async () => ({ ok: true, json: async () => NAMED }));
     vm.runInContext("TEAM_MODE = false", ctx);
     await ctx.loadTeamName();
-    expect(els.get("sb-team-name").style.display).toBe("none");
-    expect(els.get("sb-team-name").textContent).toBe("");
+    for (const id of ["sb-team-name", "topbar-team-name"]) {
+      expect(els.get(id).style.display).toBe("none");
+      expect(els.get(id).textContent).toBe("");
+    }
   });
 
   it("re-hides the name if the brain stops being a team", async () => {

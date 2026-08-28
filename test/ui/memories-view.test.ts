@@ -181,3 +181,49 @@ describe("arriving at a tab", () => {
     expect(ctx.calls).toEqual(["refresh"]);
   });
 });
+
+/**
+ * initMemoryView() runs from init() to restore the remembered projection before
+ * the first paint — and that happens BEFORE init() reads WORKER_URL and
+ * AUTH_TOKEN out of localStorage. So the load it triggers went out with an empty
+ * bearer token on every single page load, took a 401, and left one in every
+ * user's console; showApp() then re-issued the same request correctly, so the
+ * screen looked fine and nothing ever surfaced it.
+ */
+describe("nothing is fetched before the page has credentials", () => {
+  it("restores the projection without loading anything when there is no token", () => {
+    const ctx = load();
+    ctx.AUTH_TOKEN = "";
+    ctx.__store.set("sb_memory_view", "list");
+
+    ctx.initMemoryView();
+
+    expect(ctx.calls).toEqual([]);
+    // The restore itself still happened — that is what it is for.
+    expect(ctx.memoryView).toBe("list");
+    expect(ctx.__els.get("recent-list").hidden).toBe(false);
+  });
+
+  it("does not load the graph either", () => {
+    const ctx = load();
+    ctx.AUTH_TOKEN = "";
+    ctx.__store.set("sb_memory_view", "graph");
+
+    ctx.initMemoryView();
+
+    expect(ctx.calls).toEqual([]);
+    expect(ctx.memoryView).toBe("graph");
+    expect(ctx.__els.get("mem-graph").hidden).toBe(false);
+  });
+
+  it("loads normally once a token is in hand", () => {
+    // showApp() is what has credentials, and the toggle buttons run long after.
+    const ctx = load();
+    ctx.initMemoryView();
+    expect(ctx.calls).toEqual(["list"]);
+
+    ctx.calls.length = 0;
+    ctx.setMemoryView("graph");
+    expect(ctx.calls).toEqual(["graph"]);
+  });
+});

@@ -241,7 +241,7 @@ function makeRecallCard(entry, citeIndex) {
     <div class="match-line">
 ${citeIndex ? `<span class="cite-badge" title="${escAttr(t('recall.citedAs', { n: citeIndex }))}">${citeIndex}</span>` : ''}
 <span class="match-pct">${entry.score}%</span>
-${entry.hop > 0 ? `<span class="tag-chip" style="background:var(--accent-soft);color:var(--accent);flex-shrink:0">${escHtml(tPlural('recall.relatedHop', entry.hop))}</span>` : ''}
+${entry.hop > 0 ? `<span class="tag-chip tag-chip--hop">${escHtml(tPlural('recall.relatedHop', entry.hop))}</span>` : ''}
 <div class="match-bar-bg"><div class="match-bar-fill" style="width:${entry.score}%"></div></div>
     </div>
     <div class="card-content" style="cursor: pointer;">${escHtml(stripToPlainText(entry.content))}</div>

@@ -45,9 +45,12 @@ async function loadTeamName() {
  * would name a team that no longer has anyone in it.
  */
 function renderTeamName() {
-  const el = document.getElementById('sb-team-name')
   const name = TEAM_MODE ? (teamWorkspaces[0]?.name || '').trim() : ''
-  if (el) {
+  // Sidebar and mobile topbar both: they are two renderings of one header, and
+  // the sidebar is hidden at phone widths.
+  for (const id of ['sb-team-name', 'topbar-team-name']) {
+    const el = document.getElementById(id)
+    if (!el) continue
     el.textContent = name
     el.style.display = name ? '' : 'none'
   }

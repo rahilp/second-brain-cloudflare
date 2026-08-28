@@ -99,9 +99,39 @@ describe("stripToPlainText / titleLine", () => {
   });
 
   it("truncates on a boundary when there is no sentence to find", () => {
+    // A 200-character single word has no boundaries in it, so this fixture can
+    // only ever exercise the fallback — it passed while real prose was being cut
+    // mid-word. Kept for the fallback; the prose case is below.
     const long = "x".repeat(200);
     const title = titleLine(long);
     expect(title.length).toBeLessThanOrEqual(90);
+    expect(title.endsWith("…")).toBe(true);
+  });
+
+  it("never severs a word, and the preview resumes at the same boundary", () => {
+    // The card showed this as "…agreed to hire o…" above "ne more backend
+    // engineer." — one word split across two lines of the same card.
+    const { previewAfterTitle } = load();
+    const content =
+      "Meeting notes Q3 roadmap review, deferred the billing rewrite to Q4 and agreed to hire one more backend engineer";
+    const title = titleLine(content);
+
+    expect(title.endsWith("…")).toBe(true);
+    const head = title.replace(/…$/, "");
+    // The title ends on a whole word.
+    expect(content.startsWith(head)).toBe(true);
+    expect(content[head.length]).toBe(" ");
+    // And the preview picks up at the next one, not mid-word.
+    const preview = previewAfterTitle(content, title);
+    expect(preview.startsWith("one more backend engineer")).toBe(true);
+  });
+
+  it("does not collapse the title when the first word is enormous", () => {
+    const content = "y".repeat(80) + " and then some ordinary words follow here";
+    const title = titleLine(content);
+    // No usable boundary inside the budget, so the hard cut stands rather than
+    // leaving a two-character title.
+    expect(title.length).toBeGreaterThan(60);
     expect(title.endsWith("…")).toBe(true);
   });
 

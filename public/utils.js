@@ -63,7 +63,22 @@ function titleLine(content, max = 90) {
   if (!plain) return t('memories.untitled')
   const sentence = plain.match(/^.{10,}?[.!?](\s|$)/)
   const line = (sentence ? sentence[0] : plain).trim()
-  return line.length > max ? line.slice(0, max - 1).trimEnd() + '…' : line
+  if (line.length <= max) return line
+
+  // Break at a word boundary, not a character count.
+  //
+  // This used to be a bare `slice(max - 1)`, which severed the word it landed
+  // in — and previewAfterTitle resumes at exactly this offset, so the card
+  // showed the two halves as separate lines: "…agreed to hire o…" above "ne
+  // more backend engineer." Cutting on the space fixes both ends at once.
+  //
+  // The 60% floor is for the case a boundary cannot help: a title whose first
+  // word is enormous would otherwise collapse to almost nothing, so past that
+  // point the hard cut is the better of two bad options.
+  const cut = line.slice(0, max - 1)
+  const lastSpace = cut.lastIndexOf(' ')
+  const head = lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut
+  return head.trimEnd() + '…'
 }
 
 /**

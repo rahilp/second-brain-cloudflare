@@ -139,7 +139,7 @@ function makeRecentCard(entry) {
   // Layer badge: shared memories are the team's — say so. Personal is the
   // quiet default and system rows (digests, insights) carry no badge.
   const layerChip = TEAM_MODE && entry.workspace === 'company'
-    ? `<span class="tag-chip" style="color: var(--accent); border-color: var(--accent);" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(entry.actor_name ? `${t('memories.sharedChip')} · ${entry.actor_name}` : t('memories.sharedChip'))}</span>`
+    ? `<span class="tag-chip tag-chip--shared" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(entry.actor_name ? `${t('memories.sharedChip')} · ${entry.actor_name}` : t('memories.sharedChip'))}</span>`
     : ''
 
   const title = titleLine(entry.content)

@@ -1,15 +1,21 @@
 /**
  * The stale-card modifier must not reduce text contrast on the card.
  *
- * --text-tertiary is already below WCAG AA on --bg-card in BOTH themes — 4.4987 dark,
- * 3.0457 light. That is pre-existing and app-wide, not something this modifier caused,
- * but it means there is no headroom to spend: any lightening tint pushes dark further
- * down (alpha 0.02 already gives 4.35), and a darkening tint — which would actually
- * raise dark to ~4.58 — pushes light down to ~2.73 instead. No single tint helps both.
+ * This file used to open by recording that --text-tertiary was BELOW WCAG AA on
+ * --bg-card in both themes — 4.4987 dark, 3.0457 light — and reasoned from there
+ * that no tint could help, since lightening pushed dark further down and
+ * darkening pushed light down instead. It pinned those two numbers precisely and
+ * said: "if a theme change ever buys headroom, this test fails and the tint ban
+ * can be reconsidered."
  *
- * So card--stale signals with a dashed border, matching how the other card modifiers
- * work: card--synthesized varies border colour, card--rolled-up varies opacity, neither
- * touches the background.
+ * A theme change bought the headroom. The ink ramp moved so all three steps clear
+ * AA on every surface they are set on, and these assertions are now the other way
+ * round: both baselines PASS, and the test's job is to stop them regressing.
+ *
+ * The tint ban stays, on its first reason rather than its second: card--stale
+ * signals with a dashed border because that is how the other card modifiers work
+ * — card--synthesized varies border colour, card--rolled-up varies opacity,
+ * neither touches the background.
  *
  * This encodes the rule rather than the current declaration, so a re-added tint is
  * caught by the number that matters — including via background-color, background-image,
@@ -92,17 +98,32 @@ describe("card--stale does not reduce text contrast", () => {
   });
 
   it("records the baseline contrast the modifier must not worsen", () => {
-    // Asserted precisely: a ±0.05 tolerance cannot tell 4.4987 from 4.54, which is the
-    // difference between "already failing AA" and "passing".
-    expect(contrast(variable("dark", "--text-tertiary"), variable("dark", "--bg-card"))).toBeCloseTo(4.4987, 3);
-    expect(contrast(variable("light", "--text-tertiary"), variable("light", "--bg-card"))).toBeCloseTo(3.0457, 3);
+    // Asserted precisely, for the same reason the failing numbers were: a loose
+    // tolerance cannot tell 4.4987 from 4.54, and that gap is the whole point.
+    expect(contrast(variable("dark", "--text-tertiary"), variable("dark", "--bg-card"))).toBeCloseTo(5.9568, 3);
+    expect(contrast(variable("light", "--text-tertiary"), variable("light", "--bg-card"))).toBeCloseTo(5.5668, 3);
   });
 
-  it("documents that both baselines are below AA, so there is no headroom for a tint", () => {
-    // Pre-existing and app-wide, not caused by card--stale. Pinned so that if a theme
-    // change ever buys headroom, this test fails and the tint ban can be reconsidered.
+  it("both baselines now clear AA, and must keep clearing it", () => {
+    // The inversion of what this once asserted. --text-tertiary is the smallest
+    // text in the app — timestamps, sources, section labels, card meta, mostly
+    // 10-12px — so it is the ink that decides whether the interface is readable.
     for (const theme of ["light", "dark"] as const) {
-      expect(contrast(variable(theme, "--text-tertiary"), variable(theme, "--bg-card"))).toBeLessThan(4.5);
+      expect(contrast(variable(theme, "--text-tertiary"), variable(theme, "--bg-card"))).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("the ink ramp still has visible steps between its three levels", () => {
+    // Three inks that all pass AA live in a narrower band than two passing and one
+    // failing, so the ramp had to be re-spaced rather than just darkened. Pinned
+    // because the failure mode of fixing contrast is a hierarchy that collapses:
+    // secondary and tertiary rendering as the same grey.
+    for (const theme of ["light", "dark"] as const) {
+      const primary = variable(theme, "--text-primary");
+      const secondary = variable(theme, "--text-secondary");
+      const tertiary = variable(theme, "--text-tertiary");
+      expect(contrast(primary, secondary)).toBeGreaterThan(1.3);
+      expect(contrast(secondary, tertiary)).toBeGreaterThan(1.3);
     }
   });
 

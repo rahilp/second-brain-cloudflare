@@ -25,9 +25,18 @@
         --surface-3: #e8e3df;
 
         /* ink */
+        /* Ink ramp, all three steps at WCAG AA (4.5:1) against every surface
+           they are set on — #ffffff through the darkest, --surface-3 #e8e3df.
+           Tertiary was #96908b, which measured 2.48:1 on --surface-3 and 3.15:1
+           on plain white at the 10-12px it is actually used at: timestamps,
+           sources, section labels, card meta. Secondary moved down with it,
+           because three passing inks live in a narrower band than two passing
+           and one failing, and leaving secondary at #68635f would have put it
+           within 1.1:1 of the new tertiary — a ramp with no visible steps.
+           Separation is now 2.27 primary/secondary and 1.39 secondary/tertiary. */
         --text-primary: #161616;
-        --text-secondary: #68635f;
-        --text-tertiary: #96908b;
+        --text-secondary: #54504c;
+        --text-tertiary: #6a6560;
         --text-tag: #68635f;
         --text-tag-confirmed: #161616;
 
@@ -83,7 +92,10 @@
 
         --text-primary: #f2efec;
         --text-secondary: #c9c5c1;
-        --text-tertiary: #8a857f;
+        /* Was #8a857f: 3.43:1 on --surface-3 and 4.01:1 on --surface-2. Lifted
+           to clear AA on all four dark surfaces; secondary stays put, since the
+           two are still 1.61:1 apart. */
+        --text-tertiary: #9f9b96;
         --text-tag: #c9c5c1;
         --text-tag-confirmed: #161616;
 
@@ -469,7 +481,7 @@
       }
 
       .nav-tab.active {
-        color: var(--accent);
+        color: var(--accent-ink);
       }
 
       .nav-tab.active i {
@@ -552,7 +564,7 @@
       }
 
       .hashtag {
-        color: var(--accent);
+        color: var(--accent-ink);
         font-weight: 500;
       }
 
@@ -956,12 +968,16 @@
         opacity: 0.65;
       }
 
-      /* Dashed rather than tinted, so it reads as provisional next to card--synthesized
-         without touching the card background. --text-tertiary is already below WCAG AA
-         on --bg-card — 4.4987 in dark, 3.0457 in light — so there is no headroom to
-         spend: a lightening tint pushes dark further down, and a darkening tint (which
-         would raise dark to ~4.58) pushes light further down instead. A border changes
-         neither, and matches how the other card modifiers signal state. */
+      /* Dashed rather than tinted, so it reads as provisional next to
+         card--synthesized without touching the card background — which also
+         matches how the other card modifiers signal state.
+
+         This once carried a second reason: --text-tertiary sat below WCAG AA on
+         --bg-card in both themes, so a tint in either direction pushed one of
+         them further down and there was no headroom to spend. That was true of
+         tinting THIS card while the token stayed where it was; the token has
+         since moved, and both themes now clear AA on every surface. The border
+         stays because the first reason still holds. */
       .memory-card.card--stale {
         border-left: 3px dashed var(--warn);
       }
@@ -1072,6 +1088,21 @@
         border-radius: var(--radius-tag);
         white-space: nowrap;
         font-family: var(--font-sans);
+      }
+
+      /* Accent-toned chips. Both were inline styles setting `color: var(--accent)`
+         on --surface-2 — 2.84:1 at 11px, the least legible thing on the Memories
+         screen and, being inline, invisible to the token that fixed the rest.
+         --accent-ink is the same hue at AA. */
+      .tag-chip--shared {
+        color: var(--accent-ink);
+        border-color: var(--accent-ink);
+      }
+
+      .tag-chip--hop {
+        background: var(--accent-soft);
+        color: var(--accent-ink);
+        flex-shrink: 0;
       }
 
       .card-tags .tag-chip:first-child {
@@ -2416,7 +2447,7 @@
       .digest-btn {
         font-size: 12px;
         font-weight: 500;
-        color: var(--accent);
+        color: var(--accent-ink);
         background: var(--accent-soft);
         border: none;
         border-radius: var(--radius-pill);
@@ -2448,7 +2479,7 @@
       }
 
       .digest-note a {
-        color: var(--accent);
+        color: var(--accent-ink);
         text-decoration: none;
         border-bottom: 1px solid var(--accent-soft);
       }
@@ -2617,11 +2648,22 @@
          line. Sized between the two so it reads as the middle of a hierarchy
          rather than a second title, and truncated rather than wrapped — the
          sidebar is a fixed column and a two-line team name would push the nav. */
+      .topbar-team {
+        font-size: 11.5px;
+        font-weight: 500;
+        line-height: 1.35;
+        color: var(--accent-ink);
+        margin-top: 1px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       .sb-brand-team {
         font-size: 12px;
         font-weight: 500;
         line-height: 1.35;
-        color: var(--accent);
+        color: var(--accent-ink);
         margin-top: 2px;
         max-width: 148px;
         overflow: hidden;
@@ -2928,7 +2970,7 @@
       }
 
       .view-brain-row .dots {
-        color: var(--accent);
+        color: var(--accent-ink);
         letter-spacing: 2px;
         font-size: 12px;
       }
@@ -3115,7 +3157,7 @@
         font-size: 10px;
         letter-spacing: 0.1em;
         text-transform: uppercase;
-        color: var(--accent);
+        color: var(--accent-ink);
         margin-bottom: 14px;
       }
 
@@ -3902,4 +3944,97 @@
         font-size: 12px;
         color: var(--text-secondary);
         padding: 4px 0;
+      }
+
+      /* ── Phone-width overrides ─────────────────────────────────────
+         Last in the file on purpose. A media query adds no specificity,
+         so these have to come after every base rule they override or the
+         base rule simply wins — which is what happened when this block
+         sat above .team-row and its three-column grid went on applying at
+         390px, laying the columns over each other. */
+      /* Touch targets on phone-width layouts.
+         This stylesheet is mobile-first, so these are the sizes a phone actually
+         gets; desktop keeps its own via the min-width:768px blocks above. The
+         home topic chips, the layer select and the send arrow all measured
+         26-31px tall at 390px wide, which is under every published minimum and
+         noticeably fiddly on the one screen where the composer is the whole
+         point. Raised to 32px rather than the 44px Apple suggests, because these
+         sit in dense rows and 44 would push the composer below the fold — 32 is
+         the point at which mis-taps stop, without redesigning the screen. */
+      @media (max-width: 767px) {
+        .topic-chip,
+        .team-select-wrap select,
+        .nav-tab {
+          min-height: 32px;
+        }
+
+        #screen-home .send-btn,
+        #screen-recall .send-btn {
+          min-width: 32px;
+          min-height: 32px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        /* .filter-field carries no padding of its own — it is a bare input
+           inside a padded .filter-inner pill, so the pill looks like the control
+           while the thing that actually takes the tap is one line tall (17px).
+           Filling the pill costs nothing visually and makes the hit area match
+           what the eye already believes it is aiming at. */
+        .filter-field {
+          min-height: 32px;
+        }
+
+        .digest-btn,
+        .view-toggle-btn {
+          min-height: 32px;
+        }
+
+        .team-icon-btn {
+          min-width: 32px;
+          min-height: 32px;
+        }
+
+        /* The roster is a three-column grid — member, capture policy, actions —
+           and its two `auto` tracks demand more width than a phone has, so they
+           were laid over the first column instead of wrapping: a member's email
+           rendered on top of the "Captures:" label, and the role chip on top of
+           it again. Stack it. The column headings go with it, because they name
+           columns that no longer exist once the row is vertical. */
+        .team-head {
+          display: none;
+        }
+
+        .team-row {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 10px;
+          align-items: flex-start;
+          padding: 14px;
+        }
+
+        .team-capture {
+          justify-content: flex-start;
+        }
+
+        .team-actions {
+          justify-content: flex-start;
+        }
+
+        /* The Memories bar puts the filters and the list/graph toggle on one
+           row. At 390px the toggle takes what it needs first and the filter pill
+           is left with ~215px for three controls, so each select collapsed to
+           40px and every one of them read "All" — the tag filter, the time
+           filter and the layer filter became indistinguishable. Wrapping the bar
+           gives the filters their own full-width row, which is the only way all
+           three labels fit. */
+        .mem-bar {
+          flex-wrap: wrap;
+        }
+
+        .mem-filters {
+          flex: 1 0 100%;
+          max-width: none;
+          order: 2;
+        }
       }

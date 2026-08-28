@@ -82,6 +82,10 @@
           </div>
           <div class="topbar-info">
             <div class="topbar-name">Second Brain</div>
+            <!-- Same line the sidebar carries. The sidebar is hidden on phone
+                 widths, so without this a member on their phone never learns
+                 which team they are sharing into. -->
+            <div class="topbar-team" id="topbar-team-name" style="display: none"></div>
             <div class="topbar-status" id="topbar-status" data-i18n="nav.statusEmpty">always remembers</div>
           </div>
           <button class="topbar-menu refresh-now" onclick="refreshAll()" aria-label="Refresh" data-i18n="nav.refresh" data-i18n-attr="aria-label"><i class="ti ti-refresh"></i></button>
