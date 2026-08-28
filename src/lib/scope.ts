@@ -42,12 +42,37 @@ export interface WriteContext {
 export const OWNER_WRITE_CONTEXT: WriteContext = { workspaceId: "", actorId: "" };
 
 export function readableWorkspaces(identity: Identity): string[] {
-  const workspaces = [identity.personalWorkspaceId, identity.companyWorkspaceId];
+  // Spread, not index: a member of two teams reads both. Every consumer of this
+  // list already treats its length as variable — scopeWhere renders one
+  // placeholder per entry, and the D1 batch sizes that share a statement with it
+  // subtract `scope.bindings.length` from the 100-parameter ceiling rather than
+  // assuming two or three.
+  const workspaces = [identity.personalWorkspaceId, ...identity.companyWorkspaceIds];
   // The '' sentinel is the legacy/system space — pre-team rows and mixed-provenance
   // insight output. Admins keep eyes on it so a context-less writer can never create
   // an invisible row; members must never see it.
   if (identity.role === "admin") workspaces.push("");
   return workspaces;
+}
+
+/**
+ * The team a write goes to when the caller says "company" without naming one.
+ *
+ * Oldest first, so on every brain that has one team this is that team, and on a
+ * brain that later grows a second the original keeps being the default rather
+ * than the answer moving under existing members. Empty string when the caller
+ * belongs to no team — `scopeWrite` then falls back to personal, because a write
+ * with nowhere to land must not become an invisible row in the '' space.
+ */
+export function primaryCompanyWorkspaceId(identity: Identity): string {
+  return identity.companyWorkspaceIds[0] ?? "";
+}
+
+/** Whether a row's workspace is one of the caller's company layers. */
+export function isCompanyWorkspace(identity: Identity, workspaceId: unknown): boolean {
+  return typeof workspaceId === "string"
+    && workspaceId !== ""
+    && identity.companyWorkspaceIds.includes(workspaceId);
 }
 
 /**
@@ -58,7 +83,9 @@ export function readableWorkspaces(identity: Identity): string[] {
  */
 export function scopeWorkspaces(identity: Identity, only?: "personal" | "company"): string[] {
   if (only === "personal") return [identity.personalWorkspaceId];
-  if (only === "company") return [identity.companyWorkspaceId];
+  // Narrowing to "company" narrows to the caller's company layers — all of them.
+  // It can still only ever narrow, because every id comes from the identity.
+  if (only === "company") return identity.companyWorkspaceIds;
   return readableWorkspaces(identity);
 }
 
@@ -73,8 +100,13 @@ export function scopeWhere(identity: Identity, only?: "personal" | "company", co
  * returns a workspace the caller is actually a member of, because both values come
  * from the resolved identity rather than from anything the request could say.
  */
-export function scopeWrite(identity: Identity, target?: "personal" | "company"): string {
-  return target === "company" ? identity.companyWorkspaceId : identity.personalWorkspaceId;
+export function scopeWrite(identity: Identity, target?: "personal" | "company", team?: string): string {
+  if (target !== "company") return identity.personalWorkspaceId;
+  // A named team is honoured only if the caller is actually in it — the id comes
+  // from the request, so this is the check that keeps a request from naming a
+  // workspace its author does not belong to.
+  if (team && identity.companyWorkspaceIds.includes(team)) return team;
+  return primaryCompanyWorkspaceId(identity) || identity.personalWorkspaceId;
 }
 
 /**

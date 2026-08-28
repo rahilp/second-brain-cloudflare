@@ -14,7 +14,7 @@ const identity = (overrides: Partial<Identity> = {}): Identity => ({
   userId: "u1",
   role: "member",
   personalWorkspaceId: "ws-p",
-  companyWorkspaceId: "ws-c",
+  companyWorkspaceIds: ["ws-c"],
   defaultShare: "",
   ...overrides,
 });
@@ -59,7 +59,7 @@ describe("capture-visibility precedence", () => {
     await setMemberDefaultShare(env, member.userId, "company");
     const resolved = await resolveIdentity(request, env);
     expect(resolved?.defaultShare).toBe("company");
-    expect(scopeWrite(resolved!, effectiveWriteTarget(resolved!, undefined, "personal"))).toBe(resolved!.companyWorkspaceId);
+    expect(scopeWrite(resolved!, effectiveWriteTarget(resolved!, undefined, "personal"))).toBe(resolved!.companyWorkspaceIds[0]);
 
     // "inherit" clears the override back to ''.
     await setMemberDefaultShare(env, member.userId, "inherit");

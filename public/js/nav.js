@@ -153,6 +153,9 @@ async function checkVectorize() {
     maybeRevealHomeLayer(data)
     maybeRevealMemoryLayerFilter(data)
     maybeRevealRecallLayer(data)
+    // After TEAM_MODE is set, not before: the name renders only on a team brain,
+    // and this is the one place that flag is decided.
+    if (typeof loadTeamName === 'function') loadTeamName()
   } catch {}
 }
 

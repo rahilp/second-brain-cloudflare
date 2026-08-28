@@ -42,7 +42,7 @@ describe("share semantics", () => {
       userId: roots.ownerUserId,
       role: "admin" as const,
       personalWorkspaceId: roots.ownerPersonalWorkspaceId,
-      companyWorkspaceId: roots.companyWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
       defaultShare: "" as const,
     };
     await captureEntry("Q3 pricing decision", ["work"], "api", env, ctx, undefined, {
@@ -80,7 +80,7 @@ describe("share semantics", () => {
       userId: "u-b",
       role: "member" as const,
       personalWorkspaceId: "ws-u-b",
-      companyWorkspaceId: roots.companyWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
       defaultShare: "" as const,
     };
 
@@ -105,7 +105,7 @@ describe("share semantics", () => {
       userId: "u-c",
       role: "member" as const,
       personalWorkspaceId: "ws-u-c",
-      companyWorkspaceId: roots.companyWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
       defaultShare: "" as const,
     };
     await seedMember(env, "u-c", "c-token", roots.companyWorkspaceId);
@@ -115,7 +115,7 @@ describe("share semantics", () => {
       userId: roots.ownerUserId,
       role: "admin" as const,
       personalWorkspaceId: roots.ownerPersonalWorkspaceId,
-      companyWorkspaceId: roots.companyWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
       defaultShare: "" as const,
     };
     const byAdmin = await moveEntry(id!, "personal", env, owner);
@@ -139,7 +139,7 @@ describe("share semantics", () => {
       userId: "u-b",
       role: "member" as const,
       personalWorkspaceId: "ws-u-b",
-      companyWorkspaceId: roots.companyWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
       defaultShare: "" as const,
     };
     // Invisible ids read as absent — existence is not leaked through the error.
@@ -153,7 +153,7 @@ describe("share semantics", () => {
       userId: roots.ownerUserId,
       role: "admin" as const,
       personalWorkspaceId: roots.ownerPersonalWorkspaceId,
-      companyWorkspaceId: roots.companyWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
       defaultShare: "" as const,
     };
     await captureEntry("to be shared", [], "api", env, ctx, undefined, {

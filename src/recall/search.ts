@@ -9,7 +9,7 @@ import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
 import type { Identity } from "../lib/identity";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
-import { scopeWhere } from "../lib/scope";
+import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
 import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -419,7 +419,7 @@ export async function recallEntries(
   // and to badge results.
   const layerOf = (wid: unknown): "personal" | "company" | "system" =>
     wid === identity?.personalWorkspaceId ? "personal"
-    : wid === identity?.companyWorkspaceId ? "company"
+    : identity && isCompanyWorkspace(identity, wid) ? "company"
     : "system";
   const candidateSignalById = new Map(rcRows.map(row => [row.id, row]));
   markStage("finalHydration");

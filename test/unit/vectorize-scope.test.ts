@@ -11,7 +11,7 @@ const identity: Identity = {
   userId: "u1",
   role: "member",
   personalWorkspaceId: "ws-p",
-  companyWorkspaceId: "ws-c",
+  companyWorkspaceIds: ["ws-c"],
   defaultShare: "" as const,
 };
 

@@ -25,7 +25,7 @@ async function seedMember(env: Env, id: string, token: string, companyId: string
 }
 
 function identity(userId: string, personal: string, company: string, role: "admin" | "member" = "member"): Identity {
-  return { userId, role, personalWorkspaceId: personal, companyWorkspaceId: company, defaultShare: "" };
+  return { userId, role, personalWorkspaceId: personal, companyWorkspaceIds: [company], defaultShare: "" };
 }
 
 async function makeEnv() {

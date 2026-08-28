@@ -253,3 +253,57 @@ export async function setMemberProfile(
     ?? (result.meta as Record<string, number>).rows_written ?? 0;
   if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
 }
+
+/** One company workspace, as members and admins both see it. */
+export interface TeamWorkspace {
+  id: string;
+  name: string;
+  memberCount: number;
+}
+
+/**
+ * The company workspaces a caller belongs to, oldest first — the same order
+ * Identity.companyWorkspaceIds uses, so the first entry is the team a "share
+ * with the team" with no target lands in.
+ *
+ * Takes the ids from the resolved identity rather than querying memberships
+ * again: the identity already resolved them, and re-deriving the caller's teams
+ * from the request is how a scoping helper stops being the only place scoping
+ * is decided.
+ */
+export async function listTeamWorkspaces(env: Env, workspaceIds: string[]): Promise<TeamWorkspace[]> {
+  if (!workspaceIds.length) return [];
+  const placeholders = workspaceIds.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    // COUNT over the USER, not the membership row: the join to users is
+    // filtered to active people, so a suspended or removed member leaves a NULL
+    // that COUNT skips. Counting m.user_id would have counted them anyway.
+    `SELECT w.id AS id, w.name AS name, COUNT(DISTINCT u.id) AS memberCount
+       FROM workspaces w
+       LEFT JOIN memberships m ON m.workspace_id = w.id
+       LEFT JOIN users u ON u.id = m.user_id
+         AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)
+      WHERE w.id IN (${placeholders})
+      GROUP BY w.id`,
+  ).bind(...workspaceIds).all<{ id: string; name: string; memberCount: number }>();
+
+  const byId = new Map((results ?? []).map((r) => [r.id, r]));
+  // Ordered by the caller's own list, not by what the database returned, so the
+  // primary team is always first.
+  return workspaceIds.flatMap((id) => {
+    const row = byId.get(id);
+    return row ? [{ id, name: row.name || "", memberCount: Number(row.memberCount) || 0 }] : [];
+  });
+}
+
+/** Rename a team. The caller must already have been checked as an admin of it. */
+export async function renameTeamWorkspace(env: Env, workspaceId: string, name: string): Promise<string> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new TeamAdminError(400, "Give the team a name");
+  if (trimmed.length > 60) throw new TeamAdminError(400, "Team names are limited to 60 characters");
+  const changed = await env.DB.prepare(
+    `UPDATE workspaces SET name = ? WHERE id = ? AND kind = 'company'`,
+  ).bind(trimmed, workspaceId).run();
+  if (!changed.meta?.rows_written) throw new TeamAdminError(404, "No team found with that ID");
+  return trimmed;
+}

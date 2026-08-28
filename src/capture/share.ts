@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import type { Identity } from "../lib/identity";
-import { scopeWhere, scopeWrite } from "../lib/scope";
+import { isCompanyWorkspace, scopeWhere, scopeWrite } from "../lib/scope";
 
 /**
  * Share semantics: MOVE, not copy (spec decision, 2026-08-24). A shared entry
@@ -50,7 +50,7 @@ export async function moveEntry(
   const targetWorkspaceId = scopeWrite(identity, target);
   if (row.workspace_id === targetWorkspaceId) return { status: "no_change" };
 
-  if (row.workspace_id === identity.companyWorkspaceId && target === "personal") {
+  if (isCompanyWorkspace(identity, row.workspace_id) && target === "personal") {
     const isActor = row.actor_id === identity.userId;
     if (!isActor && identity.role !== "admin") return { status: "forbidden" };
   }

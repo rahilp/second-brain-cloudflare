@@ -15,7 +15,20 @@ export interface Identity {
   userId: string;
   role: "admin" | "member";
   personalWorkspaceId: string;
-  companyWorkspaceId: string;
+  /**
+   * Every company workspace this user belongs to, oldest first.
+   *
+   * Plural because `memberships` has always been a many-to-many join and the
+   * schema never said one: a second company workspace, or a member in two of
+   * them, is a row, not a migration. It was read as a singular through a JOIN
+   * that returns one row per membership and a `.first()` that took whichever
+   * came back — so a member of two teams would silently have been scoped to an
+   * arbitrary one. Reads union the whole list; the write path picks one
+   * deliberately (see primaryCompanyWorkspaceId).
+   *
+   * The dashboard exposes a single team today. Nothing below depends on that.
+   */
+  companyWorkspaceIds: string[];
   /**
    * The member's capture-visibility override: "personal", "company", or ""
    * (inherit the org-level TEAM_DEFAULT_WORKSPACE config). Resolved with the
@@ -41,15 +54,33 @@ export function extractToken(request: Request): string | null {
   return query && query.length > 0 ? query : null;
 }
 
-const IDENTITY_SQL =
-  `SELECT u.id AS userId, u.role AS role, u.default_share AS defaultShare,` +
-  ` p.id AS personalWorkspaceId, c.id AS companyWorkspaceId` +
+/**
+ * The company memberships are aggregated rather than joined one-to-one: the old
+ * shape returned one row per company workspace and `.first()` picked one, which
+ * is correct only while there is exactly one. GROUP_CONCAT keeps it a single
+ * statement — no extra subrequest on a path every request takes — and each id is
+ * paired with its created_at so the list can be ordered oldest-first in JS
+ * (SQLite does not promise GROUP_CONCAT's order).
+ *
+ * The company join is LEFT: membership of a team is not what authenticates a
+ * user. The personal join is what does, and it stays INNER.
+ */
+const COMPANY_WORKSPACES_SELECT =
+  `GROUP_CONCAT(DISTINCT c.id || '@' || c.created_at) AS companyWorkspaces`;
+
+const IDENTITY_FROM =
   ` FROM users u` +
   ` JOIN memberships mp ON mp.user_id = u.id` +
   ` JOIN workspaces p ON p.id = mp.workspace_id AND p.kind = 'personal'` +
-  ` JOIN memberships mc ON mc.user_id = u.id` +
-  ` JOIN workspaces c ON c.id = mc.workspace_id AND c.kind = 'company'` +
-  ` WHERE u.token_hash = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)`;
+  ` LEFT JOIN memberships mc ON mc.user_id = u.id` +
+  ` LEFT JOIN workspaces c ON c.id = mc.workspace_id AND c.kind = 'company'`;
+
+const IDENTITY_SQL =
+  `SELECT u.id AS userId, u.role AS role, u.default_share AS defaultShare,` +
+  ` p.id AS personalWorkspaceId, ${COMPANY_WORKSPACES_SELECT}` +
+  IDENTITY_FROM +
+  ` WHERE u.token_hash = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)` +
+  ` GROUP BY u.id`;
 
 /**
  * Resolve the caller's identity from their token, bootstrapping the tenancy rows
@@ -63,26 +94,48 @@ const IDENTITY_SQL =
  */
 const IDENTITY_BY_ID_SQL =
   `SELECT u.id AS userId, u.role AS role, u.default_share AS defaultShare,` +
-  ` p.id AS personalWorkspaceId, c.id AS companyWorkspaceId` +
-  ` FROM users u` +
-  ` JOIN memberships mp ON mp.user_id = u.id` +
-  ` JOIN workspaces p ON p.id = mp.workspace_id AND p.kind = 'personal'` +
-  ` JOIN memberships mc ON mc.user_id = u.id` +
-  ` JOIN workspaces c ON c.id = mc.workspace_id AND c.kind = 'company'` +
-  ` WHERE u.id = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)`;
+  ` p.id AS personalWorkspaceId, ${COMPANY_WORKSPACES_SELECT}` +
+  IDENTITY_FROM +
+  ` WHERE u.id = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)` +
+  ` GROUP BY u.id`;
+
+/**
+ * `GROUP_CONCAT(DISTINCT c.id || '@' || c.created_at)` → ids, oldest first.
+ *
+ * NULL when the user belongs to no company workspace (the LEFT join found
+ * nothing), which is an empty list rather than an error: a member with only a
+ * personal workspace is a legal state once teams are plural, and every read path
+ * below already handles a shorter readable set.
+ */
+function parseCompanyWorkspaces(packed: string | null | undefined): string[] {
+  if (!packed) return [];
+  return packed
+    .split(",")
+    .map((part) => {
+      const at = part.lastIndexOf("@");
+      // Ids are `ws-<uuid>` and carry no "@", so the last one is always the
+      // separator this query added.
+      return at === -1
+        ? { id: part, createdAt: 0 }
+        : { id: part.slice(0, at), createdAt: Number(part.slice(at + 1)) || 0 };
+    })
+    .filter((w) => w.id)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    .map((w) => w.id);
+}
 
 function rowToIdentity(row: {
   userId: string;
   role: string;
   defaultShare: string | null;
   personalWorkspaceId: string;
-  companyWorkspaceId: string;
+  companyWorkspaces?: string | null;
 }): Identity {
   return {
     userId: row.userId,
     role: row.role === "admin" ? "admin" : "member",
     personalWorkspaceId: row.personalWorkspaceId,
-    companyWorkspaceId: row.companyWorkspaceId,
+    companyWorkspaceIds: parseCompanyWorkspaces(row.companyWorkspaces),
     defaultShare: row.defaultShare === "company" ? "company" : row.defaultShare === "personal" ? "personal" : "",
   };
 }
@@ -99,7 +152,7 @@ export async function resolveIdentityFromToken(token: string, env: Env): Promise
   await ensureIdentityReady(env);
   const row = await env.DB.prepare(IDENTITY_SQL)
     .bind(await hashToken(token))
-    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaceId: string }>();
+    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaces: string | null }>();
   if (!row) return null;
   return rowToIdentity(row);
 }
@@ -118,7 +171,7 @@ export async function resolveIdentityByUserId(env: Env, userId: string): Promise
   }
   const row = await env.DB.prepare(IDENTITY_BY_ID_SQL)
     .bind(id)
-    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaceId: string }>();
+    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaces: string | null }>();
   if (!row) return null;
   return rowToIdentity(row);
 }

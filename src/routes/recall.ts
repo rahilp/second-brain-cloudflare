@@ -5,7 +5,7 @@ import { buildEntryFilterQuery } from "../capture/entry";
 import { compressTag } from "../compression/digest";
 import { CORS_HEADERS, intParam, json } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
-import { scopeWhere } from "../lib/scope";
+import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { recallEntries } from "../recall/search";
@@ -73,7 +73,7 @@ export async function handleRecallRoutes(
     // share/unshare without knowing the caller's workspace ids itself.
     const layerOf = (wid: unknown): string =>
       wid === identity.personalWorkspaceId ? "personal"
-      : wid === identity.companyWorkspaceId ? "company"
+      : isCompanyWorkspace(identity, wid) ? "company"
       : "system";
     const companyRows = rows.filter((r) => layerOf(r.workspace_id) === "company");
     const labelMap = await lookupActorLabels(

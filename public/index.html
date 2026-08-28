@@ -52,6 +52,9 @@
           </div>
           <div>
             <div class="sb-brand-name">Second Brain</div>
+            <!-- Which company's shared layer this member writes into. Hidden on a
+                 solo brain, where there is no other layer to distinguish. -->
+            <div class="sb-brand-team" id="sb-team-name" style="display: none"></div>
             <div class="sb-brand-status" id="sb-status" data-i18n="nav.statusEmpty">always remembers</div>
           </div>
         </div>
@@ -270,6 +273,17 @@
                     <button class="digest-btn" id="team-copy-btn" type="button" onclick="copyTeamToken()" data-i18n="team.copy">Copy</button>
                     <button class="digest-btn danger" type="button" onclick="closeTeamTokenReveal()" data-i18n="team.done">Done</button>
                   </div>
+                </div>
+
+                <div>
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.nameLabel">Team name</div>
+                  <form class="team-name-row" id="team-name-form" onsubmit="submitTeamName(); return false">
+                    <i class="ti ti-users-group team-name-icon"></i>
+                    <input class="filter-field team-name-input" id="team-name-input" maxlength="60"
+                           placeholder="Team name" data-i18n="team.namePlaceholderTeam" data-i18n-attr="placeholder" autocomplete="off" />
+                    <button class="digest-btn" id="team-name-btn" type="submit" data-i18n="team.nameSave">Save</button>
+                  </form>
+                  <p class="digest-note team-name-note" data-i18n="team.nameHint">Everyone on the team sees this name.</p>
                 </div>
 
                 <div>

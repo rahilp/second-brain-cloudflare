@@ -381,20 +381,28 @@ export class D1Mock {
           // resolveIdentity's IDENTITY_SQL: token hash to user + both workspaces.
           const user = db.users.find((u: any) => u.token_hash === args[0] && !u.suspended);
           if (!user) return null;
-          const wsOf = (kind: string) => {
-            const m = db.memberships.find((mm: any) =>
-              mm.user_id === user.id &&
-              db.workspaces.some((w: any) => w.id === mm.workspace_id && w.kind === kind));
-            return m?.workspace_id ?? null;
-          };
-          const personalWorkspaceId = wsOf("personal");
-          const companyWorkspaceId = wsOf("company");
-          if (!personalWorkspaceId || !companyWorkspaceId) return null;
+          const wsAll = (kind: string) => db.memberships
+            .filter((mm: any) => mm.user_id === user.id)
+            .map((mm: any) => db.workspaces.find((w: any) => w.id === mm.workspace_id && w.kind === kind))
+            .filter(Boolean);
+          const personalWorkspaceId = wsAll("personal")[0]?.id ?? null;
+          // The real query aggregates every company membership into one packed
+          // `id@created_at` list, because a user may belong to more than one team
+          // (memberships is many-to-many). Returning a single id here would have
+          // let a mock-backed identity read as a member of one arbitrary team
+          // while the real one reads all of them — and the scope bindings that
+          // fall out of that list size the D1 batches, so the difference shows up
+          // as a subrequest count, not as a wrong row.
+          const companyWorkspaces = wsAll("company")
+            .map((w: any) => `${w.id}@${w.created_at ?? 0}`)
+            .join(",");
+          // Personal membership is what authenticates; a team is not required.
+          if (!personalWorkspaceId) return null;
           return {
             userId: user.id,
             role: user.role,
             personalWorkspaceId,
-            companyWorkspaceId,
+            companyWorkspaces: companyWorkspaces || null,
           };
         }
         // GET /entry. Models the COALESCE alias: a row written before the

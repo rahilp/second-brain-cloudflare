@@ -2613,6 +2613,22 @@
         color: var(--text-primary);
       }
 
+      /* The team a member belongs to, between the product name and the status
+         line. Sized between the two so it reads as the middle of a hierarchy
+         rather than a second title, and truncated rather than wrapped — the
+         sidebar is a fixed column and a two-line team name would push the nav. */
+      .sb-brand-team {
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.35;
+        color: var(--accent);
+        margin-top: 2px;
+        max-width: 148px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       .sb-brand-status {
         font-size: 11.5px;
         color: var(--text-secondary);
@@ -3668,6 +3684,33 @@
          A roster that reads like a table without being one: hairline
          rows in a single rounded container, an aligned header, and
          quiet icon actions that only speak on hover. */
+      /* Team name editor. Matches the org-default pill above the roster: same
+         border, radius and surface, so the two settings rows read as a pair. */
+      .team-name-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border: 0.5px solid var(--border-input);
+        border-radius: 13px;
+        background: var(--surface-2);
+      }
+
+      .team-name-icon {
+        color: var(--text-tertiary);
+        font-size: 13px;
+        flex-shrink: 0;
+      }
+
+      .team-name-input {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .team-name-note {
+        margin: 8px 2px 0;
+      }
+
       .team-table {
         border: 0.5px solid var(--border-input);
         border-radius: 13px;

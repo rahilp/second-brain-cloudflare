@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import type { Identity } from "./identity";
-import { scopeWhere } from "./scope";
+import { isCompanyWorkspace, scopeWhere } from "./scope";
 
 /** Columns every guard needs; callers may request more via `columns`. */
 export interface EntryAccessRow {
@@ -39,7 +39,9 @@ export async function getReadableEntry(
 }
 
 function companyEditDenied(identity: Identity, row: Pick<EntryAccessRow, "workspace_id" | "actor_id">): boolean {
-  return row.workspace_id === identity.companyWorkspaceId
+  // Any of the caller's company layers, not one of them: the lock protects a
+  // shared row from a non-author whichever team it was shared into.
+  return isCompanyWorkspace(identity, row.workspace_id)
     && row.actor_id !== identity.userId
     && identity.role !== "admin";
 }

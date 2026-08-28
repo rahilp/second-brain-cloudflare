@@ -9,9 +9,72 @@
 
 let teamMembers = []
 let teamYouId = null
+/** The caller's teams, oldest first — [0] is the one "share with the team" means. */
+let teamWorkspaces = []
 // The plaintext token the server hands back exactly once. Dropped the moment
 // the reveal is dismissed — after that, rotation is the only way back.
 let lastTeamToken = ''
+
+/**
+ * The team's name, for everyone.
+ *
+ * Deliberately NOT part of loadTeam(): that probes /team/members, which is 403
+ * for a member, so anything hanging off it is admin-only by construction. A
+ * member needs the name more than an admin does — it is how they know which
+ * company they are about to share into.
+ */
+async function loadTeamName() {
+  if (!WORKER_URL || !AUTH_TOKEN) return
+  const el = document.getElementById('sb-team-name')
+  try {
+    const res = await fetch(`${WORKER_URL}/team/workspaces`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    teamWorkspaces = Array.isArray(data.teams) ? data.teams : []
+  } catch {
+    teamWorkspaces = []
+  }
+  renderTeamName()
+}
+
+/**
+ * Both branches are always set, never just the reveal: TEAM_MODE can go from
+ * true to false when the last member is removed, and a name left on screen
+ * would name a team that no longer has anyone in it.
+ */
+function renderTeamName() {
+  const el = document.getElementById('sb-team-name')
+  const name = TEAM_MODE ? (teamWorkspaces[0]?.name || '').trim() : ''
+  if (el) {
+    el.textContent = name
+    el.style.display = name ? '' : 'none'
+  }
+  const input = document.getElementById('team-name-input')
+  if (input && document.activeElement !== input) input.value = teamWorkspaces[0]?.name || ''
+}
+
+async function submitTeamName() {
+  const input = document.getElementById('team-name-input')
+  const btn = document.getElementById('team-name-btn')
+  if (!input || !btn) return
+  const name = (input.value || '').trim()
+  if (!name) { showToast(t('team.nameNeeded')); return }
+  btn.disabled = true
+  try {
+    const r = await postTeam('/team/workspaces/rename', { name })
+    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+    if (teamWorkspaces[0]) teamWorkspaces[0].name = r.data.name
+    else teamWorkspaces = [{ id: r.data.id, name: r.data.name, memberCount: 0 }]
+    renderTeamName()
+    showToast(t('team.nameSaved'))
+  } catch (e) {
+    showToast(e.message || t('team.actionFailed'))
+  } finally {
+    btn.disabled = false
+  }
+}
 
 /** The sidebar and bottom-bar entries exist in the markup, hidden by default. */
 function setTeamNavVisible(visible) {

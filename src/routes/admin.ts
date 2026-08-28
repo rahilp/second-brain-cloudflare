@@ -5,7 +5,7 @@ import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from
 import { intParam, json } from "../lib/http";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { requireAdmin, requireIdentity, type Identity } from "../lib/identity";
-import { scopeWhere } from "../lib/scope";
+import { primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
 import { storeEntry } from "../capture/store";
@@ -19,7 +19,7 @@ import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
-import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
+import { createMember, listMembers, listTeamWorkspaces, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -150,6 +150,45 @@ export async function handleAdminRoutes(
     ).bind(auth.userId).first<{ userId: string; name: string; email: string | null; role: string }>();
     if (!row) return json({ ok: false, error: "Not found" }, 404);
     return json({ ok: true, profile: row });
+  }
+
+  // GET /team/workspaces — the teams the caller belongs to, with names.
+  //
+  // Open to every member, not just admins: the name is how a member knows which
+  // company they are sharing into, and the dashboard shows it in the sidebar for
+  // everyone. Only the caller's own teams are ever returned, because the ids come
+  // from their resolved identity.
+  if (url.pathname === "/team/workspaces" && request.method === "GET") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    return json({
+      ok: true,
+      teams: await listTeamWorkspaces(env, auth.companyWorkspaceIds),
+      admin: auth.role === "admin",
+    });
+  }
+
+  // POST /team/workspaces/rename — name a team. Admin-only.
+  if (url.pathname === "/team/workspaces/rename" && request.method === "POST") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { id?: string; name?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    // Defaults to the caller's primary team so a single-team brain — every brain
+    // today — need not know its own workspace id to name itself.
+    const id = body.id?.trim() || primaryCompanyWorkspaceId(auth);
+    // An admin of one company cannot rename another's: the id has to be a team
+    // this caller is actually in.
+    if (!id || !auth.companyWorkspaceIds.includes(id)) {
+      return json({ ok: false, error: "No team found with that ID" }, 404);
+    }
+    try {
+      const name = await renameTeamWorkspace(env, id, body.name ?? "");
+      return json({ ok: true, id, name });
+    } catch (e) {
+      if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
+      throw e;
+    }
   }
 
   // POST /team/profile — rename self, or any member when caller is admin.

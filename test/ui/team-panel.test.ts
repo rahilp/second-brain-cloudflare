@@ -9,11 +9,14 @@ import { describe, it, expect } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
-/** utils.js, i18n.js, state.js and team.js, in the order the page loads them. */
+/** utils.js, i18n.js, state.js, toast.js and team.js, in page-load order. */
 const SRC = [
   "public/utils.js",
   "public/js/i18n.js",
   "public/js/state.js",
+  // Real toast rather than a stub: the team panel reports success and failure
+  // through it, and a stub would let a broken call through silently.
+  "public/js/toast.js",
   "public/js/team.js",
 ]
   .map((rel) => readFileSync(resolve(ROOT, rel), "utf8"))
@@ -36,6 +39,10 @@ function makeEl() {
     remove() {},
     focus() {},
     closest: () => null,
+    // toast.js looks inside the node it just built for an optional action
+    // button; a fake element without these throws before the toast is shown.
+    querySelector: () => null,
+    querySelectorAll: () => [],
     dataset: {},
   };
 }
@@ -55,6 +62,9 @@ const TEAM_ELEMENT_IDS = [
   "team-add-role",
   "team-add-btn",
   "team-add-error",
+  "sb-team-name",
+  "team-name-input",
+  "team-name-btn",
 ];
 
 function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
@@ -67,6 +77,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     "team-body",
     "team-token-reveal",
     "team-add-error",
+    "sb-team-name",
   ]);
   for (const id of TEAM_ELEMENT_IDS) {
     const el = makeEl();
@@ -92,6 +103,8 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     fetch: fetchImpl,
     confirm: () => true,
     alert: () => {},
+    setTimeout,
+    clearTimeout,
     module: undefined,
     exports: undefined,
   };
@@ -101,7 +114,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
   // The page connects before anything team-related can run. These are top-level
   // `let` bindings in state.js, so they must be assigned in-context rather than
   // set as sandbox properties.
-  vm.runInContext(`WORKER_URL = "http://localhost"; AUTH_TOKEN = "tok"`, ctx);
+  vm.runInContext(`WORKER_URL = "http://localhost"; AUTH_TOKEN = "tok"; var TEAM_MODE = true`, ctx);
   ctx.initI18n("en");
   return { ctx, els: elements };
 }
@@ -268,5 +281,80 @@ describe("team panel", () => {
     expect(ctx.tPlural("team.privateEntries", 2)).toBe("2 voci private");
     const html = (ctx.document.getElementById("team-list") as any).innerHTML as string;
     expect(html).toContain("Amministratore");
+  });
+});
+
+
+/**
+ * The team's name is the one piece of team UI a MEMBER sees, so it cannot hang
+ * off loadTeam() — that probes /team/members, which answers 403 for them. These
+ * drive loadTeamName() directly with a member-shaped fetch.
+ */
+describe("team name", () => {
+  const NAMED = { ok: true, admin: false, teams: [{ id: "ws-co", name: "Acme Engineering", memberCount: 3 }] };
+
+  it("shows the name to a member, who cannot load the roster at all", async () => {
+    const { ctx, els } = setup(async (url: string) => {
+      if (url.includes("/team/workspaces")) return { ok: true, json: async () => NAMED };
+      // Exactly what a member gets from the admin probe.
+      return { ok: false, status: 403, json: async () => ({ ok: false, error: "Forbidden" }) };
+    });
+    await ctx.loadTeamName();
+    expect(els.get("sb-team-name").textContent).toBe("Acme Engineering");
+    expect(els.get("sb-team-name").style.display).toBe("");
+  });
+
+  it("stays hidden on a solo brain even when a name comes back", async () => {
+    const { ctx, els } = setup(async () => ({ ok: true, json: async () => NAMED }));
+    vm.runInContext("TEAM_MODE = false", ctx);
+    await ctx.loadTeamName();
+    expect(els.get("sb-team-name").style.display).toBe("none");
+    expect(els.get("sb-team-name").textContent).toBe("");
+  });
+
+  it("re-hides the name if the brain stops being a team", async () => {
+    // TEAM_MODE goes false when the last member is removed. A name left on
+    // screen would name a team nobody is in.
+    const { ctx, els } = setup(async () => ({ ok: true, json: async () => NAMED }));
+    await ctx.loadTeamName();
+    expect(els.get("sb-team-name").style.display).toBe("");
+    vm.runInContext("TEAM_MODE = false", ctx);
+    ctx.renderTeamName();
+    expect(els.get("sb-team-name").style.display).toBe("none");
+  });
+
+  it("an unreachable or unauthorised endpoint leaves no name, not a stale one", async () => {
+    const { ctx, els } = setup(async () => { throw new Error("offline"); });
+    await ctx.loadTeamName();
+    expect(els.get("sb-team-name").textContent).toBe("");
+    expect(els.get("sb-team-name").style.display).toBe("none");
+  });
+
+  it("saving a new name updates the sidebar without a reload", async () => {
+    let sent: any = null;
+    const { ctx, els } = setup(async (url: string, init?: any) => {
+      if (url.includes("/team/workspaces/rename")) {
+        sent = JSON.parse(init.body);
+        return { ok: true, json: async () => ({ ok: true, id: "ws-co", name: sent.name }) };
+      }
+      return { ok: true, json: async () => NAMED };
+    });
+    await ctx.loadTeamName();
+    els.get("team-name-input").value = "  Platform Guild  ";
+    await ctx.submitTeamName();
+    expect(sent).toEqual({ name: "Platform Guild" });
+    expect(els.get("sb-team-name").textContent).toBe("Platform Guild");
+  });
+
+  it("refuses to save an empty name", async () => {
+    let called = false;
+    const { ctx, els } = setup(async (url: string) => {
+      if (url.includes("/rename")) { called = true; }
+      return { ok: true, json: async () => NAMED };
+    });
+    await ctx.loadTeamName();
+    els.get("team-name-input").value = "   ";
+    await ctx.submitTeamName();
+    expect(called).toBe(false);
   });
 });

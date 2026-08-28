@@ -85,7 +85,7 @@ describe("identity resolution", () => {
     expect(identity!.role).toBe("admin");
     expect(identity!.userId).toBe(roots.ownerUserId);
     expect(identity!.personalWorkspaceId).toBe(roots.ownerPersonalWorkspaceId);
-    expect(identity!.companyWorkspaceId).toBe(roots.companyWorkspaceId);
+    expect(identity!.companyWorkspaceIds[0]).toBe(roots.companyWorkspaceId);
   });
 
   it("accepts the ?token= query form", async () => {
@@ -130,7 +130,7 @@ describe("identity resolution", () => {
     expect(identity).not.toBeNull();
     expect(identity!.role).toBe("member");
     expect(identity!.personalWorkspaceId).toBe("ws-b");
-    expect(identity!.companyWorkspaceId).toBe(roots.companyWorkspaceId);
+    expect(identity!.companyWorkspaceIds[0]).toBe(roots.companyWorkspaceId);
   });
 
   it("does not resolve suspended users", async () => {

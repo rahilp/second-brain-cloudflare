@@ -26,7 +26,7 @@ const memberOf = (personal: string): Identity => ({
   userId: "u1",
   role: "member",
   personalWorkspaceId: personal,
-  companyWorkspaceId: "ws-co",
+  companyWorkspaceIds: ["ws-co"],
   defaultShare: "" as const,
 });
 
