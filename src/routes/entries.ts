@@ -124,7 +124,11 @@ export async function handleEntriesRoutes(
     const limit = parseImportLimit(url.searchParams.get("limit"));
     const offset = parseImportOffset(url.searchParams.get("offset"));
     const edgeOffset = parseImportOffset(url.searchParams.get("edge_offset"));
-    const summary = await importExportPayload(env, parsed.payload, { limit, offset, edgeOffset });
+    // Import always lands in the caller's own personal workspace, never the
+    // company layer: a restore is not a share, and the company layer is only
+    // ever reached through POST /share ("move, not copy").
+    const writeCtx = { workspaceId: auth.personalWorkspaceId, actorId: auth.userId };
+    const summary = await importExportPayload(env, parsed.payload, { limit, offset, edgeOffset, writeCtx });
     return json(summary);
   }
 

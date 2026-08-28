@@ -85,14 +85,29 @@ describe("WriteContext stamping", () => {
     d1.close();
   });
 
-  it("imported rows carry the workspace_id/actor_id columns defaulted ''", async () => {
+  it("imported rows carry an explicit writeCtx's workspace_id/actor_id", async () => {
     const { env, d1 } = await makeReadyEnv();
     const summary = await importExportPayload(
       env,
       { version: 2, entries: [{ id: "imp-1", content: "restored memory", tags: [] }] },
+      { writeCtx: { workspaceId: "ws-bob", actorId: "user-bob" } },
     );
     expect(summary.imported).toBe(1);
     const row = await env.DB.prepare(`SELECT workspace_id, actor_id FROM entries WHERE id = 'imp-1'`)
+      .first<{ workspace_id: string; actor_id: string }>();
+    expect(row?.workspace_id).toBe("ws-bob");
+    expect(row?.actor_id).toBe("user-bob");
+    d1.close();
+  });
+
+  it("imported rows default to '' / '' when no context is threaded (pre-tenancy callers)", async () => {
+    const { env, d1 } = await makeReadyEnv();
+    const summary = await importExportPayload(
+      env,
+      { version: 2, entries: [{ id: "imp-2", content: "restored memory", tags: [] }] },
+    );
+    expect(summary.imported).toBe(1);
+    const row = await env.DB.prepare(`SELECT workspace_id, actor_id FROM entries WHERE id = 'imp-2'`)
       .first<{ workspace_id: string; actor_id: string }>();
     expect(row?.workspace_id).toBe("");
     expect(row?.actor_id).toBe("");
