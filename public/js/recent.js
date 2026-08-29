@@ -449,10 +449,10 @@ function makeRecentCard(entry) {
         ? `<span class="tag-chip vec-chip vec-chip--pending" title="${escAttr(t('memories.vecPendingTitle'))}"><i class="ti ti-clock"></i></span>`
         : `<span class="tag-chip vec-chip vec-chip--off" title="${escAttr(t('memories.vecOffTitle'))}">${escHtml(t('memories.vecNotIndexed'))}</span>`
   // Layer badge: shared memories are the team's — say so. Personal is the
-  // quiet default and system rows (digests, insights) carry no badge.
-  const layerChip = TEAM_MODE && entry.workspace === 'company'
-    ? `<span class="tag-chip tag-chip--shared" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(entry.actor_name ? `${t('memories.sharedChip')} · ${entry.actor_name}` : t('memories.sharedChip'))}</span>`
-    : ''
+  // quiet default and system rows (digests, insights) carry no badge. Built by
+  // layerChipHtml in utils.js, which the review queue also calls, so the two
+  // surfaces cannot come to describe the same row differently.
+  const layerChip = layerChipHtml(entry, TEAM_MODE)
 
   const title = titleLine(entry.content)
   const preview = previewAfterTitle(entry.content, title)

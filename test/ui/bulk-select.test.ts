@@ -36,6 +36,10 @@ const SRC = [
   // The tag and time filters, and applyRecentFilters — the one path every
   // selection change re-renders through.
   "public/js/nav.js",
+  // The review queue, for the reach case at the bottom of this file: it is the
+  // second caller of the shared-badge helper, and this is the only harness
+  // that builds both surfaces over one entry.
+  "public/js/patterns.js",
 ];
 
 /**
@@ -675,5 +679,45 @@ describe("bulk layer move — Italian", () => {
     await h.ctx.runConfirmAction();
     await h.settle();
     expect(h.toast()).toContain("2 spostati · 1 rifiutato — resta selezionato");
+  });
+});
+
+/**
+ * ONE implementation of "this row is shared", with two callers.
+ *
+ * The memories card built the badge inline and the review queue built nothing.
+ * The requirement is not two chips that look alike — a requirement phrased as
+ * sameness is satisfiable by copying — so it is one function in
+ * `public/utils.js`, and this is the assertion that survives someone later
+ * "fixing" one of the two surfaces without the other.
+ */
+describe("the shared badge reaches both surfaces from one function", () => {
+  const CHIP = /<span class="tag-chip tag-chip--shared"[\s\S]*?<\/span>/;
+
+  const fixture = {
+    id: "p1",
+    content: "You keep circling back to the same onboarding complaint.",
+    tags: "[]",
+    source: "web-ui",
+    created_at: FROZEN_NOW - 60_000,
+    vector_ids: "[]",
+    workspace: "company",
+    actor_name: "Second Brain",
+  };
+
+  it("renders the same chip on a memory card and on a pattern row", () => {
+    const { ctx } = setup({ team: true });
+    const fromCard = ctx.makeRecentCard(fixture).innerHTML.match(CHIP);
+    const fromRow = ctx.patternRow(fixture).match(CHIP);
+    expect(fromCard, "the memories card must carry the chip").not.toBeNull();
+    expect(fromRow, "the review queue must carry the chip").not.toBeNull();
+    expect(fromRow![0]).toBe(fromCard![0]);
+    expect(fromCard![0]).toContain("shared · Second Brain");
+  });
+
+  it("renders it on neither surface on a solo brain", () => {
+    const { ctx } = setup({ team: false });
+    expect(ctx.makeRecentCard(fixture).innerHTML).not.toContain("tag-chip--shared");
+    expect(ctx.patternRow(fixture)).not.toContain("tag-chip--shared");
   });
 });
