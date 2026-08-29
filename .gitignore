@@ -1,6 +1,11 @@
 .DS_Store
 assets/*.gif
-node_modules/
+# NO trailing slash, deliberately. `node_modules/` matches a DIRECTORY only, so
+# a SYMLINK named node_modules — what a git worktree sharing the parent
+# checkout's install looks like — is a plain file to git and slips past the
+# rule. One was committed as a mode-120000 blob pointing outside the repository
+# root. Slashless matches both. test/unit/repo-hygiene.test.ts is the guard.
+node_modules
 coverage/
 .wrangler/
 .wrangler-dry-run/
