@@ -144,10 +144,10 @@ describe("scanSource — evasions", () => {
   });
 
   it("(a) still accepts workspace_id when it is actually a predicate", () => {
+    // Only the two operators that NARROW to a named set. See the inverse case below.
     for (const sql of [
       "`SELECT id FROM entries WHERE workspace_id IN (?, ?)`",
       "`SELECT id FROM edges WHERE workspace_id = ?`",
-      "`SELECT DISTINCT workspace_id FROM entries WHERE workspace_id > ?`",
       "`SELECT id FROM entries e WHERE e.workspace_id IN (?, ?)`",
     ]) {
       expect([sql, scanSource(`const q = ${sql};`).violations]).toEqual([sql, []]);
@@ -245,6 +245,143 @@ describe("scanSource — evasions", () => {
       "   ORDER BY created_at`;",
     ].join("\n"));
     expect(r.violations.length).toBe(1);
+  });
+});
+
+/**
+ * Round two: what a 38-attack adversarial sweep got past the round-one rules.
+ * Same governing rule — a false positive costs thirty seconds, a false negative
+ * is a leak with a green tick beside it.
+ */
+describe("scanSource — inverse and near-miss predicates", () => {
+  it("(A) rejects every operator that does not narrow to a named set", () => {
+    // `!=` returns precisely everyone ELSE's rows: the tool was green-lighting
+    // the exact opposite of what it exists to enforce. `>` is how
+    // src/runtime/rotation.ts walks the ring — a real corpus query that passed
+    // on this alone. Only `=` and `IN` narrow to a set the caller named.
+    for (const op of ["!=", "<>", ">", "<", ">=", "<=", "NOT IN", "LIKE", "IS NOT"]) {
+      const rhs = op === "NOT IN" ? "(?, ?)" : "?";
+      const sql = `const q = \`SELECT content FROM entries WHERE workspace_id ${op} ${rhs}\`;`;
+      expect([op, scanSource(sql).violations.length]).toEqual([op, 1]);
+    }
+    // BETWEEN takes two bounds and is a range, never a scope.
+    expect(scanSource("const q = `SELECT content FROM entries WHERE workspace_id BETWEEN ? AND ?`;")
+      .violations.length).toBe(1);
+  });
+
+  it("(B1) does not read a scope interpolation out of a SQL comment", () => {
+    // stripSqlComments already ran on the literal-workspace_id path and never on
+    // the interpolation path, so the round-one test passed while this shipped.
+    for (const commented of [
+      "`SELECT content FROM entries\n   -- AND ${scope.clause}\n   ORDER BY created_at`",
+      "`SELECT content FROM entries /* ${scope.clause} */ ORDER BY created_at`",
+    ]) {
+      expect([commented, scanSource(`const q = ${commented};`).violations.length])
+        .toEqual([commented, 1]);
+    }
+  });
+
+  it("(B2) does not accept an identifier that merely contains the letters scope", () => {
+    for (const name of ["periscopeStart", "unscopedId", "scopeless", "telescope"]) {
+      const sql = `const q = \`SELECT content FROM entries WHERE x = \${${name}}\`;`;
+      expect([name, scanSource(sql).violations.length]).toEqual([name, 1]);
+    }
+  });
+
+  it("(B2) still accepts the scope shapes the codebase actually writes", () => {
+    for (const expr of [
+      "scope.clause", "aScope.clause", "mScope.clause", "scopeSql",
+      "nodeScopeSql", "rcScopeSql", "tagScopeSql", "scopeWhere(identity).clause",
+    ]) {
+      const sql = `const q = \`SELECT content FROM entries WHERE \${${expr}}\`;`;
+      expect([expr, scanSource(sql).violations]).toEqual([expr, []]);
+    }
+  });
+
+  it("(B3) sees a quoted or schema-qualified table name, and counts it", () => {
+    // The worst failure shape available: these produced queries=0, so they were
+    // neither flagged NOR counted, and the summary line looked healthier for it.
+    for (const ref of ['"entries"', "[entries]", "main.entries", 'main."edges"']) {
+      const r = scanSource(`const q = \`SELECT content FROM ${ref} ORDER BY created_at\`;`);
+      expect([ref, r.queries, r.violations.length]).toEqual([ref, 1, 1]);
+    }
+    // And they are still satisfiable by a real clause, so this is not a blanket ban.
+    expect(scanSource('const q = `SELECT content FROM "entries" WHERE ${scope.clause}`;').violations)
+      .toEqual([]);
+  });
+
+  it("(B3) fails loudly on a table reference it matched but cannot parse", () => {
+    // The rule that makes B3 safe in general rather than for three known
+    // spellings: if the file-level sweep saw a reference and the per-statement
+    // parse cannot account for it, that is reported, never dropped.
+    const r = scanSource('const q = `SELECT content FROM "entries WHERE ${scope.clause}`;');
+    expect(r.queries).toBe(1);
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("could not");
+  });
+
+  it("(B4) rejects every conditional spelling of a scope clause, not just one", () => {
+    // Limitation 7 claimed conditional clauses were refused; it caught exactly
+    // `: ""` and `: ''`. All of these were passing.
+    for (const expr of [
+      'scope ? `AND ${scope.clause}` : ``',
+      'scope ? `AND ${scope.clause}` : "1=1"',
+      '!scope ? "" : `AND ${scope.clause}`',
+      'scope?.clause ?? ""',
+      'scope && `AND ${scope.clause}`',
+      'scope || ""',
+    ]) {
+      const sql = `const q = \`SELECT content FROM entries WHERE 1=1 \${${expr}}\`;`;
+      expect([expr, scanSource(sql).violations.length]).toEqual([expr, 1]);
+    }
+  });
+});
+
+describe("scanSource — documented limitations, pinned so the header cannot drift", () => {
+  it("limitation 3: does not parse boolean structure, so `OR 1=1` defeats a real clause", () => {
+    // Asserted as CURRENT BEHAVIOUR, not as desired behaviour. The clause is
+    // present and unconditional; seeing that an OR at the same level undoes it
+    // needs a SQL parser. The header says so in exactly these terms, and this
+    // test is what keeps the sentence and the code honest with each other. If
+    // someone teaches the checker boolean structure, this test goes red and the
+    // header limitation gets deleted in the same commit.
+    const r = scanSource("const q = `SELECT content FROM entries WHERE ${scope.clause} OR 1=1`;");
+    expect(r.violations).toEqual([]);
+  });
+
+  it("limitation 1: SQL split across a concatenation is not seen, and not counted", () => {
+    // The one gap with no loud failure, for the reason the header gives: the
+    // token `FROM entries` never exists in the source, so there is nothing to
+    // match. Pinned so the claim "of the statements it can see" stays accurate.
+    const r = scanSource('const q = "SELECT id FROM " + "entries WHERE 1=1";');
+    expect([r.queries, r.violations]).toEqual([0, []]);
+  });
+});
+
+describe("scanSource — scope-checked, for clauses the lexer cannot see", () => {
+  it("counts a scope-checked marker separately from an exemption", () => {
+    // src/recall/search.ts and src/recall/distill.ts ARE scoped; the clause is
+    // assembled in JavaScript. Filing them as permanent licences made the
+    // exemption count overstate how much of src/ is deliberately unscoped.
+    const r = scanSource([
+      "// scope-checked: the caller's clause is inside d1Filters, built above",
+      "const a = `SELECT * FROM entries WHERE id IN (${ph})${d1Filters}`;",
+      "// scope-exempt: by-id, gated at the route",
+      "const b = `SELECT * FROM entries WHERE id = ?`;",
+    ].join("\n"));
+    expect(r.violations).toEqual([]);
+    expect(r.exceptions.map(e => [e.kind, e.line])).toEqual([["checked", 2], ["exempt", 4]]);
+  });
+
+  it("reports the aliases the machine found unscoped alongside the human reason", () => {
+    // So the sentence and the machine's own alias list sit side by side and any
+    // drift between them is visible without re-deriving it.
+    const r = scanSource([
+      "// scope-exempt: e is pinned by id; m carries its own clause",
+      "const q = `SELECT m.content FROM edges e LEFT JOIN entries m ON m.id = e.target_id AND m.${scope.clause}`;",
+    ].join("\n"));
+    expect(r.exceptions.length).toBe(1);
+    expect(r.exceptions[0].unscoped).toEqual(["edges e"]);
   });
 });
 

@@ -169,7 +169,7 @@ function pageSql(hasCursor: boolean): string {
   const after = hasCursor
     ? `AND (created_at > ? OR (created_at = ? AND id > ?))`
     : "";
-    // scope-exempt: one-time re-embed migration: admin-triggered and deployment-wide; the rows it selects go to the embedder, and only counts reach the response
+  // scope-exempt: one-time re-embed migration: admin-triggered and deployment-wide; the rows it selects go to the embedder, and only counts reach the response
   return `SELECT id, content, tags, source, created_at
             FROM entries
            WHERE ${NOT_DEPRECATED} ${after}

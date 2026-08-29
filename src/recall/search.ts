@@ -407,7 +407,7 @@ export async function recallEntries(
     const batch = allParentIds.slice(i, i + idBatchSize);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      // scope-exempt: scoped: the caller's clause is inside d1Filters, built above
+      // scope-checked: the caller's clause IS applied — d1Filters is built from scope.clause above and appended here; the lexer cannot see into a JS-assembled fragment
       `SELECT id, content, tags, source, created_at, updated_at, workspace_id, actor_id FROM entries WHERE id IN (${placeholders})${d1Filters}`
     ).bind(...batch, ...filterBindings).all() as { results: Record<string, any>[] };
     d1Rows.push(...results);
