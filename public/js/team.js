@@ -9,6 +9,15 @@
 
 let teamMembers = []
 let teamYouId = null
+/**
+ * The probe's answer to "is whoever holds this bearer token an admin?" — true,
+ * false, or null while it has not been asked. Nothing on this screen branches
+ * on it (the screen's three states come from which fetch succeeded); it exists
+ * so js/activity.js can decline to request an admin-only feed on a member's
+ * behalf. Null is deliberately not false: an unanswered probe must not be able
+ * to hide an admin's own activity log.
+ */
+let teamIsAdmin = null
 /** GET /team/roster's members — names and roles only. The member view's list. */
 let teamRoster = []
 /** GET /team/roster's teams, same shape as teamWorkspaces but for a member. */
@@ -116,6 +125,8 @@ async function loadTeam() {
     if (!data.ok || !Array.isArray(data.members)) throw new Error(t('common.invalidResponse'))
     teamMembers = data.members
     teamYouId = data.you ?? null
+    // 200 from an endpoint behind requireAdmin IS the answer.
+    teamIsAdmin = true
     setTeamNavVisible(true)
     renderTeam()
   } catch {
@@ -145,6 +156,9 @@ async function loadTeamMemberView() {
     if (!res.ok) throw new Error(String(res.status))
     const data = await res.json()
     if (!data.ok || !Array.isArray(data.members)) throw new Error(t('common.invalidResponse'))
+    // The caller's OWN role, from an identity-scoped endpoint, so it is the
+    // answer either way — including on the path that stands this view down.
+    teamIsAdmin = !!data.admin
     if (data.admin) throw new Error('admin')
     teamRoster = data.members
     teamRosterTeams = Array.isArray(data.teams) ? data.teams : []

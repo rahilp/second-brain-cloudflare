@@ -869,6 +869,38 @@ describe("team member view", () => {
     return { ...harness, seen };
   }
 
+  it("records the probe's answer, which is what stands the activity feed down", async () => {
+    // js/activity.js declines to request the admin-only GET /team/activity once
+    // this says false — otherwise a member pays for a 403 on every Team-tab
+    // visit. `teamIsAdmin` is a top-level `let`, so it is read out of the
+    // context rather than off the sandbox.
+    const before = memberSetup();
+    expect(vm.runInContext("teamIsAdmin", before.ctx)).toBe(null);
+    await before.ctx.loadTeam();
+    expect(vm.runInContext("teamIsAdmin", before.ctx)).toBe(false);
+
+    const asAdmin = adminSetup();
+    await asAdmin.ctx.loadTeam();
+    expect(vm.runInContext("teamIsAdmin", asAdmin.ctx)).toBe(true);
+
+    // Neither probe answered: unknown, not "no". An unanswered probe hiding an
+    // admin's own activity log is the worse of the two failures by far.
+    const offline = setup(async () => {
+      throw new Error("offline");
+    });
+    await offline.ctx.loadTeam();
+    expect(vm.runInContext("teamIsAdmin", offline.ctx)).toBe(null);
+  });
+
+  it("calls an admin an admin even when the roster probe is the one that answers", async () => {
+    // /team/members failed for some reason other than permission, and
+    // /team/roster says this caller IS an admin. The member view stands down —
+    // and so does the not-an-admin gate.
+    const { ctx } = memberSetup({ roster: { ...ROSTER_OK, admin: true } });
+    await ctx.loadTeam();
+    expect(vm.runInContext("teamIsAdmin", ctx)).toBe(true);
+  });
+
   it("renders the team name and everyone on it, with the caller's own row marked", async () => {
     const { ctx, els } = memberSetup();
     await ctx.loadTeam();

@@ -13,7 +13,7 @@
  * an empty page, on the cap and on an error) and the leak (one
  * revokeObjectURL per click, for the url createObjectURL actually returned).
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
@@ -322,6 +322,100 @@ describe("the activity CSV export", () => {
     expect(lines[1].startsWith('"2026-08-20T09:00:00.000Z"')).toBe(true);
   });
 
+  it("exports the rest of the trail when one row's timestamp is unusable", async () => {
+    // The whole point: a single bad row must not cost the admin the file. The
+    // `when` cell is empty for that row — every other column in this document
+    // already renders an absent value as an empty cell, and a made-up token in
+    // an ISO-8601 column would give the column two grammars. Inventing a date
+    // is the one answer that is never acceptable in an audit export.
+    const { ctx, els, createdFrom, toasts } = setup(async () =>
+      ok([
+        row(0, { at: undefined, actor: "No clock" }),
+        row(1, { at: "2026-08-20T09:00:00.000Z", actor: "Good row" }),
+        row(2, { at: null, actor: "Null clock" }),
+        row(3, { at: "not a date at all", actor: "Junk clock" }),
+        row(4, { at: 1755680400000, actor: "Epoch row" }),
+      ]),
+    );
+    await ctx.exportActivityCsv(els.get("activity-export"));
+    expect(toasts).toEqual([]);
+    expect(createdFrom).toHaveLength(1);
+    const lines = (await rawText(createdFrom[0])).slice(1).split("\r\n");
+    expect(lines).toHaveLength(6);
+    expect(lines[1].startsWith('"",')).toBe(true);
+    expect(lines[1]).toContain('"No clock"');
+    expect(lines[2].startsWith('"2026-08-20T09:00:00.000Z",')).toBe(true);
+    // `new Date(null)` is epoch 0: without an explicit check this row would
+    // claim, in a compliance record, that it happened in 1970.
+    expect(lines[3].startsWith('"",')).toBe(true);
+    expect(lines[3]).not.toContain("1970");
+    expect(lines[4].startsWith('"",')).toBe(true);
+    // Epoch milliseconds are what the endpoint actually sends, and they work.
+    expect(lines[5].startsWith('"2025-08-20T09:00:00.000Z",')).toBe(true);
+  });
+
+  it("says so rather than downloading an empty log when the body is not a feed", async () => {
+    // An empty audit log is a CLAIM that nothing happened. A 200 whose body is
+    // the wrong shape must never be able to make that claim — which is what a
+    // header-only CSV with no toast is.
+    for (const body of [{ ok: false }, { ok: true, activity: [] }, { ok: true, events: null }, {}]) {
+      const { ctx, els, createdFrom, toasts } = setup(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+      }));
+      await ctx.exportActivityCsv(els.get("activity-export"));
+      expect(createdFrom, JSON.stringify(body)).toHaveLength(0);
+      expect(toasts, JSON.stringify(body)).toEqual(["Could not export the activity log."]);
+    }
+  });
+
+  it("reads the same body the view reads, through the same check", async () => {
+    // loadTeamActivity and exportActivityCsv disagreeing about one response is
+    // exactly how a cross-worktree field-name change becomes a silent empty
+    // file on one path and a stated failure on the other. One check, one answer.
+    const src = readFileSync(resolve(ROOT, "public/js/activity.js"), "utf8");
+    const callers = src.match(/activityEventsFrom\(/g) ?? [];
+    // The declaration plus both call sites.
+    expect(callers).toHaveLength(3);
+    expect(src).not.toMatch(/Array\.isArray\(data\.events\) \? data\.events : \[\]/);
+  });
+
+  it("pages on the page size, never on a count the feed does not send", async () => {
+    // GET /team/activity answers { ok, events, limit, offset } — there is no
+    // `total`, and reading one would be reading undefined. A body that grows a
+    // total later must not be able to truncate the export either.
+    const { ctx, els, calls, createdFrom } = setup(async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        limit: 50,
+        offset: 0,
+        total: 1,
+        events: url.includes("offset=0") ? page(50, 0) : page(3, 50),
+      }),
+    }));
+    await ctx.exportActivityCsv(els.get("activity-export"));
+    expect(calls).toHaveLength(2);
+    const lines = (await rawText(createdFrom[0])).slice(1).split("\r\n");
+    expect(lines).toHaveLength(54);
+  });
+
+  it("writes the raw event name for a kind it has never heard of", async () => {
+    // Any AdminEventName added later reaches this endpoint with no route
+    // change. An unrecognised name must still produce a row, with something
+    // honest and non-empty in the event column — a dropped row in a compliance
+    // export is a silent claim that nothing happened.
+    const { ctx, els, createdFrom } = setup(async () =>
+      ok([row(0, { event: "member_teleported", actor: "Ada" })]),
+    );
+    await ctx.exportActivityCsv(els.get("activity-export"));
+    const lines = (await rawText(createdFrom[0])).slice(1).split("\r\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('"member_teleported"');
+  });
+
   it("is wired into index.html", () => {
     const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
     expect(html).toContain('id="activity-export"');
@@ -332,13 +426,35 @@ describe("the activity CSV export", () => {
     // The structural half of the anti-duplication requirement. Two code paths
     // producing matching output have NOT met it: one of them is where the
     // missing revokeObjectURL goes to live.
-    const files = ["public/utils.js", "public/js/activity.js", "public/js/settings.js"];
-    const owners = files.filter((f) =>
-      /URL\.createObjectURL\(/.test(readFileSync(resolve(ROOT, f), "utf8")),
-    );
+    //
+    // This walks ALL of public/, not a hand-listed few, and matches every
+    // mechanism a browser will save a file with — not just the one this tree
+    // happens to use today. A test that names the current three files pins the
+    // files; the invariant is "one place in public/", and a second downloader
+    // added anywhere, by any means, is what this has to fail on.
+    const MECHANISMS =
+      /URL\.createObjectURL\(|webkitURL\.createObjectURL\(|createObjectURL\s*=|msSaveBlob|msSaveOrOpenBlob|showSaveFilePicker|toDataURL\(|\.download\s*=|download\s*=\s*["'][^"']|href\s*=\s*["'`]?\s*data:/;
+    const owners: string[] = [];
+    let scanned = 0;
+    const walk = (dir: string) => {
+      for (const e of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(rel);
+        else if (/\.(js|html|htm|css|json)$/.test(e.name)) {
+          scanned++;
+          if (MECHANISMS.test(readFileSync(resolve(ROOT, rel), "utf8"))) owners.push(rel);
+        }
+      }
+    };
+    walk("public");
     expect(owners).toEqual(["public/utils.js"]);
+
+    // …and it really is the shared one, reached by both callers by name.
     for (const f of ["public/js/activity.js", "public/js/settings.js"]) {
       expect(readFileSync(resolve(ROOT, f), "utf8")).toContain("downloadTextFile(");
     }
+    // A guard on the guard: the walk must actually have read the tree, not
+    // silently matched nothing because the extension filter drifted.
+    expect(scanned).toBeGreaterThan(15);
   });
 });
