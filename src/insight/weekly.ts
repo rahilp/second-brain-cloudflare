@@ -70,10 +70,48 @@ export function rawInsightText(content: string): string {
   return footer === -1 ? content : content.slice(0, footer);
 }
 
-export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promise<void> {
+/**
+ * Every company workspace on the deployment. A cron has no caller to
+ * scope to; `kind` is the whole predicate and the result is a list of
+ * ids, never content.
+ */
+export async function companyWorkspaceIds(env: Env): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM workspaces WHERE kind = 'company'`,
+  ).all<{ id: string }>();
+  return (results ?? []).map(r => r.id);
+}
+
+/**
+ * `onlyWorkspaceIds` narrows the candidate slate to pairs whose BOTH sides sit
+ * in one of the named workspaces. Absent or empty means the whole corpus — the
+ * personal pass — so a solo brain's empty company list reads as "no
+ * restriction was asked for" rather than "restrict to nothing".
+ *
+ * One implementation, two invocations. Everything the personal and team passes
+ * do differs by this predicate and nothing else: the eligibility gate, the
+ * same-workspace gate, the novelty floor, the three-per-run cap, the
+ * drawn_from edges and the batch are behaviour both need and neither may drift
+ * on, so a second function would be two things to keep in step rather than one
+ * thing to get right.
+ */
+export async function runWeeklyInsights(
+  env: Env,
+  ctx: ExecutionContext,
+  opts?: { onlyWorkspaceIds?: string[] },
+): Promise<void> {
   try {
     const cfg = await resolveConfig(env);
     await initializeDatabase(env);
+
+    // Built here rather than inline in the template so the query carries a
+    // plain identifier: a conditional written inside `${…}` is unscoped on the
+    // arm that matters and scripts/check-scope.mjs refuses it on sight.
+    const sliceIds = opts?.onlyWorkspaceIds ?? [];
+    const slicePlaceholders = sliceIds.map(() => "?").join(", ");
+    const sliceClause = sliceIds.length
+      ? `AND a.workspace_id IN (${slicePlaceholders}) AND b.workspace_id IN (${slicePlaceholders})`
+      : "";
 
     // One statement rather than a select-then-hydrate: the join is what keeps
     // this inside the subrequest budget, and a candidate whose entries have
@@ -92,7 +130,7 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // being drawn under the old rule until the pool empties. Free: the JOIN
     // was already selecting these rows, this only widens the column list.
     const { results } = await env.DB.prepare(
-      // scope-exempt: cron: no caller to scope to. Both workspaces are projected, and the loop below compares them BEFORE the pair reaches the model: a candidate whose two entries sit in different workspaces is skipped and settled, never reasoned over and never written anywhere. Accrual refuses to pair across workspaces (candidates.ts), so that only fires for pre-tenancy candidate rows
+      // scope-exempt: cron: no caller to scope to. Both workspaces are projected, and the loop below compares them BEFORE the pair reaches the model: a candidate whose two entries sit in different workspaces is skipped and settled, never reasoned over and never written anywhere. Accrual refuses to pair across workspaces (candidates.ts), so that only fires for pre-tenancy candidate rows. sliceClause is optionally present and is a list of workspace IDS read from the `workspaces` table (companyWorkspaceIds, below), never from a request — it narrows this cron's slate, it does not scope it to a caller, and there is no caller to scope to on either invocation
       `SELECT c.id, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
               a.tags AS a_tags, b.tags AS b_tags,
               a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id
@@ -102,9 +140,10 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
        WHERE c.status = 'pending'
          AND a.tags NOT LIKE '%"status:deprecated"%'
          AND b.tags NOT LIKE '%"status:deprecated"%'
+         ${sliceClause}
        ORDER BY c.score DESC
        LIMIT ?`,
-    ).bind(WEEKLY_CANDIDATE_LIMIT).all() as { results: CandidateRow[] };
+    ).bind(...sliceIds, ...sliceIds, WEEKLY_CANDIDATE_LIMIT).all() as { results: CandidateRow[] };
 
     // Seeds the novelty floor with what a reader would already have seen: the
     // last RECENT_INSIGHT_WINDOW insights the pass has WRITTEN, not just what
@@ -191,9 +230,14 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       //
       // Accrual (src/insight/candidates.ts) already refuses to pair across
       // workspaces in both paths, so this only fires for candidates that predate
-      // tenancy — which is every candidate an upgraded v2 brain carries in. Team
-      // insights are a Phase 4 feature (spec 4.5), deliberately scoped to the
-      // company workspace and attributed; this is not that.
+      // tenancy — which is every candidate an upgraded v2 brain carries in.
+      //
+      // It holds identically on the sliced (team) invocation, and it is not
+      // made redundant by the slice: `onlyWorkspaceIds` can name more than one
+      // company workspace, and a pair with one side in each passes both IN
+      // predicates. This gate is the only thing between such a pair and the
+      // model. Team insights (spec 4.5) are a company-SCOPED pass, not a
+      // cross-workspace one.
       const inputWorkspaces = new Set([candidate.a_workspace_id ?? "", candidate.b_workspace_id ?? ""]);
       if (inputWorkspaces.size !== 1) {
         used.push(candidate.id);

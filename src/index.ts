@@ -11,8 +11,9 @@ import { INTEGRATION_SYNC_CRON, runScheduledIntegrationSync } from "./integratio
 import { runStalenessPass } from "./staleness/pass";
 import { nextWorkspace } from "./runtime/rotation";
 import { runInsightAccrual } from "./insight/candidates";
-import { runWeeklyInsights } from "./insight/weekly";
-import { INSIGHT_ACCRUAL_CRON, INSIGHT_WEEKLY_CRON } from "./insight/schedule";
+import { companyWorkspaceIds, runWeeklyInsights } from "./insight/weekly";
+import { INSIGHT_ACCRUAL_CRON, INSIGHT_TEAM_WEEKLY_CRON, INSIGHT_WEEKLY_CRON } from "./insight/schedule";
+import { resolveConfig } from "./config";
 import { resolveIdentityFromToken } from "./lib/identity";
 import { apiHandler } from "./mcp/handler";
 import { augmentOAuthRegistrationRequest } from "./oauth/register";
@@ -74,16 +75,37 @@ export default {
     // is maintenance, so without these each new trigger would run compression,
     // the graph pass and staleness a second and third time every day.
     //
-    // The insight passes deliberately stay WHOLE-CORPUS — they are not given a
-    // workspace slice. They are already budget-managed on their own invocations
-    // (#290), and cross-workspace candidate pairs were handled in P1a, so slicing
-    // them would only stretch coverage over K nights without buying headroom.
+    // Accrual and the PERSONAL weekly pass stay whole-corpus: they are already
+    // budget-managed on their own invocations (#290), and cross-workspace
+    // candidate pairs were handled in P1a, so a maintenance-style rotation
+    // slice would only stretch coverage over K nights without buying headroom.
+    //
+    // The TEAM pass below is the one exception, and it is not that kind of
+    // slice. It is not a rotation and it does not exist to save budget: it is
+    // the same pass given the company workspaces so the shared layer stops
+    // competing with every member's personal pairs for the same ten-candidate
+    // slate and the same three write slots (spec 4.5). One implementation, two
+    // invocations — see runWeeklyInsights's own note.
     if (event.cron === INSIGHT_ACCRUAL_CRON) {
       job("insight accrual", runInsightAccrual(env, ctx));
       return;
     }
     if (event.cron === INSIGHT_WEEKLY_CRON) {
       job("weekly insights", runWeeklyInsights(env, ctx));
+      return;
+    }
+
+    // The team pass. Gated on config rather than on "is this a team brain",
+    // because a brain can have a company workspace and still not want its
+    // shared memory reasoned over — and an empty id list is a no-op either way.
+    if (event.cron === INSIGHT_TEAM_WEEKLY_CRON) {
+      job("team insights", (async () => {
+        const cfg = await resolveConfig(env);
+        if (cfg.TEAM_INSIGHTS !== "on") return;
+        const ids = await companyWorkspaceIds(env);
+        if (!ids.length) return;
+        await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: ids });
+      })());
       return;
     }
 

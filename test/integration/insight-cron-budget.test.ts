@@ -211,6 +211,85 @@ describe("insight crons stay inside one invocation's budget", () => {
     expect(await drawnFrom(sqlite)).toHaveLength(MAX_INSIGHTS_PER_RUN * 2);
     sqlite.close();
   });
+
+  it("the sliced team pass stays under budget at a full candidate slate", async () => {
+    // The team pass is its own invocation and therefore its own 50, and this
+    // is the measurement the fifth cron trigger is justified by: if the two
+    // passes shared one invocation the total would be the sum of this number
+    // and the one above, which is well past the ceiling and would leave the
+    // second pass dead half-written.
+    //
+    // A FULL slate inside the slice, plus personal candidates outscoring every
+    // one of them — the worst case, and the shape a real team brain has. The
+    // personal rows are what make the measurement honest: a slice that cost
+    // less only because it drew fewer candidates would prove nothing.
+    const sqlite: SqliteD1 = makeSqliteD1();
+    const seedIn = (id: string, workspaceId: string, content: string, createdAt: number) => {
+      sqlite.seed({ id, content, createdAt, tags: ["pricing"] });
+      return sqlite.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(workspaceId, id).run();
+    };
+    for (let i = 0; i < WEEKLY_CANDIDATE_LIMIT; i++) {
+      await seedIn(`co-a-${i}`, "ws-co",
+        `Decision: price tier ${i} flat at nine dollars a month for predictable billing.`, FIXTURE_NOW - 120 * DAY);
+      await seedIn(`co-b-${i}`, "ws-co",
+        `Decision: move tier ${i} to usage-based billing instead of flat pricing.`, FIXTURE_NOW);
+      await sqlite.db.prepare(
+        `INSERT INTO insight_candidates (id, a_id, b_id, similarity, gap_ms, score, signal, status, created_at)
+         VALUES (?, ?, ?, 0.87, ?, ?, 'vector', 'pending', ?)`,
+      ).bind(`co-c-${i}`, `co-a-${i}`, `co-b-${i}`, 120 * DAY, 10 - i, FIXTURE_NOW).run();
+      // A higher-scoring personal pair per company pair, which the slice must
+      // remove in the query rather than after drawing it.
+      await seedIn(`p-a-${i}`, "ws-alice",
+        `Decision: price plan ${i} flat at nine dollars a month for predictable billing.`, FIXTURE_NOW - 120 * DAY);
+      await seedIn(`p-b-${i}`, "ws-alice",
+        `Decision: move plan ${i} to usage-based billing instead of flat pricing.`, FIXTURE_NOW);
+      await sqlite.db.prepare(
+        `INSERT INTO insight_candidates (id, a_id, b_id, similarity, gap_ms, score, signal, status, created_at)
+         VALUES (?, ?, ?, 0.87, ?, ?, 'vector', 'pending', ?)`,
+      ).bind(`p-c-${i}`, `p-a-${i}`, `p-b-${i}`, 120 * DAY, 100 - i, FIXTURE_NOW).run();
+    }
+    const before = sqlite.issued.length;   // seeding is not the pass
+
+    const kv = makeMemoryKV();
+    const env = makeTestEnv(undefined, {
+      DB: sqlite.db as any, OAUTH_KV: kv, VECTORIZE: makeVectorizeMock(),
+      AI: makeReasoningAI(),
+    });
+    const kvGet = vi.spyOn(kv, "get");
+    const kvPut = vi.spyOn(kv, "put");
+
+    await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: ["ws-co"] });
+
+    // The expensive branch: three real captures, all of them in the slice.
+    const written = (await sqlite.db.prepare(
+      `SELECT COUNT(*) AS n FROM entries WHERE tags LIKE '%"auto-insight"%' AND workspace_id = 'ws-co'`,
+    ).first()) as { n: number };
+    expect(written.n).toBe(MAX_INSIGHTS_PER_RUN);
+
+    const bindingCalls =
+      (env.AI.run as any).mock.calls.length +
+      (env.VECTORIZE.query as any).mock.calls.length +
+      (env.VECTORIZE.insert as any).mock.calls.length +
+      (env.VECTORIZE.upsert as any).mock.calls.length +
+      kvGet.mock.calls.length +
+      kvPut.mock.calls.length;
+    const measured = (sqlite.issued.length - before) + bindingCalls;
+    expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
+    // Pinned, like the unsliced case above: the slice is a WHERE predicate on
+    // a query that already ran, so it costs the same 38 the personal pass
+    // costs. A future change that made the team pass more expensive than the
+    // personal one is exactly what this number is here to surface.
+    expect(measured).toBe(38);
+
+    // What the scheduled() branch spends AROUND the pass, so the pinned number
+    // above is not mistaken for the whole invocation: one KV read for the
+    // config flag and one D1 read for companyWorkspaceIds. The team
+    // invocation's real total is therefore 40 of 50.
+    expect(measured + 2).toBeLessThan(SUBREQUEST_BUDGET);
+
+    expect(await drawnFrom(sqlite)).toHaveLength(MAX_INSIGHTS_PER_RUN * 2);
+    sqlite.close();
+  });
 });
 
 describe("POST /insights/accrue stays inside one invocation's budget", () => {
