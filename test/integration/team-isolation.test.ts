@@ -559,11 +559,11 @@ describe("cross-user isolation — maintenance passes", () => {
    * backfills the `entries` ROWS (src/lib/tenancy.ts) but never restamps their
    * vectors, so the row has a real workspace and the vector has none.
    *
-   * `absentFieldMatches` is the thing about Vectorize this repo cannot verify
-   * locally — `vectorize` has no local emulation (wrangler binds it "remote"),
-   * and neither the type declarations nor the docs in this repo say whether an
-   * absent field satisfies `$in`. Both readings are therefore modelled, and the
-   * cases below are asserted under each.
+   * `absentFieldMatches` is the thing about Vectorize this repo cannot verify:
+   * there is no local Vectorize to observe, so the real index's answer is only
+   * available against a live deployment, and neither the type declarations nor
+   * anything in this repo says whether an absent field satisfies `$in`. Both
+   * readings are therefore modelled, and the cases below are asserted under each.
    */
   function indexDouble(opts: {
     vectors: { id: string; workspaceId?: string; score: number }[];
@@ -622,10 +622,9 @@ describe("cross-user isolation — maintenance passes", () => {
     ],
   });
 
-  /** Two of Alice's own rows as each other's nearest neighbour. */
-  const sameWorkspaceVectorize = (rejectFilters: boolean) => indexDouble({
+  /** Two of Alice's own rows as each other's nearest neighbour, both stamped. */
+  const sameWorkspaceVectorize = () => indexDouble({
     absentFieldMatches: true,
-    rejectFilters,
     vectors: [
       { id: "alice-one", workspaceId: aliceWorkspaceId, score: 0.97 },
       { id: "alice-two", workspaceId: aliceWorkspaceId, score: 0.96 },
@@ -701,8 +700,10 @@ describe("cross-user isolation — maintenance passes", () => {
    * the acting entry's workspace while its `source_id` might be the colleague's
    * row.
    *
-   * The pass now filters to the row's own workspace, and inferEdgesOnWrite
-   * refuses a pair whose endpoints disagree whatever the filter did. The
+   * `inferEdgesOnWrite` now refuses a pair whose endpoints sit in different
+   * workspaces, reading both from `entries` rather than from vector metadata.
+   * The pass still queries the index unfiltered — deliberately, see
+   * src/graph/pass.ts — so that check is doing all of the work here. The
    * assertion below is exactly the one that was recorded as failing.
    */
   it("the graph pass never links a memory to one in another workspace", async () => {
@@ -776,9 +777,9 @@ describe("cross-user isolation — maintenance passes", () => {
    *
    * Run under both readings of `$in` against a missing field, because which one
    * Vectorize implements is not determinable from this repo: there is no local
-   * Vectorize emulation (wrangler binds it "remote"), the type declarations are
-   * silent, and guessing the favourable one is how this shipped in the first
-   * place. The pass must be correct under either.
+   * Vectorize to observe it against, the type declarations are silent, and
+   * guessing the favourable one is how this shipped in the first place. The
+   * pass must be correct under either.
    */
   it.each([
     { name: "an absent field does not satisfy $in", absentFieldMatches: false },
@@ -842,17 +843,18 @@ describe("cross-user isolation — maintenance passes", () => {
     expect(crossings).toEqual([]);
   });
 
-  // A solo brain has one workspace, so the narrowing must cost it nothing —
-  // whether or not its index can filter. Both arms assert the same edge.
-  it.each([
-    { name: "filter accepted", rejectFilters: false },
-    { name: "filter rejected", rejectFilters: true },
-  ])("still links two memories in one workspace ($name)", async ({ rejectFilters }) => {
+  // A solo brain has one workspace, so the narrowing must cost it nothing.
+  //
+  // Not parametrised over whether the index accepts metadata filters: the pass
+  // sends none, so both arms ran the identical query and the second proved
+  // nothing. What guards against a filter being reintroduced is the dedicated
+  // case above, whose double rejects filtered queries outright.
+  it("still links two memories in one workspace", async () => {
     seed("alice-one", aliceWorkspaceId, aliceUserId,
       "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
     seed("alice-two", aliceWorkspaceId, aliceUserId,
       "Renewal terms for the Ardent contract were re-signed this quarter", ["contracts"]);
-    env.VECTORIZE = sameWorkspaceVectorize(rejectFilters);
+    env.VECTORIZE = sameWorkspaceVectorize();
 
     await parkCursorBefore(aliceWorkspaceId);
     await nightly();

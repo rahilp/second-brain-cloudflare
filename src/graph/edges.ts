@@ -153,12 +153,26 @@ export async function inferEdgesOnWrite(
 
   for (const n of top) {
     // Two different members' private entries are never linked, whatever the
-    // vector index returned. The write paths that call this DO filter their
-    // Vectorize query by workspace, but that filter is best-effort by contract
-    // (src/vectorize/scope.ts degrades to an unfiltered query on a filter-shaped
-    // rejection and latches it per isolate) — so this is the check that still
-    // holds in the degraded mode, and the one that makes the invariant true
-    // rather than likely.
+    // vector index returned. This is the ENFORCEMENT, not a backstop behind one:
+    // of the three paths that reach here, two send the vector index no workspace
+    // filter at all.
+    //
+    //   - src/graph/pass.ts (nightly backfill) queries unfiltered on purpose —
+    //     its candidate rows include entries whose vectors predate workspace
+    //     stamping, so a filter on that field can match nothing (see the comment
+    //     there);
+    //   - src/capture/store.ts's append and update paths go through
+    //     neighborsFromVectorQuery (src/graph/traverse.ts), a plain unfiltered
+    //     query;
+    //   - only src/capture/entry.ts's capture path filters, via
+    //     checkDuplicateAndContradiction — and that filter is best-effort by
+    //     contract anyway (src/vectorize/scope.ts degrades to an unfiltered query
+    //     on a filter-shaped rejection and latches it per isolate).
+    //
+    // So a foreign neighbour arriving here is the ordinary case rather than the
+    // degraded one, and this check — which reads both endpoints' workspaces from
+    // `entries`, the authoritative source, never from vector metadata — is the
+    // only thing that makes the invariant true.
     //
     // A neighbour with no `entries` row at all — a vector whose entry has since
     // been forgotten — is NOT refused here. It has no workspace to disagree

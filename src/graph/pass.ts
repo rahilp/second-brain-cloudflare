@@ -70,8 +70,9 @@ export async function runGraphPass(
       // none.
       //
       // Whether Vectorize's `$in` matches a vector that is MISSING the field is
-      // not determinable from this repo: Vectorize has no local emulation
-      // (wrangler binds it "remote"), and the type declarations do not say. Under
+      // not determinable from this repo: there is no local Vectorize to observe
+      // it against, so the real answer is only available from a live deployment,
+      // and the type declarations do not say either. Under
       // the unfavourable reading a filtered query returns nothing for every such
       // row, and the nightly pass silently stops inferring any edges at all on
       // exactly the brains the upgrade path produces — which is the
