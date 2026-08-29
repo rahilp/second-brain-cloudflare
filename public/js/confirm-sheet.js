@@ -108,12 +108,16 @@ function openDangerConfirm(opts) {
 /**
  * Dismiss whatever question is on screen.
  *
- * This is the AMBIENT dismissal, and it is for the two places that genuinely
- * mean "close what I am looking at": the Cancel button in the markup and the
- * backdrop listener in `app.js`. It is deliberately not what an action uses —
- * an action can resolve long after its own sheet was replaced, and by then
- * "what is on screen" is someone else's question. Actions close with the
- * handle `runConfirmAction` gives them.
+ * This is the AMBIENT dismissal: for callers that genuinely mean "close what I
+ * am looking at". The user dismissing the sheet is the usual one — the Cancel
+ * button in the markup and the backdrop listener in `app.js` — and
+ * `confirmForget`'s `done || closeConfirm` fallback is the other, reached only
+ * when something calls it directly rather than through the sheet.
+ *
+ * It is deliberately not what an action uses. An action can resolve long after
+ * its own sheet was replaced, and by then "what is on screen" is someone
+ * else's question. Actions close with the handle `runConfirmAction` gives
+ * them, which is inert once that question has gone.
  */
 function closeConfirm() {
   dismissConfirmSheet()
