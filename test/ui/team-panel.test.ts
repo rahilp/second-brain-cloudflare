@@ -91,6 +91,7 @@ const TEAM_ELEMENT_IDS = [
   "confirm-checkbox",
   "team-invite-copy-btn",
   "team-invite-mail-btn",
+  "team-org-default",
 ];
 
 function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
@@ -491,6 +492,156 @@ describe("team panel", () => {
     await ctx.setTeamSuspended("u2", true);
     await ctx.runConfirmAction();
     expect(appended[appended.length - 1].innerHTML).toContain("boom");
+  });
+
+  /**
+   * A native confirm() is modal — it structurally cannot be double-submitted.
+   * The sheet is not, so a double-click (or two calls landing back to back)
+   * can fire two POSTs whose responses race. The guard lives in
+   * runConfirmAction (confirm-sheet.js), not in team.js, but this asserts the
+   * OUTCOME the member actually cares about: only one request ever goes out,
+   * regardless of which layer enforces that.
+   */
+  it("a second confirm while a token rotation is in flight issues no second POST", async () => {
+    let tokenCalls = 0;
+    let resolveToken: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveToken = resolve;
+    });
+    const { ctx, els } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/token"),
+          reply: () => {
+            tokenCalls++;
+            return pending;
+          },
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.rotateTeamToken("u2");
+    const first = ctx.runConfirmAction();
+    const second = ctx.runConfirmAction(); // fired before the first POST resolves
+    // The caller's own progress copy, shown for the duration of the request.
+    expect(els.get("confirm-accept-btn").textContent).toBe("Resetting…");
+    resolveToken({ ok: true, status: 200, json: async () => ({ ok: true, id: "u2", token: "rotated-secret" }) });
+    await Promise.all([first, second]);
+    expect(tokenCalls).toBe(1);
+  });
+
+  it("a second confirm while a removal is in flight issues no second POST", async () => {
+    let removeCalls = 0;
+    let resolveRemove: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveRemove = resolve;
+    });
+    const { ctx } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/remove"),
+          reply: () => {
+            removeCalls++;
+            return pending;
+          },
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.removeTeamMember("u2");
+    const first = ctx.runConfirmAction();
+    const second = ctx.runConfirmAction();
+    resolveRemove({ ok: true, status: 200, json: async () => ({ ok: true, id: "u2" }) });
+    await Promise.all([first, second]);
+    expect(removeCalls).toBe(1);
+  });
+
+  it("a failing remove reports through the toast, never alert", async () => {
+    const { ctx, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/remove"),
+          reply: () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: "remove-boom" }) }),
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam();
+    await ctx.removeTeamMember("u2");
+    await ctx.runConfirmAction();
+    expect(appended[appended.length - 1].innerHTML).toContain("remove-boom");
+  });
+
+  it("a failing capture-default change reports through the toast (never alert) and reloads the roster", async () => {
+    let membersCalls = 0;
+    const { ctx, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/default-share"),
+          reply: () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: "share-boom" }) }),
+        },
+        {
+          match: (u) => u.endsWith("/team/members"),
+          reply: () => {
+            membersCalls++;
+            return { ok: true, status: 200, json: async () => ADMIN_OK };
+          },
+        },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam(); // membersCalls === 1
+    await ctx.setMemberDefaultShare("u2", "company");
+    expect(appended[appended.length - 1].innerHTML).toContain("share-boom");
+    expect(membersCalls).toBe(2); // reloaded after the failure
+  });
+
+  it("loads the org-wide capture default alongside the roster", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "company" } }) }),
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    // renderTeam() kicks this off without awaiting it (it is a secondary
+    // fetch, not part of the roster response) — await it directly rather
+    // than racing loadTeam()'s own promise.
+    await ctx.loadTeamOrgDefault();
+    expect(els.get("team-org-default").value).toBe("company");
+  });
+
+  it("a failing org-default change reports through the toast (never alert) and reloads the previous value", async () => {
+    const { ctx, els, appended } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: () => ({ ok: false, status: 500, json: async () => ({}) }),
+        },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "personal" } }) }),
+        },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam();
+    await ctx.setTeamOrgDefault("company");
+    expect(els.get("team-org-default").value).toBe("personal"); // reloaded after failure
+    expect(appended[appended.length - 1].innerHTML).toContain("did not work");
   });
 
   it("dismissed token reveal clears the plaintext token", async () => {

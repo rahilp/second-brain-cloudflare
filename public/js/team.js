@@ -284,6 +284,23 @@ function copyInviteMessage() {
   }, 1500)
 }
 
+/**
+ * The one-time token rides in this URL's `body` parameter. A plain mailto:
+ * handoff to the OS mail client is not a navigation and leaves no history
+ * entry, but a user with a WEBMAIL protocol handler registered (e.g. Gmail
+ * via registerProtocolHandler) gets this rewritten by the browser into a real
+ * navigation — `https://mail.google.com/…?url=mailto%3A…` — which lands the
+ * token in browser history and in that webmail provider's request logs.
+ *
+ * Kept anyway: the admin has already chosen to send a credential by email,
+ * which is an insecure channel regardless — the token sits in the
+ * recipient's inbox and the sender's Sent folder no matter what this
+ * function does. The webmail-handler path adds history and a provider log
+ * on top of a risk the admin already accepted; stripping the token from the
+ * email would leave an invite nobody can act on, which defeats the feature.
+ * `copyInviteMessage()` (clipboard, no URL, no navigation) is the
+ * lower-exposure option and is the button placed first/primary in the row.
+ */
 function emailInvite() {
   if (!lastTeamInvite.token) return
   window.location.href = `mailto:${encodeURIComponent(lastTeamInvite.email)}?subject=${encodeURIComponent(t('invite.subject'))}&body=${encodeURIComponent(inviteMessage())}`
@@ -331,8 +348,12 @@ async function rotateTeamToken(id) {
   openDangerConfirm({
     title: t('team.rotateTitle'),
     body: t('team.rotateConfirm', { name: teamMemberLabel(m) }),
-    confirmLabel: t('team.rotateAction'),
+    confirmLabel: t('team.rotateToken'),
+    // Progress copy is this action's to own — runConfirmAction disables the
+    // button for the duration, but has no idea what to say while it waits.
     onConfirm: async () => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.rotating')
       try {
         const r = await postTeam('/team/members/token', { id })
         if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
@@ -370,6 +391,8 @@ async function setTeamSuspended(id, suspended) {
     body: t('team.suspendConfirm', { name: teamMemberLabel(m) }),
     confirmLabel: t('team.suspend'),
     onConfirm: async () => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.suspending')
       try {
         const r = await postTeam('/team/members/suspend', { id, suspended })
         if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
@@ -395,6 +418,8 @@ async function removeTeamMember(id) {
     body: t('team.removeConfirm', { name: teamMemberLabel(m), n: Number(m.privateEntries) || 0 }),
     confirmLabel: t('team.remove'),
     onConfirm: async () => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.removing')
       try {
         const r = await postTeam('/team/members/remove', { id })
         if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))

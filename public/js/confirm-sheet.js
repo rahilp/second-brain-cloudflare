@@ -10,8 +10,10 @@ let pendingConfirmClose = null
 /**
  * Opens the shared sheet. `opts`:
  *   title, body, confirmLabel  — copy for the three text nodes
- *   onConfirm(checked)         — run by runConfirmAction(); owns its own
- *                                 progress/disabled state and error handling
+ *   onConfirm(checked)         — run by runConfirmAction(), which disables
+ *                                 the accept button for its duration (see
+ *                                 below); the caller owns progress COPY and
+ *                                 error handling, not the disabled state
  *   onClose                    — run once, by closeConfirm(), for state reset
  *   checkboxLabel              — optional; when present shows the checkbox row
  */
@@ -49,8 +51,25 @@ function closeConfirm() {
   pendingConfirmClose = null
 }
 
+/**
+ * A native confirm() is modal and cannot be double-submitted; this sheet is
+ * not, so the guard against a double-click (or two calls fired back to back)
+ * lives here rather than in each caller — every caller inherits it for free.
+ * The accept button is disabled for the duration of the awaited onConfirm and
+ * re-enabled on failure so the action can be retried; on success the caller
+ * typically calls closeConfirm() itself, and the next openDangerConfirm()
+ * re-enables the button regardless.
+ */
 async function runConfirmAction() {
   const checkbox = document.getElementById('confirm-checkbox')
   const checked = checkbox ? checkbox.checked : false
-  await pendingConfirmAction?.(checked)
+  const acceptBtn = document.getElementById('confirm-accept-btn')
+  if (acceptBtn?.disabled) return
+  if (acceptBtn) acceptBtn.disabled = true
+  try {
+    await pendingConfirmAction?.(checked)
+  } catch (e) {
+    if (acceptBtn) acceptBtn.disabled = false
+    throw e
+  }
 }
