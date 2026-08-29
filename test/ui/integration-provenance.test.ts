@@ -3,8 +3,11 @@
  *
  * A connected card used to tell a non-admin nothing but "Admins only" — no
  * hint at who to ask, or whether a synced page lands in their own private
- * layer or the team's. This adds one prose line, gated on TEAM_MODE rather
- * than on the fields having values, so a solo brain's card is unaffected.
+ * layer or the team's. This adds one prose line. Only the mirror-layer
+ * clause is gated on TEAM_MODE — a solo brain still gets a "Connected by"
+ * name (ensureTenantBootstrap makes the owner a member of a company
+ * workspace on every brain), it just has no shared/personal distinction to
+ * report.
  *
  * Harness copied from disconnect-sheet.test.ts's `load()`, which already
  * builds the right vm context for integrations.js.
@@ -125,11 +128,21 @@ describe("integrations sheet: connection provenance", () => {
     expect(sharedHtml).not.toContain("Synced memories land in the personal layer");
   });
 
-  it("names no one and writes no literal 'null' when connectedBy is absent", () => {
+  it("names no one and writes no literal 'null' when connectedBy is null", () => {
     const ctx = load(true);
     const html = ctx.renderIntegrationCard({ ...BASE, connectedBy: null, mirrorWorkspace: "company" });
     expect(html).not.toContain("Connected by");
     expect(html).not.toContain("null");
+  });
+
+  // The server contract is "a name, or null, or empty string" — listRoster maps
+  // a missing users.name to "" and the route's nameOf.get(id) ?? null does not
+  // catch that case, so a truthiness check (not `!== null`) is what keeps this
+  // from rendering "Connected by " with nothing after it.
+  it("names no one, and leaves no dangling label, when connectedBy is the empty string", () => {
+    const ctx = load(true);
+    const html = ctx.renderIntegrationCard({ ...BASE, connectedBy: "", mirrorWorkspace: "company" });
+    expect(html).not.toContain("Connected by");
   });
 
   it("still reads the provenance line for a member, above the reason they cannot act on it", () => {
@@ -149,10 +162,24 @@ describe("integrations sheet: connection provenance", () => {
     expect(html).not.toContain("<button");
   });
 
-  it("changes nothing on a solo brain: no mirror-layer sentence, and byte-identical to the pre-task render", () => {
+  // ensureTenantBootstrap creates a company workspace and joins the owner to it
+  // on every brain, including a one-person one — so on a real solo brain
+  // connectedBy is the owner's own name, not null. TEAM_MODE alone decides
+  // whether the mirror-layer sentence makes sense; connectedBy is never gated
+  // on it.
+  it("still names the connector on a solo brain, without the mirror-layer sentence a one-person install has no use for", () => {
     const ctx = load(false);
-    // A pre-Task-6 record: no connectedBy, no mirrorWorkspace, no connectedAt —
-    // constraint 12's "absent entirely on any pre-Task-6 record".
+    const html = ctx.renderIntegrationCard({ ...BASE, connectedBy: "Owner", mirrorWorkspace: "personal" });
+    expect(html).toContain("Connected by Owner");
+    expect(html).not.toContain("Synced memories land in the personal layer");
+    expect(html).not.toContain("Synced memories land in the shared team layer");
+  });
+
+  it("omits the provenance line entirely for a pre-Task-6 record, and is otherwise byte-identical to the pre-task render", () => {
+    const ctx = load(false);
+    // A pre-Task-6 record: no connectedBy, no mirrorWorkspace, no connectedAt.
+    // (A real solo brain's connectedBy is the owner's name, not this — see
+    // above. This fixture is the "field never existed" case, not "solo brain".)
     const html = ctx.renderIntegrationCard({ ...BASE });
     expect(html).not.toContain("Synced memories land in the personal layer");
     expect(html).not.toContain("Synced memories land in the shared team layer");
