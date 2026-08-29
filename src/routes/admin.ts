@@ -299,6 +299,7 @@ export async function handleAdminRoutes(
         // unvectorized skips deprecated entries: their vectors were deleted
         // deliberately, so counting them here offered the user a repair for
         // something that is not broken.
+        // scope-exempt: the row set here is deliberately corpus-wide — unvectorized and unclassified are deployment repair counters and would under-report if narrowed (see the block comment above and team-isolation.test.ts). The caller's clause is applied INSIDE the CASE for count/avg_importance, which scopes those two numbers and not the rows read; that is why it is spelled as a CASE and not a WHERE
         `SELECT
            SUM(CASE WHEN ${scope.clause} THEN 1 ELSE 0 END) as count,
            AVG(CASE WHEN ${scope.clause} THEN importance_score END) as avg_importance,

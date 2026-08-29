@@ -199,6 +199,7 @@ export async function recallEntries(
     // caused in compressTag — but `?tag=%` silently defeats the filter entirely and
     // returns the whole brain, which is not a recoverable-looking answer either.
     const tagScopeSql = scope ? ` AND ${scope.clause}` : "";
+    // scope-checked: the caller's clause IS applied — tagScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), which is the pre-v3 whole-corpus tag scan
     const { results: tagRows } = await env.DB.prepare(
       `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}${tagScopeSql}`
     ).bind(tagLikePattern(tag), ...(scope?.bindings ?? [])).all();
@@ -312,6 +313,7 @@ export async function recallEntries(
   for (let i = 0; i < candidateIds.length; i += rcBatchSize) {
     const batch = candidateIds.slice(i, i + rcBatchSize);
     const rcPlaceholders = batch.map(() => "?").join(", ");
+    // scope-checked: the caller's clause IS applied — rcScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results: rows } = await env.DB.prepare(
       `SELECT ${candidateSignalProjection} FROM entries WHERE id IN (${rcPlaceholders})${rcScopeSql}`
     ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: CandidateSignalRow[] };

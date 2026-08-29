@@ -448,15 +448,144 @@ describe("scanSource — interpolations must be in predicate position too", () =
       "`SELECT id FROM entries WHERE ${scope.clause}`",
       "`SELECT id FROM entries WHERE tags LIKE ? AND ${scope.clause}`",
       "`SELECT id FROM entries a WHERE x = 1 AND a.${scope.clause}`",
-      "`SELECT SUM(CASE WHEN ${scope.clause} THEN 1 ELSE 0 END) FROM entries`",
       "`SELECT id FROM entries WHERE (${scope.clause})`",
-      // A fragment appended after a bound parameter or a closing paren carries
-      // its own AND inside the JS. Accepted on trust — see limitation 6.
-      "`SELECT id FROM entries WHERE tags LIKE ? ${tagScopeSql}`",
-      "`SELECT id FROM entries WHERE id IN (${ph})${rcScopeSql}`",
     ]) {
       expect([sql, scanSource(`const q = ${sql};`).violations]).toEqual([sql, []]);
     }
+  });
+
+  it("(A6) rejects a fragment appended after a bound parameter or a closing paren", () => {
+    // These two ARE scoped in src/recall/search.ts — their leading AND is inside
+    // the JS fragment, where nothing here can see it. Round three accepted them
+    // on trust, using a blocklist; that blocklist turned out to be evadable
+    // eleven ways, so the allowlist replaced it and these are the price. They
+    // carry `// scope-checked:` in the tree, which is the marker for precisely
+    // "this IS scoped, the lexer just cannot see it".
+    for (const sql of [
+      "`SELECT id FROM entries WHERE tags LIKE ? ${tagScopeSql}`",
+      "`SELECT id FROM entries WHERE id IN (${ph})${rcScopeSql}`",
+    ]) {
+      expect([sql, scanSource(`const q = ${sql};`).violations.length]).toEqual([sql, 1]);
+    }
+  });
+
+  it("(A6) rejects a clause that narrows an aggregate rather than the row set", () => {
+    // `SUM(CASE WHEN ${scope.clause} …) FROM entries` reads the whole corpus and
+    // scopes the NUMBER. Round three counted it as a scope clause; it is not one,
+    // and GET /stats does this deliberately, so it is annotated in the tree.
+    const r = scanSource("const q = `SELECT SUM(CASE WHEN ${scope.clause} THEN 1 ELSE 0 END) FROM entries`;");
+    expect(r.violations.length).toBe(1);
+  });
+});
+
+/**
+ * Round four. The blocklist of round three fired only when one of its tokens was
+ * the LAST thing before `${`, so one character of punctuation walked through it.
+ * These are the eleven shapes that did, plus the regression set that must keep
+ * passing under the allowlist that replaced it.
+ */
+describe("scanSource — interpolation predicate position, by allowlist", () => {
+  const REJECTED = {
+    "parenthesised projection": "SELECT id, content, (${entryScope}) AS in_scope FROM entries ORDER BY created_at",
+    "coalesce": "SELECT COALESCE(${entryScope}, 0) FROM entries",
+    "case when": "SELECT CASE WHEN ${entryScope} THEN 1 END FROM entries",
+    "concatenation": "SELECT 'x' || ${entryScope} FROM entries",
+    "arithmetic": "SELECT 1 + ${entryScope} FROM entries",
+    "order by case": "SELECT id FROM entries ORDER BY CASE WHEN ${entryScope} THEN 1 END",
+    "limit paren": "SELECT id FROM entries LIMIT (${entryScope})",
+    "offset arithmetic": "SELECT id FROM entries LIMIT 1 OFFSET 0 + ${entryScope}",
+    "group by paren": "SELECT id FROM entries GROUP BY (${entryScope})",
+    "returning": "DELETE FROM entries RETURNING ${entryScope}",
+    "values": "INSERT INTO entries VALUES (${entryScope}) FROM entries",
+  };
+
+  for (const [name, sql] of Object.entries(REJECTED)) {
+    it(`rejects a clause rendered into a ${name}`, () => {
+      expect(scanSource(`const q = \`${sql}\`;`).violations.length).toBe(1);
+    });
+  }
+
+  it("still accepts every predicate position that is real", () => {
+    for (const sql of [
+      "`SELECT id FROM entries WHERE ${scope.clause}`",
+      "`SELECT id FROM entries GROUP BY tags HAVING ${entryScope}`",
+      "`SELECT id FROM edges e JOIN entries a ON a.id = e.source_id AND ${aScope} AND ${eScope}`",
+      '`SELECT id FROM entries WHERE ${scopeWhere("e")}`',
+      "`SELECT id FROM entries WHERE tags LIKE ? AND ${scope.clause}`",
+      "`SELECT id FROM entries a WHERE x = 1 AND a.${scope.clause}`",
+      "`SELECT id FROM entries WHERE (${scope.clause})`",
+      "`SELECT id FROM entries WHERE ((${scope.clause}))`",
+      "`SELECT id FROM entries WHERE NOT ${scope.clause}`",
+      // Earlier fragments blank to spaces, so the last real token is still WHERE.
+      "`SELECT id FROM entries WHERE ${tokenWhere}${timeWhere}${scopeSql}`",
+    ]) {
+      expect([sql, scanSource(`const q = ${sql};`).violations]).toEqual([sql, []]);
+    }
+  });
+});
+
+describe("scanSource — a reference must never be dropped", () => {
+  it("(A2) sees a SPACED schema qualifier, even beside a scoped sibling", () => {
+    // The exact statement from the review. Standalone this survived on the
+    // total===0 guard; with a parseable sibling it was silently dropped —
+    // queries=1, violations=[], exceptions=[] — which is the failure shape this
+    // whole line of work exists to eliminate.
+    const r = scanSource(
+      "const q = `SELECT a.id FROM entries a WHERE a.workspace_id = ?" +
+      " UNION ALL SELECT b.id FROM main . entries b`;",
+    );
+    expect(r.queries).toBe(1);
+    expect(r.violations.length).toBe(1);
+    expect(r.exceptions).toEqual([]);
+  });
+
+  it("(A2) sees every spaced qualifier spelling", () => {
+    for (const ref of ["main . entries b", '"main" . "entries" b', "[main] . [entries] b"]) {
+      const r = scanSource(`const q = \`SELECT b.id FROM ${ref}\`;`);
+      expect([ref, r.queries, r.violations.length]).toEqual([ref, 1, 1]);
+    }
+  });
+
+  it("(A2) sees a multi-part dotted name", () => {
+    // Found by attacking the round-four build rather than by the review: both the
+    // file sweep and the token normaliser allowed exactly ONE qualifier, so
+    // `a . b . entries` matched nothing at all and reported queries=0 — the same
+    // disappearance, one dot further along.
+    const r = scanSource("const q = `SELECT x.id FROM a . b . entries x`;");
+    expect([r.queries, r.violations.length]).toEqual([1, 1]);
+  });
+
+  it("reports when the parser accounts for fewer references than the sweep found", () => {
+    // The structural backstop behind both A2 fixes: rather than patching one
+    // spelling at a time, the two counts are compared, and a shortfall is
+    // reported. Any future shape that slips past the token grammar lands here
+    // instead of vanishing.
+    const r = scanSource("const q = `SELECT id FROM entries WHERE ${scope.clause} UNION SELECT id FROM \"main\" . entries`;");
+    expect(r.violations.length).toBe(1);
+  });
+});
+
+describe("scanSource — annotations inside a template are not annotations", () => {
+  it("(A4) refuses a licence written on a line inside a template literal", () => {
+    // annotationOn is per-line and had no idea it was inside a span, so SQL or
+    // fixture text carrying a line that starts with // granted a real licence.
+    const r = scanSource([
+      "const sample = `",
+      "// scope-exempt: this is documentation, not a decision",
+      "`;",
+      "const q = `SELECT * FROM entries`;",
+    ].join("\n"));
+    expect(r.exceptions).toEqual([]);
+    expect(r.violations.length).toBe(1);
+  });
+
+  it("(A4) still accepts a real comment directly above the query", () => {
+    const r = scanSource([
+      "// scope-exempt: by-id, gated at the route",
+      "const q = `SELECT * FROM entries`;",
+    ].join("\n"));
+    expect(r.violations).toEqual([]);
+    expect(r.exceptions.length).toBe(1);
   });
 });
 

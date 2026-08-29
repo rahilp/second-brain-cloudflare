@@ -120,7 +120,17 @@
  * 10. The comment skip is per-line: a match on a line whose first non-space
  *     character is `*` or `//` is treated as prose, even in the unlikely case
  *     that the line sits inside a template literal.
- * 11. It reads `src/**\/*.ts` and nothing else. `db/schema.sql`, `installer/`,
+ * 11. Predicate position for an interpolation is judged by an ALLOWLIST of the
+ *     token it follows — WHERE, AND, OR, ON, HAVING, NOT, optionally through
+ *     open parens. That is a rule about ONE TOKEN, not about SQL structure, and
+ *     it is strict in both directions on purpose. It refuses correct queries
+ *     whose leading AND is inside a JavaScript fragment (five of them in this
+ *     tree, all carrying `scope-checked`), and it would accept a clause after a
+ *     WHERE that some other part of the statement then undoes — see limitation
+ *     3. It replaced a blocklist that eleven shapes walked through, and the
+ *     asymmetry is deliberate: the blocklist's failures were silent, this rule's
+ *     failures arrive as a build error.
+ * 12. It reads `src/**\/*.ts` and nothing else. `db/schema.sql`, `installer/`,
  *     `integrations/`, `test/` and every migration outside src/ are never
  *     looked at. That is survivable today because the SQL out there is DDL, but
  *     it is not a claim about them — it is an absence of one.
@@ -133,16 +143,17 @@
  * description of what the script does, which is checkable, rather than as a
  * property of the tree, which is not:
  *
- *   For every reference to `entries` or `edges` that this script MATCHES, it
- *   either finds a narrowing clause attributed to each alias, or it fails —
- *   and where it matches a reference it cannot parse, or one hidden inside a
- *   nested template, it fails too rather than dropping it. Every failure it
- *   does not raise is either a clause it verified or a non-empty sentence a
- *   human wrote in a comment above the query.
+ *   For every reference to `entries` or `edges` that this script MATCHES, one
+ *   of three things happens and nothing else. It finds a narrowing clause for
+ *   each alias. Or it reports the statement. Or a human wrote a non-empty
+ *   sentence in a real comment above it. There is no fourth path: a reference
+ *   it cannot parse is reported, a reference hidden inside a nested template is
+ *   reported, and a shortfall between what the file sweep saw and what the
+ *   statement parser accounted for is reported. Nothing is dropped quietly.
  *
- *   It does NOT claim to have matched them all. Limitations 1 and 11 are holes
- *   by construction, and 2 through 9 are places where a match is judged on a
- *   name or a position rather than on meaning.
+ *   It does NOT claim to have matched them all. Limitations 1 and 12 are holes
+ *   by construction, and 2 through 11 are places where a match is judged on a
+ *   name, a token or a position rather than on meaning.
  *
  * Read a green run as "nothing this script can see is unscoped". Never as
  * "nothing is unscoped". The thing that tests the actual behaviour is
@@ -162,6 +173,24 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const QUALIFIER = `(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]*"|\\[[^\\]]*\\])`;
 
 /**
+ * The token after FROM/JOIN, dotted parts and all — `entries`, `"entries"`,
+ * `main . entries`, `[main] . [entries]`.
+ *
+ * The dots must be part of the token, together with the whitespace around them.
+ * A token pattern of `[^\\s,;()]+` stopped at the first space, so
+ * `FROM main . entries b` handed the parser `main`, which parses cleanly as a
+ * table that is not ours and was skipped without a word. Standalone that
+ * survived on the total===0 guard; sharing a statement with one parseable
+ * reference, it vanished outright.
+ */
+const TABLE_TOKEN_RE = () =>
+  new RegExp(
+    `\\b(?:FROM|JOIN)\\s+(${QUALIFIER}(?:\\s*\\.\\s*${QUALIFIER})*)` +
+      `(?:\\s+(?:AS\\s+)?([A-Za-z_][A-Za-z0-9_$]*))?`,
+    "gi",
+  );
+
+/**
  * The file-level sweep. Its job is to SEE every reference, in any spelling —
  * `entries`, `"entries"`, `[entries]`, `main.entries`, `"main"."entries"`,
  * `[main].[entries]`. Whether a reference can then be parsed and attributed is
@@ -173,11 +202,11 @@ const QUALIFIER = `(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]*"|\\[[^\\]]*\\])`;
  * quoted and bracketed names too — three of the six spellings used to vanish here.
  */
 const FILE_TABLE_PATTERN =
-  new RegExp(`\\b(?:FROM|JOIN)\\s+(?:${QUALIFIER}\\s*\\.\\s*)?["'\\[]?\\s*(entries|edges)\\b`, "gi");
+  new RegExp(`\\b(?:FROM|JOIN)\\s+(?:${QUALIFIER}\\s*\\.\\s*)*["'\\[]?\\s*(entries|edges)\\b`, "gi");
 
 /** The same reference test, for looking inside one interpolation. */
 const HIDDEN_TABLE = new RegExp(
-  `\\b(?:FROM|JOIN)\\s+(?:${QUALIFIER}\\s*\\.\\s*)?["'\\[]?\\s*(entries|edges)\\b`, "i");
+  `\\b(?:FROM|JOIN)\\s+(?:${QUALIFIER}\\s*\\.\\s*)*["'\\[]?\\s*(entries|edges)\\b`, "i");
 
 /** How far above a query an annotation may sit and still plainly be about it. */
 const ANNOTATION_LOOKBACK = 5;
@@ -383,8 +412,13 @@ const blankSqlComments = (sql) =>
  */
 function normaliseTableToken(token) {
   let t = token;
-  const qualifier = t.match(/^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]*"|\[[^\]]*\])\s*\.\s*/);
-  if (qualifier) t = t.slice(qualifier[0].length);
+  // Every leading qualifier, not just one: `a . b . entries` must reduce to
+  // `entries` rather than stopping half way and being called unparseable.
+  for (;;) {
+    const qualifier = t.match(/^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]*"|\[[^\]]*\])\s*\.\s*/);
+    if (!qualifier) break;
+    t = t.slice(qualifier[0].length);
+  }
   if (/^"[^"]*"$/.test(t) || /^\[[^\]]*\]$/.test(t)) return { name: t.slice(1, -1).toLowerCase() };
   if (/^[A-Za-z_][A-Za-z0-9_$]*$/.test(t)) return { name: t.toLowerCase() };
   return { unparseable: true, token };
@@ -398,7 +432,7 @@ function normaliseTableToken(token) {
 function tableRefs(sql) {
   const refs = [];
   const unreadable = [];
-  const re = /\b(?:FROM|JOIN)\s+([^\s,;()]+)(?:\s+(?:AS\s+)?([A-Za-z_][A-Za-z0-9_$]*))?/gi;
+  const re = TABLE_TOKEN_RE();
   let m;
   while ((m = re.exec(sql)) !== null) {
     const norm = normaliseTableToken(m[1]);
@@ -406,7 +440,13 @@ function tableRefs(sql) {
       if (/entries|edges/i.test(m[1])) unreadable.push(m[1]);
       continue;
     }
-    if (norm.name !== "entries" && norm.name !== "edges") continue;
+    if (norm.name !== "entries" && norm.name !== "edges") {
+      // A token that parsed cleanly as something else but still MENTIONS one of
+      // our tables is the qualifier-only case: `FROM main . entries b` used to
+      // yield the name "main" and be dropped on the spot. Reported, not skipped.
+      if (/\b(entries|edges)\b/i.test(m[1])) unreadable.push(m[1]);
+      continue;
+    }
     const candidate = m[2];
     const alias = candidate && !NOT_AN_ALIAS.has(candidate.toLowerCase()) ? candidate : null;
     refs.push({ table: norm.name, name: (alias ?? norm.name).toLowerCase() });
@@ -465,18 +505,44 @@ const SCOPE_SHAPES = [
 const CONDITIONAL = /\?|&&|\|\|/;
 
 /**
- * Positions in which an interpolation is plainly NOT a predicate: projected,
- * ordered by, limited by, aliased.
+ * The only tokens a scope clause may follow.
  *
- * A blocklist, not an allowlist, and the difference is disclosed in limitation 6.
- * An allowlist would reject `WHERE tags LIKE ? ${tagScopeSql}` and
- * `WHERE id IN (${ph})${rcScopeSql}` — real, correctly scoped queries whose
- * leading AND lives inside the JavaScript fragment, where nothing here can see
- * it. So a fragment appended after a bound parameter or a closing paren is
- * accepted on trust, and only the positions that cannot be a predicate are
- * refused.
+ * An ALLOWLIST, replacing a blocklist that a single character of punctuation
+ * walked through: it fired only when one of its tokens was the last thing before
+ * `${`, so `SELECT id, content, (${entryScope}) AS in_scope FROM entries` — and
+ * ten other shapes: COALESCE, CASE WHEN, `||`, `+`, `LIMIT (…)`, `OFFSET 0 + …`,
+ * `GROUP BY (…)`, `ORDER BY CASE WHEN …`, `RETURNING`, `VALUES (…)` — all
+ * reported clean.
+ *
+ * The price is real and was paid rather than argued away. `WHERE tags LIKE ?
+ * ${tagScopeSql}` and `WHERE id IN (${ph})${rcScopeSql}` in src/recall/search.ts
+ * ARE scoped, and this rule cannot see it, because their leading AND lives
+ * inside the JavaScript fragment. They carry `// scope-checked:` now — the
+ * marker for exactly that, which does not inflate the exemption count. Three
+ * honest annotations for eleven closed holes.
+ *
+ * CASE WHEN is deliberately NOT here. `SUM(CASE WHEN ${scope.clause} THEN 1 ELSE
+ * 0 END) … FROM entries` narrows the AGGREGATE, not the row set — the statement
+ * still reads the whole corpus — so counting it as a scope clause was itself a
+ * small false pass.
  */
-const NON_PREDICATE_POSITION = /(?:\bSELECT|\bDISTINCT|\bBY|\bLIMIT|\bOFFSET|\bAS|,)\s*$/i;
+const PREDICATE_KEYWORDS = new Set(["WHERE", "AND", "OR", "ON", "HAVING", "NOT"]);
+
+/**
+ * Is an interpolation at the end of `before` in a position where a boolean
+ * clause is actually applied?
+ *
+ * Open parens are stepped over, so `WHERE ((${scope.clause}))` still counts, but
+ * only the token before them decides — which is what separates `WHERE (` from
+ * `COALESCE(`, `LIMIT (` and `, (`.
+ */
+function inPredicatePosition(before) {
+  const text = before
+    .replace(/[A-Za-z_][A-Za-z0-9_$]*\s*\.\s*$/, "")
+    .replace(/[\s(]*$/, "");
+  const token = text.match(/([A-Za-z_][A-Za-z0-9_$]*)\s*$/);
+  return !!token && PREDICATE_KEYWORDS.has(token[1].toUpperCase());
+}
 
 /**
  * The scope predicates in a statement, each attributed to an alias where the
@@ -508,8 +574,7 @@ function scopePredicates(sql) {
     // Predicate position, the same requirement the literal `workspace_id` path
     // has always had. `SELECT ${scope.clause} AS x FROM entries` renders the
     // clause into the projection and constrains nothing.
-    const before = blanked.slice(0, it.start).replace(/[A-Za-z_][A-Za-z0-9_$]*\s*\.\s*$/, "");
-    if (NON_PREDICATE_POSITION.test(before)) continue;
+    if (!inPredicatePosition(blanked.slice(0, it.start))) continue;
     predicates.push({ alias: it.alias ? it.alias.toLowerCase() : null });
   }
   predicates.hidden = hidden;
@@ -537,7 +602,16 @@ function scopePredicates(sql) {
  * alias first, and only unattributed predicates are shared out afterwards.
  */
 function unscopedRefs(sql) {
-  const refs = tableRefs(blankSqlComments(maskInterpolations(sql).masked));
+  const outer = blankSqlComments(maskInterpolations(sql).masked);
+  const refs = tableRefs(outer);
+  // The structural backstop. The file-level sweep is deliberately looser than the
+  // statement parser, so if the parser accounts for FEWER references than the
+  // sweep can see, something was dropped — and a dropped reference is the one
+  // failure shape with no symptom, because the summary line gets healthier as the
+  // tree gets worse. Rather than patch one spelling at a time, the two counts are
+  // compared and any shortfall is reported.
+  FILE_TABLE_PATTERN.lastIndex = 0;
+  const swept = (outer.match(FILE_TABLE_PATTERN) ?? []).length;
   const found = scopePredicates(sql);
   const pool = found.map((p) => ({ ...p, used: false }));
   const pending = [];
@@ -553,7 +627,15 @@ function unscopedRefs(sql) {
     if (shared) shared.used = true;
     else unscoped.push(ref);
   }
-  return { unscoped, unreadable: refs.unreadable, hidden: found.hidden, total: refs.length };
+  const dropped = swept - (refs.length + refs.unreadable.length);
+  return {
+    unscoped,
+    unreadable: dropped > 0
+      ? [...refs.unreadable, `${dropped} reference(s) the sweep found and the parser did not`]
+      : refs.unreadable,
+    hidden: found.hidden,
+    total: refs.length,
+  };
 }
 
 const describeRef = (r) => (r.name === r.table ? r.table : `${r.table} ${r.name}`);
@@ -572,8 +654,14 @@ const describeRef = (r) => (r.name === r.table ? r.table : `${r.table} ${r.name}
  *
  * An empty reason is refused for the same reason: a bare marker records that
  * someone wanted the check to stop, not why it is safe.
+ *
+ * `insideTemplate` closes the last version of the same hole: this is a per-line
+ * read and had no idea whether the line was CODE. A line beginning `//` inside a
+ * template literal — sample SQL, a fixture, documentation of this very
+ * convention — is text, not a decision, and it was granting full licences.
  */
-function annotationOn(line) {
+function annotationOn(line, insideTemplate) {
+  if (insideTemplate) return null;
   const trimmed = (line ?? "").trimStart();
   let body = null;
   if (trimmed.startsWith("//")) body = trimmed.slice(2).trimStart();
@@ -630,6 +718,15 @@ export function scanSource(text) {
     });
   }
 
+  // Offsets of every line start, so a candidate annotation can be tested for
+  // "is this line actually code, or is it text inside a template literal?".
+  const lineStarts = [];
+  for (let i = 0, at = 0; i < lines.length; i++) {
+    lineStarts.push(at);
+    at += lines[i].length + 1;
+  }
+  const inSpan = (offset) => spans.some((sp) => sp.start < offset && offset < sp.end);
+
   const exceptions = [];
   const violations = [];
   // An annotation is spent by the first query below it. Without this, one
@@ -660,7 +757,7 @@ export function scanSource(text) {
     let found = null;
     for (let i = query.line - 1; i >= from && !found; i--) {
       if (claimed.has(i)) continue;
-      const hit = annotationOn(lines[i]);
+      const hit = annotationOn(lines[i], inSpan(lineStarts[i] ?? 0));
       if (hit) found = { index: i, ...hit };
     }
     if (found) {

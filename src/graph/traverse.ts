@@ -72,6 +72,7 @@ async function deprecatedIdsAmong(ids: string[], env: Env, identity?: Identity, 
   for (let i = 0; i < ids.length; i += take) {
     const batch = ids.slice(i, i + take);
     const ph = batch.map(() => "?").join(", ");
+    // scope-checked: the caller's clause IS applied — scopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
       `SELECT id, tags FROM entries WHERE id IN (${ph})${scopeSql}`
     ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
@@ -169,6 +170,7 @@ async function hydrateGraphEntries(ids: string[], env: Env, identity?: Identity,
   for (let i = 0; i < ids.length; i += take) {
     const batch = ids.slice(i, i + take);
     const ph = batch.map(() => "?").join(", ");
+    // scope-checked: the caller's clause IS applied — scopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
       `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${ph})${scopeSql}`
     ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
@@ -251,6 +253,7 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
   for (let i = 0; i < nodeIds.length; i += nodeTake) {
     const batch = nodeIds.slice(i, i + nodeTake);
     const ph = batch.map(() => "?").join(", ");
+    // scope-checked: the caller's clause IS applied — nodeScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
       `SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN (${ph})${nodeScopeSql}`
     ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
