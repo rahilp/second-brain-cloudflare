@@ -13,10 +13,11 @@
  * substring cannot tell a correct predicate from a broken one.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runWeeklyInsights, companyWorkspaceIds, MAX_INSIGHTS_PER_RUN } from "../../src/insight/weekly";
+import { runWeeklyInsights, companyWorkspaceIds, MAX_INSIGHTS_PER_RUN, MAX_SLICE_STATEMENTS } from "../../src/insight/weekly";
 import { resetDatabaseInit } from "../../src/db/init";
 import { makeTestEnv, makeMemoryKV, makeVectorizeMock } from "../helpers/make-env";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
+import { D1_MAX_BOUND_PARAMS } from "../../src/constants";
 import type { Env } from "../../src/env";
 
 const DAY = 86400000;
@@ -96,6 +97,38 @@ function seedTeamBrain(sqlite: SqliteD1) {
   seedPair(sqlite, 1, WS_ALICE, WS_ALICE, 9);
   seedPair(sqlite, 2, WS_BOB, WS_BOB, 8);
   seedPair(sqlite, 3, WS_CO, WS_CO, 7);
+}
+
+/**
+ * A D1 facade that enforces the ONE limit real D1 enforces and this file's
+ * subject can break: at most D1_MAX_BOUND_PARAMS bound parameters per
+ * statement. `node:sqlite` accepts far more (its own ceiling is in the
+ * thousands), so a test driven against the bare facade passes while the
+ * deployed Worker's statement is rejected outright — and the rejection is
+ * swallowed by runWeeklyInsights's own try/catch, so the only symptom in
+ * production is a pass that silently stops producing anything.
+ *
+ * Records every statement's parameter count so a test can assert the ceiling
+ * was respected rather than merely not tripped.
+ */
+function withBoundParamLimit(inner: SqliteD1["db"], executed: { sql: string; params: number }[]) {
+  const check = (sql: string, params: unknown[]) => {
+    executed.push({ sql, params: params.length });
+    if (params.length > D1_MAX_BOUND_PARAMS) {
+      throw new Error("D1_ERROR: too many SQL variables: SQLITE_ERROR");
+    }
+  };
+  const wrap = (sql: string, stmt: any, params: unknown[]): any => ({
+    bind: (...args: unknown[]) => wrap(sql, stmt.bind(...args), args),
+    all: async () => { check(sql, params); return stmt.all(); },
+    first: async () => { check(sql, params); return stmt.first(); },
+    run: async () => { check(sql, params); return stmt.run(); },
+  });
+  return {
+    prepare: (sql: string) => wrap(sql, inner.prepare(sql), []),
+    exec: (sql: string) => inner.exec(sql),
+    batch: (statements: any[]) => inner.batch(statements),
+  } as unknown as SqliteD1["db"];
 }
 
 const envOf = (sqlite: SqliteD1): Env => makeTestEnv(undefined, {
@@ -232,6 +265,178 @@ describe("runWeeklyInsights — the workspace slice", () => {
 
     expect(await insights(sqlite)).toHaveLength(0);
     expect(await statusOf(sqlite, "cand-0")).toBe("pending");
+  });
+
+  // ── The novelty floor ──────────────────────────────────────────────────────
+
+  /** An already-written insight, in the shape the pass stores one. */
+  const seedWrittenInsight = (id: string, workspaceId: string, text: string) => {
+    sqlite.seed({
+      id, createdAt: NOW - DAY, tags: ["auto-insight"],
+      content: `${text}\n\n[Insight: contradiction — drawn from 2 memories]`,
+    });
+    sqlite.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(workspaceId, id).run();
+  };
+
+  it("does not let a member's personal insight suppress a company one", async () => {
+    // The floor asks "has this reader already seen this?", and under a slice
+    // the reader is the company workspace — everyone in it. An insight one
+    // member happened to receive privately is not something the team has seen,
+    // and suppressing on it does not merely skip the pair: it settles the
+    // candidate `used`, so the company insight is lost permanently rather than
+    // deferred. One layer's state must not decide another layer's output.
+    seedWrittenInsight("prior", WS_ALICE, PER_TIER["0"]);
+    seedPair(sqlite, 0, WS_CO, WS_CO, 10);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO] });
+
+    const written = await insights(sqlite);
+    expect(written.filter(r => r.workspace_id === WS_CO)).toHaveLength(1);
+  });
+
+  it("still lets an earlier company insight suppress a restatement of itself", async () => {
+    // The other half, and the reason this is a SLICE and not a deletion: the
+    // floor has to keep firing on what the team pass itself wrote last week.
+    seedWrittenInsight("prior", WS_CO, PER_TIER["0"]);
+    seedPair(sqlite, 0, WS_CO, WS_CO, 10);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO] });
+
+    expect((await insights(sqlite)).filter(r => r.id !== "prior")).toHaveLength(0);
+    // Settled `used`, not `rejected`: the pair reasoned fine, it just landed
+    // where the reader has already been.
+    expect(await statusOf(sqlite, "cand-0")).toBe("used");
+  });
+
+  // ── The bound-parameter ceiling ────────────────────────────────────────────
+
+  const CANDIDATE_SELECT = /FROM insight_candidates c/;
+
+  it("draws a slice too large for one statement to bind, including its last workspace", async () => {
+    // Every slice id is bound TWICE — once for `a.workspace_id`, once for
+    // `b.workspace_id` — plus the LIMIT, so N company workspaces cost 2N + 1
+    // bound parameters against a hard platform ceiling of 100
+    // (D1_MAX_BOUND_PARAMS). At 50 workspaces that is 101: D1 rejects the
+    // statement, runWeeklyInsights's outer catch swallows the rejection, and
+    // the team pass silently stops producing anything, forever, with no
+    // user-visible signal. 60 workspaces is past that line on purpose.
+    //
+    // The only candidate lives in the LAST workspace of the slice, so a fix
+    // that merely truncated the list to what one statement can bind would
+    // leave this red rather than pass for the wrong reason.
+    const slice = Array.from({ length: 60 }, (_, i) => `ws-co-${i}`);
+    seedPair(sqlite, 0, slice[59], slice[59], 10);
+    const executed: { sql: string; params: number }[] = [];
+    const env = makeTestEnv(undefined, {
+      DB: withBoundParamLimit(sqlite.db, executed) as any,
+      AI: makeAI(), OAUTH_KV: makeMemoryKV(), VECTORIZE: makeVectorizeMock(),
+    }) as Env;
+
+    await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: slice });
+
+    const written = await insights(sqlite);
+    expect(written).toHaveLength(1);
+    expect(written[0].workspace_id).toBe(slice[59]);
+    expect(await statusOf(sqlite, "cand-0")).toBe("used");
+    expect(Math.max(...executed.map(e => e.params))).toBeLessThanOrEqual(D1_MAX_BOUND_PARAMS);
+  });
+
+  it("spends one statement per chunk of the slice and no more", async () => {
+    // The chunk size is the cost line: each chunk is a subrequest against the
+    // same 50-subrequest invocation the pass's model calls come out of, so
+    // "chunk smaller to be safe" is not free. 49 ids (2 x 49 + 1 = 99
+    // parameters) must still be ONE statement; 50 is where a second is owed.
+    const draws = async (n: number) => {
+      const executed: { sql: string; params: number }[] = [];
+      const env = makeTestEnv(undefined, {
+        DB: withBoundParamLimit(sqlite.db, executed) as any,
+        AI: makeAI(), OAUTH_KV: makeMemoryKV(), VECTORIZE: makeVectorizeMock(),
+      }) as Env;
+      await runWeeklyInsights(env, ctx, {
+        onlyWorkspaceIds: Array.from({ length: n }, (_, i) => `ws-co-${i}`),
+      });
+      return executed.filter(e => CANDIDATE_SELECT.test(e.sql)).length;
+    };
+
+    expect(await draws(49)).toBe(1);
+    expect(await draws(50)).toBe(2);
+    // 98 is the whole capacity (MAX_SLICE_STATEMENTS chunks); past it the
+    // slice is truncated rather than given a third statement — see the case
+    // below.
+    expect(await draws(98)).toBe(MAX_SLICE_STATEMENTS);
+  });
+
+  it("spends its write slots by score ACROSS chunks, not chunk by chunk", async () => {
+    // Each chunk's statement carries its own ORDER BY … LIMIT, so the ordering
+    // the three write slots are spent by only exists once the chunks are
+    // merged. Drawn chunk-first, the two lowest-scoring pairs in the first
+    // chunk would take two of the three slots and the second-highest pair in
+    // the last chunk would get none.
+    const slice = Array.from({ length: 60 }, (_, i) => `ws-co-${i}`);
+    seedPair(sqlite, 0, slice[0], slice[0], 1);
+    seedPair(sqlite, 1, slice[1], slice[1], 2);
+    seedPair(sqlite, 2, slice[50], slice[50], 10);
+    seedPair(sqlite, 3, slice[51], slice[51], 9);
+    const executed: { sql: string; params: number }[] = [];
+    const env = makeTestEnv(undefined, {
+      DB: withBoundParamLimit(sqlite.db, executed) as any,
+      AI: makeAI(), OAUTH_KV: makeMemoryKV(), VECTORIZE: makeVectorizeMock(),
+    }) as Env;
+
+    await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: slice });
+
+    expect(await insights(sqlite)).toHaveLength(MAX_INSIGHTS_PER_RUN);
+    // The three highest scores (10, 9, 2) were spent; the lowest is untouched
+    // and still available to a later run.
+    expect(await statusOf(sqlite, "cand-2")).toBe("used");
+    expect(await statusOf(sqlite, "cand-3")).toBe("used");
+    expect(await statusOf(sqlite, "cand-1")).toBe("used");
+    expect(await statusOf(sqlite, "cand-0")).toBe("pending");
+  });
+
+  it("stops adding statements before the slice can spend the whole invocation, and says so", async () => {
+    // Chunking trades a bound-parameter ceiling for a subrequest one: each
+    // extra statement is one more of the 50 this invocation gets, and the team
+    // invocation already measures 47 of 50 at its worst slate
+    // (test/integration/insight-cron-budget.test.ts). Left unbounded, a brain
+    // with enough company workspaces would overflow the budget mid-loop —
+    // which loses the whole run, batch included, and is swallowed by the same
+    // catch. Truncating is a real loss, so it is reported rather than assumed
+    // to be noticed.
+    const slice = Array.from({ length: 200 }, (_, i) => `ws-co-${i}`);
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(args); });
+    const executed: { sql: string; params: number }[] = [];
+    const env = makeTestEnv(undefined, {
+      DB: withBoundParamLimit(sqlite.db, executed) as any,
+      AI: makeAI(), OAUTH_KV: makeMemoryKV(), VECTORIZE: makeVectorizeMock(),
+    }) as Env;
+
+    await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: slice });
+
+    spy.mockRestore();
+    expect(executed.filter(e => CANDIDATE_SELECT.test(e.sql))).toHaveLength(MAX_SLICE_STATEMENTS);
+    expect(JSON.stringify(errors)).toContain('"dropped":102');
+  });
+
+  it("names the slice in the log when the pass fails, so a silent death is legible", async () => {
+    // The catch below this pass is the reason the double-bind above could have
+    // run for a whole release without anyone noticing: it swallows everything.
+    // It must at least say WHICH invocation died — the personal pass and the
+    // team pass share one implementation and one log line, and "weekly insight
+    // pass failed" alone does not distinguish them.
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(args); });
+    const env = makeTestEnv(undefined, {
+      DB: { prepare: () => { throw new Error("D1_ERROR: too many SQL variables: SQLITE_ERROR"); },
+            exec: async () => {}, batch: async () => [] } as any,
+      AI: makeAI(), OAUTH_KV: makeMemoryKV(), VECTORIZE: makeVectorizeMock(),
+    }) as Env;
+
+    await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: [WS_CO, WS_CO2] });
+
+    spy.mockRestore();
+    expect(JSON.stringify(errors)).toContain('"sliceWorkspaces":2');
   });
 });
 

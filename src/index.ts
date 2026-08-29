@@ -98,6 +98,12 @@ export default {
     // The team pass. Gated on config rather than on "is this a team brain",
     // because a brain can have a company workspace and still not want its
     // shared memory reasoned over — and an empty id list is a no-op either way.
+    //
+    // Every company workspace shares this one pass, and therefore its three
+    // write slots: with two teams, team B competes with team A on exactly the
+    // terms 4.5 stopped the shared layer competing with personal pairs on.
+    // Known and DEFERRED — per-team scheduling belongs with the multi-team
+    // switcher work, which is out of scope for this whole effort.
     if (event.cron === INSIGHT_TEAM_WEEKLY_CRON) {
       job("team insights", (async () => {
         const cfg = await resolveConfig(env);
