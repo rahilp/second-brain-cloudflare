@@ -429,7 +429,7 @@ describe("who may change a shared memory", () => {
 
   it("disables both controls on a memory someone else shared", () => {
     const ctx = opened(shared({ can_edit: false }));
-    for (const id of ["view-btn-edit", "view-btn-forget"]) {
+    for (const id of ["view-btn-append", "view-btn-edit", "view-btn-forget"]) {
       const btn = ctx.__els.get(id);
       expect(btn.disabled, id).toBe(true);
       expect(btn.classList.contains("view-btn--locked"), id).toBe(true);
@@ -440,7 +440,7 @@ describe("who may change a shared memory", () => {
 
   it("leaves them working on a memory you may change", () => {
     const ctx = opened(shared({ can_edit: true }));
-    for (const id of ["view-btn-edit", "view-btn-forget"]) {
+    for (const id of ["view-btn-append", "view-btn-edit", "view-btn-forget"]) {
       const btn = ctx.__els.get(id);
       expect(btn.disabled, id).toBe(false);
       expect(btn.classList.contains("view-btn--locked"), id).toBe(false);
@@ -453,7 +453,7 @@ describe("who may change a shared memory", () => {
     // No can_edit at all — a recall card that carries no flag, or a Worker
     // from before the flag existed. Absent is not the same as denied.
     const ctx = opened({ id: "x", content: "c", tags: [] });
-    for (const id of ["view-btn-edit", "view-btn-forget"]) {
+    for (const id of ["view-btn-append", "view-btn-edit", "view-btn-forget"]) {
       const btn = ctx.__els.get(id);
       expect(btn.disabled, id).toBe(false);
       expect(btn.classList.contains("view-btn--locked"), id).toBe(false);
@@ -486,5 +486,67 @@ describe("who may change a shared memory", () => {
     await ctx.hydrateView("x");
     expect(ctx.__els.get("view-btn-edit").disabled).toBe(true);
     expect(ctx.__els.get("view-btn-forget").classList.contains("view-btn--locked")).toBe(true);
+  });
+});
+
+describe("Append is gated by the same server rule as Edit", () => {
+  // src/routes/capture.ts:136 (POST /append) calls assertCanEditContent, the
+  // very same predicate POST /update uses — assertCanEditContent just delegates
+  // to assertCanMutateEntry. Leaving Append enabled reproduced, on a different
+  // button, exactly the 403-after-typing this lock exists to prevent.
+  it("is disabled on a memory someone else shared", () => {
+    const ctx = load();
+    ctx.openView({ id: "x", content: "c", tags: [], workspace: "company", actor_name: "Bob", can_edit: false }, null);
+    const btn = ctx.__els.get("view-btn-append");
+    expect(btn.disabled).toBe(true);
+    expect(btn.classList.contains("view-btn--locked")).toBe(true);
+    expect(btn.getAttribute("aria-disabled")).toBe("true");
+    expect(btn.title).toBe("Only the author can change a shared memory");
+  });
+
+  it("stays available on a memory with no flag at all", () => {
+    const ctx = load();
+    ctx.openView({ id: "x", content: "c", tags: [] }, null);
+    const btn = ctx.__els.get("view-btn-append");
+    expect(btn.disabled).toBe(false);
+    expect(btn.classList.contains("view-btn--locked")).toBe(false);
+  });
+
+  it("is re-locked when /entry answers with the authoritative flag", async () => {
+    const ctx = load(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, entry: { id: "x", content: "c", tags: [], workspace: "company", actor_name: "Bob", can_edit: false, timeline: [] } }),
+    }));
+    ctx.openView({ id: "x", content: "c", tags: [] }, null);
+    expect(ctx.__els.get("view-btn-append").disabled).toBe(false);
+    await ctx.hydrateView("x");
+    expect(ctx.__els.get("view-btn-append").disabled).toBe(true);
+  });
+});
+
+describe("a double-tapped link removal", () => {
+  it("issues one POST /unlink, not two", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((res) => { release = res; });
+    const ctx = load(async (url: string) => {
+      if (url.includes("/connections")) {
+        return { ok: true, json: async () => ({ ok: true, connections: [{ id: "c1", type: "relates_to", label: "Relates to", provenance: "explicit", content: "The other memory", linkedAt: 1 }] }) };
+      }
+      await held;
+      return { ok: true, json: async () => ({ ok: true }) };
+    });
+    const open = { onclick: null as any };
+    const unlink = { onclick: null as any };
+    const row = { dataset: { id: "c1", type: "relates_to" }, querySelector: (sel: string) => (sel === ".related-open" ? open : unlink) };
+    const el = { style: {} as Record<string, string>, innerHTML: "", querySelectorAll: () => [row] };
+    await ctx.loadRelated("m1", el);
+    await unlink.onclick();
+
+    const first = ctx.runConfirmAction();
+    await ctx.runConfirmAction();
+    await ctx.runConfirmAction();
+    release();
+    await first;
+    expect((ctx.calls as any[]).filter((c) => c.url.includes("/unlink")).length).toBe(1);
   });
 });

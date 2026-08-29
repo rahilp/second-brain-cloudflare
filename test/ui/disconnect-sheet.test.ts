@@ -171,3 +171,56 @@ describe("disconnecting an integration", () => {
     expect(ctx.__els.get("confirm-title").textContent).toBe("Disconnettere questa integrazione?");
   });
 });
+
+describe("the purge checkbox label", () => {
+  it("names what ticking it does, not buttons that no longer exist", async () => {
+    // The string was written for a second confirm() dialog, so it ended
+    // "OK = delete them / Cancel = keep them as regular memories". As a
+    // checkbox label the newlines collapse and it names a pair of buttons that
+    // are not on screen.
+    const ctx = load([{ provider: "gmail", name: "Gmail", itemCount: 3 }]);
+    await ctx.disconnectIntegration("gmail", makeEl());
+    const label = ctx.__els.get("confirm-check-label").textContent as string;
+    expect(label).toBe("Also delete the 3 synced memories");
+    expect(label).not.toContain("OK =");
+    expect(label).not.toContain("Cancel =");
+    expect(label).not.toContain("\n");
+  });
+
+  it("agrees in number for a single memory, in both languages", async () => {
+    const one = [{ provider: "gmail", name: "Gmail", itemCount: 1 }];
+    const ctx = load(one);
+    await ctx.disconnectIntegration("gmail", makeEl());
+    expect(ctx.__els.get("confirm-check-label").textContent).toBe("Also delete the 1 synced memory");
+
+    const it_ = load(one);
+    it_.initI18n("it");
+    await it_.disconnectIntegration("gmail", makeEl());
+    expect(it_.__els.get("confirm-check-label").textContent).toBe("Elimina anche il 1 ricordo sincronizzato");
+
+    const itMany = load([{ provider: "gmail", name: "Gmail", itemCount: 4 }]);
+    itMany.initI18n("it");
+    await itMany.disconnectIntegration("gmail", makeEl());
+    expect(itMany.__els.get("confirm-check-label").textContent).toBe("Elimina anche i 4 ricordi sincronizzati");
+  });
+});
+
+describe("a double-tapped disconnect", () => {
+  it("issues one POST, not two, and never a stray purge", async () => {
+    // The sheet is not modal the way confirm() was, so the accept button can be
+    // tapped twice while the first request is still in flight.
+    let release: () => void = () => {};
+    const held = new Promise<void>((res) => { release = res; });
+    const ctx = load([{ provider: "gmail", name: "Gmail", itemCount: 3 }], async () => {
+      await held;
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    });
+    await ctx.disconnectIntegration("gmail", makeEl());
+    const first = ctx.runConfirmAction();
+    await ctx.runConfirmAction();
+    await ctx.runConfirmAction();
+    release();
+    await first;
+    expect(disconnectBodies(ctx)).toEqual([{ purge: false }]);
+  });
+});

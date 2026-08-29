@@ -52,6 +52,53 @@ utils.js → credits.js → state.js → toast.js → confirm-sheet.js → api.j
 | Escaping, graph layout, vectorize banner | `utils.js` (existing) |
 | About credits | `credits.js` |
 
+## The destructive-action sheet (`js/confirm-sheet.js`)
+
+One `#confirm-dialog` element, parameterised. Every irreversible action in the
+dashboard goes through it; there is deliberately no second sheet, because two
+would diverge the first time either was restyled.
+
+```js
+const token = openDangerConfirm({
+  title, body, confirmLabel,          // already translated
+  checkboxLabel,                      // optional modifier; '' or omitted hides the row
+  onConfirm: async (checked, token) => { /* … */ closeConfirm(token) },
+  onClose: () => { /* reset the caller's own state */ },
+})
+```
+
+Three rules a caller has to know. The first two are enforced by the sheet, so
+forgetting them is safe; the third is not, and is the one that bites.
+
+**1. The sheet does not close on accept.** The action decides when it is done,
+which is what lets it show progress copy on the accept button (`confirmForget`
+writes `t('memories.forgetting')` there). Call `closeConfirm(token)` yourself.
+
+**2. Pass the token, and treat a close as scoped.** `openDangerConfirm` returns
+a generation, and `onConfirm` receives the same value as its second argument.
+`closeConfirm(token)` is a **no-op** if that question has since been dismissed
+and replaced — without this, a slow POST resolving after the user moved on
+closes, and fires the `onClose` of, whatever question is on screen now. A close
+with no token made from inside a running action is scoped to that action
+anyway, so a caller that forgets is still safe; `closeConfirm()` from the
+backdrop or the Cancel button is unscoped, which is what a user dismissing what
+they can see means.
+
+**3. Snapshot caller state BEFORE you close.** `closeConfirm` fires your
+`onClose`, and `onClose` is where your state reset lives — so anything you read
+*after* your own close reads `null`. `confirmForget` copies `pendingForgetId`
+and `pendingForgetCard` into locals as its first act, and depends on that.
+For the same reason, set your pending state **after** calling
+`openDangerConfirm`, not before: opening dismisses the sheet it replaces, and
+if that was a sheet of the same kind, its `onClose` would clear the state you
+just set (see `openConfirm`).
+
+Two hazards the sheet handles for you, both created by replacing a modal
+`confirm()`: a second `runConfirmAction()` while your action is in flight is
+dropped and the accept button is held down for the duration (no double POST),
+and the button is released again if your action throws. Your action's errors
+propagate — the sheet does not swallow them.
+
 ## Tests
 
 Vitest covers `utils.js` (`test/ui/utils.test.ts`, `test/ui/graph-clusters.test.ts`) and dashboard module load order / inline-handler contract (`test/ui/dashboard-modules.test.ts`). Feature modules use classic globals; test pure helpers via `utils.js` dual CJS export.

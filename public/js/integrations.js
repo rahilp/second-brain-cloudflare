@@ -313,7 +313,7 @@ async function disconnectIntegration(provider, btn) {
             noun: tPlural('integrations.nounMemory', info.itemCount),
           })
         : '',
-    onConfirm: async (purge) => {
+    onConfirm: async (purge, token) => {
       btn.disabled = true
       btn.textContent = t('integrations.disconnecting')
       try {
@@ -331,7 +331,7 @@ async function disconnectIntegration(provider, btn) {
         btn.textContent = t('menu.disconnect')
         showToast(e.message || t('integrations.disconnectFailed'))
       }
-      closeConfirm()
+      closeConfirm(token)
     },
   })
 }

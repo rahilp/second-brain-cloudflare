@@ -51,12 +51,15 @@ function makeEl() {
   };
 }
 
-function load() {
+/** `missing` names ids that this page simply does not have. */
+function load(missing: string[] = []) {
   const els = new Map<string, any>();
+  const absent = new Set(missing);
   const ctx: any = {
     console,
     document: {
       getElementById: (id: string) => {
+        if (absent.has(id)) return null;
         if (!els.has(id)) {
           const el = makeEl();
           el.id = id;
@@ -208,5 +211,214 @@ describe("memory delete as the first caller", () => {
     ctx.initI18n("it");
     ctx.openConfirm("m1", null);
     expect(el(ctx, "confirm-title").textContent).toBe("Dimenticare questo ricordo?");
+  });
+});
+
+/** A promise plus the handle to settle it, for holding an action in flight. */
+function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("whose sheet is this", () => {
+  it("will not let a superseded caller close the question that replaced it", async () => {
+    // Traced sequence: tap Disconnect on a slow integration, dismiss it via the
+    // backdrop, tap Forget, and then the disconnect POST resolves. Its close
+    // used to dismiss the FORGET sheet and fire the forget's onClose, throwing
+    // away the id that was about to be deleted.
+    const ctx = load();
+    const slow = deferred();
+    let firstToken: number | undefined;
+    firstToken = ctx.openDangerConfirm({
+      title: "Disconnect",
+      body: "B",
+      confirmLabel: "Go",
+      onConfirm: async (_checked: boolean, token: number) => {
+        await slow.promise;
+        ctx.closeConfirm(token);
+      },
+    });
+    expect(typeof firstToken).toBe("number");
+    const running = ctx.runConfirmAction();
+
+    ctx.closeConfirm(); // the user dismisses it via the backdrop
+
+    let secondClosed = 0;
+    ctx.openDangerConfirm({
+      title: "Forget this memory?",
+      body: "B2",
+      confirmLabel: "Forget",
+      onConfirm: () => {},
+      onClose: () => secondClosed++,
+    });
+
+    slow.resolve();
+    await running;
+
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
+    expect(ctx.__els.get("confirm-title").textContent).toBe("Forget this memory?");
+    expect(secondClosed).toBe(0);
+  });
+
+  it("protects the live sheet even from a caller that forgot to say which sheet it meant", async () => {
+    // Same sequence, but the stale action calls closeConfirm() with no token.
+    // The guard has to live in the sheet, or every future caller re-introduces
+    // this by omission.
+    const ctx = load();
+    const slow = deferred();
+    ctx.openDangerConfirm({
+      title: "Disconnect",
+      body: "B",
+      confirmLabel: "Go",
+      onConfirm: async () => {
+        await slow.promise;
+        ctx.closeConfirm();
+      },
+    });
+    const running = ctx.runConfirmAction();
+    ctx.closeConfirm();
+
+    let secondClosed = 0;
+    ctx.openDangerConfirm({ title: "Forget this memory?", body: "B2", confirmLabel: "Forget", onConfirm: () => {}, onClose: () => secondClosed++ });
+
+    slow.resolve();
+    await running;
+
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
+    expect(ctx.__els.get("confirm-title").textContent).toBe("Forget this memory?");
+    expect(secondClosed).toBe(0);
+  });
+
+  it("still lets a caller close the sheet it actually opened", async () => {
+    const ctx = load();
+    let closed = 0;
+    ctx.openDangerConfirm({
+      title: "T",
+      body: "B",
+      confirmLabel: "Go",
+      onConfirm: (_c: boolean, token: number) => ctx.closeConfirm(token),
+      onClose: () => closed++,
+    });
+    await ctx.runConfirmAction();
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(false);
+    expect(closed).toBe(1);
+  });
+
+  it("dismisses the caller it is replacing, so that caller's state still resets", () => {
+    // Opening a second sheet over a first one used to drop the first's onClose
+    // on the floor, leaving whatever it was going to reset set forever.
+    const ctx = load();
+    let firstClosed = 0;
+    ctx.openDangerConfirm({ title: "T", body: "B", confirmLabel: "Go", onConfirm: () => {}, onClose: () => firstClosed++ });
+    ctx.openDangerConfirm({ title: "T2", body: "B2", confirmLabel: "Go2", onConfirm: () => {} });
+    expect(firstClosed).toBe(1);
+    // And it is not run a second time when the replacement is dismissed.
+    ctx.closeConfirm();
+    expect(firstClosed).toBe(1);
+  });
+});
+
+describe("double submit", () => {
+  it("runs the action once however many times the accept button is tapped", async () => {
+    // confirm() was modal and could not do this; a sheet can, so the guard has
+    // to be here rather than remembered by every caller.
+    const ctx = load();
+    const slow = deferred();
+    let runs = 0;
+    ctx.openDangerConfirm({
+      title: "T",
+      body: "B",
+      confirmLabel: "Go",
+      onConfirm: async () => {
+        runs++;
+        await slow.promise;
+      },
+    });
+    const first = ctx.runConfirmAction();
+    await ctx.runConfirmAction();
+    await ctx.runConfirmAction();
+    expect(runs).toBe(1);
+    slow.resolve();
+    await first;
+    expect(runs).toBe(1);
+  });
+
+  it("disables the accept button while the action is in flight", async () => {
+    const ctx = load();
+    const slow = deferred();
+    ctx.openDangerConfirm({ title: "T", body: "B", confirmLabel: "Go", onConfirm: async () => void (await slow.promise) });
+    const running = ctx.runConfirmAction();
+    expect(ctx.__els.get("confirm-accept-btn").disabled).toBe(true);
+    slow.resolve();
+    await running;
+  });
+
+  it("gives the button back when the action fails, so the user can retry", async () => {
+    const ctx = load();
+    let runs = 0;
+    ctx.openDangerConfirm({
+      title: "T",
+      body: "B",
+      confirmLabel: "Go",
+      onConfirm: async () => {
+        runs++;
+        throw new Error("server said no");
+      },
+    });
+    await expect(ctx.runConfirmAction()).rejects.toThrow("server said no");
+    expect(ctx.__els.get("confirm-accept-btn").disabled).toBe(false);
+    // And the retry actually runs, rather than being swallowed by the guard.
+    await expect(ctx.runConfirmAction()).rejects.toThrow("server said no");
+    expect(runs).toBe(2);
+  });
+
+  it("leaves a caller free to set its own progress copy", async () => {
+    // confirmForget writes "Forgetting…" onto this button; the sheet owns the
+    // disabled state, the caller owns the words.
+    const ctx = load();
+    const slow = deferred();
+    ctx.openDangerConfirm({
+      title: "T",
+      body: "B",
+      confirmLabel: "Forget",
+      onConfirm: async () => {
+        ctx.document.getElementById("confirm-accept-btn").textContent = "Forgetting…";
+        await slow.promise;
+      },
+    });
+    const running = ctx.runConfirmAction();
+    expect(ctx.__els.get("confirm-accept-btn").textContent).toBe("Forgetting…");
+    slow.resolve();
+    await running;
+  });
+});
+
+describe("a page that does not have the sheet's markup", () => {
+  it("does not throw when the checkbox is absent", async () => {
+    // An older cached index.html, or a harness that only built part of the DOM.
+    const ctx = load(["confirm-checkbox"]);
+    const seen: unknown[] = [];
+    ctx.openDangerConfirm({ title: "T", body: "B", confirmLabel: "Go", onConfirm: (c: boolean) => void seen.push(c) });
+    await ctx.runConfirmAction();
+    expect(seen).toEqual([false]);
+  });
+});
+
+describe("opening a second question of the same kind", () => {
+  it("keeps the NEW memory pending, not none of them", async () => {
+    // openConfirm sets pendingForgetId and then opens. Since opening now
+    // dismisses the sheet it replaces — and that dismissal is what nulls
+    // pendingForgetId — an opener that sets its state first would have it
+    // wiped out from under itself by its own predecessor.
+    const ctx = load();
+    ctx.openConfirm("m1", null);
+    ctx.openConfirm("m2", null);
+    expect(vm.runInContext("pendingForgetId", ctx)).toBe("m2");
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
   });
 });

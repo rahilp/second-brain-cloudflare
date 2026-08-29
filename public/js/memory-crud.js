@@ -116,8 +116,11 @@ async function saveEdit() {
 }
 
 function openConfirm(id, btnOrCard) {
-  pendingForgetId = id
-  pendingForgetCard = btnOrCard ? (btnOrCard.classList?.contains('memory-card') ? btnOrCard : btnOrCard.closest('.memory-card')) : null
+  const card = btnOrCard ? (btnOrCard.classList?.contains('memory-card') ? btnOrCard : btnOrCard.closest('.memory-card')) : null
+  // Opened BEFORE the state is set, not after: opening dismisses whatever sheet
+  // it replaces, and for a previous forget that dismissal is exactly what nulls
+  // these two. Setting them first would let the outgoing sheet wipe them.
+  //
   // The shared sheet, driven like any other caller — the markup's cold copy is
   // this same wording, but it is written in explicitly so whichever action
   // opened the sheet last cannot leave its words behind.
@@ -131,6 +134,8 @@ function openConfirm(id, btnOrCard) {
       pendingForgetCard = null
     },
   })
+  pendingForgetId = id
+  pendingForgetCard = card
 }
 /**
  * Tell any open list that this memory has been dealt with.
@@ -148,8 +153,10 @@ function notifyMemoryResolved(id) {
   if (typeof dropFromStaleQueue === 'function') dropFromStaleQueue(id)
 }
 
-async function confirmForget() {
+async function confirmForget(_checked, token) {
   if (!pendingForgetId) return
+  // Snapshot BEFORE closing: closeConfirm fires this sheet's onClose, which is
+  // what nulls these two. Anything read after the close reads null.
   const idToForget = pendingForgetId
   const cardElement = pendingForgetCard
   const btn = document.querySelector('#confirm-dialog .btn-delete')
@@ -160,7 +167,7 @@ async function confirmForget() {
 
   try {
     await apiMcp('forget', { id: idToForget })
-    closeConfirm()
+    closeConfirm(token)
     if (cardElement) {
       cardElement.style.transition = 'none'
       cardElement.classList.add('explode-out')
@@ -372,12 +379,17 @@ function renderViewTimeline(entry) {
  * only then be told the Worker refuses. Strictly `=== false`: a recall card
  * that carries no flag, and any Worker from before the flag existed, are not
  * locked — which is what keeps a solo brain identical to what it is today.
+ *
+ * Append is in this set because POST /append gates on `assertCanEditContent`,
+ * the same predicate POST /update uses (src/routes/capture.ts) — leaving it
+ * enabled reproduced the same 403-after-typing on a different button. The
+ * related-memory unlink control is deliberately NOT here: POST /unlink gates
+ * only on readability (src/routes/graph.ts), so a reader may remove a link.
  */
 function applyAuthorLock(entry) {
-  const editBtn = document.getElementById('view-btn-edit')
-  const forgetBtn = document.getElementById('view-btn-forget')
   const locked = entry.can_edit === false
-  for (const btn of [editBtn, forgetBtn]) {
+  for (const id of ['view-btn-append', 'view-btn-edit', 'view-btn-forget']) {
+    const btn = document.getElementById(id)
     if (!btn) continue
     btn.disabled = locked
     btn.classList.toggle('view-btn--locked', locked)
@@ -492,7 +504,7 @@ async function loadRelated(id, el) {
           title: t('danger.removeLinkTitle'),
           body: t('memories.removeLinkConfirm'),
           confirmLabel: t('danger.removeLinkAction'),
-          onConfirm: async () => {
+          onConfirm: async (_checked, token) => {
             try {
               await fetch(`${WORKER_URL}/unlink`, {
                 method: 'POST',
@@ -501,7 +513,7 @@ async function loadRelated(id, el) {
               })
             } catch {}
             await loadRelated(id, el)
-            closeConfirm()
+            closeConfirm(token)
           },
         })
       }

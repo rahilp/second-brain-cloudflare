@@ -339,9 +339,12 @@ const I18N_EN = {
     lastSync: 'Last sync: {when}',
     never: 'never',
     disconnectConfirm: 'Disconnect {name}? It will stop syncing.',
+    // A checkbox label, not a dialog: it names what ticking it does. It used to
+    // end "OK = delete them / Cancel = keep them", which described a pair of
+    // buttons that are no longer on screen.
     purgeConfirm: {
-      one: 'Also delete the {n} synced {noun}?\n\nOK = delete them\nCancel = keep them as regular memories',
-      other: 'Also delete the {n} synced {noun}?\n\nOK = delete them\nCancel = keep them as regular memories',
+      one: 'Also delete the {n} synced {noun}',
+      other: 'Also delete the {n} synced {noun}',
     },
     disconnecting: 'Disconnecting…',
     disconnectFailed: 'Disconnect failed',
@@ -874,8 +877,8 @@ const I18N_IT = {
     never: 'mai',
     disconnectConfirm: 'Disconnettere {name}? Smetterà di sincronizzare.',
     purgeConfirm: {
-      one: 'Eliminare anche il {n} {noun} sincronizzato?\n\nOK = eliminali\nAnnulla = tienili come ricordi normali',
-      other: 'Eliminare anche i {n} {noun} sincronizzati?\n\nOK = eliminali\nAnnulla = tienili come ricordi normali',
+      one: 'Elimina anche il {n} {noun} sincronizzato',
+      other: 'Elimina anche i {n} {noun} sincronizzati',
     },
     disconnecting: 'Disconnessione…',
     disconnectFailed: 'Disconnessione non riuscita',
