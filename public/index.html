@@ -238,6 +238,11 @@
                   </select><i class="ti ti-chevron-down"></i></span>
                 </span>
               </div>
+              <!-- Selection is a mode, entered deliberately: a checkbox on every
+                   card would permanently reframe the screen people READ as an
+                   editing surface. Team brains only — renderBulkBar() in
+                   js/recent.js sets this display in both branches. -->
+              <button class="digest-btn" id="mem-select-btn" type="button" style="display: none" onclick="toggleSelectMode()" data-i18n="bulk.select">Select</button>
               <!-- This used to read "Knowledge / Events / Unsorted", which stopped
                    being true when the canvas moved to per-cluster colours from a
                    palette (graph-canvas.js). The canvas draws its own legend with
@@ -252,6 +257,17 @@
                   <i class="ti ti-affiliate"></i><span data-i18n="memories.viewGraph">Graph</span>
                 </button>
               </div>
+            </div>
+
+            <!-- Only in selection mode, and only in team mode. Both branches are set on
+                 every render by renderBulkBar() in js/recent.js. -->
+            <div class="mem-bulk-bar" id="mem-bulk-bar" style="display: none">
+              <span class="mem-bulk-count" id="mem-bulk-count"></span>
+              <button class="digest-btn" type="button" onclick="selectAllVisible()" data-i18n="bulk.selectAll">Select all</button>
+              <button class="digest-btn" type="button" onclick="clearSelection()" data-i18n="bulk.clear">Clear</button>
+              <button class="digest-btn" id="mem-bulk-share" type="button" onclick="confirmBulkLayerMove('company')" data-i18n="bulk.shareAction">Share with team</button>
+              <button class="digest-btn" id="mem-bulk-private" type="button" onclick="confirmBulkLayerMove('personal')" data-i18n="bulk.privateAction">Make private</button>
+              <button class="digest-btn" type="button" onclick="toggleSelectMode()" data-i18n="bulk.exit">Done</button>
             </div>
 
             <!-- The author lock, written by renderMemoriesCoach() in

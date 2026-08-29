@@ -117,7 +117,7 @@ describe("destructive-action sheet caller counts match the architecture doc", ()
   });
 
   /** Doc count, kept next to the code it counts so both move together. */
-  const EXPECTED_OPEN = 6;
+  const EXPECTED_OPEN = 7;
 
   // The companion guard, and the reason both live in one file: twelve tests
   // exercise the sheet's behaviour and not one of them counts who opens it, so
@@ -128,7 +128,7 @@ describe("destructive-action sheet caller counts match the architecture doc", ()
     expect(
       callers.length,
       `openDangerConfirm caller count changed — update the enumeration in ` +
-        `docs/dashboard-architecture.md (search "the sheet has six callers") ` +
+        `docs/dashboard-architecture.md (search "the sheet has seven callers") ` +
         `and EXPECTED_OPEN here, and confirm the new caller closes with the ` +
         `done() it was handed rather than with closeConfirm(). ` +
         `Found:\n${callers.join("\n")}`,

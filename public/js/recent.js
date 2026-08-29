@@ -7,6 +7,25 @@
 let memoryLayerFilter = null
 /** Author filter, meaningful only on the shared layer: null = everyone. */
 let memoryActorFilter = null
+/**
+ * Whether the memories list is in selection mode.
+ *
+ * A mode rather than always-on checkboxes: the cost of a mode is one tap, and
+ * the cost of always-on is that every visit to the screen people READ looks
+ * like a bulk-edit tool. Only reachable through #mem-select-btn, which
+ * renderBulkBar holds at display:none on a solo brain.
+ */
+let selectMode = false
+/** The ticked ids. Survives a re-render; cleared on leaving the mode. */
+const selectedMemoryIds = new Set()
+/**
+ * What renderRecent last put ON SCREEN — the filtered list, not allEntries.
+ *
+ * applyRecentFilters (nav.js) narrows allEntries by tag and time before
+ * handing the result here, so "Select all" over allEntries would pick up rows
+ * the user cannot see. Every bulk action reads this instead.
+ */
+let renderedEntries = []
 /** { members, you } from GET /team/roster; null = not fetched yet. */
 let memoryAuthors = null
 /** The in-flight roster request, shared by concurrent callers. */
@@ -22,6 +41,167 @@ function maybeRevealMemoryLayerFilter(health) {
   // rather than leaving an author filter behind over a layer filter that has
   // just gone away.
   maybeRevealActorFilter()
+  // Last, and for the same reason: a brain that stops being a team drops the
+  // Select button with the rest of the layer controls, and — because
+  // renderBulkBar reads TEAM_MODE itself — the bulk bar with it.
+  renderBulkBar()
+}
+
+/**
+ * Enter or leave selection mode.
+ *
+ * Leaving clears the set: a selection that survived the exit would still be
+ * there the next time someone pressed Select, over a list they may since have
+ * re-filtered. Re-renders through applyRecentFilters either way, so the cards
+ * gain or lose their checkbox.
+ */
+function toggleSelectMode() {
+  selectMode = !selectMode
+  if (!selectMode) selectedMemoryIds.clear()
+  applyRecentFilters()
+}
+
+/** "All" means what is on screen under the current filters. See renderedEntries. */
+function selectAllVisible() {
+  renderedEntries.forEach((e) => {
+    if (e && e.id) selectedMemoryIds.add(e.id)
+  })
+  applyRecentFilters()
+}
+
+function clearSelection() {
+  selectedMemoryIds.clear()
+  applyRecentFilters()
+}
+
+/**
+ * One checkbox tap.
+ *
+ * Re-renders the whole filtered list rather than patching the one card. The
+ * card is reachable from the checkbox in a browser and not in the fake DOM the
+ * UI suite runs against, but the real reason is the same one renderAuthorOptions
+ * rebuilds rather than patches: one rendering path for selection, instead of
+ * one for bulk changes and another for single taps. Fifty cards is cheap.
+ */
+function toggleMemorySelection(id, on) {
+  if (on) selectedMemoryIds.add(id)
+  else selectedMemoryIds.delete(id)
+  applyRecentFilters()
+}
+
+/**
+ * The Select button and the bulk bar, both branches, every render.
+ *
+ * Stated in both directions rather than revealed once, for the reason
+ * maybeRevealMemoryLayerFilter states both: a brain that stops being a team
+ * has to lose these controls, not merely never gain them.
+ */
+function renderBulkBar() {
+  const bar = document.getElementById('mem-bulk-bar')
+  // '' and not 'flex': the stylesheet owns the layout (.mem-bulk-bar), and an
+  // inline display here would be one more place to change it.
+  if (bar) bar.style.display = TEAM_MODE && selectMode ? '' : 'none'
+  const toggle = document.getElementById('mem-select-btn')
+  if (toggle) {
+    toggle.style.display = TEAM_MODE ? '' : 'none'
+    // A template whose one ${} is a ternary over quoted literals, which is the
+    // form the catalog→call-site scraper resolves. A bare ternary between two
+    // whole keys, passed as the argument instead, is an unresolvable call site
+    // and would orphan both of them.
+    toggle.textContent = t(`bulk.${selectMode ? 'exit' : 'select'}`)
+  }
+  const count = document.getElementById('mem-bulk-count')
+  if (count) count.textContent = tPlural('bulk.count', selectedMemoryIds.size, { n: selectedMemoryIds.size })
+  // Nothing selected is not a refusal to explain — it is a button that cannot
+  // do anything yet, and the count beside it says why.
+  const none = selectedMemoryIds.size === 0
+  const share = document.getElementById('mem-bulk-share')
+  if (share) share.disabled = none
+  const makePrivate = document.getElementById('mem-bulk-private')
+  if (makePrivate) makePrivate.disabled = none
+}
+
+/**
+ * Ask, then move them one at a time.
+ *
+ * THERE IS NO BULK ENDPOINT, and that is the requirement rather than a
+ * shortcut. moveEntry (src/capture/share.ts) is the one place that decides who
+ * may move what — personal → company is open, company → personal is refused
+ * unless the caller is the entry's actor or an admin. A POST /share/bulk would
+ * be a SECOND loop over that decision, with its own ordering, its own
+ * partial-failure semantics and its own author-lock matrix, and the first time
+ * one of them changed the two would disagree about a permission. Every row
+ * here goes through apiShare — the same call the single-card control makes —
+ * so the lock is enforced once, on the server, and this function never decides
+ * who may move what. It is also the cheaper shape: fifty rows server-side is
+ * fifty SELECTs and fifty batches in ONE Worker invocation, over 100
+ * subrequests against a 50-subrequest ceiling, where fifty individual requests
+ * are fifty invocations with fifty budgets.
+ *
+ * SEQUENTIAL, not Promise.all: fifty parallel POSTs against one D1 database is
+ * a self-inflicted thundering herd, and the progress copy on the accept button
+ * is only honest if the moves are ordered.
+ *
+ * A row that is refused is left SELECTED, which is how the user is told which
+ * ones did not move without a second list to render or a second piece of state
+ * to hold.
+ *
+ * A confirmation rather than the single-card control's undo toast: one card's
+ * share is reversible in one tap and the toast IS that tap, but a bulk share
+ * is a visibility decision over N memories whose reversal is N taps, and the
+ * sheet is where this codebase asks about decisions it cannot cheaply undo.
+ */
+function confirmBulkLayerMove(target) {
+  // Through renderedEntries rather than over the set, so the order the rows
+  // are posted in is the order they are on screen.
+  const ids = renderedEntries.map((e) => e.id).filter((id) => selectedMemoryIds.has(id))
+  if (!ids.length) return
+  const sharing = target === 'company'
+  openDangerConfirm({
+    title: tPlural(`bulk.${sharing ? 'confirmShareTitle' : 'confirmPrivateTitle'}`, ids.length, { n: ids.length }),
+    body: t(`bulk.${sharing ? 'confirmShareBody' : 'confirmPrivateBody'}`),
+    confirmLabel: t(`bulk.${sharing ? 'shareAction' : 'privateAction'}`),
+    onConfirm: async (_checked, done) => {
+      const accept = document.getElementById('confirm-accept-btn')
+      let moved = 0
+      const refused = []
+      for (let i = 0; i < ids.length; i++) {
+        if (accept) accept.textContent = t('bulk.working', { done: i + 1, total: ids.length })
+        try {
+          const r = await apiShare(ids[i], target)
+          // r.ok is the whole classification, deliberately. A row already in
+          // the target layer answers { ok: true, status: "no_change" } and
+          // counts as moved — the user asked for a state and the row is in it.
+          // A colleague's shared memory answers 403 and a row deleted since
+          // the list was fetched answers 404; both are "this did not move",
+          // which is the same sentence and is true of each.
+          if (r && r.ok) {
+            moved++
+            selectedMemoryIds.delete(ids[i])
+          } else {
+            refused.push(ids[i])
+          }
+        } catch {
+          // A network failure is a refusal for this row and nothing more:
+          // aborting here would leave the user with a half-moved selection
+          // and no way to tell which half.
+          refused.push(ids[i])
+        }
+      }
+      // Closed with the handle this action was given, never with
+      // closeConfirm(): a batch can resolve long after its own question was
+      // replaced, and by then "what is on screen" is someone else's.
+      done()
+      showToast(
+        moved === 0
+          ? t('bulk.resultNone')
+          : refused.length === 0
+            ? tPlural('bulk.resultMoved', moved, { n: moved })
+            : `${tPlural('bulk.resultMoved', moved, { n: moved })} · ${tPlural('bulk.resultRefused', refused.length, { n: refused.length })}`,
+      )
+      loadRecent()
+    },
+  })
 }
 
 /**
@@ -194,9 +374,15 @@ function showFirstRunIfEmpty(isEmpty) {
 }
 
 function renderRecent(entries) {
+  // First, so every path below — including the empty one — agrees with the bar
+  // about what "everything on screen" means.
+  renderedEntries = entries
   const list = document.getElementById('recent-list')
   if (!entries.length) {
     list.innerHTML = `<div class="empty-state"><i class="ti ti-brain"></i><span>${escHtml(t('memories.empty'))}</span></div>`
+    // In this branch too: a filter that empties the list must still leave the
+    // bar and the Select button correct rather than showing the last count.
+    renderBulkBar()
     return
   }
   const groups = {},
@@ -235,6 +421,7 @@ function renderRecent(entries) {
     g.appendChild(cards)
     list.appendChild(g)
   })
+  renderBulkBar()
 }
 
 function makeRecentCard(entry) {
@@ -272,10 +459,21 @@ function makeRecentCard(entry) {
   const shown = humanTags(tags)
   const badge = sourceBadge(entry.source)
   const created = Number(entry.created_at) || 0
+  // Selection mode, on a team brain, and nothing else. Outside it both
+  // expressions are the empty string and the card's markup is byte-identical
+  // to what it was before multi-select existed — which is what keeps a solo
+  // brain, and every card test written against it, untouched.
+  const selecting = TEAM_MODE && selectMode
+  const picked = selecting && selectedMemoryIds.has(entry.id)
+  const selectBox = selecting
+    ? `<label class="card-select"><input type="checkbox" ${picked ? 'checked' : ''} onchange="toggleMemorySelection('${escAttr(entry.id)}', this.checked)" /></label>`
+    : ''
   const card = document.createElement('div')
-  card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '') + (isStale ? ' card--stale' : '')
+  card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '') + (isStale ? ' card--stale' : '') + (picked ? ' memory-card--selected' : '')
   card.dataset.id = entry.id
-  card.innerHTML = `
+  card.innerHTML =
+    selectBox +
+    `
 <div class="card-content" style="cursor: pointer;">
   <div class="card-title">${escHtml(title)}</div>
   ${preview ? `<div class="card-preview">${escHtml(preview)}</div>` : ''}

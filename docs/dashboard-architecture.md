@@ -101,10 +101,14 @@ and nothing in the sheet can make it so: an action can be suspended at an
 `await` while another action runs, so there is no "currently running action"
 for a module-level variable to hold.
 
-In tree the sheet has six callers — memory forget and link removal
-(`memory-crud.js`), integration disconnect (`integrations.js`), and token
-rotation, suspension and removal (`team.js`) — and every one of them closes
-with its `done()`. `closeConfirm` itself has four callers, all ambient. Three
+In tree the sheet has seven callers — memory forget and link removal
+(`memory-crud.js`), integration disconnect (`integrations.js`), token
+rotation, suspension and removal (`team.js`), and the memories list's bulk
+layer move (`recent.js`) — and every one of them closes with its `done()`. The
+bulk move is the one whose action is long enough for the double-submit guard to
+matter in practice: it posts one `/share` per selected row, sequentially, and
+closes with the `done()` it was handed after the last of them, never with
+`closeConfirm()`. `closeConfirm` itself has four callers, all ambient. Three
 are the user dismissing what they can see: the Cancel button in `index.html`,
 the backdrop listener in `app.js`, and the Escape handler in
 `confirm-sheet.js`. The fourth is `confirmForget`'s `done || closeConfirm`
