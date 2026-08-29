@@ -5,6 +5,7 @@ import { buildEntryFilterQuery } from "../capture/entry";
 import { compressTag } from "../compression/digest";
 import { CORS_HEADERS, intParam, json, readWorkspaceParam } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
+import { assertCanMutateEntry } from "../lib/entry-access";
 import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -77,6 +78,17 @@ export async function handleRecallRoutes(
       return {
         ...r,
         workspace: layer,
+        // The same answer GET /entry gives, from the same predicate the mutation
+        // routes enforce with: a card the caller cannot edit says so before they
+        // try. Computed for every row, not only company ones, so a client can
+        // read a missing field as "old Worker" and a present `true` as a real
+        // answer. workspace_id and actor_id are already in the projection —
+        // layerOf reads the first and lookupActorLabels the second — so this
+        // costs no query.
+        can_edit: assertCanMutateEntry(identity, {
+          workspace_id: String(r.workspace_id ?? ""),
+          actor_id: String(r.actor_id ?? ""),
+        }) === null,
         actor_name: layer === "company"
           ? resolveActorLabel(String(r.actor_id ?? ""), labelMap, {
               viewerId: identity.userId,

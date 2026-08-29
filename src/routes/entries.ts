@@ -227,6 +227,17 @@ export async function handleEntriesRoutes(
         indexed: Array.isArray(vectorIds) && vectorIds.length > 0,
         workspace: layer,
         actor_name: actorName,
+        // Whether this caller may edit or forget it, answered by the very
+        // predicate the mutation routes enforce with — so the dashboard stops
+        // offering an action it will be refused for. One flag rather than two
+        // because the server checks edit and delete through the same guard
+        // (assertCanEditContent is a re-export of assertCanMutateEntry), and two
+        // flags that can never disagree are one flag. Both columns are already
+        // in the SELECT above: no extra query.
+        can_edit: assertCanMutateEntry(auth, {
+          workspace_id: String(row.workspace_id ?? ""),
+          actor_id: String(row.actor_id ?? ""),
+        }) === null,
         timeline,
       },
     });

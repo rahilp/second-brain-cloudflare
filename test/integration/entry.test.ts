@@ -51,6 +51,9 @@ describe("GET /entry", () => {
       indexed: true,
       workspace: "personal",
       actor_name: "Owner",
+      // Whether this caller may edit or forget it. True here and on every row of
+      // a solo brain: the author lock only ever engages on the company layer.
+      can_edit: true,
       timeline: [],
     });
   });
