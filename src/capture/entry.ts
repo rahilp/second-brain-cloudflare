@@ -180,7 +180,14 @@ export async function captureEntry(
       console.error("Contradiction deprecation failed (non-fatal):", e);
     }
     try {
-      await createEdge(id, conflictId, "supersedes", { provenance: "system", weight: 1.0 }, env);
+      // Stamped with the workspace this capture was written to, for the same
+      // reason POST /link and the MCP link tool stamp theirs: edges.workspace_id
+      // has no default worth having — it falls back to "", the legacy/system
+      // space, which readableWorkspaces grants to ADMINS ONLY. An edge left
+      // there is one the member whose capture drew it can never see in their own
+      // graph. writeCtx is already the resolved answer to "which workspace did
+      // this entry land in", so no second lookup is needed.
+      await createEdge(id, conflictId, "supersedes", { provenance: "system", weight: 1.0, workspaceId: writeCtx.workspaceId }, env);
     } catch (e) {
       console.error("Supersedes edge creation failed (non-fatal):", e);
     }

@@ -33,10 +33,11 @@ export async function handleGraphRoutes(
     if (!source) return json({ ok: false, error: `No entry found with ID: ${sourceId}` }, 404);
     const target = await getReadableEntry(env, auth, targetId);
     if (!target) return json({ ok: false, error: `No entry found with ID: ${targetId}` }, 404);
-    // Same-layer only. edges.workspace_id is one denormalized column copied from
-    // the source entry, and moveEntry re-stamps it by source_id alone — so a
-    // cross-layer edge has no correct value the moment either endpoint moves, and
-    // is guaranteed to go inconsistent rather than merely unusual. Refusing here
+    // Same-workspace only. edges.workspace_id is one denormalized column copied
+    // from the source entry, and a share re-stamps it to follow the entry that
+    // moved — so an edge whose endpoints started in different workspaces has no
+    // correct value at all, and is guaranteed to go inconsistent rather than
+    // merely unusual. Refusing here
     // gives an instruction the user can act on instead of a link that silently
     // vanishes from their graph. Costs nothing on a solo brain: one workspace.
     if (source.workspace_id !== target.workspace_id) {

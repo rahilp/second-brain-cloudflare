@@ -109,10 +109,11 @@ async function readableAndDeprecatedAmong(
  * before tenancy, and so is the subrequest count.
  *
  * The endpoint check is what stops a walk travelling THROUGH a row the caller
- * cannot read. `edges.workspace_id` is denormalized from the SOURCE entry and
- * moveEntry re-stamps it by source_id alone, so an edge can legitimately be
- * readable while the row on its far side is not: sharing one end of an existing
- * link produces exactly that. Every consumer already dropped such a row at
+ * cannot read. `edges.workspace_id` is denormalized from the SOURCE entry, and
+ * moveEntry re-stamps every edge the moved entry is an endpoint of while the row
+ * on the FAR side stays put — so an edge can legitimately be readable while the
+ * row it points at is not: sharing one end of an existing link produces exactly
+ * that. Every consumer already dropped such a row at
  * hydration, so nothing leaked — but an unread node still entered the frontier,
  * and hop 2 walked out the other side of it, making the caller's reachable set a
  * function of a colleague's private memory.

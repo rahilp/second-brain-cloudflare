@@ -75,7 +75,19 @@ export async function moveEntry(
     // Edges are denormalized from their source entry's workspace at insert time;
     // moving an entry without its edges would strand them in the old workspace,
     // where scoped graph walks could never find them again.
-    env.DB.prepare(`UPDATE edges SET workspace_id = ? WHERE source_id = ?`).bind(targetWorkspaceId, id),
+    //
+    // Either endpoint, not source_id alone: edgeInsertStatement REORDERS a
+    // symmetric pair lexically before inserting, so whether the entry being
+    // moved sits in source_id or target_id is decided by how its id sorts
+    // against the other endpoint's — not by who linked what. Matching only
+    // source_id therefore carried the edge on about half the ids and stranded
+    // it on the other half, pointing at a row that had left the workspace.
+    //
+    // Only workspace_id is written. The endpoint columns are left exactly as
+    // stored, because for the directed types (supersedes, causes, …) their
+    // order IS the claim the edge makes.
+    env.DB.prepare(`UPDATE edges SET workspace_id = ? WHERE source_id = ? OR target_id = ?`)
+      .bind(targetWorkspaceId, id, id),
   ]);
 
   return {

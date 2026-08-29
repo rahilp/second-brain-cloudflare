@@ -13,9 +13,9 @@
  * to, and the edge structure it implies is inference drawn from a private row.
  *
  * Cross-layer edges are not hypothetical after Task 10 refuses new ones:
- *   - `moveEntry` re-stamps edges `WHERE source_id = ?`, so sharing one end of a
- *     link made before the share moves the EDGE into the company layer and leaves
- *     the far end personal. That is the "link then share" case below, driven
+ *   - `moveEntry` re-stamps every edge the moved entry is an endpoint of, so
+ *     sharing one end of a link made before the share moves the EDGE into the
+ *     company layer and leaves the far end personal. That is the "link then share" case below, driven
  *     through the real /link and /share routes rather than seeded.
  *   - `inferEdgesOnWrite` copies the SOURCE entry's workspace, so a company-layer
  *     capture whose nearest neighbour is someone's private memory writes a
@@ -105,8 +105,8 @@ afterEach(() => sqlite?.close());
 describe("a hop lands only on a node the caller may read", () => {
   beforeEach(async () => {
     // A (Alice) — B (Bob, private) — C (company), with BOTH edges stamped company:
-    // exactly what a share leaves behind, since moveEntry re-stamps by source_id
-    // and the far endpoint does not move with it.
+    // exactly what a share leaves behind, since moveEntry re-stamps the edge and
+    // the far endpoint does not move with it.
     await seed("a-seed", alice.personalWorkspaceId, alice.userId, "Alice private: the Q3 pricing decision");
     await seed("b-mid", bob.personalWorkspaceId, bob.userId, "Bob private: my counter-offer numbers");
     await seed("co-far", companyWorkspaceId, bob.userId, "Company: pricing page copy freeze");
@@ -149,8 +149,8 @@ describe("link, then share: the walk the re-stamped edge used to allow", () => {
   /**
    * Spec 1.4's explicit case, driven through the real routes. Alice links two of
    * her own personal memories (legal — same layer), then shares one. moveEntry
-   * moves the entry AND re-stamps `edges WHERE source_id = ?`, so the link is now
-   * a company-layer edge pointing at a row that is still Alice's alone.
+   * moves the entry AND re-stamps every edge it is an endpoint of, so the link is
+   * now a company-layer edge pointing at a row that is still Alice's alone.
    */
   async function linkThenShare() {
     await seed("a-plan", alice.personalWorkspaceId, alice.userId, "Alice: rollout plan for the ledger migration");
@@ -158,10 +158,10 @@ describe("link, then share: the walk the re-stamped edge used to allow", () => {
     await seed("co-note", companyWorkspaceId, bob.userId, "Company: quarterly vendor review notes");
 
     // Ids chosen so "a-plan" sorts before "a-quote": `relates_to` is symmetric, so
-    // edgeInsertStatement stores the pair in lexical order, and moveEntry re-stamps
-    // `WHERE source_id = ?`. Reverse the names and the share moves the entry while
-    // leaving the edge behind in Alice's personal layer — a separate defect, and not
-    // the one under test here.
+    // edgeInsertStatement stores the pair in lexical order. Which endpoint column
+    // the shared entry lands in no longer changes the outcome — moveEntry matches
+    // either — but the ordering is pinned here anyway so the row this case asserts
+    // on below is the same one every run.
     const linked = await call("POST", "/link", alice.token, { source_id: "a-plan", target_id: "a-quote" });
     expect(linked.status).toBe(200);
     const shared = await jsonOf(await call("POST", "/share", alice.token, { id: "a-plan" }));

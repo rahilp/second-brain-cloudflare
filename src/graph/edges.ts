@@ -6,15 +6,28 @@ const DEFAULT_EDGE_WEIGHT = 0.5;
 
 /**
  * What POST /link and the MCP `link` tool both say when a caller asks to join two
- * entries that live in different layers.
+ * entries that live in different workspaces.
  *
  * One constant rather than two string literals: the two surfaces are one
  * operation, and the repo's parity convention (test/integration/update-parity.test.ts)
- * is that they must not be able to drift. It names the fix — share the personal
- * one first — because the alternative the user is offered is otherwise invisible.
+ * is that they must not be able to drift. It names a fix, because the alternative
+ * the user is offered is otherwise invisible.
+ *
+ * It says "workspace" and not "layer", and it does not name WHICH side to move,
+ * because the check is `source.workspace_id !== target.workspace_id` and three
+ * shapes reach it — only one of which has a personal side:
+ *
+ *   - personal <-> company, the ordinary case;
+ *   - company A <-> company B, for a member of two teams: both are the company
+ *     layer, so "layer" is the wrong word and neither is personal;
+ *   - "" <-> anything, for an admin: "" is the legacy/system space, and no share
+ *     moves an entry INTO it.
+ *
+ * Naming the personal one was a single-team assumption, which spec item 4.1
+ * forbids introducing.
  */
 export const CROSS_WORKSPACE_LINK_MESSAGE =
-  "Both memories must be in the same layer — share the personal one first";
+  "Both memories must be in the same workspace — move one into the other's workspace first";
 
 export function isValidEdgeType(type: string): type is EdgeType {
   return Object.prototype.hasOwnProperty.call(EDGE_TYPES, type);

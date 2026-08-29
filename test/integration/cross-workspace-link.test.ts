@@ -13,8 +13,8 @@
  *
  * (2) With that fixed, an edge has to copy *a* workspace, and `edges.workspace_id`
  * is a single denormalized column taken from the source entry — `moveEntry`
- * re-stamps it `WHERE source_id = ?` alone. A link whose endpoints sit in
- * different layers therefore has no correct value the moment either end moves:
+ * re-stamps it to follow whichever endpoint moved. A link whose endpoints sit in
+ * different workspaces therefore has no correct value at all:
  * it is guaranteed to go inconsistent, not merely unusual. So the pair is refused
  * at creation, with an instruction the user can act on, rather than written into a
  * layer where one endpoint will stop being visible.
@@ -23,17 +23,18 @@
  * hides an edge row is a property of the SQL, and the string-matching d1-mock
  * ignores workspace bindings entirely, so a green mock proves nothing here.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import worker from "../../src/index";
 import { buildMcpServer } from "../../src/mcp/server";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
-import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
+import { makeTestEnv, makeMemoryKV, makeVectorizeMock } from "../helpers/make-env";
 import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember } from "../../src/lib/team-admin";
 import { resolveIdentityFromToken } from "../../src/lib/identity";
+import { CROSS_WORKSPACE_LINK_MESSAGE } from "../../src/graph/edges";
 import type { Env } from "../../src/env";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as ExecutionContext;
@@ -169,7 +170,7 @@ describe("a link across two layers is refused, not written", () => {
     expect(res.status).toBe(400);
     expect(await jsonOf(res)).toEqual({
       ok: false,
-      error: "Both memories must be in the same layer — share the personal one first",
+      error: "Both memories must be in the same workspace — move one into the other's workspace first",
       code: "cross_workspace_link",
     });
     expect(await edgeRows("a-one", "co-one")).toEqual([]);
@@ -184,8 +185,8 @@ describe("a link across two layers is refused, not written", () => {
 
   it("the MCP link tool refuses the same pair, in the same words, and writes no edge", async () => {
     const text = await viaMcp(alice.token, "link", { source_id: "a-one", target_id: "co-one", type: "relates_to" });
-    expect(text).toContain("same layer");
-    expect(text).toBe("Both memories must be in the same layer — share the personal one first");
+    expect(text).toContain("same workspace");
+    expect(text).toBe("Both memories must be in the same workspace — move one into the other's workspace first");
     expect(await edgeRows("a-one", "co-one")).toEqual([]);
   });
 
@@ -260,5 +261,209 @@ describe("unlink still removes a stale cross-layer edge", () => {
     await seedCrossLayerEdge();
     await viaMcp(alice.token, "unlink", { source_id: "a-one", target_id: "co-one" });
     expect(await edgeRows("a-one", "co-one")).toEqual([]);
+  });
+});
+
+/**
+ * Task 15b. The same mis-filing as bug (1) above, on the path nobody links by
+ * hand: when a capture wins a contradiction, `captureEntry` writes a `supersedes`
+ * edge itself. That call passed no `workspaceId`, so `edgeInsertStatement` bound
+ * the `""` default and the edge landed in the legacy/system space — which
+ * `readableWorkspaces` grants to admins only. Every link the system inferred on a
+ * member's own capture was therefore invisible to that member, exactly as their
+ * hand-made links had been.
+ *
+ * Alice is a plain member for the reason given at the top of this file: an admin
+ * reads `""` and would have seen the mis-filed edge anyway.
+ */
+describe("a link the system draws on capture lands in the capturer's own layer", () => {
+  /**
+   * A capture that supersedes an existing memory: the vector index answers with
+   * `a-one` as a near neighbour, and the model calls it a contradiction the new
+   * memory wins.
+   */
+  function contradictionEnv() {
+    const sse = (text: string) => new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(text)}}\n\n`));
+        c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+        c.close();
+      },
+    });
+    env.VECTORIZE = makeVectorizeMock({
+      // 0.9 is above DUPLICATE_FLAG_THRESHOLD and below DUPLICATE_BLOCK_THRESHOLD,
+      // which is the band where the merge/contradiction model is consulted.
+      query: vi.fn().mockResolvedValue({
+        matches: [{ id: "a-one", score: 0.9, metadata: { parentId: "a-one" } }],
+      }),
+    });
+    env.AI = {
+      run: vi.fn().mockImplementation(async (model: string) => {
+        if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
+        return sse('{"action":"contradiction","conflicting_id":"a-one","reason":"plan changed"}');
+      }),
+    } as unknown as Ai;
+  }
+
+  async function supersedesEdge(): Promise<{ source_id: string; target_id: string; workspace_id: string } | null> {
+    return await sqlite.db
+      .prepare(`SELECT source_id, target_id, workspace_id FROM edges WHERE type = 'supersedes'`)
+      .first() as { source_id: string; target_id: string; workspace_id: string } | null;
+  }
+
+  it("stamps the supersedes edge with the capturer's workspace, not the legacy space", async () => {
+    contradictionEnv();
+
+    const res = await call("POST", "/capture", alice.token, {
+      content: "Alice private: the migration plan was cancelled",
+    });
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    // The capture really did resolve a contradiction — otherwise there is no
+    // system-drawn edge to be mis-filed and the assertion below proves nothing.
+    expect(body.resolved_conflict).toBe("a-one");
+
+    const edge = await supersedesEdge();
+    // Direction is the claim: the new memory supersedes the one it corrected.
+    expect(edge).toEqual({
+      source_id: body.id,
+      target_id: "a-one",
+      workspace_id: alice.personalWorkspaceId,
+    });
+  });
+
+  it("shows that inferred link back to the member in GET /graph", async () => {
+    // The user-visible half: buildGraph's edge scan is scoped, so an edge in ""
+    // is simply absent from the member's own graph however loudly capture
+    // reported it.
+    contradictionEnv();
+    const body = await jsonOf(await call("POST", "/capture", alice.token, {
+      content: "Alice private: the migration plan was cancelled",
+    }));
+
+    const view = await jsonOf(await call("GET", "/graph", alice.token));
+    expect(view.ok).toBe(true);
+    expect(view.edges).toContainEqual(expect.objectContaining({ source: body.id, target: "a-one" }));
+    expect(view.nodes.map((n: any) => n.id).sort()).toEqual([body.id, "a-one"].sort());
+  });
+
+  it("stamps a company-layer capture's inferred link with the company workspace", async () => {
+    // The stamp follows the WRITE TARGET, not the member — a capture the member
+    // chose to share lands its edge on the company layer with the entry.
+    contradictionEnv();
+    env.VECTORIZE = makeVectorizeMock({
+      query: vi.fn().mockResolvedValue({
+        matches: [{ id: "co-one", score: 0.9, metadata: { parentId: "co-one" } }],
+      }),
+    });
+    const sse = new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify('{"action":"contradiction","conflicting_id":"co-one","reason":"policy changed"}')}}\n\n`));
+        c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+        c.close();
+      },
+    });
+    env.AI = {
+      run: vi.fn().mockImplementation(async (model: string) => {
+        if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
+        return sse;
+      }),
+    } as unknown as Ai;
+
+    const body = await jsonOf(await call("POST", "/capture", alice.token, {
+      content: "Company: releases now ship without a flag",
+      workspace: "company",
+    }));
+    expect(body.resolved_conflict).toBe("co-one");
+
+    expect(await supersedesEdge()).toEqual({
+      source_id: body.id,
+      target_id: "co-one",
+      workspace_id: companyWorkspaceId,
+    });
+  });
+});
+
+/**
+ * Task 15c. The refusal above used to read "share the personal one first",
+ * which presumes one of the two endpoints is a personal workspace. Two reachable
+ * shapes have no personal side at all:
+ *
+ *   - a member of TWO teams linking a team-A memory to a team-B one;
+ *   - an admin linking a `""` legacy/system row to a personal one — no share
+ *     moves an entry INTO `""`.
+ *
+ * Spec item 4.1 makes "introduce no new single-team assumption" a binding
+ * negative requirement, and that sentence was one. One constant, so the two
+ * surfaces cannot drift; asserted against all three shapes rather than the one
+ * the sentence happened to describe.
+ */
+describe("the cross-workspace refusal is correct whichever two workspaces disagree", () => {
+  const TEAM_B = "ws-team-b";
+  /** The bootstrap owner, who is the only identity that can read `""`. */
+  const ADMIN = "test-token";
+
+  async function joinTeamB(userId: string) {
+    await sqlite.db
+      .prepare(`INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'company', 'Platform', ?)`)
+      .bind(TEAM_B, Date.now() + 1000).run();
+    await sqlite.db
+      .prepare(`INSERT INTO memberships (user_id, workspace_id, created_at) VALUES (?, ?, ?)`)
+      .bind(userId, TEAM_B, Date.now()).run();
+  }
+
+  const SHAPES: { name: string; setup: () => Promise<{ token: string; source: string; target: string }> }[] = [
+    {
+      name: "personal and company",
+      setup: async () => ({ token: alice.token, source: "a-one", target: "co-one" }),
+    },
+    {
+      name: "two company workspaces, neither of them personal",
+      setup: async () => {
+        await joinTeamB(alice.userId);
+        seed("tb-one", TEAM_B, alice.userId, "Platform: the on-call handbook");
+        return { token: alice.token, source: "co-one", target: "tb-one" };
+      },
+    },
+    {
+      name: "the legacy/system workspace and a personal one",
+      setup: async () => {
+        // Pre-tenancy rows sit in "". Nothing moves an entry INTO "", so
+        // "share the personal one first" named a fix that does not exist here.
+        const owner = await sqlite.db
+          .prepare(`SELECT w.id FROM workspaces w JOIN memberships m ON m.workspace_id = w.id
+                    JOIN users u ON u.id = m.user_id
+                    WHERE w.kind = 'personal' AND u.role = 'admin'`)
+          .first() as { id: string };
+        seed("legacy-one", "", "", "A memory from before this brain had workspaces");
+        seed("admin-one", owner.id, "", "Admin: this quarter's board pack");
+        return { token: ADMIN, source: "legacy-one", target: "admin-one" };
+      },
+    },
+  ];
+
+  it.each(SHAPES)("POST /link refuses $name without assuming either side is personal", async ({ setup }) => {
+    const { token, source, target } = await setup();
+    const res = await call("POST", "/link", token, { source_id: source, target_id: target });
+    expect(res.status).toBe(400);
+    expect(await jsonOf(res)).toEqual({
+      ok: false,
+      error: "Both memories must be in the same workspace — move one into the other's workspace first",
+      code: "cross_workspace_link",
+    });
+    expect(await edgeRows(source, target)).toEqual([]);
+  });
+
+  it.each(SHAPES)("the MCP link tool refuses $name in the very same words", async ({ setup }) => {
+    const { token, source, target } = await setup();
+    const text = await viaMcp(token, "link", { source_id: source, target_id: target, type: "relates_to" });
+    expect(text).toBe("Both memories must be in the same workspace — move one into the other's workspace first");
+    expect(await edgeRows(source, target)).toEqual([]);
+  });
+
+  it("names no layer the pair does not have", async () => {
+    // The regression in one line: the sentence must not tell a member of two
+    // teams to share a personal memory that neither endpoint is.
+    expect(CROSS_WORKSPACE_LINK_MESSAGE).not.toContain("personal");
   });
 });
