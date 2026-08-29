@@ -123,13 +123,22 @@ function installAuthWatch(scope) {
     // the body arrives. The `.catch` is load-bearing now that nothing awaits
     // this — a truncated or non-JSON body would otherwise become an unhandled
     // rejection with no owner.
-    res
-      .clone()
-      .json()
-      .then((body) => {
-        if (body && body.code) sessionEnded(body.code)
-      })
-      .catch(() => {})
+    //
+    // clone() itself is inside this try. Native fetch would have handed the
+    // caller `res` untouched; a clone() that throws synchronously (a body
+    // already read, a Response-like object that does not implement it) must
+    // not turn that into a rejection the pre-wrapper code would never have
+    // produced. The reason is simply unreachable then, same as a 401 from a
+    // Worker too old to send a code — the session stands.
+    try {
+      res
+        .clone()
+        .json()
+        .then((body) => {
+          if (body && body.code) sessionEnded(body.code)
+        })
+        .catch(() => {})
+    } catch {}
     return res
   }
 }

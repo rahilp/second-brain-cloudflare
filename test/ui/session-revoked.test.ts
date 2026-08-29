@@ -638,6 +638,34 @@ describe("a revoked token ends the session", () => {
     });
   }
 
+  it("does not reject the caller when clone() itself throws synchronously", async () => {
+    // clone() sits OUTSIDE the try/catch that guards the detached read. Native
+    // fetch would have handed a caller `res` untouched; if clone() throws
+    // before the detached chain even starts, an unguarded wrapper turns that
+    // into a rejection nothing before this wrapper existed would have produced
+    // — the one case where "no caller's behaviour changes" was not yet true.
+    const h = setup();
+    h.signedIn();
+    h.ctx.installAuthWatch(h.ctx);
+    const original: Stub = {
+      ok: false,
+      status: 401,
+      json: async () => ({ ok: false, error: "x", code: "suspended" }),
+      clone: () => {
+        throw new TypeError("Response body is already used");
+      },
+    };
+    h.respondWith(() => original);
+
+    const res = await h.ctx.fetch("http://localhost/list?n=50");
+
+    expect(res).toBe(original);
+    // A throwing clone() means the reason is unreachable, same as a 401 from
+    // too old a Worker — the session must stand rather than being ended blind.
+    expect(h.token()).toBe("a-real-looking-token");
+    expect(h.els.get("auth-error").writes).toBe(0);
+  });
+
   it("wraps the global fetch once however many times it is installed", async () => {
     const h = setup();
     h.signedIn();
