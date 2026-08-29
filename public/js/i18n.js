@@ -208,6 +208,9 @@ const I18N_EN = {
     evUnshared: 'Made personal again',
     authorLockedTitle: 'Only the author can change a shared memory',
     authorLocked: 'Shared by {name} — only they can edit or delete it',
+    allAuthors: 'All authors',
+    authorFilterTitle: 'Show only what one person shared',
+    authorYou: 'You',
   },
   graph: {
     empty: 'No connections yet — link memories, or let them auto-connect as you add more.',
@@ -796,6 +799,9 @@ const I18N_IT = {
     evUnshared: 'Reso di nuovo personale',
     authorLockedTitle: 'Solo l’autore può modificare un ricordo condiviso',
     authorLocked: 'Condiviso da {name} — solo questa persona può modificarlo o eliminarlo',
+    allAuthors: 'Tutti gli autori',
+    authorFilterTitle: 'Mostra solo ciò che ha condiviso una persona',
+    authorYou: 'Tu',
   },
   graph: {
     empty:

@@ -5,6 +5,10 @@
 
 /** Layer filter for the memories screen: null = all layers. */
 let memoryLayerFilter = null
+/** Author filter, meaningful only on the shared layer: null = everyone. */
+let memoryActorFilter = null
+/** { members, you } from GET /team/roster; null = not fetched yet. */
+let memoryAuthors = null
 
 function maybeRevealMemoryLayerFilter(health) {
   // The outer span is what carries display:none — the select's immediate
@@ -12,9 +16,77 @@ function maybeRevealMemoryLayerFilter(health) {
   // visibility always tracks TEAM_MODE rather than just being revealed once.
   const wrap = document.getElementById('layer-filter-wrap')
   if (wrap) wrap.style.display = TEAM_MODE ? '' : 'none'
+  // Last, so a brain that stops being a team drops both controls together
+  // rather than leaving an author filter behind over a layer filter that has
+  // just gone away.
+  maybeRevealActorFilter()
+}
+
+/**
+ * The people whose shared memories this caller can filter by.
+ *
+ * Fetched here rather than read out of team.js's `teamRoster`, which is only
+ * populated by a visit to the Team screen — a memories filter that works or
+ * not depending on which screen you opened first is worse than one extra
+ * request. A failure is recorded as an empty roster rather than left null, so
+ * an unreachable or older Worker costs one request and not one per change of
+ * filter.
+ */
+async function loadMemoryAuthors() {
+  if (!TEAM_MODE || memoryAuthors !== null) return
+  try {
+    const res = await fetch(`${WORKER_URL}/team/roster`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    memoryAuthors = { members: Array.isArray(data.members) ? data.members : [], you: data.you ?? null }
+  } catch {
+    memoryAuthors = { members: [], you: null }
+  }
+}
+
+function renderAuthorOptions() {
+  const select = document.getElementById('actor-filter-recent')
+  if (!select || !memoryAuthors) return
+  select.innerHTML =
+    `<option value="">${escHtml(t('memories.allAuthors'))}</option>` +
+    memoryAuthors.members
+      .map(
+        (m) =>
+          `<option value="${escAttr(m.userId)}">${escHtml(m.userId === memoryAuthors.you ? t('memories.authorYou') : m.name)}</option>`,
+      )
+      .join('')
+  // Restored rather than reset: rebuilding the list must not silently widen a
+  // filter the user still has applied.
+  select.value = memoryActorFilter || ''
+}
+
+/**
+ * Show the author filter on the shared layer only, both branches, every call.
+ *
+ * On the personal layer every row is the caller's own, so the control would
+ * offer one real choice; on a solo brain there is nobody else to filter by and
+ * no roster is ever requested.
+ */
+async function maybeRevealActorFilter() {
+  const wrap = document.getElementById('actor-filter-wrap')
+  if (!wrap) return
+  const show = TEAM_MODE && memoryLayerFilter === 'company'
+  wrap.style.display = show ? '' : 'none'
+  if (!show) {
+    // The layer-change path clears this too (see onLayerFilterChange); this
+    // one covers the other way the control can vanish — TEAM_MODE going false
+    // under a filter that is already applied.
+    memoryActorFilter = null
+    return
+  }
+  await loadMemoryAuthors()
+  renderAuthorOptions()
 }
 
 async function loadRecent() {
+  await maybeRevealActorFilter()
   const list = document.getElementById('recent-list')
   // Only show the loading state on a cold list. A refresh after a capture
   // would otherwise blank out rows the user is reading and snap them back.
@@ -22,7 +94,7 @@ async function loadRecent() {
     list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>${escHtml(t('memories.loadingShort'))}</span></div>`
   }
   try {
-    allEntries = await apiList(50, memoryLayerFilter)
+    allEntries = await apiList(50, memoryLayerFilter, memoryActorFilter)
     // Through the filters, not straight to render: reloading used to reset the
     // list to everything while the filter controls still read "work" and
     // "past 7 days", which now happens after every capture rather than only
@@ -38,6 +110,14 @@ async function loadRecent() {
 
 function onLayerFilterChange(value) {
   memoryLayerFilter = value || null
+  // An author filter that survives a move off the shared layer keeps
+  // narrowing a list from a control the user can no longer see.
+  if (memoryLayerFilter !== 'company') memoryActorFilter = null
+  loadRecent()
+}
+
+function onActorFilterChange(value) {
+  memoryActorFilter = value || null
   loadRecent()
 }
 

@@ -226,6 +226,13 @@
                     <option value="company" data-i18n="memories.sharedLayer">Shared</option>
                   </select><i class="ti ti-chevron-down"></i></span>
                 </span>
+                <!-- Only on the shared layer: on the personal layer every row is
+                     yours, so "who shared this" would be a list of one. -->
+                <span id="actor-filter-wrap" style="display: none">
+                  <span class="team-select-wrap"><select class="team-select" id="actor-filter-recent" onchange="onActorFilterChange(this.value)" title="Show only what one person shared" data-i18n="memories.authorFilterTitle" data-i18n-attr="title">
+                    <option value="" data-i18n="memories.allAuthors">All authors</option>
+                  </select><i class="ti ti-chevron-down"></i></span>
+                </span>
               </div>
               <!-- This used to read "Knowledge / Events / Unsorted", which stopped
                    being true when the canvas moved to per-cluster colours from a
