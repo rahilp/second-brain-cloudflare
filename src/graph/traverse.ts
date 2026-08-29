@@ -3,7 +3,7 @@ import { DEFAULTS, type Config } from "../config";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { getKind } from "../memory/kind";
 import { getStatus } from "../memory/status";
-import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhere } from "../lib/scope";
 import { resolveActorLabel } from "../lib/actors";
 import type { Identity } from "../lib/identity";
 import { edgeLabel } from "./edges";
@@ -356,23 +356,17 @@ export async function buildGraph(opts: { seed?: string; limit?: number; only?: "
     }
   }
 
-  // Exactly GET /list's layer rule, so the canvas and the list badge the same
-  // row the same way. Without an Identity there is no personal or company layer
-  // to be in — the cron and unit callers get "system" on every node and no
-  // author lookup at all.
-  const layerOf = (wid: unknown): "personal" | "company" | "system" =>
-    !identity ? "system"
-    : wid === identity.personalWorkspaceId ? "personal"
-    : isCompanyWorkspace(identity, wid) ? "company"
-    : "system";
-
   const nodes: GraphView["nodes"] = [];
   for (const id of nodeIds) {
     const r = nodeRows.get(id);
     if (!r) continue;
     const tags: string[] = JSON.parse(r.tags ?? "[]");
     if (tags.some(t => MACHINE_AUTHORED_TAGS.has(t))) continue;
-    const workspace = layerOf(r.workspace_id);
+    // Exactly GET /list's layer rule, because it is that function: the canvas
+    // and the list badge the same row the same way. Without an Identity there
+    // is no personal or company layer to be in — the cron and unit callers get
+    // "system" on every node and no author lookup at all.
+    const workspace = layerOf(identity, r.workspace_id);
     nodes.push({
       id,
       label: (r.content as string).slice(0, 80),

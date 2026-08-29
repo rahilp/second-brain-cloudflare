@@ -26,6 +26,7 @@ import {
   scopeWrite,
   primaryCompanyWorkspaceId,
   isCompanyWorkspace,
+  layerOf,
 } from "../../src/lib/scope";
 import type { Env } from "../../src/env";
 
@@ -130,6 +131,25 @@ describe("a member of two teams", () => {
     expect(isCompanyWorkspace(identity, roots.ownerPersonalWorkspaceId)).toBe(false);
     // The legacy/system space is never a team, whoever asks.
     expect(isCompanyWorkspace(identity, "")).toBe(false);
+  });
+
+  it("names the layer a row is in, for every surface that badges one", async () => {
+    // /list, /entry, /recall, /graph, /patterns and the MCP tools all report a
+    // row's layer, and they used to each carry their own copy of this
+    // three-way expression. One implementation, so a row cannot be badged
+    // "company" on the canvas and "system" in the review queue.
+    const identity = (await resolveIdentityFromToken(dana.token, env))!;
+    expect(layerOf(identity, dana.personalWorkspaceId)).toBe("personal");
+    expect(layerOf(identity, roots.companyWorkspaceId)).toBe("company");
+    expect(layerOf(identity, TEAM_B)).toBe("company");
+    // Someone else's personal workspace is not a layer this caller has.
+    expect(layerOf(identity, roots.ownerPersonalWorkspaceId)).toBe("system");
+    // The legacy/system space, and a system-authored insight's own row.
+    expect(layerOf(identity, "")).toBe("system");
+    // No identity at all — the cron and unit callers of the graph walk. There
+    // is no personal or company layer to be in without someone to be it for.
+    expect(layerOf(undefined, TEAM_B)).toBe("system");
+    expect(layerOf(undefined, undefined)).toBe("system");
   });
 
   it("writes to the named team when it is one of theirs, and never otherwise", async () => {

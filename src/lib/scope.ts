@@ -76,6 +76,23 @@ export function isCompanyWorkspace(identity: Identity, workspaceId: unknown): bo
 }
 
 /**
+ * Which layer a row is in, from the caller's point of view: their own personal
+ * workspace, one of their company workspaces, or neither — legacy '' rows and
+ * system-authored insights, and any workspace that is not theirs.
+ *
+ * ONE implementation, because six surfaces report this key and a row badged
+ * "company" on the canvas and "system" in the review queue is the same row
+ * described two ways. `undefined` identity means there is nobody for a row to
+ * be personal or shared TO — the cron and unit callers of the graph walk — so
+ * every row reads as "system" and no author lookup is owed.
+ */
+export function layerOf(identity: Identity | undefined, workspaceId: unknown): "personal" | "company" | "system" {
+  if (!identity) return "system";
+  if (workspaceId === identity.personalWorkspaceId) return "personal";
+  return isCompanyWorkspace(identity, workspaceId) ? "company" : "system";
+}
+
+/**
  * The workspace ids a read should cover: the readable set, or just one layer of
  * it when the caller asked to scope ("personal" | "company"). Requesting a
  * single layer can only ever narrow — both ids come from the identity, so a

@@ -14,7 +14,7 @@ import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
 import type { Identity } from "../lib/identity";
 import { assertCanEditContent, assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
-import { isCompanyWorkspace, scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
+import { layerOf, scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
@@ -137,14 +137,8 @@ const LIST_RECENT_DESCRIPTION =
   + "Pass actor to list only what one person wrote — their name as shown in the header, their user id, or \"me\".";
 
 /** Which layer a raw entries row is in, from the caller's point of view. */
-function layerOfRow(
-  identity: Identity | undefined,
-  row: Record<string, any>,
-): "personal" | "company" | "system" {
-  if (!identity) return "system";
-  if (row.workspace_id === identity.personalWorkspaceId) return "personal";
-  return isCompanyWorkspace(identity, row.workspace_id) ? "company" : "system";
-}
+const layerOfRow = (identity: Identity | undefined, row: Record<string, any>) =>
+  layerOf(identity, row.workspace_id);
 
 /**
  * Resolve author names for a page of rows, in one query, and only when a company

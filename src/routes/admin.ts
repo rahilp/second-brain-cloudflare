@@ -5,7 +5,7 @@ import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from
 import { intParam, json } from "../lib/http";
 import { D1_MAX_BOUND_PARAMS, VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY } from "../constants";
 import { requireAdmin, requireIdentity, type Identity } from "../lib/identity";
-import { effectiveWriteTarget, isCompanyWorkspace, primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
+import { effectiveWriteTarget, layerOf, primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
@@ -612,14 +612,10 @@ export async function handleAdminRoutes(
       }
     }
 
-    // Exactly GET /list's layer rule. Written here rather than shared because
-    // this route has no other layer computation to share with, and the client
-    // cannot infer it: it holds no workspace ids, and the one thing it could
-    // read a layer off (`sources`) describes the INPUTS, not the insight.
-    const layerOf = (wid: unknown): "personal" | "company" | "system" =>
-      wid === auth.personalWorkspaceId ? "personal"
-      : isCompanyWorkspace(auth, wid) ? "company"
-      : "system";
+    // Exactly GET /list's layer rule, because it is literally that function
+    // (src/lib/scope.ts). The client cannot infer this itself: it holds no
+    // workspace ids, and the one thing it could read a layer off (`sources`)
+    // describes the INPUTS, not the insight.
     // Issues NO statement for an empty list — and in practice it always is
     // empty, because every row in this queue carries `auto-insight` and every
     // auto-insight row is written with actorId "". The call is made anyway
@@ -628,7 +624,7 @@ export async function handleAdminRoutes(
     // is zero.
     const labelMap = await lookupActorLabels(
       env,
-      pageRows.filter(r => layerOf(r.workspace_id) === "company").map(r => String(r.actor_id ?? "")),
+      pageRows.filter(r => layerOf(auth, r.workspace_id) === "company").map(r => String(r.actor_id ?? "")),
     );
 
     return json({
@@ -638,7 +634,7 @@ export async function handleAdminRoutes(
         content: r.content as string,
         created_at: r.created_at as number,
         sources: sourcesByInsight.get(r.id as string) ?? [],
-        workspace: layerOf(r.workspace_id),
+        workspace: layerOf(auth, r.workspace_id),
         // The same resolver /list, /entry and /graph call, given the same
         // inputs — so an insight cannot be attributed one way in the review
         // queue and another way on the card the reader opens next.
