@@ -45,6 +45,15 @@
         --text-on-elevated: #f2efec;
         --accent-on-elevated: #fd540a;
 
+        /* The knob of an on/off switch (.sb-switch). Fixed near-white in BOTH
+           themes, like --text-on-elevated and for the same reason: it never
+           sits on the page surface, only on a filled track — --surface-3 when
+           off, --accent when on — so a theme-flipping value would go dark on
+           dark the moment the switch was turned on. Defined in both blocks
+           rather than reached for with a var() fallback: an undefined token
+           must fail loudly, which is how the black-on-black toast shipped. */
+        --switch-knob: #ffffff;
+
         /* ink */
         /* Ink ramp, all three steps at WCAG AA (4.5:1) against every surface
            they are set on — #ffffff through the darkest, --surface-3 #e8e3df.
@@ -130,6 +139,12 @@
         --surface-elevated: #38332a;
         --text-on-elevated: #f2efec;
         --accent-on-elevated: #ffab6e;
+
+        /* Not #ffffff: pure white is the one ink this theme never uses, and the
+           knob reads as a hole punched in the page against --bg #161616.
+           #f2efec is the theme's own lightest ink, 12.5:1 on the off track
+           (--surface-3) and 4.9:1 on the on track (--accent). */
+        --switch-knob: #f2efec;
 
         --text-primary: #f2efec;
         --text-secondary: #c9c5c1;
@@ -3999,6 +4014,98 @@
 
       .team-select-wrap select:hover + .ti {
         color: var(--text-secondary);
+      }
+
+      /* On/off switch, for a setting that is genuinely binary — a two-option
+         <select> makes the reader open a menu to find out there was nothing to
+         choose. Built on a real <input type="checkbox"> so it is focusable,
+         Space-toggles, and is announced as a checkbox; the input is made
+         TRANSPARENT rather than display:none or visibility:hidden, both of
+         which would take it out of the tab order along with the pixels.
+         Sits alongside .team-select-wrap and borrows its language: the same
+         --border-input hairline, the same --accent focus boundary. */
+      .sb-switch {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        /* A base rule, not a phone-only one: the pointer that most often misses
+           a 22px control is a thumb, and this row is reachable at every width. */
+        min-height: 32px;
+        flex-shrink: 0;
+        cursor: pointer;
+      }
+
+      .sb-switch-input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        opacity: 0;
+        cursor: inherit;
+      }
+
+      .sb-switch-track {
+        width: 40px;
+        height: 22px;
+        padding: 2px;
+        display: inline-flex;
+        align-items: center;
+        border-radius: var(--radius-pill);
+        background: var(--surface-3);
+        border: 0.5px solid var(--border-input);
+        /* The input is on top; without this the track would eat its own clicks
+           in browsers that hit-test the sibling first. */
+        pointer-events: none;
+        transition: background 0.18s var(--ease), border-color 0.18s var(--ease);
+      }
+
+      .sb-switch-knob {
+        width: 17px;
+        height: 17px;
+        border-radius: 50%;
+        background: var(--switch-knob);
+        border: 0.5px solid var(--border-input);
+        box-shadow: var(--shadow-card);
+        transition: transform 0.18s var(--ease);
+      }
+
+      /* --accent as a FILL and as a boundary, never as ink: nothing is
+         written on the track. */
+      .sb-switch-input:checked + .sb-switch-track {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+
+      .sb-switch-input:checked + .sb-switch-track .sb-switch-knob {
+        /* 40 track - 4 padding - 1 border - 17 knob. */
+        transform: translateX(18px);
+      }
+
+      /* Focus lands on the invisible input, so the ring has to be drawn on the
+         track. :focus-visible rather than :focus, so a pointer tap does not
+         leave a ring sitting there. */
+      .sb-switch-input:focus-visible + .sb-switch-track {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* Locked on by real membership. Dimmed and not-allowed rather than
+         removed: a control that vanishes leaves the reader wondering where the
+         setting went, and the hint beside it explains the lock. */
+      .sb-switch-input:disabled {
+        cursor: not-allowed;
+      }
+
+      .sb-switch-input:disabled + .sb-switch-track {
+        opacity: 0.55;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .sb-switch-track,
+        .sb-switch-knob {
+          transition: none;
+        }
       }
 
       .team-capture-label {

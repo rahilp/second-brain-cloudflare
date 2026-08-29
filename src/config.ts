@@ -83,6 +83,27 @@ export const DEFAULTS = {
   // would start spending model calls on every existing team brain the day
   // this deploys.
   TEAM_INSIGHTS: "off",
+
+  // Whether this brain is a team at all: "auto" | "on" | "off". Read in exactly
+  // one place — isTeamBrain() in src/lib/team-admin.ts, which GET /health
+  // publishes as `team` — so no other caller has to know the key exists.
+  //
+  //   "auto" infers from active membership (more than one non-tombstoned user),
+  //   "on"   is a team before anyone is invited, which inference cannot express,
+  //   "off"  is solo, and only takes effect while the owner really is alone —
+  //          real membership is a FLOOR on it, so a brain that acquires
+  //          colleagues while this says "off" is still a team. Two mechanisms
+  //          hold that: the floor in isTeamBrain() enforces it, and PATCH
+  //          /config refuses the write outright while more than one person is
+  //          on the team (src/routes/config.ts).
+  //
+  // The default is "auto" and that is NOT a cosmetic choice. DEFAULTS is static
+  // and reaches every brain that never overrode the key, so a default of "off"
+  // would turn every existing team brain solo on upgrade — the sharing controls
+  // would vanish from the dashboard while the shared workspace and everyone's
+  // access to it stayed exactly where they were. "auto" is today's behaviour
+  // spelled out, so upgrading changes nothing for anybody.
+  TEAM_MODE: "auto",
 } as const;
 
 // DEFAULTS is `as const` so the shipped values are pinned and a typo shows up
@@ -145,6 +166,7 @@ export const RULES: Record<ConfigKey, Rule> = {
   INSIGHT_LLM_MODEL: { kind: "string" },
   TEAM_DEFAULT_WORKSPACE: { kind: "string" },
   TEAM_INSIGHTS: { kind: "string" },
+  TEAM_MODE: { kind: "string" },
 };
 
 /**

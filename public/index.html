@@ -355,6 +355,33 @@
                   <p class="digest-note team-name-note" data-i18n="team.nameHint">Everyone on the team sees this name.</p>
                 </div>
 
+                <!-- Team mode. The ONE team control a solo owner sees, and a
+                     deliberate exception to "no team UI on a solo brain": it is
+                     how a solo owner turns the feature on, so gating it on
+                     TEAM_MODE would hide it exactly when it is needed. It
+                     therefore ships VISIBLE, unlike #team-insights-row below.
+                     A real <input type="checkbox"> under a styled track, not a
+                     div with a click handler — it has to be focusable, Space-
+                     toggleable and announced as a checkbox. renderTeamMode()
+                     in js/team.js sets checked, disabled and the hint on every
+                     render, in both branches. -->
+                <div id="team-mode-row">
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.modeTitle">Team mode</div>
+                  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
+                    <i class="ti ti-users-group" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                    <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.modeLabel">Shared team layer</span>
+                    <label class="sb-switch">
+                      <input type="checkbox" class="sb-switch-input" id="team-mode-toggle" onchange="setTeamMode(this.checked)" />
+                      <span class="sb-switch-track"><span class="sb-switch-knob"></span></span>
+                    </label>
+                  </div>
+                  <!-- Filled by renderTeamMode(), never by data-i18n: its copy
+                       depends on how many people are on the team, and a
+                       data-i18n key here would overwrite that on every locale
+                       change. -->
+                  <p class="digest-note" id="team-mode-hint" style="margin-top: 8px;"></p>
+                </div>
+
                 <div>
                   <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.membersLabel">Members</div>
                   <!-- Org-wide capture default. Its own pill, label and control
