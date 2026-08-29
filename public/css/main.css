@@ -238,6 +238,31 @@
         align-items: center;
       }
 
+      .auth-link {
+        background: none;
+        border: none;
+        padding: 10px 0 0;
+        min-height: 32px;
+        font-family: var(--font-sans);
+        font-size: 13px;
+        color: var(--text-secondary);
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .auth-invite-help {
+        margin-top: 6px;
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--text-secondary);
+      }
+      .auth-invite-help ol {
+        margin: 0;
+        padding-left: 18px;
+      }
+      .auth-invite-help li {
+        margin-bottom: 6px;
+      }
+
       #auth-overlay .brain-logo {
         width: 70px;
         height: 70px;

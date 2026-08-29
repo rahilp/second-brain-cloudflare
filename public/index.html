@@ -41,6 +41,14 @@
           <button id="auth-connect" type="submit" data-i18n="auth.connect">Connect</button>
         </form>
         <div id="auth-error"></div>
+        <button type="button" class="auth-link" id="auth-invite-toggle" aria-expanded="false" aria-controls="auth-invite-help" onclick="toggleInviteHelp()" data-i18n="auth.haveInvite">I received a team invite</button>
+        <div class="auth-invite-help" id="auth-invite-help" style="display: none">
+          <ol>
+            <li data-i18n="auth.inviteStep1">Leave the address above as it is — it is already this team's Second Brain.</li>
+            <li data-i18n="auth.inviteStep2">Paste the one-time token your admin sent you into the field above.</li>
+            <li data-i18n="auth.inviteStep3">Press Connect. Everything you capture stays personal until you share it with the team.</li>
+          </ol>
+        </div>
       </div>
     </div>
 

@@ -18,6 +18,11 @@ const I18N_EN = {
     accountRemoved: 'Your account has been removed from this team.',
     couldNotConnect: 'Could not connect.',
     serverError: 'Server error: {status}',
+    haveInvite: 'I received a team invite',
+    inviteHide: 'Hide',
+    inviteStep1: 'Leave the address above as it is — it is already this team’s Second Brain.',
+    inviteStep2: 'Paste the one-time token your admin sent you into the field above.',
+    inviteStep3: 'Press Connect. Everything you capture stays personal until you share it with the team.',
   },
   nav: {
     home: 'Home',
@@ -549,6 +554,11 @@ const I18N_IT = {
     accountRemoved: 'Il tuo account è stato rimosso da questo team.',
     couldNotConnect: 'Impossibile connettersi.',
     serverError: 'Errore del server: {status}',
+    haveInvite: 'Ho ricevuto un invito al team',
+    inviteHide: 'Nascondi',
+    inviteStep1: 'Lascia l’indirizzo qui sopra com’è — è già il Second Brain di questo team.',
+    inviteStep2: 'Incolla nel campo qui sopra il token monouso che ti ha inviato l’amministratore.',
+    inviteStep3: 'Premi Connetti. Tutto ciò che salvi resta personale finché non lo condividi col team.',
   },
   nav: {
     home: 'Inizio',
