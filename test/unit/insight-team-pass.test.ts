@@ -13,7 +13,7 @@
  * substring cannot tell a correct predicate from a broken one.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runWeeklyInsights, companyWorkspaceIds, MAX_INSIGHTS_PER_RUN, MAX_SLICE_STATEMENTS } from "../../src/insight/weekly";
+import { runWeeklyInsights, companyWorkspaceIds, MAX_INSIGHTS_PER_RUN, MAX_SLICE_STATEMENTS, RECENT_INSIGHT_WINDOW } from "../../src/insight/weekly";
 import { resetDatabaseInit } from "../../src/db/init";
 import { makeTestEnv, makeMemoryKV, makeVectorizeMock } from "../helpers/make-env";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
@@ -274,13 +274,35 @@ describe("runWeeklyInsights — the workspace slice", () => {
 
   // ── The novelty floor ──────────────────────────────────────────────────────
 
-  /** An already-written insight, in the shape the pass stores one. */
-  const seedWrittenInsight = (id: string, workspaceId: string, text: string) => {
+  /**
+   * An already-written insight, in the shape the pass stores one.
+   *
+   * `createdAt` is explicit because the floor's window is ordered by it: a
+   * case about WHICH ten of a workspace's insights the floor reads cannot be
+   * written against a helper that stamps them all with one timestamp.
+   */
+  const seedWrittenInsight = (
+    id: string, workspaceId: string, text: string, createdAt = NOW - DAY,
+  ) => {
     sqlite.seed({
-      id, createdAt: NOW - DAY, tags: ["auto-insight"],
+      id, createdAt, tags: ["auto-insight"],
       content: `${text}\n\n[Insight: contradiction — drawn from 2 memories]`,
     });
     sqlite.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(workspaceId, id).run();
+  };
+
+  /**
+   * Prior insights about a subject nothing else in this file mentions, so they
+   * fill the window without restating anything a candidate reasons to.
+   */
+  const seedFiller = (workspaceId: string, n: number, at: (i: number) => number) => {
+    for (let i = 0; i < n; i++) {
+      seedWrittenInsight(
+        `filler-${workspaceId}-${String(i).padStart(2, "0")}`, workspaceId,
+        "The weekend support rota stopped relying on volunteers and became a paid on-call roster.",
+        at(i),
+      );
+    }
   };
 
   it("does not let a member's personal insight suppress a company one", async () => {
@@ -413,6 +435,87 @@ describe("runWeeklyInsights — the workspace slice", () => {
     await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO, WS_CO2] });
 
     expect((await insights(sqlite)).filter(r => r.id !== "prior")).toHaveLength(0);
+    expect(await statusOf(sqlite, "cand-0")).toBe("used");
+  });
+
+  it("holds EVERY drawn workspace's floor, not one workspace's on behalf of all", async () => {
+    // WHY ROW_NUMBER AND NOT A BARE LIMIT, asserted as an outcome instead of
+    // as a string in the SQL. Two companies, each with its own prior insight
+    // restating its own candidate: both candidates must be suppressed, which
+    // requires the floor read to return a row for BOTH workspaces.
+    //
+    // A single shared window — an outer `LIMIT 1` on this statement, or the
+    // `ORDER BY created_at DESC LIMIT ?` this replaced — can only carry one of
+    // the two, so exactly one candidate would survive its own company's floor
+    // and be written. The assertion is deliberately blind to WHICH one: it
+    // fails whichever row the shared window happens to keep, so it cannot pass
+    // by accident of the seed order.
+    seedWrittenInsight("prior-co", WS_CO, PER_TIER["0"]);
+    seedWrittenInsight("prior-co2", WS_CO2, PER_TIER["1"]);
+    seedPair(sqlite, 0, WS_CO, WS_CO, 10);
+    seedPair(sqlite, 1, WS_CO2, WS_CO2, 9);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO, WS_CO2] });
+
+    expect((await insights(sqlite)).filter(r => !r.id.startsWith("prior"))).toHaveLength(0);
+    expect(await statusOf(sqlite, "cand-0")).toBe("used");
+    expect(await statusOf(sqlite, "cand-1")).toBe("used");
+  });
+
+  it("reads a workspace's NEWEST insights into the floor, not its oldest", async () => {
+    // The other half of what the window function buys, also as an outcome
+    // rather than as a spelling. RECENT_INSIGHT_WINDOW is a RECENCY window:
+    // the floor asks "is this a restatement of something this reader was given
+    // LATELY", and a candidate that restates last week's insight has to be
+    // caught even in a workspace with a long history behind it.
+    //
+    // One workspace holding exactly RECENT_INSIGHT_WINDOW older insights about
+    // an unrelated subject, plus a newer one the candidate restates. Ordered
+    // newest-first the restatement is in the window and the candidate is
+    // suppressed; ordered oldest-first the window is spent entirely on the
+    // filler and the restatement is written. No other case in this file seeds
+    // more than one insight into a workspace, so nothing else can tell those
+    // two orderings apart.
+    seedFiller(WS_CO, RECENT_INSIGHT_WINDOW, (i) => NOW - 30 * DAY + i);
+    seedWrittenInsight("prior", WS_CO, PER_TIER["0"], NOW - DAY);
+    seedPair(sqlite, 0, WS_CO, WS_CO, 10);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO] });
+
+    expect((await insights(sqlite)).filter(r => r.id === "cand-0" || !/^(prior|filler)/.test(r.id)))
+      .toHaveLength(0);
+    expect(await statusOf(sqlite, "cand-0")).toBe("used");
+  });
+
+  it("settles a tie in the floor window by id, so the same data suppresses the same way", async () => {
+    // TIES ARE PRODUCED HERE, not imagined: a run writes up to
+    // MAX_INSIGHTS_PER_RUN insights in one batch off one Date.now(), and the
+    // pass is a cron that has run every week since the brain was made. With
+    // `ORDER BY created_at DESC` alone, which of a tie group falls inside
+    // `rn <= RECENT_INSIGHT_WINDOW` is whatever order the engine happened to
+    // emit — and unlike the activity feed's boundary, where the cost of an
+    // arbitrary order is a row shown on two pages, this boundary decides
+    // whether a candidate is DESTROYED: a suppressed pair is settled `used`
+    // and never comes back.
+    //
+    // `id DESC` is the same disposal /team/activity took with `event_id DESC`:
+    // a per-row primary key, unique in the table, making the sort a total
+    // order — arbitrary within a tie, but the SAME arbitrary order for every
+    // run over the same data, which is the whole requirement.
+    //
+    // The window here is exactly full of filler and the restatement is the
+    // ELEVENTH row of the tie group, so the tiebreaker is what decides the
+    // case: `zz-prior` sorts first under `id DESC` and is read into the floor;
+    // with no tiebreaker at all the engine emits it last, it falls outside the
+    // window, and the candidate is written instead of suppressed.
+    const TIED = NOW - DAY;
+    seedFiller(WS_CO, RECENT_INSIGHT_WINDOW, () => TIED);
+    seedWrittenInsight("zz-prior", WS_CO, PER_TIER["0"], TIED);
+    seedPair(sqlite, 0, WS_CO, WS_CO, 10);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO] });
+
+    expect((await insights(sqlite)).filter(r => !/^(zz-prior|filler)/.test(r.id))).toHaveLength(0);
     expect(await statusOf(sqlite, "cand-0")).toBe("used");
   });
 

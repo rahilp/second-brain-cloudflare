@@ -261,6 +261,18 @@ export async function runWeeklyInsights(
     // every other one's floor down to nothing. Each workspace gets its own
     // RECENT_INSIGHT_WINDOW rows, which is what a solo brain — one workspace —
     // has always had.
+    //
+    // `created_at DESC, id DESC` — the tiebreaker is not decoration. A run
+    // writes up to MAX_INSIGHTS_PER_RUN insights in one batch off one
+    // Date.now(), so tied timestamps are something this pass PRODUCES, and on
+    // created_at alone which of a tie group falls inside `rn <= ?` is whatever
+    // order the engine happens to emit. Two runs over identical data could
+    // then read different floors and destroy different candidates —
+    // suppression settles a pair `used`, so it does not defer the candidate,
+    // it ends it. `id` is entries' own primary key, unique in the table, which
+    // makes this a total order: arbitrary within a tie, but the SAME arbitrary
+    // order every run, exactly as `created_at DESC, event_id DESC` is for the
+    // activity feed.
     const floorWorkspaces = [...new Set(
       results
         .filter(c => (c.a_workspace_id ?? "") === (c.b_workspace_id ?? ""))
@@ -279,7 +291,8 @@ export async function runWeeklyInsights(
         // is compared and never returned.
         `SELECT workspace_id, content FROM (
            SELECT workspace_id, content,
-                  ROW_NUMBER() OVER (PARTITION BY workspace_id ORDER BY created_at DESC) AS rn
+                  ROW_NUMBER() OVER (PARTITION BY workspace_id
+                                     ORDER BY created_at DESC, id DESC) AS rn
              FROM entries
             WHERE ${WRITTEN_INSIGHT_SQL}
               AND workspace_id IN (${floorWorkspaces.map(() => "?").join(", ")})
