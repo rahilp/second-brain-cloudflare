@@ -423,6 +423,19 @@ describe("dashboard i18n", () => {
       const rel = relative(ROOT, file);
       const content = readFileSync(file, "utf8");
 
+      // This scan runs over raw file text with no comment stripping, so it is deliberately
+      // naive: it matches calls to t() / tPlural() wherever they appear, including inside a
+      // // or /* */ comment that's merely talking ABOUT the i18n API. That's a false
+      // positive by design, not a bug to fix here — a real JS comment stripper would need
+      // to survive template literals, nested ${}, regex literals, and string literals, and
+      // this file's own stripper in scripts/check-scope.mjs isn't reusable for that (it
+      // blanks SQL comments inside template literals, a different job). A subtly wrong
+      // stripper would silently blank a region of real code, turning the closed set of
+      // dynamic call sites into an open one — trading this loud, file:line-diagnosable
+      // false positive for the quiet false negative this test exists to prevent. If you
+      // need to write prose about the i18n API in a comment, use the empty-parens form
+      // t() rather than writing out a call with a literal key argument — see the
+      // precedent at line 242 above, which already does this to stay out of the scan.
       const callRe = /\b(t|tPlural)\(/g;
       let m: RegExpExecArray | null;
       while ((m = callRe.exec(content))) {
