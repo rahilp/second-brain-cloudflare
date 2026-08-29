@@ -22,6 +22,7 @@ import worker from "../../src/index";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
 import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
+import { resetVectorizeFilterState, vectorizeFilterState } from "../../src/vectorize/scope";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember } from "../../src/lib/team-admin";
 import type { Env } from "../../src/env";
@@ -130,6 +131,9 @@ function seed(id: string, workspaceId: string, actorId: string, content: string,
 
 beforeEach(async () => {
   resetDatabaseInit();
+  // The filter-support latch is module-scoped, so a case that degrades it would
+  // otherwise leave every later case in this file querying unfiltered.
+  resetVectorizeFilterState();
   sqlite = makeSqliteD1();
   env = makeTestEnv(undefined, {
     DB: sqlite.db as unknown as Env["DB"],
@@ -552,6 +556,45 @@ describe("cross-user isolation — maintenance passes", () => {
   }) as unknown as VectorizeIndex;
 
   /**
+   * The same index, but one that REJECTS the workspace metadata filter — the
+   * documented degraded mode of `queryVectorizeScoped`, which retries unfiltered
+   * and latches that per isolate.
+   *
+   * This is why filtering the pass's query cannot be the whole fix: on a
+   * deployment whose index cannot filter, the pass sees exactly the neighbour
+   * list the unfixed code saw. What has to hold there is the endpoint check in
+   * inferEdgesOnWrite.
+   */
+  const filterRejectingVectorize = () => ({
+    ...env.VECTORIZE,
+    query: vi.fn().mockImplementation(async (_values: number[], opts: any) => {
+      if (opts?.filter) throw new Error("VECTORIZE_QUERY_ERROR (code = 40006): unsupported metadata filter");
+      return {
+        matches: [
+          { id: "alice-link", score: 0.97, metadata: { parentId: "alice-link" } },
+          { id: "bob-link", score: 0.96, metadata: { parentId: "bob-link" } },
+        ],
+      };
+    }),
+  }) as unknown as VectorizeIndex;
+
+  /** Two of Alice's own rows as each other's nearest neighbour. */
+  const sameWorkspaceVectorize = (rejectFilters: boolean) => ({
+    ...env.VECTORIZE,
+    query: vi.fn().mockImplementation(async (_values: number[], opts: any) => {
+      if (rejectFilters && opts?.filter) {
+        throw new Error("VECTORIZE_QUERY_ERROR (code = 40006): unsupported metadata filter");
+      }
+      return {
+        matches: [
+          { id: "alice-one", score: 0.97, metadata: { parentId: "alice-one" } },
+          { id: "alice-two", score: 0.96, metadata: { parentId: "alice-two" } },
+        ],
+      };
+    }),
+  }) as unknown as VectorizeIndex;
+
+  /**
    * A ctx that can be awaited. src/index.ts hands every nightly pass to
    * ctx.waitUntil, so the no-op double used by the request tests above would let
    * these assertions run against a database no pass had touched yet.
@@ -612,25 +655,19 @@ describe("cross-user isolation — maintenance passes", () => {
   });
 
   /**
-   * KNOWN DEFECT, recorded rather than weakened.
+   * Recorded first as `it.fails` — the defect it describes was real: the nightly
+   * graph pass queried Vectorize with no workspace filter, so a near-duplicate in
+   * another member's personal workspace came back as a neighbour and
+   * `inferEdgesOnWrite` wrote the edge. `relates_to` is symmetric, so
+   * edgeInsertStatement also reordered the endpoints — the edge was stamped with
+   * the acting entry's workspace while its `source_id` might be the colleague's
+   * row.
    *
-   * `it.fails` asserts that this assertion currently does NOT hold: the nightly
-   * graph pass queries Vectorize with no workspace filter
-   * (src/graph/pass.ts calls `env.VECTORIZE.query(values, { topK: 5 })`), so a
-   * near-duplicate in another member's personal workspace comes back as a
-   * neighbour and `inferEdgesOnWrite` writes the edge. `relates_to` is
-   * symmetric, so edgeInsertStatement also reorders the endpoints — the edge is
-   * stamped with the acting entry's workspace while its `source_id` may be the
-   * colleague's row.
-   *
-   * It is left failing on purpose. Fixing it means changing src/, which this
-   * task does not own, and deleting the case would lose the only record that
-   * anyone looked. When the pass learns to filter, this flips red and someone
-   * changes `it.fails` back to `it`.
-   *
-   * What contains it today is asserted for real in the test directly below.
+   * The pass now filters to the row's own workspace, and inferEdgesOnWrite
+   * refuses a pair whose endpoints disagree whatever the filter did. The
+   * assertion below is exactly the one that was recorded as failing.
    */
-  it.fails("the graph pass never links a memory to one in another workspace", async () => {
+  it("the graph pass never links a memory to one in another workspace", async () => {
     // Near-identical text on both sides, and a Vectorize double that answers the
     // way a real unfiltered index answers: every entry is a strong neighbour of
     // every other. Without that the backfill gets an empty match list and the
@@ -655,22 +692,81 @@ describe("cross-user isolation — maintenance passes", () => {
     expect(crossings).toEqual([]);
   });
 
-  it("a cross-workspace edge the graph pass writes still draws no colleague's node", async () => {
-    // The containment that DOES hold, and the reason the defect above is a
-    // defect rather than an outage: GET /graph hydrates nodes through the
-    // caller's scope, so the foreign endpoint drops out of the drawing even
-    // though the edge row exists. Asserted here so a change to the hydration
-    // cannot quietly turn the recorded defect into a live content leak.
+  it("still refuses the cross-workspace pair when Vectorize rejects the filter", async () => {
+    // The filter is best-effort by contract (src/vectorize/scope.ts). With it
+    // rejected, the pass gets the identical neighbour list the unfixed code got,
+    // so this is the case that shows the invariant is held by the endpoint check
+    // and not by the filter.
     seed("alice-link", aliceWorkspaceId, aliceUserId,
       "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
     seed("bob-link", bobWorkspaceId, bobUserId,
       "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
-    env.VECTORIZE = crossWorkspaceVectorize();
+    env.VECTORIZE = filterRejectingVectorize();
 
     await parkCursorBefore(aliceWorkspaceId);
     await nightly();
 
-    // The pass really did write the edge — otherwise this proves nothing.
+    // The degraded path was really taken: without this the case could pass
+    // because the filter worked, which is the thing it is meant to rule out.
+    expect(vectorizeFilterState()).toMatchObject({ supported: false });
+    expect(vectorizeFilterState().degradedQueries).toBeGreaterThan(0);
+
+    const { results: crossings } = await sqlite.db.prepare(
+      `SELECT e.source_id, e.target_id FROM edges e
+         JOIN entries s ON s.id = e.source_id
+         JOIN entries t ON t.id = e.target_id
+        WHERE s.workspace_id != t.workspace_id`,
+    ).all();
+    expect(crossings).toEqual([]);
+  });
+
+  // A solo brain has one workspace, so the narrowing must cost it nothing —
+  // whether or not its index can filter. Both arms assert the same edge.
+  it.each([
+    { name: "filter accepted", rejectFilters: false },
+    { name: "filter rejected", rejectFilters: true },
+  ])("still links two memories in one workspace ($name)", async ({ rejectFilters }) => {
+    seed("alice-one", aliceWorkspaceId, aliceUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    seed("alice-two", aliceWorkspaceId, aliceUserId,
+      "Renewal terms for the Ardent contract were re-signed this quarter", ["contracts"]);
+    env.VECTORIZE = sameWorkspaceVectorize(rejectFilters);
+
+    await parkCursorBefore(aliceWorkspaceId);
+    await nightly();
+
+    const { results } = await sqlite.db.prepare(
+      `SELECT source_id, target_id, workspace_id FROM edges
+        WHERE type = 'relates_to' AND provenance = 'inferred'`,
+    ).all();
+    expect(results).toContainEqual({
+      source_id: "alice-one",
+      target_id: "alice-two",
+      workspace_id: aliceWorkspaceId,
+    });
+  });
+
+  it("a cross-workspace edge still draws no colleague's node", async () => {
+    // The containment that holds independently of how the edge got there, and
+    // the reason the defect above was a defect rather than an outage: GET /graph
+    // hydrates nodes through the caller's scope, so the foreign endpoint drops
+    // out of the drawing even though the edge row exists. Asserted here so a
+    // change to the hydration cannot quietly turn a stale row into a live
+    // content leak.
+    //
+    // The row is seeded rather than produced by the pass: the pass no longer
+    // writes one. Every brain upgraded from before that fix still has rows of
+    // exactly this shape, which is what this case is for.
+    seed("alice-link", aliceWorkspaceId, aliceUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    seed("bob-link", bobWorkspaceId, bobUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    sqlite.db.prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+       VALUES ('stale-cross', 'alice-link', 'bob-link', 'relates_to', 0.96, 'inferred', '{}', ?, ?, ?)`,
+    ).bind(SEEDED_AT, SEEDED_AT, aliceWorkspaceId).run();
+
+    // The bridging edge really is there — otherwise this proves nothing.
     const bridged = await sqlite.db.prepare(
       `SELECT COUNT(*) AS n FROM edges e
          JOIN entries s ON s.id = e.source_id

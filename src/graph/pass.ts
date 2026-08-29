@@ -3,6 +3,7 @@ import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { initializeDatabase } from "../db/init";
 import { embed } from "../lib/ai";
 import { inferEdgesOnWrite } from "./edges";
+import { queryVectorizeScoped, singleWorkspaceFilter } from "../vectorize/scope";
 
 const GRAPH_PASS_BACKFILL_LIMIT = 25;
 const EDGE_PRUNE_WEIGHT = 0.3;
@@ -34,18 +35,22 @@ export async function runGraphPass(
     console.error("Graph prune failed (non-fatal):", e);
   }
 
-  let unlinked: { id: string; content: string }[] = [];
+  // workspace_id rides along on the row the backfill already selects — the
+  // neighbour search below has to be asked within the workspace of the row being
+  // processed, and this is where that workspace is known. Projecting it costs no
+  // extra statement, and it is not a scope clause: the slice above is.
+  let unlinked: { id: string; content: string; workspace_id: string | null }[] = [];
   try {
     const sliceSql = workspaceId != null ? `\n         AND workspace_id = ?` : "";
     const stmt = env.DB.prepare(
       // scope-exempt: cron: nightly backfill, narrowed by the workspace slice in sliceSql
-      `SELECT id, content FROM entries
+      `SELECT id, content, workspace_id FROM entries
        WHERE id NOT IN (SELECT source_id FROM edges) AND id NOT IN (SELECT target_id FROM edges)
          AND tags NOT LIKE '%"status:deprecated"%'${sliceSql}
        ORDER BY created_at DESC LIMIT ${GRAPH_PASS_BACKFILL_LIMIT}`
     );
     const { results } = await (workspaceId != null ? stmt.bind(workspaceId) : stmt)
-      .all() as { results: { id: string; content: string }[] };
+      .all() as { results: { id: string; content: string; workspace_id: string | null }[] };
     unlinked = results;
   } catch (e) {
     console.error("Graph backfill query failed (non-fatal):", e);
@@ -54,7 +59,20 @@ export async function runGraphPass(
   for (const entry of unlinked) {
     try {
       const values = await embed(entry.content, env, cfg);
-      const { matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
+      // Neighbours from the row's OWN workspace. Unfiltered, this asked the whole
+      // index and routinely answered with another member's private near-duplicate,
+      // which inferEdgesOnWrite then linked. Same one Vectorize call either way —
+      // a filter is a query argument, not a second subrequest.
+      //
+      // Best-effort, by the contract in src/vectorize/scope.ts: a deployment whose
+      // index rejects metadata filters degrades to an unfiltered query. What makes
+      // the invariant true rather than merely likely is inferEdgesOnWrite's
+      // endpoint check, which does not depend on this.
+      const { matches } = await queryVectorizeScoped<VectorizeMatch>(
+        env.VECTORIZE,
+        values,
+        { topK: 5, filter: singleWorkspaceFilter(entry.workspace_id ?? "").filter },
+      );
       const scores = new Map<string, number>();
       for (const m of matches) {
         const pid = (m.metadata as any)?.parentId ?? m.id;

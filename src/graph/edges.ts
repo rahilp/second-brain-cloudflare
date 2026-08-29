@@ -138,14 +138,39 @@ export async function inferEdgesOnWrite(
   // the nightly graph backfill (src/graph/pass.ts) runs corpus-wide by design, and
   // without this copy every edge it inferred would land in "" no matter which
   // workspace the entry itself lives in — invisible to that owner's scoped walks.
-  // One read per write batch; ids are globally unique so no scoping is needed.
-  const source = await env.DB.prepare(
-    // scope-exempt: by-id: reads the source row's own workspace to stamp the edge with it
-    `SELECT workspace_id FROM entries WHERE id = ?`
-  ).bind(newId).first<{ workspace_id: string | null }>();
-  const workspaceId = source?.workspace_id ?? "";
+  //
+  // The neighbours' workspaces come back from the SAME statement, which is what
+  // makes the check below free: one read per write batch either way, no
+  // per-neighbour subrequest. Ids are globally unique, so a by-id read needs no
+  // scope clause of its own.
+  const ids = [newId, ...top.map(n => n.id)];
+  const { results } = await env.DB.prepare(
+    // scope-exempt: by-id: reads each endpoint's own workspace, to stamp the edge with the source's and to refuse a pair whose workspaces disagree
+    `SELECT id, workspace_id FROM entries WHERE id IN (${ids.map(() => "?").join(", ")})`
+  ).bind(...ids).all() as { results: { id: string; workspace_id: string | null }[] };
+  const workspaceById = new Map(results.map(r => [r.id, r.workspace_id ?? ""]));
+  const workspaceId = workspaceById.get(newId) ?? "";
 
   for (const n of top) {
+    // Two different members' private entries are never linked, whatever the
+    // vector index returned. The write paths that call this DO filter their
+    // Vectorize query by workspace, but that filter is best-effort by contract
+    // (src/vectorize/scope.ts degrades to an unfiltered query on a filter-shaped
+    // rejection and latches it per isolate) — so this is the check that still
+    // holds in the degraded mode, and the one that makes the invariant true
+    // rather than likely.
+    //
+    // A neighbour with no `entries` row at all — a vector whose entry has since
+    // been forgotten — is NOT refused here. It has no workspace to disagree
+    // with, so it is not the case this check is about, and the edge it produces
+    // is inert: every graph read hydrates its endpoints through the caller's
+    // scope and drops the ones that are missing. Narrowing that too would change
+    // what the pass does for a reason unrelated to tenancy.
+    //
+    // Within one workspace nothing changes at all, which is every pair on a
+    // solo brain.
+    const neighborWorkspace = workspaceById.get(n.id);
+    if (neighborWorkspace !== undefined && neighborWorkspace !== workspaceId) continue;
     await createEdge(newId, n.id, "relates_to", { weight: n.score, provenance: "inferred", workspaceId }, env);
   }
 }

@@ -557,8 +557,18 @@ export class D1Mock {
             })
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .slice(0, limit)
-            .map((e: any) => ({ id: e.id, content: e.content }));
+            .map((e: any) => ({ id: e.id, content: e.content, workspace_id: e.workspace_id ?? "" }));
           return { results: rows };
+        }
+        if (s.includes("SELECT id, workspace_id FROM entries WHERE id IN")) {
+          // inferEdgesOnWrite: the source row's workspace (to stamp the edge with)
+          // and each candidate neighbour's (to refuse a pair that disagrees). Rows
+          // seeded without the column read as "", the pre-tenancy value, so a
+          // fixture that says nothing about workspaces still links exactly as it did.
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id, workspace_id: e.workspace_id ?? "" }));
+          return { results };
         }
         if (s.includes("SELECT id FROM entries WHERE id IN")) {
           const results = db.entries
