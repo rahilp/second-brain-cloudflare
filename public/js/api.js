@@ -49,13 +49,18 @@ async function apiShare(id, workspace) {
   return res.json()
 }
 
-/** Share/unshare with confirm + undo toast; refreshes via optional callback. */
+/**
+ * Move a memory between layers, reporting it with an undo toast.
+ *
+ * No confirmation in front of this: the act is reversible in one tap and the
+ * toast is what offers that tap. Asking first as well made two questions of
+ * one reversible decision, which is how people learn to dismiss dialogs
+ * without reading them.
+ */
 async function toggleEntryLayer(id, currentLayer, onDone) {
   const goingShared = currentLayer !== 'company'
   const target = goingShared ? 'company' : 'personal'
   const previous = currentLayer === 'company' ? 'company' : 'personal'
-  const question = goingShared ? t('team.shareConfirm') : t('team.unshareConfirm')
-  if (!confirm(question)) return
   try {
     const r = await apiShare(id, target)
     if (!r.ok) throw new Error(r.error || t('team.actionFailed'))
@@ -71,6 +76,6 @@ async function toggleEntryLayer(id, currentLayer, onDone) {
     else if (typeof loadRecent === 'function') loadRecent()
     else if (typeof refreshAll === 'function') refreshAll()
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+    showToast(e.message || t('team.actionFailed'))
   }
 }
