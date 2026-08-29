@@ -668,11 +668,14 @@ describe("scanSource — documented limitations, pinned so the header cannot dri
     expect(r.violations).toEqual([]);
   });
 
-  it("limitation 1: SQL split across a concatenation is not seen, and not counted", () => {
-    // The one gap with no loud failure, for the reason the header gives: the
-    // token `FROM entries` never exists in the source, so there is nothing to
-    // match. Pinned so the claim "of the statements it can see" stays accurate.
-    const r = scanSource('const q = "SELECT id FROM " + "entries WHERE 1=1";');
+  it("limitation 1: what remains invisible is a split THROUGH an identifier", () => {
+    // The two concatenation shapes worth writing by accident — a dangling
+    // `FROM "` and an interpolated table name — are now reported (see
+    // "table names the lexer cannot follow" above). This is what is left: a
+    // split that falls INSIDE the table's identifier, so there is no FROM/JOIN
+    // adjacent to a concatenation boundary to notice. Pinned as CURRENT
+    // BEHAVIOUR so the header's narrowed claim and the code go red together.
+    const r = scanSource('const q = "SELECT id FROM ent" + "ries WHERE 1=1";');
     expect([r.queries, r.violations]).toEqual([0, []]);
   });
 });
@@ -704,6 +707,65 @@ describe("scanSource — scope-checked, for clauses the lexer cannot see", () =>
   });
 });
 
+describe("scanSource — table names the lexer cannot follow", () => {
+  // Both of these were SILENT evasions: not flagged and not counted, because
+  // neither text ever contains the token `FROM entries`. A checker whose
+  // summary line gets healthier as the tree gets worse is the one outcome this
+  // script exists to prevent, so the rule is that an unfollowable table name
+  // fails loudly and is answered with an annotation like any other exception.
+  it("fails a FROM whose table name is an interpolation", () => {
+    const r = scanSource("const q = `SELECT id, content FROM ${TBL} ORDER BY created_at`;");
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("the table name is an interpolation");
+    expect(r.queries).toBe(1);
+  });
+
+  it("fails a FROM split across a string concatenation", () => {
+    const r = scanSource('const q = "SELECT id, content FROM " + "entries ORDER BY created_at";');
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("split across a string concatenation");
+    expect(r.queries).toBe(1);
+  });
+
+  it("counts and licenses an unfollowable table name when a reason is written", () => {
+    // The whole pipeline, not just the detection: a construct that genuinely
+    // cannot be parsed must be answerable the same way every other one is.
+    const r = scanSource([
+      "// scope-exempt: table name chosen from a fixed allowlist, rows pinned by id",
+      "const q = `SELECT id FROM ${TBL} WHERE id = ?`;",
+    ].join("\n"));
+    expect(r.violations).toEqual([]);
+    expect(r.exceptions.length).toBe(1);
+    expect(r.exceptions[0].kind).toBe("exempt");
+    expect(r.queries).toBe(1);
+  });
+
+  // The gate that keeps this on by default. Both strings below are real in
+  // src/ (integrations/mirror.ts, compression/digest.ts) and neither is SQL;
+  // flagging them would have made the whole check unusable.
+  it("does not read English prose containing the word 'from' as a query", () => {
+    const prose = scanSource(
+      "const msg = `This memory is synced from ${name}. Edit it in ${name} instead.`;",
+    );
+    expect(prose.violations).toEqual([]);
+    expect(prose.queries).toBe(0);
+
+    const other = scanSource('const label = "imported from " + source;');
+    expect(other.violations).toEqual([]);
+    expect(other.queries).toBe(0);
+  });
+
+  it("does not trip on this checker's own prose about the constructs", () => {
+    const r = scanSource([
+      "// A FROM ${TBL} is not something this can follow.",
+      '// Nor is "SELECT x FROM " + "entries".',
+      "const q = `SELECT id FROM entries WHERE ${scope.clause}`;",
+    ].join("\n"));
+    expect(r.violations).toEqual([]);
+    expect(r.queries).toBe(1);
+  });
+});
+
 describe("the checker over the real source tree", () => {
   it("exits 0, so a future unscoped query fails the suite as well as CI", () => {
     const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
@@ -712,6 +774,37 @@ describe("the checker over the real source tree", () => {
     });
     expect([run.status, run.stdout, run.stderr]).toEqual([0, expect.any(String), ""]);
     expect(run.stdout).toContain("scope check:");
+  });
+
+  // THE COUNTS ARE PINNED, and that is the point of this test rather than a
+  // sanity check.
+  //
+  // Two evasions were found in this checker whose defining property was that
+  // the SUMMARY DID NOT MOVE — a query slipped through and the line CI prints
+  // said exactly what it said the day before. Nothing in the repo asserted
+  // those numbers, so the only thing standing between a silent evasion and a
+  // green build was a human noticing that a three-digit total had not changed.
+  //
+  // Pinning them turns every movement into a deliberate edit. A legitimate
+  // change WILL fail this: when it does, read the new numbers, satisfy yourself
+  // that each one moved for a reason you can name, and update them here in the
+  // same commit as the change that moved them.
+  it("reports exactly 88 queries, 49 documented exceptions and 7 scope-checked", () => {
+    const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
+      cwd: ROOT,
+      encoding: "utf8",
+    });
+    expect(run.status).toBe(0);
+    const m = run.stdout.match(
+      /scope check: (\d+) queries, (\d+) documented exceptions, (\d+) scope-checked/,
+    );
+    expect(m, `summary line not found in:\n${run.stdout}`).not.toBeNull();
+    const [queries, exempt, checked] = (m as RegExpMatchArray).slice(1).map(Number);
+    expect(
+      { queries, exempt, checked },
+      "check:scope counts moved. If that was deliberate, say so out loud and " +
+        "update this expectation in the same commit.",
+    ).toEqual({ queries: 88, exempt: 49, checked: 7 });
   });
 
   it("is wired into package.json and CI, or nothing runs it", () => {

@@ -82,12 +82,25 @@
  * below is where the two come apart, and every entry in it was found by someone
  * attacking this file rather than by reasoning about it.
  *
- *  1. SQL assembled by concatenation is invisible. `"SELECT … FROM " +
- *     "entries WHERE …"` never contains the token `FROM entries`, so nothing
- *     here can see the table at all. Same for a whole statement built in
- *     JavaScript and handed to `env.DB.prepare(sql)` as a variable — only
- *     template literals are scanned. This is the one gap with no loud failure:
- *     the statement is not checked and not counted, because it is not seen.
+ *  1. A table named in a shape this lexer cannot follow now FAILS LOUDLY rather
+ *     than vanishing. Two spellings are detected and reported: a FROM/JOIN whose
+ *     table is an interpolation (`FROM ${TBL}`), and one split across a string
+ *     concatenation (`"SELECT … FROM " + "entries …"`). Neither ever contains
+ *     the token `FROM entries`, so both used to be invisible to every pattern
+ *     here — not flagged AND not counted, which is precisely the failure shape
+ *     this script exists to prevent. They are now reported like any other
+ *     unparseable reference and answered with an annotation.
+ *
+ *     What is still invisible is narrower, and stated rather than implied: a
+ *     split THROUGH an identifier (`"… FROM ent" + "ries"`), and a whole
+ *     statement assembled in JavaScript and handed to `env.DB.prepare(sql)` as
+ *     a bare variable, with no SQL text at the call site to see at all.
+ *
+ *     Detection of the two closed shapes is gated on the surrounding region
+ *     looking like SQL (`looksLikeSql`), because `synced from ${name}` and
+ *     `Synthesized from ${rows.length} entries` are both real strings in this
+ *     tree and neither is a query. That gate is a heuristic, and it is the ONE
+ *     place in this file that deliberately errs toward a false negative.
  *  2. The scope test is by identifier NAME, not by proof. `${somethingScope}`
  *     passes whatever it renders; it shows the thought was applied, not that the
  *     clause is right. Correctness is the isolation suite's job
@@ -166,9 +179,15 @@
  *   survive the check — and it cannot reach an executing statement, because a
  *   line beginning that way outside a template is a comment or a syntax error.
  *
- *   It does NOT claim to have matched them all. Limitations 1 and 12 are holes
- *   by construction, and 2 through 11 are places where a match is judged on a
- *   name, a token or a position rather than on meaning.
+ *   Separately from that trichotomy, a FROM/JOIN whose table name is an
+ *   interpolation or is split across a concatenation is reported on sight. It is
+ *   not a reference this script can attribute to a table, so it is not resolved
+ *   — it is refused, and counted, and a human writes down why it is safe.
+ *
+ *   It does NOT claim to have matched them all. Limitation 12 is a hole by
+ *   construction, limitation 1 names what remains of a hole that used to be much
+ *   wider, and 2 through 11 are places where a match is judged on a name, a
+ *   token or a position rather than on meaning.
  *
  * Read a green run as "nothing this script can see is unscoped". Never as
  * "nothing is unscoped". The thing that tests the actual behaviour is
@@ -222,6 +241,62 @@ const FILE_TABLE_PATTERN =
 /** The same reference test, for looking inside one interpolation. */
 const HIDDEN_TABLE = new RegExp(
   `\\b(?:FROM|JOIN)\\s+(?:${QUALIFIER}\\s*\\.\\s*)*["'\\[]?\\s*(entries|edges)\\b`, "i");
+
+/**
+ * A SQL statement's opening verb. Used only to tell SQL from English prose when
+ * deciding whether a dangling FROM/JOIN is worth reporting — `synced from
+ * ${name}` and `Synthesized from ${rows.length} entries` are both real strings
+ * in this tree, and neither is a query.
+ */
+const SQL_VERB = /\b(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|WITH)\b/i;
+
+/**
+ * Two ways to name a table that no amount of lexing here can follow, each
+ * REPORTED rather than skipped.
+ *
+ * Both used to be silent. A statement written either way was not flagged and
+ * not counted — it was not seen at all — so the summary line got healthier as
+ * the tree got worse, which is the one failure shape this script exists to
+ * prevent. Neither can be resolved (the table name is not in the source text
+ * at all, or not in one piece), so the honest outcome is a loud failure that a
+ * human answers with `scope-exempt:` / `scope-checked:` like any other, not a
+ * quiet pass.
+ *
+ * Neither construct exists in src/ today. That is the point: they are closed
+ * before the first one is written, not after.
+ */
+const UNRESOLVABLE_TABLE = [
+  {
+    re: /\b(?:FROM|JOIN)\s+\$\{/gi,
+    describe: "the table name is an interpolation (`FROM ${...}`), so which table this reads is not in the source",
+  },
+  {
+    re: /\b(?:FROM|JOIN)[ \t]*["'`][ \t]*\+/gi,
+    describe: "the table name is split across a string concatenation (`\"... FROM \" + \"entries ...\"`), so no single literal contains it",
+  },
+];
+
+/**
+ * Is the text around `index` SQL rather than English?
+ *
+ * Inside a template literal the whole template is the region, because that is
+ * the statement. Outside one — a concatenation of double-quoted strings — the
+ * region is a window, wide enough to reach a `SELECT` in an earlier fragment of
+ * the same expression.
+ *
+ * A heuristic, and named as one. It errs toward a false NEGATIVE in exactly one
+ * shape: a statement whose verb is far enough away, or absent, that the region
+ * misses it. That is the direction chosen deliberately here and nowhere else in
+ * this file, because the alternative is flagging ordinary prose containing the
+ * word "from" and this check has to survive being on by default.
+ */
+function looksLikeSql(text, spans, index) {
+  const span = spans.find((sp) => sp.start < index && index < sp.end);
+  const region = span
+    ? text.slice(span.start, span.end)
+    : text.slice(Math.max(0, index - 300), index + 100);
+  return SQL_VERB.test(region);
+}
 
 /** How far above a query an annotation may sit and still plainly be about it. */
 const ANNOTATION_LOOKBACK = 5;
@@ -751,6 +826,31 @@ export function scanSource(text) {
     });
   }
 
+  // The two constructs that name a table in a shape this lexer cannot follow.
+  // Keyed by offset, not by span, so one of these inside a template that ALSO
+  // contains a readable query yields two findings rather than being absorbed
+  // into one — they are separate problems and each needs its own reason.
+  for (const { re, describe } of UNRESOLVABLE_TABLE) {
+    re.lastIndex = 0;
+    let hit;
+    while ((hit = re.exec(text)) !== null) {
+      const lineNo = lineOf(text, hit.index);
+      const span = spans.find((sp) => sp.start < hit.index && hit.index < sp.end);
+      // The same prose skip the sweep uses, for the same reason: this file and
+      // src/lib/scope.ts both describe these constructs in words.
+      if (!span) {
+        const trimmed = (lines[lineNo - 1] ?? "").trimStart();
+        if (trimmed.startsWith("*") || trimmed.startsWith("//")) continue;
+      }
+      if (!looksLikeSql(text, spans, hit.index)) continue;
+      seen.set(`unresolvable:${hit.index}`, {
+        line: lineNo,
+        text: (lines[lineNo - 1] ?? "").trim(),
+        problem: `${describe}: ${(lines[lineNo - 1] ?? "").trim().slice(0, 80)}`,
+      });
+    }
+  }
+
   // Offsets of every line start, so a candidate annotation can be tested for
   // "is this line actually code, or is it text inside a template literal?".
   const lineStarts = [];
@@ -768,7 +868,12 @@ export function scanSource(text) {
   const claimed = new Set();
 
   for (const query of [...seen.values()].sort((a, b) => a.line - b.line)) {
-    const { unscoped, unreadable, hidden, total } = unscopedRefs(query.text);
+    // A construct whose table name is not resolvable at all: the problem is
+    // already decided, and running it through the parser would only produce a
+    // second, less useful description of the same thing.
+    const { unscoped, unreadable, hidden, total } = query.problem
+      ? { unscoped: [], unreadable: [], hidden: [], total: 1 }
+      : unscopedRefs(query.text);
     const names = unscoped.map(describeRef);
 
     // Three ways a statement can be a problem, in the order they matter. The
@@ -776,8 +881,10 @@ export function scanSource(text) {
     // summary line got healthier as the tree got worse — and they take priority
     // over a missing clause, because a scope clause elsewhere in the statement
     // says nothing about a branch that carries its own FROM.
-    let problem = null;
-    if (hidden.length) {
+    let problem = query.problem ?? null;
+    if (problem) {
+      // decided above
+    } else if (hidden.length) {
       problem = `a corpus table is reached from inside a nested template, where the clause for it cannot be read: \${${hidden[0]}}`;
     } else if (unreadable.length || total === 0) {
       problem = `could not parse the table reference: ${unreadable.join(", ") || query.text.replace(/\s+/g, " ").trim().slice(0, 60)}`;
