@@ -105,6 +105,20 @@ const SCHEMA_OBJECTS: Record<string, string> = {
   memberships: `CREATE TABLE IF NOT EXISTS memberships (user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', created_at INTEGER NOT NULL, PRIMARY KEY (user_id, workspace_id))`,
   entry_events: `CREATE TABLE IF NOT EXISTS entry_events (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, actor_id TEXT NOT NULL DEFAULT '', event TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)`,
   idx_entry_events_entry: `CREATE INDEX IF NOT EXISTS idx_entry_events_entry ON entry_events(entry_id, created_at DESC)`,
+  // The compliance feed (GET /team/activity) reads this table the other way
+  // round: the whole trail ordered by created_at, with no entry_id to give the
+  // index above a leading column to seek on. Without this, SQLite scans
+  // entry_events and builds a temp b-tree over all of it to return fifty rows —
+  // measured at 200k events on real SQLite, 40ms and a full sort against 3ms
+  // and a last-term sort. entry_events is the busiest table in the schema
+  // (a row per capture, edit, append, delete and status change), so this is the
+  // one audit table where the scan actually grows. admin_events has carried the
+  // same index since it shipped; this is the pair completing.
+  //
+  // In SCHEMA_OBJECTS rather than POST_COLUMN_OBJECTS deliberately: created_at
+  // is in entry_events' original CREATE, so it is present on every brain that
+  // has the table at all and there is no ALTER to sequence behind.
+  idx_entry_events_created: `CREATE INDEX IF NOT EXISTS idx_entry_events_created ON entry_events(created_at DESC)`,
   // Immutable administration audit trail. Same contract as entry_events:
   // application code only ever INSERTs here. Consumed by Phase 4.2.
   admin_events: `CREATE TABLE IF NOT EXISTS admin_events (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL DEFAULT '', target_user_id TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT '', event TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)`,

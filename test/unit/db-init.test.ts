@@ -33,7 +33,7 @@ const ALL_COLUMNS = MIGRATION.map(([column]) => column);
 const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue",
   // Team edition (v3). idx_entries_workspace_created is deliberately last-applied
   // (POST_COLUMN_OBJECTS): it indexes a column that arrives via ALTER.
-  "workspaces", "idx_workspaces_kind", "users", "idx_users_token_hash", "memberships", "entry_events", "idx_entry_events_entry",
+  "workspaces", "idx_workspaces_kind", "users", "idx_users_token_hash", "memberships", "entry_events", "idx_entry_events_entry", "idx_entry_events_created",
   "admin_events", "idx_admin_events_created", "maintenance_cursor", "idx_entries_workspace_created"];
 // Columns in the base CREATE of entries since v3 — present on every brain init touches.
 const BASE_COLUMNS = ["id", "content", "tags", "source", "created_at", "vector_ids", "workspace_id", "actor_id"];
@@ -180,7 +180,10 @@ describe("initializeDatabase updated_at migration", () => {
       resetDatabaseInit();
       await initializeDatabase(env);
 
-      expect(migrated).toBe(34); // one-off cost of creating a brain: 19 objects + 14 ALTERs + 1 post-column index
+      // MOVED 34 -> 35 by idx_entry_events_created, the compliance feed's index.
+      // One object, not one object plus an ALTER: it indexes created_at, which
+      // has been in entry_events' base CREATE since the table shipped.
+      expect(migrated).toBe(35); // one-off cost of creating a brain: 20 objects + 14 ALTERs + 1 post-column index
       expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
       expect(prepared).toHaveLength(3); // one probe each, and nothing else
       expect(touchesEntries(execd)).toEqual([]);
@@ -421,7 +424,8 @@ describe("initializeDatabase against real SQLite", () => {
     resetDatabaseInit(); // a second cold isolate against the brain the first one migrated
     await initializeDatabase(envFor(d1));
 
-    expect(cold).toBe(35); // one probe, then the 34 statements a new brain needs (19 objects + 14 ALTERs + 1 post-column index)
+    // MOVED 35 -> 36 by idx_entry_events_created; see the sibling pin above.
+    expect(cold).toBe(36); // one probe, then the 35 statements a new brain needs (20 objects + 14 ALTERs + 1 post-column index)
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });
@@ -468,6 +472,36 @@ describe("initializeDatabase against real SQLite", () => {
       `CREATE INDEX IF NOT EXISTS idx_edges_weight ON edges(weight DESC)`,
     ]);
     expect(await objectNames(d1)).toContain("idx_edges_weight");
+  });
+
+  it("adds the entry_events feed index to a brain that predates it, without touching its rows", async () => {
+    // GET /team/activity orders the WHOLE entry_events table by created_at with
+    // no entry_id predicate, and idx_entry_events_entry is (entry_id,
+    // created_at DESC) — the wrong shape for that, so the feed sorted the whole
+    // trail on every request. The index is additive and has to reach EXISTING
+    // brains: admin_events once shipped with no column map, every audit write
+    // failed silently on older databases, and the trail simply stopped. This is
+    // the path that stops that repeating for an index.
+    d1 = makeSqliteD1({ schema: false });
+    await initializeDatabase(envFor(d1));
+    await d1.db.prepare(
+      `INSERT INTO entry_events (id, entry_id, actor_id, event, payload, created_at)
+       VALUES ('ee-old', 'e-1', 'usr-1', 'shared', '{}', 42)`,
+    ).run();
+    await d1.db.exec(`DROP INDEX idx_entry_events_created`);
+    resetDatabaseInit();
+    d1.issued.length = 0;
+
+    await initializeDatabase(envFor(d1));
+
+    expect(d1.issued).toEqual([
+      expect.stringMatching(PROBE),
+      `CREATE INDEX IF NOT EXISTS idx_entry_events_created ON entry_events(created_at DESC)`,
+    ]);
+    expect(await objectNames(d1)).toContain("idx_entry_events_created");
+    // An index migration must not be a data migration.
+    const { results } = await d1.db.prepare(`SELECT id, created_at FROM entry_events`).all();
+    expect(results).toEqual([{ id: "ee-old", created_at: 42 }]);
   });
 
   it("adds the edges table to a brain that predates it", async () => {
