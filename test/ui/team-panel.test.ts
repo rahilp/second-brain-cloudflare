@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
-/** utils.js, i18n.js, state.js, toast.js and team.js, in page-load order. */
+/** utils.js, i18n.js, state.js, toast.js, confirm-sheet.js and team.js, in page-load order. */
 const SRC = [
   "public/utils.js",
   "public/js/i18n.js",
@@ -17,21 +17,36 @@ const SRC = [
   // Real toast rather than a stub: the team panel reports success and failure
   // through it, and a stub would let a broken call through silently.
   "public/js/toast.js",
+  // The shared destructive-action sheet. team.js's suspend/remove/rotate
+  // flows are built against this documented API rather than confirm().
+  "public/js/confirm-sheet.js",
   "public/js/team.js",
 ]
   .map((rel) => readFileSync(resolve(ROOT, rel), "utf8"))
   .join("\n");
 
 function makeEl() {
-  return {
+  const el: any = {
     id: "",
     style: {} as Record<string, string>,
-    classList: { add() {}, remove() {}, toggle() {} },
+    // Tracks add/remove calls so a test can tell whether the sheet was ever
+    // opened, rather than only inspecting its final state.
+    classList: {
+      calls: [] as Array<[string, string]>,
+      add(c: string) {
+        el.classList.calls.push(["add", c]);
+      },
+      remove(c: string) {
+        el.classList.calls.push(["remove", c]);
+      },
+      toggle() {},
+    },
     addEventListener() {},
     value: "",
     textContent: "",
     innerHTML: "",
     disabled: false,
+    checked: false,
     setAttribute() {},
     getAttribute: () => null,
     hasAttribute: () => false,
@@ -45,6 +60,7 @@ function makeEl() {
     querySelectorAll: () => [],
     dataset: {},
   };
+  return el;
 }
 
 const TEAM_ELEMENT_IDS = [
@@ -66,6 +82,13 @@ const TEAM_ELEMENT_IDS = [
   "topbar-team-name",
   "team-name-input",
   "team-name-btn",
+  "confirm-dialog",
+  "confirm-title",
+  "confirm-body",
+  "confirm-accept-btn",
+  "confirm-check-row",
+  "confirm-check-label",
+  "confirm-checkbox",
 ];
 
 function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
@@ -80,6 +103,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     "team-add-error",
     "sb-team-name",
     "topbar-team-name",
+    "confirm-check-row",
   ]);
   for (const id of TEAM_ELEMENT_IDS) {
     const el = makeEl();
@@ -87,15 +111,20 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     if (SHIPS_HIDDEN.has(id)) el.style.display = "none";
     elements.set(id, el);
   }
+  // Elements toast.js creates on demand (id "app-toast") are NOT pre-registered,
+  // so getElementById must return null for them the first time — a fallback
+  // dummy element here would silently swallow the toast's real DOM write and
+  // this test group exists specifically to observe that write.
+  const appended: any[] = [];
   const doc = {
     documentElement: { lang: "en" },
     querySelector: () => makeEl(),
     querySelectorAll: () => [],
-    getElementById: (id?: string) => elements.get(id ?? "") ?? makeEl(),
+    getElementById: (id?: string) => elements.get(id ?? "") ?? null,
     createElement: () => makeEl(),
     addEventListener() {},
     removeEventListener() {},
-    body: { style: {}, appendChild() {} },
+    body: { style: {}, appendChild: (el: any) => { appended.push(el); } },
   };
   const ctx: any = {
     console,
@@ -103,7 +132,11 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     navigator: { language: "en-US" },
     fetch: fetchImpl,
-    confirm: () => true,
+    // team.js's suspend/remove/rotate flows must never reach for the
+    // browser's native dialog — the sheet from confirm-sheet.js replaces it.
+    confirm: () => {
+      throw new Error("confirm() must not be used");
+    },
     alert: () => {},
     setTimeout,
     clearTimeout,
@@ -118,7 +151,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
   // set as sandbox properties.
   vm.runInContext(`WORKER_URL = "http://localhost"; AUTH_TOKEN = "tok"; var TEAM_MODE = true`, ctx);
   ctx.initI18n("en");
-  return { ctx, els: elements };
+  return { ctx, els: elements, appended };
 }
 
 const ADMIN_OK = {
@@ -295,7 +328,90 @@ describe("team panel", () => {
     );
     await ctx.loadTeam(); // populate teamMembers so the action can find the row
     await ctx.setTeamSuspended("u2", true);
+    await ctx.runConfirmAction();
     expect(bodies).toEqual([{ id: "u2", suspended: true }]);
+  });
+
+  it("suspending fills the sheet body with the member's name and waits for confirmation", async () => {
+    const bodies: any[] = [];
+    const { ctx, els } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/suspend"),
+          reply: (_u, i) => {
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true, id: "u2", suspended: true }) };
+          },
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamSuspended("u2", true);
+    expect(els.get("confirm-body").textContent).toContain("Bob");
+    expect(bodies).toEqual([]); // no POST until the sheet is confirmed
+    await ctx.runConfirmAction();
+    expect(bodies).toEqual([{ id: "u2", suspended: true }]);
+  });
+
+  it("restoring posts immediately, opens no sheet, and reports success via toast", async () => {
+    const bodies: any[] = [];
+    const { ctx, els, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/suspend"),
+          reply: (_u, i) => {
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true, id: "u2", suspended: false }) };
+          },
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamSuspended("u2", false);
+    expect(bodies).toEqual([{ id: "u2", suspended: false }]);
+    expect(els.get("confirm-dialog").classList.calls).not.toContainEqual(["add", "open"]);
+    expect(appended[appended.length - 1].innerHTML).toContain("Access restored");
+  });
+
+  it("removing a member puts the private-entry count into the sheet body", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([{ match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) }]),
+    );
+    await ctx.loadTeam();
+    await ctx.removeTeamMember("u2");
+    expect(els.get("confirm-body").textContent).toContain("Bob");
+    expect(els.get("confirm-body").textContent).toContain("1");
+  });
+
+  it("rotating a member's token in Italian shows the Italian sheet title — impossible with the native confirm()", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([{ match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) }]),
+    );
+    ctx.initI18n("it");
+    await ctx.loadTeam();
+    await ctx.rotateTeamToken("u2");
+    expect(els.get("confirm-title").textContent).toBe("Reimpostare il token di questa persona?");
+  });
+
+  it("a failing action reports through the toast, never alert", async () => {
+    const { ctx, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/suspend"),
+          reply: () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: "boom" }) }),
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam();
+    await ctx.setTeamSuspended("u2", true);
+    await ctx.runConfirmAction();
+    expect(appended[appended.length - 1].innerHTML).toContain("boom");
   });
 
   it("dismissed token reveal clears the plaintext token", async () => {
@@ -310,6 +426,7 @@ describe("team panel", () => {
     );
     await ctx.loadTeam(); // populate teamMembers so the action can find the row
     await ctx.rotateTeamToken("u2");
+    await ctx.runConfirmAction();
     expect(els.get("team-token-reveal").style.display).toBe("");
     ctx.closeTeamTokenReveal();
     expect(els.get("team-token-reveal").style.display).toBe("none");

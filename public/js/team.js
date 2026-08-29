@@ -303,50 +303,83 @@ async function submitNewMember() {
 async function rotateTeamToken(id) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  if (!confirm(t('team.rotateConfirm', { name: teamMemberLabel(m) }))) return
-  try {
-    const r = await postTeam('/team/members/token', { id })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    showTeamToken(r.data.token, teamMemberLabel(m))
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
-  }
+  openDangerConfirm({
+    title: t('team.rotateTitle'),
+    body: t('team.rotateConfirm', { name: teamMemberLabel(m) }),
+    confirmLabel: t('team.rotateAction'),
+    onConfirm: async () => {
+      try {
+        const r = await postTeam('/team/members/token', { id })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        showTeamToken(r.data.token, teamMemberLabel(m))
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      closeConfirm()
+    },
+  })
 }
 
+/**
+ * Suspending someone else's access is destructive enough to gate on the
+ * sheet; restoring it is not. Restore is instantly reversible by the Suspend
+ * button sitting right beside it, and a confirmation dialog in front of an
+ * undoable act only trains people to dismiss dialogs without reading them.
+ */
 async function setTeamSuspended(id, suspended) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  const question = suspended ? t('team.suspendConfirm', { name: teamMemberLabel(m) }) : t('team.restoreConfirm', { name: teamMemberLabel(m) })
-  if (!confirm(question)) return
-  try {
-    const r = await postTeam('/team/members/suspend', { id, suspended })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    await loadTeam()
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+  if (!suspended) {
+    try {
+      const r = await postTeam('/team/members/suspend', { id, suspended })
+      if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+      await loadTeam()
+      showToast(t('team.restoredToast'))
+    } catch (e) {
+      showToast(e.message || t('team.actionFailed'))
+    }
+    return
   }
+  openDangerConfirm({
+    title: t('team.suspendTitle'),
+    body: t('team.suspendConfirm', { name: teamMemberLabel(m) }),
+    confirmLabel: t('team.suspend'),
+    onConfirm: async () => {
+      try {
+        const r = await postTeam('/team/members/suspend', { id, suspended })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        await loadTeam()
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      closeConfirm()
+    },
+  })
 }
 
 /**
  * Hard offboarding. The server refuses self-removal and last-admin removal;
- * the confirm here carries the destructive detail — the member's PRIVATE
+ * the sheet body carries the destructive detail — the member's PRIVATE
  * memories die with the account, shared ones stay.
  */
 async function removeTeamMember(id) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  const question = t('team.removeConfirm', {
-    name: teamMemberLabel(m),
-    n: Number(m.privateEntries) || 0,
+  openDangerConfirm({
+    title: t('team.removeTitle'),
+    body: t('team.removeConfirm', { name: teamMemberLabel(m), n: Number(m.privateEntries) || 0 }),
+    confirmLabel: t('team.remove'),
+    onConfirm: async () => {
+      try {
+        const r = await postTeam('/team/members/remove', { id })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        await loadTeam()
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      closeConfirm()
+    },
   })
-  if (!confirm(question)) return
-  try {
-    const r = await postTeam('/team/members/remove', { id })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    await loadTeam()
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
-  }
 }
 
 // ── Capture-visibility defaults ───────────────────────────────────────────
@@ -368,7 +401,7 @@ async function setMemberDefaultShare(id, value) {
     m.defaultShare = value === 'inherit' ? '' : value
     renderTeam()
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+    showToast(e.message || t('team.actionFailed'))
     await loadTeam()
   }
 }
@@ -396,7 +429,7 @@ async function setTeamOrgDefault(value) {
     })
     if (!res.ok) throw new Error(t('team.actionFailed'))
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+    showToast(e.message || t('team.actionFailed'))
     await loadTeamOrgDefault()
   }
 }
