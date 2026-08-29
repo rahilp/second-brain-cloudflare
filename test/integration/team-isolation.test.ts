@@ -281,6 +281,51 @@ describe("cross-user isolation — read surfaces", () => {
     expect(patterns.total).toBe(0);
   });
 
+  it("GET /patterns never prints a source memory the caller cannot read", async () => {
+    // The fourth leak of this shape, and the subtlest: the insight page itself is
+    // scoped, and the `drawn_from` hydration below it constrains only
+    // `e.source_id` — the ids of that scoped page. The content it RETURNS comes
+    // from `e.target_id`, which nothing constrained, so an insight the admin may
+    // read handed back the full text of the memory it was drawn from even when
+    // that memory sits in a colleague's personal workspace.
+    //
+    // Alice's own insight, drawn from a memory of Bob's.
+    seed("alice-drawn", aliceWorkspaceId, aliceUserId,
+      "Alice insight: two threads about the same negotiation", ["auto-insight"]);
+    sqlite.db.prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+       VALUES ('edge-1', 'alice-drawn', 'bob-source', 'drawn_from', 1, 'system', '{}', ?, ?, ?)`,
+    ).bind(SEEDED_AT, SEEDED_AT, aliceWorkspaceId).run();
+    seed("bob-source", bobWorkspaceId, bobUserId,
+      "Bob private: my psychiatrist raised the lithium dose", ["health"]);
+
+    const page = await jsonOf(await call("GET", "/patterns", ALICE));
+    // The insight is hers and must still be listed.
+    expect(page.patterns.map((p: any) => p.id)).toContain("alice-drawn");
+    expect(JSON.stringify(page)).not.toContain("lithium");
+
+    // An unreadable source reads exactly like a deleted one — the reviewer is
+    // told the source is unavailable rather than shown a colleague's memory.
+    const drawn = page.patterns.find((p: any) => p.id === "alice-drawn");
+    expect(drawn.sources).toEqual([{ id: "bob-source", missing: true }]);
+
+    // And a source she CAN read is still hydrated in full, or the fix would have
+    // emptied the panel rather than scoped it.
+    seed("alice-source", aliceWorkspaceId, aliceUserId,
+      "Alice: the counterparty moved on the indemnity cap", ["deal"]);
+    sqlite.db.prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+       VALUES ('edge-2', 'alice-drawn', 'alice-source', 'drawn_from', 1, 'system', '{}', ?, ?, ?)`,
+    ).bind(SEEDED_AT, SEEDED_AT, aliceWorkspaceId).run();
+
+    const again = await jsonOf(await call("GET", "/patterns", ALICE));
+    const sources = again.patterns.find((p: any) => p.id === "alice-drawn").sources;
+    expect(sources).toEqual(expect.arrayContaining([
+      { id: "alice-source", content: "Alice: the counterparty moved on the indemnity cap" },
+      { id: "bob-source", missing: true },
+    ]));
+  });
+
   it("the queues still show the caller their OWN flagged memories", async () => {
     // The guard must not empty the queue for the person it is built for.
     const stale = await jsonOf(await call("GET", "/stale", bobToken));

@@ -439,12 +439,33 @@ export async function handleAdminRoutes(
     // the reviewer needs to be told the source is gone rather than shown a gap.
     const sourcesByInsight = new Map<string, ({ id: string; content: string } | { id: string; missing: true })[]>();
     if (pageIds.length) {
+      // The scope goes in the JOIN's ON clause, not the WHERE. Only `e.source_id`
+      // was ever constrained here — those are the scoped page's insight ids — but
+      // the CONTENT returned comes from `e.target_id`, which nothing constrained,
+      // so an insight the caller may read handed back the full text of a memory
+      // in a colleague's personal workspace. It is the same defect as the
+      // /insights/dry-run pair query: a join through an unscoped table, not a
+      // by-id lookup.
+      //
+      // In the ON clause rather than the WHERE because this is a LEFT JOIN whose
+      // whole point is that a source deleted after the edge was written still
+      // surfaces as a row. A WHERE predicate would drop those rows (NULL IN (...)
+      // is never true) and take the "missing" signal with them. In the ON clause,
+      // an unreadable source reads exactly like a deleted one — the reviewer is
+      // told the source is unavailable rather than shown a colleague's memory,
+      // which is the same answer GET /entry gives for that id.
+      //
+      // Written `m.${scope.clause}` rather than building the clause with the
+      // alias baked in, so the alias is visible in the template itself: that is
+      // what lets scripts/check-scope.mjs attribute the clause to `m` instead of
+      // counting it against whichever table reference it reaches first.
+      const mScope = scopeWhere(auth);
+      // scope-exempt: the edges alias e is pinned by source_id IN (the scoped insight page above); the entries alias m carries its own clause in the ON below
       const sourceRows = (await env.DB.prepare(
-        // scope-exempt: by-id: source ids come from the scoped insight page above
         `SELECT e.source_id AS insight_id, e.target_id AS id, m.content AS content
-         FROM edges e LEFT JOIN entries m ON m.id = e.target_id
+         FROM edges e LEFT JOIN entries m ON m.id = e.target_id AND m.${mScope.clause}
          WHERE e.type = 'drawn_from' AND e.source_id IN (${pageIds.map(() => "?").join(",")})`,
-      ).bind(...pageIds).all()).results as Record<string, any>[];
+      ).bind(...mScope.bindings, ...pageIds).all()).results as Record<string, any>[];
       for (const r of sourceRows) {
         const list = sourcesByInsight.get(r.insight_id as string) ?? [];
         list.push(
