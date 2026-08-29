@@ -35,6 +35,7 @@ import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
 import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember } from "../../src/lib/team-admin";
+import { D1_MAX_BOUND_PARAMS } from "../../src/constants";
 import type { Env } from "../../src/env";
 
 const BASE = "http://localhost";
@@ -653,6 +654,159 @@ function countPrepares(): { feed: number; names: number } {
   };
   return counts;
 }
+
+/**
+ * A D1 facade that enforces the ONE limit real D1 enforces and this route can
+ * break: at most D1_MAX_BOUND_PARAMS bound parameters per statement.
+ *
+ * `node:sqlite` accepts parameters in the thousands, so a test driven against
+ * the bare helper passes while the deployed Worker's statement is rejected
+ * outright — and this path has no try/catch anywhere between it and the
+ * platform, so the rejection is a 500 rather than a degraded page. Same
+ * technique and same reason as test/unit/insight-team-pass.test.ts's
+ * withBoundParamLimit; a test that does not enforce 100 proves nothing here.
+ *
+ * A Proxy rather than a hand-written stand-in: env.DB is the whole worker's
+ * database for the duration of the request, not just this route's, so
+ * everything the facade does not care about has to keep working unchanged.
+ */
+function withBoundParamLimit(): { sql: string; params: number }[] {
+  const executed: { sql: string; params: number }[] = [];
+  const real = env.DB.prepare.bind(env.DB);
+  const check = (sql: string, params: unknown[]) => {
+    executed.push({ sql, params: params.length });
+    if (params.length > D1_MAX_BOUND_PARAMS) {
+      throw new Error("D1_ERROR: too many SQL variables: SQLITE_ERROR");
+    }
+  };
+  const wrap = (sql: string, stmt: unknown, params: unknown[]): unknown =>
+    new Proxy(stmt as object, {
+      get(target, prop) {
+        if (prop === "bind") {
+          return (...args: unknown[]) => wrap(sql, (target as any).bind(...args), args);
+        }
+        if (prop === "all" || prop === "first" || prop === "run" || prop === "raw") {
+          return async (...rest: unknown[]) => {
+            check(sql, params);
+            return (target as any)[prop](...rest);
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  (env.DB as any).prepare = (sql: string) => wrap(sql, real(sql), []);
+  return executed;
+}
+
+const worstBind = (executed: { sql: string; params: number }[]) =>
+  executed.reduce((worst, s) => Math.max(worst, s.params), 0);
+
+const nameStatements = (executed: { sql: string; params: number }[]) =>
+  executed.filter((s) => /SELECT id, name\s+FROM users WHERE id IN/.test(s.sql));
+
+/**
+ * THE BOUND-PARAMETER CEILING on the name lookup.
+ *
+ * The feed's own statement binds the caller's scope plus LIMIT/OFFSET — a
+ * fixed handful. The name lookup binds one parameter PER DISTINCT PERSON on
+ * the page, and the page is caller-controlled: `limit` is admitted up to 100
+ * and every admin row can carry two different people, so one request can ask
+ * for 200 bound parameters against a platform ceiling of 100.
+ *
+ * The number that makes this urgent rather than theoretical is the
+ * dashboard's own: ACTIVITY_PAGE = 50 (public/js/activity.js) puts a full
+ * page at exactly 100 of 100. The shipped client is one distinct person short
+ * of a 500 on every load, forever, for that team.
+ */
+describe("GET /team/activity — the bound-parameter ceiling", () => {
+  /** `n` admin rows: one actor throughout, a different subject on each row. */
+  async function distinctSubjects(n: number): Promise<void> {
+    for (let i = 0; i < n; i++) {
+      await adminRow(clock + i, "member_created", roots.ownerUserId, `u-${String(i).padStart(3, "0")}`);
+    }
+  }
+
+  /** A named users row, so a resolved name proves which chunk answered. */
+  async function named(id: string, name: string): Promise<void> {
+    await env.DB.prepare(
+      `INSERT INTO users (id, name, role, token_hash, created_at) VALUES (?, ?, 'member', ?, 0)`,
+    ).bind(id, name, `hash-${id}`).run();
+  }
+
+  it("answers a full page naming more people than one statement may bind", async () => {
+    // 101 rows, one actor and 101 distinct subjects, read at the largest
+    // `limit` the route admits. The page carries 100 rows naming 101 distinct
+    // people — one over the ceiling, which is the smallest input that breaks
+    // an unchunked list and therefore the one worth pinning.
+    await distinctSubjects(101);
+    await named("u-001", "Zoe");
+
+    const executed = withBoundParamLimit();
+    const res = await call("GET", "/team/activity?limit=100", ALICE);
+    await settle();
+
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.events.length).toBe(100);
+    expect(worstBind(executed)).toBeLessThanOrEqual(D1_MAX_BOUND_PARAMS);
+    // Two chunks, not one truncated one — and the SECOND chunk's names have to
+    // reach the response. `u-001` is the oldest subject on the page, so it is
+    // last into the deduplicated list and lands in the second chunk: a fix that
+    // chunked the query but kept only the last map would answer null here.
+    expect(nameStatements(executed).length).toBe(2);
+    expect(body.events[99].subject).toBe("Zoe");
+    expect(body.events[99].actor).toBe("Owner");
+  });
+
+  it("holds at the page size the dashboard actually requests", async () => {
+    // ACTIVITY_PAGE = 50 with two different people per row is exactly 100 of
+    // 100 — the shipped client's real worst case, and the reason this is not
+    // a limit=100 curiosity.
+    for (let i = 0; i < 50; i++) {
+      await adminRow(clock + i, "member_created", `a-${i}`, `s-${i}`);
+    }
+
+    const executed = withBoundParamLimit();
+    const res = await call("GET", "/team/activity?limit=50", ALICE);
+    await settle();
+
+    expect(res.status).toBe(200);
+    expect((await jsonOf(res)).events.length).toBe(50);
+    expect(worstBind(executed)).toBe(D1_MAX_BOUND_PARAMS);
+    expect(nameStatements(executed).length).toBe(1);
+  });
+});
+
+/**
+ * THE RULING ON FAILURE, asserted rather than only written down.
+ *
+ * This route is deliberately uncaught — see the note above the handler. The
+ * property that makes that the right call is the one below: a feed that cannot
+ * be read must not answer as a feed with nothing in it. `{ ok: true, events: [] }`
+ * is the single most dangerous response this endpoint could give, because it is
+ * the same response a clean brain gives and an auditor cannot tell them apart.
+ *
+ * Written as a failure the route cannot anticipate — the feed statement itself
+ * rejecting — because that is exactly the class a well-meaning try/catch would
+ * catch, and the class this route must let through.
+ */
+describe("GET /team/activity — an unreadable feed is not an empty one", () => {
+  it("lets a rejected feed statement through rather than answering it as no events", async () => {
+    await adminRow(clock, "member_suspended", roots.ownerUserId, bob.member.userId);
+    const real = env.DB.prepare.bind(env.DB);
+    // Rejected at EXECUTION, the way D1 rejects: a stub that threw from
+    // prepare() would be unreachable by the `.catch()` a degrading fix would
+    // reach for, and so could not tell a catch from no catch.
+    const locked = () => Promise.reject(new Error("D1_ERROR: database is locked"));
+    const failing: any = { bind: () => failing, all: locked, first: locked, run: locked };
+    (env.DB as any).prepare = (sql: string) =>
+      sql.includes("FROM admin_events") ? failing : real(sql);
+
+    await expect(call("GET", "/team/activity", ALICE)).rejects.toThrow(/D1_ERROR/);
+    await settle();
+  });
+});
 
 describe("GET /team/activity — cost", () => {
   it("issues one statement for the feed and one for the names", async () => {
