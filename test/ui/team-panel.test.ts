@@ -656,7 +656,14 @@ describe("team panel", () => {
           match: (u) => u.endsWith("/config"),
           reply: () => {
             getCalls++;
-            return { ok: true, status: 200, json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "personal" } }) };
+            // Deliberately neither key's fallback: "personal"/"off" are what a
+            // read that never looked at the body would produce, so a stored
+            // value equal to one of them cannot tell the reload apart from it.
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "company", TEAM_INSIGHTS: "on" } }),
+            };
           },
         },
       ]),
@@ -670,10 +677,12 @@ describe("team panel", () => {
     // not, so the test does it. Without this drag the assertion below would be
     // asserting the value the load already left there — true whether or not the
     // reload ran.
-    els.get("team-org-default").value = "company";
-    await ctx.setTeamOrgDefault("company");
-    expect(els.get("team-org-default").value).toBe("personal"); // reloaded after failure
-    expect(els.get("team-insights").value).toBe("off"); // the sibling row is not touched
+    els.get("team-org-default").value = "personal";
+    await ctx.setTeamOrgDefault("personal");
+    // "company" is the stored value AND not this select's fallback, so this
+    // holds only if the reload actually applied the response body.
+    expect(els.get("team-org-default").value).toBe("company"); // reloaded after failure
+    expect(els.get("team-insights").value).toBe("on"); // the sibling row keeps its own stored value
     expect(getCalls).toBe(2); // the render's read, then a fresh one after the refusal
     expect(appended[appended.length - 1].innerHTML).toContain("did not work");
   });
@@ -741,7 +750,10 @@ describe("team panel", () => {
             return {
               ok: true,
               status: 200,
-              json: async () => ({ config: { TEAM_INSIGHTS: "off", TEAM_DEFAULT_WORKSPACE: "personal" } }),
+              // Neither value is its select's fallback ("off"/"personal"), so
+              // requesting the config and then ignoring the body cannot
+              // satisfy the assertions below.
+              json: async () => ({ config: { TEAM_INSIGHTS: "on", TEAM_DEFAULT_WORKSPACE: "company" } }),
             };
           },
         },
@@ -755,10 +767,10 @@ describe("team panel", () => {
     // The drag: a browser writes <select>.value before onchange fires, and the
     // stored value is deliberately the OTHER one, so only a reload that really
     // read the server can produce the expectation below.
-    els.get("team-insights").value = "on";
-    await ctx.setTeamInsights("on");
-    expect(els.get("team-insights").value).toBe("off"); // the server's value, not the drag
-    expect(els.get("team-org-default").value).toBe("personal"); // reloaded into the right control
+    els.get("team-insights").value = "off";
+    await ctx.setTeamInsights("off");
+    expect(els.get("team-insights").value).toBe("on"); // the server's value, not the drag
+    expect(els.get("team-org-default").value).toBe("company"); // reloaded into the right control
     expect(getCalls).toBe(2); // the render's read, then a fresh one after the refusal
     expect(appended[appended.length - 1].innerHTML).toContain("did not work");
   });
@@ -846,6 +858,44 @@ describe("team panel", () => {
     await drain();
     expect(els.get("team-org-default").value).toBe("personal");
     expect(els.get("team-insights").value).toBe("off");
+  });
+
+  it("does not remember a rejected config read: a later read goes back to the server and can succeed", async () => {
+    // The in-flight handle has to be dropped on BOTH settle paths. Dropped only
+    // when the read resolves, the first refusal would stay attached to it and
+    // every later read would replay that one rejection — the rows would sit on
+    // their fallbacks until a page reload, including the reload a refused write
+    // does to put a control back.
+    let getCalls = 0;
+    const { ctx, els } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => {
+            getCalls++;
+            // Refused once, then answered: the second read only sees this body
+            // if it was a real second request rather than the first read's
+            // rejection handed out again.
+            if (getCalls === 1) return { ok: false, status: 500, json: async () => ({}) };
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ config: { TEAM_INSIGHTS: "on", TEAM_DEFAULT_WORKSPACE: "company" } }),
+            };
+          },
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await drain(); // the render's shared read rejects and both rows fall back
+    expect(els.get("team-insights").value).toBe("off");
+    expect(els.get("team-org-default").value).toBe("personal");
+    expect(getCalls).toBe(1);
+    // A later, entirely separate read. Nothing of the failed one may survive it.
+    await ctx.loadTeamInsights();
+    expect(getCalls).toBe(2);
+    expect(els.get("team-insights").value).toBe("on");
   });
 
   it("setTeamOrgDefault still PATCHes exactly its one key after sharing the helper with team-insights", async () => {
