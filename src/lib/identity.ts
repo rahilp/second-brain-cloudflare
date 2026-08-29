@@ -228,9 +228,14 @@ export async function resolveIdentityFromToken(token: string, env: Env): Promise
     // Batching put the stamp in the same transaction as the read, so a failing
     // write would otherwise take authentication down with it — a request that
     // reads nothing would start failing because of a column nothing reads.
-    // Retry the read on its own instead. This costs a second subrequest, but
-    // only on a path where D1 has already errored, and it keeps the property the
-    // un-awaited version had for free: the stamp can never fail a request.
+    // Retry the read on its own instead, which keeps the property the un-awaited
+    // version had for free: the stamp can never fail a request.
+    //
+    // The cost is amplification during an outage. This is a single retry — no
+    // loop, no backoff — so while D1 is failing wholesale every request issues
+    // two D1 calls instead of one and then fails anyway. That is accepted: it
+    // buys the common cases, a transient SQLITE_BUSY or a breached write cap,
+    // where the second call succeeds and the caller never sees the difference.
     console.error("identity batch failed, retrying the read alone (non-fatal):", e);
     const row = await env.DB.prepare(IDENTITY_SQL).bind(tokenHash).first<IdentityRow>();
     return row ? rowToIdentity(row) : null;

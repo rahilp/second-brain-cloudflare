@@ -280,20 +280,32 @@ describe("integer query parameters (#277)", () => {
       // last_used_at stamp) and the one-time provisioning write.
       const tenancy = /sqlite_master|FROM workspaces|INTO workspaces|INTO users|FROM users|memberships|token_hash|maintenance_cursor|SET workspace_id|^BATCH$/;
       expect(big.sql.filter((s: string) => !tenancy.test(s))).toHaveLength(predicted);
-      // Team edition adds one token-to-identity round trip per request and, on a
-      // first request against a fresh database, one-time tenant provisioning
-      // (~11 statements here). A full-size team brain therefore sits above the
-      // free-plan ceiling even warm — accepted in the v3 spec (teams land on
-      // paid plans). Unscoped single-user paths keep the original counts and do
-      // not regress; the +11 documents exactly how far over the team case goes.
+      // Team edition adds one token-to-identity round trip per request and, on
+      // a first request against a fresh database, one-time tenant provisioning.
+      // A full-size team brain therefore sits above the free-plan ceiling even
+      // warm — accepted in the v3 spec (teams land on paid plans). Unscoped
+      // single-user paths keep the original counts and do not regress; the +4
+      // documents exactly how far over the team case goes.
       //
-      // Read this number before adding anything to the identity path. /graph is
-      // the largest request in the app and the one with no headroom left: this
-      // is the endpoint where "one more query per request" stops being free.
-      // users.last_used_at is written on this path and does not appear here,
-      // because it is batched with the identity read rather than issued beside
-      // it — that is the only reason an informational column was affordable.
-      expect(big.sql.length + kvReads).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS + 11);
+      // This bound is EXACT: the measured value is 54 against 50 + 4. Keep it
+      // exact. It was +11 while identity resolution and the tenant bootstrap
+      // each spent one subrequest per statement; both are batches now, and a
+      // batch is one subrequest however many statements it carries, so the same
+      // work costs 54 instead of 61. Re-pinning it at the measured number is the
+      // point — a bound of +11 would still have read as "unchanged since v3"
+      // while quietly admitting seven subrequests of tenancy-path growth that no
+      // test would have noticed.
+      //
+      // So: if you change this, measure the new value and re-pin it tight. A
+      // constant that did not move is not evidence that the assertion still
+      // binds — check the slack, not just the number.
+      //
+      // Read it before adding anything to the identity path. /graph is the
+      // largest request in the app: this is the endpoint where "one more query
+      // per request" stops being free. users.last_used_at is written on this
+      // path and costs nothing here, because it is batched with the identity
+      // read rather than issued beside it.
+      expect(big.sql.length + kvReads).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS + 4);
     });
   });
 });

@@ -112,7 +112,7 @@ export class D1Mock {
         // single-row SELECT like IDENTITY_SQL is modelled in first() and
         // answers all() with nothing. Asking both is what makes a batched read
         // see the same row the unbatched one does.
-        if (/^\s*SELECT\b/i.test(s)) {
+        if (/^\s*(SELECT|WITH)\b/i.test(s)) {
           const many = await stmt.all();
           if (many.results.length) return { ...many, meta: { changes: 0 } };
           const one = await stmt.first();

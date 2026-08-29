@@ -22,6 +22,7 @@ const START = 1_800_000_000_000;
 let sqlite: SqliteD1;
 let env: Env;
 let dana: { userId: string; token: string };
+let ownerUserId: string;
 
 /** Let the un-awaited update settle. It is a floating promise by design. */
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -40,7 +41,7 @@ beforeEach(async () => {
   sqlite = makeSqliteD1();
   env = makeTestEnv(undefined, { DB: sqlite.db as unknown as Env["DB"] });
   await initializeDatabase(env);
-  await ensureTenantBootstrap(env);
+  ownerUserId = (await ensureTenantBootstrap(env)).ownerUserId;
   const created = await createMember(env, { name: "Dana" });
   dana = { userId: created.member.userId, token: created.token };
 });
@@ -205,6 +206,55 @@ describe("the throttled write", () => {
     await flush();
 
     expect((await storedLastUsed(dana.userId))?.last_used_at).toBeNull();
+  });
+
+  // `removed_at` is the predicate most likely to be dropped in a future edit:
+  // removal is the rarer of the two account states, and the read-side filter
+  // lives in a different statement, so nothing else in this file would notice.
+  //
+  // The flag is set directly rather than through removeMember, and that is the
+  // whole point of the case. removeMember also deletes the member's personal
+  // workspace and memberships, so the stamp's EXISTS clause refuses it anyway —
+  // a test driven that way passes with `removed_at` deleted from the statement
+  // and proves nothing about it. Setting the column alone is the only state in
+  // which this predicate is the thing doing the work.
+  it("does not stamp a removed member whose memberships are still in place", async () => {
+    await env.DB.prepare(`UPDATE users SET removed_at = ? WHERE id = ?`)
+      .bind(Date.now(), dana.userId).run();
+
+    expect(await resolveIdentityFromToken(dana.token, env)).toBeNull();
+    await flush();
+
+    expect((await storedLastUsed(dana.userId))?.last_used_at).toBeNull();
+  });
+
+  it("does not stamp a member who is both suspended and removed", async () => {
+    // removeMember does not clear `suspended`, so both flags set is the ordinary
+    // shape of a removed row; neither predicate may be relied on alone.
+    await env.DB.prepare(`UPDATE users SET suspended = 1, removed_at = ? WHERE id = ?`)
+      .bind(Date.now(), dana.userId).run();
+
+    expect(await resolveIdentityFromToken(dana.token, env)).toBeNull();
+    await flush();
+
+    expect((await storedLastUsed(dana.userId))?.last_used_at).toBeNull();
+  });
+
+  it("stops stamping a member the moment they are removed, having stamped before", async () => {
+    // The transition, so the case above cannot pass merely because nothing was
+    // ever written for this member.
+    await resolveIdentityFromToken(dana.token, env);
+    await flush();
+    const stamped = (await storedLastUsed(dana.userId))!.last_used_at!;
+
+    vi.advanceTimersByTime(LAST_USED_THROTTLE_MS + 1);
+    await env.DB.prepare(`UPDATE users SET removed_at = ? WHERE id = ?`)
+      .bind(Date.now(), dana.userId).run();
+    await resolveIdentityFromToken(dana.token, env);
+    await flush();
+
+    // The throttle would have allowed a write; removal is what stopped it.
+    expect((await storedLastUsed(dana.userId))!.last_used_at).toBe(stamped);
   });
 
   it("is not stamped by the OAuth grant path, which says nothing about token use", async () => {
