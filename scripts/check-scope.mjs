@@ -117,9 +117,18 @@
  *     `&&` or `||` will be flagged and must be annotated.
  *  9. Only `entries` and `edges` are checked. Every other table is out of scope
  *     for this script by design.
- * 10. The comment skip is per-line: a match on a line whose first non-space
- *     character is `*` or `//` is treated as prose, even in the unlikely case
- *     that the line sits inside a template literal.
+ * 10. The line-leading `*` / `//` prose skip applies only OUTSIDE a template.
+ *     Inside one there is no such thing as a comment line, only SQL — an earlier
+ *     draft skipped there too and silently ate `SELECT\n  * FROM entries`, which
+ *     is ordinary wrapping rather than an edge case. Two consequences worth
+ *     knowing, both deliberate and both erring toward a false positive:
+ *       - A real trailing comment on the line that CLOSES a multi-line template
+ *         is read as inside the span, so it cannot grant a licence. Put the
+ *         annotation on its own line above the query.
+ *       - SQL string literals are never lexed, so a clause written inside one —
+ *         `WHERE note = 'x WHERE ${scope.clause}'` — counts. Building a SQL
+ *         string lexer to catch a contrived case is not worth the surface it
+ *         would add.
  * 11. Predicate position for an interpolation is judged by an ALLOWLIST of the
  *     token it follows — WHERE, AND, OR, ON, HAVING, NOT, optionally through
  *     open parens. That is a rule about ONE TOKEN, not about SQL structure, and
@@ -137,19 +146,25 @@
  *
  * WHAT IT DOES PROVE, AND WHAT IT DOES NOT
  *
- * This sentence has been wrong twice. Both times it was wrong in the same
- * direction — claiming completeness the tool cannot deliver — and both times a
- * short adversarial sweep found the counterexample. So it is now written as a
- * description of what the script does, which is checkable, rather than as a
- * property of the tree, which is not:
+ * This sentence was wrong in three successive reviews. Every time it was wrong
+ * in the same direction — claiming completeness the tool cannot deliver — and
+ * every time a short adversarial sweep found the counterexample. The version
+ * below is written to be checked against the code branch by branch, and the
+ * previous one still said "no fourth path" while a fourth path existed:
  *
- *   For every reference to `entries` or `edges` that this script MATCHES, one
- *   of three things happens and nothing else. It finds a narrowing clause for
- *   each alias. Or it reports the statement. Or a human wrote a non-empty
- *   sentence in a real comment above it. There is no fourth path: a reference
- *   it cannot parse is reported, a reference hidden inside a nested template is
- *   reported, and a shortfall between what the file sweep saw and what the
- *   statement parser accounted for is reported. Nothing is dropped quietly.
+ *   For every reference to `entries` or `edges` that this script matches INSIDE
+ *   A TEMPLATE LITERAL, one of three things happens. It finds a narrowing
+ *   clause for each alias. Or it reports the statement. Or a human wrote a
+ *   non-empty sentence in a real comment above it. A reference it cannot parse
+ *   is reported; one hidden inside a nested template is reported; and a
+ *   shortfall between what the file sweep saw and what the statement parser
+ *   accounted for is reported. Nothing inside a template is dropped quietly.
+ *
+ *   Exactly one kind of match is discarded: a line OUTSIDE every template whose
+ *   first non-space character is `*` or `//`. That is prose about SQL rather
+ *   than SQL — it is how this file's own documentation, and src/lib/scope.ts's,
+ *   survive the check — and it cannot reach an executing statement, because a
+ *   line beginning that way outside a template is a comment or a syntax error.
  *
  *   It does NOT claim to have matched them all. Limitations 1 and 12 are holes
  *   by construction, and 2 through 11 are places where a match is judged on a
@@ -521,12 +536,19 @@ const CONDITIONAL = /\?|&&|\|\|/;
  * marker for exactly that, which does not inflate the exemption count. Three
  * honest annotations for eleven closed holes.
  *
+ * NOT is deliberately not here either, and its absence is the same rule as the
+ * one restricting operators to `=` and `IN`: `WHERE NOT ${scope.clause}` and
+ * `WHERE NOT workspace_id IN (…)` return precisely everyone ELSE's rows. Having
+ * NOT in this set reopened that class one token to the left of where it had been
+ * closed. A NOT that applies to something else in the statement is untouched —
+ * the rule is about the token immediately left of the clause.
+ *
  * CASE WHEN is deliberately NOT here. `SUM(CASE WHEN ${scope.clause} THEN 1 ELSE
  * 0 END) … FROM entries` narrows the AGGREGATE, not the row set — the statement
  * still reads the whole corpus — so counting it as a scope clause was itself a
  * small false pass.
  */
-const PREDICATE_KEYWORDS = new Set(["WHERE", "AND", "OR", "ON", "HAVING", "NOT"]);
+const PREDICATE_KEYWORDS = new Set(["WHERE", "AND", "OR", "ON", "HAVING"]);
 
 /**
  * Is an interpolation at the end of `before` in a position where a boolean
@@ -584,6 +606,9 @@ function scopePredicates(sql) {
   let m;
   while ((m = WORKSPACE_PREDICATE.exec(clean)) !== null) {
     if (!NARROWING_OPERATORS.has(m[2].replace(/\s+/g, " ").toUpperCase())) continue;
+    // `WHERE NOT workspace_id = ?` is the inverse of a scope clause, and the
+    // operator alone cannot see it.
+    if (/\bNOT\s*$/i.test(clean.slice(0, m.index))) continue;
     // The masked text blanks interpolations, so a `${...}` right-hand side shows
     // as whitespace here; read the RHS from the original to tell it from nothing.
     if (!BOUND_RHS.test(sql.slice(m.index + m[0].length))) continue;
@@ -703,13 +728,21 @@ export function scanSource(text) {
   while ((match = FILE_TABLE_PATTERN.exec(text)) !== null) {
     const lineNo = lineOf(text, match.index);
     const source = lines[lineNo - 1] ?? "";
-    // Prose in a doc comment, not SQL. src/lib/scope.ts and
+    const span = spans.find((s) => s.start < match.index && match.index < s.end);
+    // Prose in a doc comment, not SQL — src/lib/scope.ts and
     // src/tags/vocabulary.ts both describe this rule in these words, and a
     // checker that trips on its own documentation is one people switch off.
-    const trimmed = source.trimStart();
-    if (trimmed.startsWith("*") || trimmed.startsWith("//")) continue;
+    //
+    // Only OUTSIDE a template, though. Applied inside one it ate ordinary
+    // formatting: `SELECT\n  * FROM entries` is one of the commonest ways to
+    // wrap a select, and it was matched by the sweep and then dropped — not
+    // flagged, not counted. Inside a template there is no such thing as a
+    // comment line; there is only SQL.
+    if (!span) {
+      const trimmed = source.trimStart();
+      if (trimmed.startsWith("*") || trimmed.startsWith("//")) continue;
+    }
 
-    const span = spans.find((s) => s.start < match.index && match.index < s.end);
     const key = span ? span.start : `bare:${match.index}`;
     if (seen.has(key)) continue;
     seen.set(key, {

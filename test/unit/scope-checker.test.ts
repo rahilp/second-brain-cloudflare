@@ -65,7 +65,10 @@ describe("scanSource", () => {
     // src/lib/scope.ts:6 and src/tags/vocabulary.ts:4 both describe the rule in
     // exactly these words. A checker that trips on its own documentation is one
     // people switch off.
-    const r = scanSource(" * writes `FROM entries` with a bare template");
+    // As they actually appear: a JSDoc continuation line inside a block comment.
+    // A bare `*` line outside one cannot occur in real source, and treating the
+    // backticks in it as a template literal is the correct reading.
+    const r = scanSource("/**\n * writes `FROM entries` with a bare template\n */");
     expect(r.violations).toEqual([]);
     expect(r.queries).toBe(0);
 
@@ -515,12 +518,41 @@ describe("scanSource — interpolation predicate position, by allowlist", () => 
       "`SELECT id FROM entries a WHERE x = 1 AND a.${scope.clause}`",
       "`SELECT id FROM entries WHERE (${scope.clause})`",
       "`SELECT id FROM entries WHERE ((${scope.clause}))`",
-      "`SELECT id FROM entries WHERE NOT ${scope.clause}`",
       // Earlier fragments blank to spaces, so the last real token is still WHERE.
       "`SELECT id FROM entries WHERE ${tokenWhere}${timeWhere}${scopeSql}`",
     ]) {
       expect([sql, scanSource(`const q = ${sql};`).violations]).toEqual([sql, []]);
     }
+  });
+});
+
+describe("scanSource — negation is not scoping", () => {
+  it("rejects a clause the statement negates", () => {
+    // Round three restricted operators to = and IN under the heading "stop
+    // accepting the inverse of a scope clause". NOT sat in the predicate-keyword
+    // allowlist, which reopened exactly that class one token to the left:
+    // `WHERE NOT workspace_id IN (...)` returns precisely everyone else's rows.
+    //
+    // Round four then added an assertion that this SHOULD pass. That is worse
+    // than the hole: a green test asserting a false negative tells the next
+    // reader the behaviour was considered and wanted. It has been deleted and
+    // replaced by this.
+    for (const sql of [
+      "`SELECT id FROM entries WHERE NOT ${scope.clause}`",
+      "`SELECT id FROM entries WHERE NOT(${scope.clause})`",
+      "`SELECT id FROM entries WHERE x = 1 AND NOT ${scope.clause}`",
+      "`SELECT id FROM entries WHERE NOT workspace_id = ?`",
+      "`SELECT id FROM entries WHERE NOT workspace_id IN (?, ?)`",
+    ]) {
+      expect([sql, scanSource(`const q = ${sql};`).violations.length]).toEqual([sql, 1]);
+    }
+  });
+
+  it("still accepts a NOT that applies to something else in the statement", () => {
+    // The rule is about the token immediately left of the clause, not about the
+    // word appearing anywhere in the statement.
+    const sql = "`SELECT id FROM entries WHERE NOT (tags LIKE ?) AND ${scope.clause}`";
+    expect([sql, scanSource(`const q = ${sql};`).violations]).toEqual([sql, []]);
   });
 });
 
@@ -544,6 +576,28 @@ describe("scanSource — a reference must never be dropped", () => {
       const r = scanSource(`const q = \`SELECT b.id FROM ${ref}\`;`);
       expect([ref, r.queries, r.violations.length]).toEqual([ref, 1, 1]);
     }
+  });
+
+  it("sees a table on a line that ordinary SQL wrapping began with an asterisk", () => {
+    // The comment skip exists for JSDoc continuation lines and is right there.
+    // Applied inside a template it ate ordinary formatting: this is one of the
+    // most common ways anyone wraps a SELECT, and it reported queries=0 —
+    // matched by the sweep, then dropped, which is the vanishing shape.
+    const r = scanSource("const q = `SELECT\n  * FROM entries`;");
+    expect([r.queries, r.violations.length]).toEqual([1, 1]);
+  });
+
+  it("sees a table on a line inside a template that begins with a slash-slash", () => {
+    // The reference must sit ON the slash-slash line, or the skip is not exercised.
+    const r = scanSource("const q = `SELECT id\n  // FROM entries\n  WHERE 1=1`;");
+    expect([r.queries, r.violations.length]).toEqual([1, 1]);
+  });
+
+  it("still treats a real JSDoc line as prose", () => {
+    // src/lib/scope.ts:6 and src/tags/vocabulary.ts:4 describe the rule in these
+    // words. A checker that trips on its own documentation is one people switch off.
+    expect(scanSource("/**\n * writes `FROM entries` with a bare template\n */").queries).toBe(0);
+    expect(scanSource("// a query that says `FROM edges` and means it").queries).toBe(0);
   });
 
   it("(A2) sees a multi-part dotted name", () => {
