@@ -90,7 +90,7 @@ export async function captureEntry(
 
       let newVectorIds: string[] | null = null;
       try {
-        newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg);
+        newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg, writeCtx);
       } catch (e) {
         console.error("Merge re-embed failed — keeping both, target untouched:", e);
       }

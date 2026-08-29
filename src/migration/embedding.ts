@@ -168,7 +168,7 @@ function pageSql(hasCursor: boolean): string {
   const after = hasCursor
     ? `AND (created_at > ? OR (created_at = ? AND id > ?))`
     : "";
-  return `SELECT id, content, tags, source, created_at
+  return `SELECT id, content, tags, source, created_at, workspace_id, actor_id
             FROM entries
            WHERE ${NOT_DEPRECATED} ${after}
            ORDER BY created_at ASC, id ASC
@@ -288,6 +288,9 @@ export async function runBatch(
     chunkBudget -= cost;
 
     try {
+      // Cron path, no request identity: the context comes from the row being
+      // repaired, not the caller, so a re-embed can never relocate an entry
+      // between workspaces.
       await storeEntry(
         env,
         row.id as string,
@@ -296,6 +299,7 @@ export async function runBatch(
         row.source as string,
         row.created_at as number,
         config,
+        { workspaceId: row.workspace_id as string, actorId: row.actor_id as string },
       );
       processed++;
       // Only advance past entries that actually succeeded. A failed entry stays

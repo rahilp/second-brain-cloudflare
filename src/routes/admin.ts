@@ -592,7 +592,7 @@ export async function handleAdminRoutes(
     // brain to drop, and crowding the vector query with candidates that recall
     // discards at hydration anyway.
     const { results: toProcess } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at FROM entries
+      `SELECT id, content, tags, source, created_at, workspace_id, actor_id FROM entries
        WHERE vector_ids = '[]' AND created_at < ? AND ${INDEXABLE_SQL}
        ORDER BY created_at DESC LIMIT 25`
     ).bind(graceCutoff).all();
@@ -612,7 +612,11 @@ export async function handleAdminRoutes(
           // Without this the backfill embeds with DEFAULTS.EMBEDDING_MODEL while
           // capture and recall use the configured one, writing vectors from the
           // wrong model into the index — scores go quietly wrong, nothing throws.
-          cfg
+          cfg,
+          // This route repairs OTHER members' rows by design — the context comes
+          // from the row, never from `auth`. Stamping the admin's workspace here
+          // would move every repaired vector into the admin's own space.
+          { workspaceId: row.workspace_id as string, actorId: row.actor_id as string },
         );
         processed++;
       } catch (e) {
