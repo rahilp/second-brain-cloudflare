@@ -14,7 +14,7 @@
  * drops the promise would let every assertion below pass against a database that
  * never received the row. This one collects and the tests await.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import worker from "../../src/index";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
@@ -93,7 +93,10 @@ beforeEach(async () => {
   await env.DB.prepare(`DELETE FROM admin_events`).run();
 });
 
-afterEach(() => sqlite?.close());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  sqlite?.close();
+});
 
 describe("admin_events — every mutating /team route writes one row", () => {
   it("POST /team/members records member_created against the new member", async () => {
@@ -245,5 +248,137 @@ describe("admin_events — every mutating /team route writes one row", () => {
     const dump = JSON.stringify(await events());
     expect(dump).not.toContain(createdToken);
     expect(dump).not.toContain(rotatedToken);
+  });
+});
+
+/**
+ * Notion's API, for the two calls a connect makes. Connecting is the only
+ * administration action on this surface that has to reach the network before it
+ * is allowed to succeed, so the trail's "a rejected call writes nothing" rule
+ * needs a token that validates and one that does not.
+ */
+function stubNotion(validTokens: string[]) {
+  vi.stubGlobal("fetch", vi.fn(async (input: any, init?: any) => {
+    const url = typeof input === "string" ? input : input.url;
+    const auth = String(init?.headers?.Authorization ?? "").replace(/^Bearer /, "");
+    if (!validTokens.includes(auth)) {
+      return new Response(JSON.stringify({ message: "API token is invalid." }), { status: 401 });
+    }
+    if (url.endsWith("/users/me")) {
+      return new Response(JSON.stringify({
+        object: "user", type: "bot", name: "Second Brain", bot: { workspace_name: "Acme" },
+      }), { status: 200 });
+    }
+    return new Response("not found", { status: 404 });
+  }));
+}
+
+describe("admin_events — integration connects and disconnects", () => {
+  it("POST /integrations/notion/connect records integration_connected with no target user", async () => {
+    stubNotion(["secret_abc123"]);
+    const res = await call("POST", "/integrations/notion/connect", ALICE, { token: "secret_abc123" });
+    expect(res.status).toBe(200);
+    await settle();
+
+    const rows = await events();
+    expect(rows.length).toBe(1);
+    expect(rows[0].event).toBe("integration_connected");
+    expect(rows[0].actor_id).toBe(roots.ownerUserId);
+    // An integration has no target USER; "" is what the column already stores
+    // for team_renamed's absent target.
+    expect(rows[0].target_user_id).toBe("");
+    expect(JSON.parse(rows[0].payload)).toEqual({ provider: "notion", mirrorWorkspace: "personal" });
+  });
+
+  it("connecting with workspace company records that, because it is the visibility decision", async () => {
+    stubNotion(["secret_abc123"]);
+    const res = await call("POST", "/integrations/notion/connect", ALICE, {
+      token: "secret_abc123", workspace: "company",
+    });
+    expect(res.status).toBe(200);
+    await settle();
+
+    const rows = await events();
+    expect(rows.length).toBe(1);
+    expect(JSON.parse(rows[0].payload)).toEqual({ provider: "notion", mirrorWorkspace: "company" });
+  });
+
+  it("POST /integrations/notion/disconnect records integration_disconnected and nothing more", async () => {
+    stubNotion(["secret_abc123"]);
+    expect((await call("POST", "/integrations/notion/connect", ALICE, { token: "secret_abc123" })).status).toBe(200);
+    await settle();
+    await env.DB.prepare(`DELETE FROM admin_events`).run();
+
+    const res = await call("POST", "/integrations/notion/disconnect", ALICE, {});
+    expect(res.status).toBe(200);
+    await settle();
+
+    const rows = await events();
+    expect(rows.length).toBe(1);
+    expect(rows[0].event).toBe("integration_disconnected");
+    expect(rows[0].actor_id).toBe(roots.ownerUserId);
+    expect(rows[0].target_user_id).toBe("");
+    // Exhaustive: a disconnect records that it happened and to which provider.
+    // `purge` is not policy and the count of what it removed is not either.
+    expect(Object.keys(JSON.parse(rows[0].payload))).toEqual(["provider"]);
+  });
+
+  it("no payload ever carries the credential the connect was given", async () => {
+    // The same rule member_token_rotated set: that the connection happened, to
+    // what and by whom, is the whole record. A trail carrying the Notion secret
+    // would make reading the log enough to read the org's Notion.
+    const secret = "secret_nT0k3n-do-not-log-me";
+    stubNotion([secret]);
+    expect((await call("POST", "/integrations/notion/connect", ALICE, {
+      token: secret, workspace: "company",
+    })).status).toBe(200);
+    await settle();
+
+    const rows = await events();
+    expect(rows.length).toBe(1);
+    expect(JSON.stringify(rows)).not.toContain(secret);
+    for (const row of rows) expect(row.payload).not.toContain(secret);
+  });
+
+  it("a connect that fails writes nothing at all", async () => {
+    stubNotion(["secret_abc123"]);
+    // Unknown provider: refused before any action runs.
+    expect((await call("POST", "/integrations/nosuch/connect", ALICE, { token: "x" })).status).toBe(404);
+    await settle();
+    expect(await events()).toEqual([]);
+
+    // A token the provider rejects: the connection never happened, so a row
+    // here would be a false record of one.
+    expect((await call("POST", "/integrations/notion/connect", ALICE, { token: "wrong" })).status).toBe(400);
+    await settle();
+    expect(await events()).toEqual([]);
+
+    // Disconnecting something that is not connected likewise.
+    expect((await call("POST", "/integrations/notion/disconnect", ALICE, {})).status).toBe(404);
+    await settle();
+    expect(await events()).toEqual([]);
+  });
+
+  it("a failing audit insert does not fail the connect", async () => {
+    stubNotion(["secret_abc123"]);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    (env as any).DB = new Proxy(env.DB, {
+      get(target, prop, receiver) {
+        if (prop !== "prepare") return Reflect.get(target, prop, receiver);
+        return (sql: string) => {
+          if (!sql.includes("INSERT INTO admin_events")) return realPrepare(sql);
+          return {
+            bind: () => ({ run: () => Promise.reject(new Error("admin_events is on fire")) }),
+          };
+        };
+      },
+    });
+
+    const res = await call("POST", "/integrations/notion/connect", ALICE, { token: "secret_abc123" });
+    // The audit write is off the critical path by contract, not by luck: the
+    // connection is the user-visible act and it must survive the trail.
+    expect(res.status).toBe(200);
+    await settle();
+    expect(await events()).toEqual([]);
   });
 });

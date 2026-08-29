@@ -9,6 +9,7 @@ import {
 import type { IntegrationRecord } from "../integrations";
 import type { Env } from "../env";
 import { json } from "../lib/http";
+import { adminAuditEvent } from "../lib/admin-audit";
 import { requireAdmin, requireIdentity } from "../lib/identity";
 import { listRoster } from "../lib/team-admin";
 import { forgetEntry } from "../capture/lifecycle";
@@ -19,7 +20,7 @@ export async function handleIntegrationsRoutes(
   request: Request,
   url: URL,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
 ): Promise<Response | null> {
   // GET /integrations — provider list + connection status (never the token)
   if (url.pathname === "/integrations" && request.method === "GET") {
@@ -121,6 +122,21 @@ export async function handleIntegrationsRoutes(
         updatedAt: now,
       };
       await saveIntegration(env, record);
+      // The trail, not the blob. `connectedByUserId` above answers "who
+      // connected the thing that is connected NOW" and is overwritten by the
+      // next reconnect; it cannot answer "who connected it in March and who
+      // disconnected it in April". `mirrorWorkspace` is in the payload because
+      // where a connector's content lands is the visibility decision the
+      // connect makes. The token is not, and nothing that is or contains a
+      // credential ever will be — the rule member_token_rotated set.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        event: "integration_connected",
+        // provider.id, not `provider`: the local is the registry OBJECT here,
+        // and JSON.stringify of it would put the provider's display name and
+        // category in the trail instead of the id an auditor filters on.
+        payload: { provider: provider.id, mirrorWorkspace },
+      });
       return json({ ok: true, provider: provider.id, workspaceName, mirrorWorkspace });
     }
 
@@ -171,6 +187,15 @@ export async function handleIntegrationsRoutes(
       }
     }
     await deleteIntegration(env, provider.id);
+    // A separate name rather than integration_connected with a boolean, for the
+    // reason member_suspended/member_unsuspended already gives: an auditor
+    // scanning for "when did this stop mirroring" should not have to read a
+    // payload to find out.
+    adminAuditEvent(env, ctx, {
+      actorId: auth.userId,
+      event: "integration_disconnected",
+      payload: { provider: provider.id },
+    });
     // `kept` counts what is deliberately left behind: everything, when no purge was
     // asked for, plus anything a purge was not allowed to touch.
     return json({
