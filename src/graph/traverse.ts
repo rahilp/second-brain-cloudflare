@@ -61,13 +61,29 @@ export const GRAPH_HOP_DECAY = 0.6;
 // cost is 2 ids + any scope bindings against D1_MAX_BOUND_PARAMS — computed at
 // each loop rather than as a fixed constant, because scoping changes the budget.
 
-// Scoped to the caller's readable workspaces when an Identity is supplied, so the
-// deprecation verdict is not read off rows the caller cannot see.
-async function deprecatedIdsAmong(ids: string[], env: Env, identity?: Identity, only?: "personal" | "company"): Promise<Set<string>> {
+/**
+ * Two verdicts about a hop's candidate ids, from ONE scoped statement: which of
+ * them the caller may actually read, and which are deprecated.
+ *
+ * They come from the same query because they are the same query. The scope clause
+ * already restricts the rows to the caller's readable workspaces, so the ids that
+ * come back ARE the readable ones — reading that off costs nothing beyond the
+ * statement the deprecation check was issuing anyway, which is what keeps the
+ * per-endpoint check inside the subrequest budget GRAPH_VIEW_MAX_NODES is sized
+ * against. Absent an Identity there is nothing to be readable *to*, and the
+ * `readable` set is not consulted.
+ */
+async function readableAndDeprecatedAmong(
+  ids: string[],
+  env: Env,
+  identity?: Identity,
+  only?: "personal" | "company",
+): Promise<{ readable: Set<string>; deprecated: Set<string> }> {
   const scope = identity ? scopeWhere(identity, only) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
   // Scope bindings share the statement's bound-parameter budget with the ids.
   const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  const readable = new Set<string>();
   const deprecated = new Set<string>();
   for (let i = 0; i < ids.length; i += take) {
     const batch = ids.slice(i, i + take);
@@ -76,17 +92,29 @@ async function deprecatedIdsAmong(ids: string[], env: Env, identity?: Identity, 
       `SELECT id, tags FROM entries WHERE id IN (${ph})${scopeSql}`
     ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
     for (const r of results) {
+      readable.add(r.id as string);
       if (getStatus(JSON.parse(r.tags ?? "[]")) === "deprecated") deprecated.add(r.id as string);
     }
   }
-  return deprecated;
+  return { readable, deprecated };
 }
 
 /**
- * When `identity` is present, both the edge scan and the deprecation check are
- * scoped to the caller's readable workspaces (personal ∪ company via the IN-form,
- * so a neighbour that legitimately lives in the other readable workspace is kept).
- * Absent — the cron callers — the SQL is exactly what it was before tenancy.
+ * When `identity` is present, the edge scan, the deprecation check and — since a
+ * scoped edge does not imply a readable endpoint — the candidate ids themselves
+ * are all restricted to the caller's readable workspaces (personal ∪ company via
+ * the IN-form, so a neighbour that legitimately lives in the other readable
+ * workspace is kept). Absent — the cron callers — the SQL is exactly what it was
+ * before tenancy, and so is the subrequest count.
+ *
+ * The endpoint check is what stops a walk travelling THROUGH a row the caller
+ * cannot read. `edges.workspace_id` is denormalized from the SOURCE entry and
+ * moveEntry re-stamps it by source_id alone, so an edge can legitimately be
+ * readable while the row on its far side is not: sharing one end of an existing
+ * link produces exactly that. Every consumer already dropped such a row at
+ * hydration, so nothing leaked — but an unread node still entered the frontier,
+ * and hop 2 walked out the other side of it, making the caller's reachable set a
+ * function of a colleague's private memory.
  */
 export async function expandGraph(
   seedIds: string[],
@@ -140,9 +168,16 @@ export async function expandGraph(
     }
 
     let allowed = candidates;
-    if (!opts.includeDeprecated && candidates.length) {
-      const deprecated = await deprecatedIdsAmong([...new Set(candidates.map(c => c.id))], env, identity, opts.only);
-      allowed = candidates.filter(c => !deprecated.has(c.id));
+    // Skipped only when neither verdict is wanted — an identity-less caller that
+    // also wants deprecated rows has nothing to filter, so it issues no statement
+    // and costs exactly what it did before tenancy.
+    if (candidates.length && (identity || !opts.includeDeprecated)) {
+      const { readable, deprecated } = await readableAndDeprecatedAmong(
+        [...new Set(candidates.map(c => c.id))], env, identity, opts.only,
+      );
+      allowed = candidates.filter(c =>
+        (!identity || readable.has(c.id))
+        && (opts.includeDeprecated || !deprecated.has(c.id)));
     }
 
     const nextFrontier: string[] = [];
