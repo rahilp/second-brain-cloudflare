@@ -1133,7 +1133,7 @@ const I18N_IT = {
     sourceDashboard: 'dashboard',
     sourcePhone: 'telefono',
     sourceVoice: 'voce',
-    sourceImport: 'import',
+    sourceImport: 'importazione',
     sourceSystem: 'sistema',
     sourceClaudeCode: 'claude code',
     invalidResponse: 'Risposta non valida',

@@ -189,6 +189,8 @@ describe("dashboard i18n", () => {
   const IDENTICAL_BY_DESIGN = [
     // PROPER NOUN
     "auth.brand",
+    // ACCEPTED ITALIAN LOANWORD — used unchanged in everyday Italian, not a
+    // proper noun.
     "nav.team",
     "team.title",
     "integrations.categoryEmail",
@@ -198,7 +200,6 @@ describe("dashboard i18n", () => {
     "common.sourceChat",
     "common.sourceBrowser",
     "common.sourceDashboard",
-    "common.sourceImport",
     "common.sourceClaudeCode",
     "integrations.nounEmail.one",
     // FORMAT ONLY — URLs the user pastes, and punctuation around a placeholder.
