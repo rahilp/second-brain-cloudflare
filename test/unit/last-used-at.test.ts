@@ -14,7 +14,7 @@ import { makeTestEnv } from "../helpers/make-env";
 import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember, listMembers } from "../../src/lib/team-admin";
-import { resolveIdentityFromToken, LAST_USED_THROTTLE_MS } from "../../src/lib/identity";
+import { resolveIdentityFromToken, hashToken, LAST_USED_THROTTLE_MS } from "../../src/lib/identity";
 import type { Env } from "../../src/env";
 
 const START = 1_800_000_000_000;
@@ -101,36 +101,109 @@ describe("the throttled write", () => {
     expect((await storedLastUsed(dana.userId))!.last_used_at).toBe(first);
   });
 
-  it("costs one extra statement when it writes and none when it does not", async () => {
+  // The regression guard for the whole design. An informational column may not
+  // cost a subrequest on a path every request takes: Workers get 50 per
+  // invocation on the free plan and GET /graph already has no headroom. The
+  // stamp is therefore batched with the identity read, and a D1 batch is ONE
+  // subrequest whatever it carries.
+  //
+  // Both halves matter. The cold case is the one that would regress if someone
+  // moved the write back out into its own statement — it is the request that
+  // actually performs the write. The warm case is what the throttle buys.
+  it("costs no extra subrequest on the cold path, where it does write", async () => {
     sqlite.issued.length = 0;
-    await resolveIdentityFromToken(dana.token, env);
-    await flush();
-    expect(updates()).toHaveLength(1);
 
-    sqlite.issued.length = 0;
-    vi.advanceTimersByTime(1000);
-    await resolveIdentityFromToken(dana.token, env);
+    const identity = await resolveIdentityFromToken(dana.token, env);
     await flush();
-    expect(sqlite.issued).toHaveLength(1); // the identity read, and nothing else
+
+    expect(identity).not.toBeNull();
+    // Exactly one round trip: the batch carrying the read and the stamp.
+    expect(sqlite.issued).toEqual(["BATCH"]);
+    // And the write genuinely happened — this is not "cheap because it did
+    // nothing".
+    expect((await storedLastUsed(dana.userId))!.last_used_at).toBe(Date.now());
   });
 
-  it("resolves the identity even when the update fails", async () => {
+  it("costs no extra subrequest on the warm path, where it writes nothing", async () => {
+    await resolveIdentityFromToken(dana.token, env);
+    await flush();
+    vi.advanceTimersByTime(1000);
+    sqlite.issued.length = 0;
+
+    const identity = await resolveIdentityFromToken(dana.token, env);
+    await flush();
+
+    expect(identity).not.toBeNull();
+    expect(sqlite.issued).toEqual(["BATCH"]);
+  });
+
+  // Batching put the stamp in the same transaction as the read, so without a
+  // fallback a failing write would take authentication down with it: every
+  // request in the deployment would start failing over a column nothing reads.
+  it("resolves the identity even when the batched update fails", async () => {
     const realPrepare = sqlite.db.prepare.bind(sqlite.db);
     const failing = {
       ...sqlite.db,
       prepare: (sql: string) => {
-        if (/UPDATE users SET last_used_at/.test(sql)) throw new Error("D1_ERROR: database is locked");
+        if (/SET last_used_at/.test(sql)) throw new Error("D1_ERROR: database is locked");
         return realPrepare(sql);
       },
+      batch: sqlite.db.batch.bind(sqlite.db),
     };
     const brokenEnv = makeTestEnv(undefined, { DB: failing as unknown as Env["DB"] });
 
     const identity = await resolveIdentityFromToken(dana.token, brokenEnv);
-    await flush();
 
     expect(identity).not.toBeNull();
     expect(identity!.userId).toBe(dana.userId);
     // And the column is still what it was: a lost stamp, never a wrong one.
+    expect((await storedLastUsed(dana.userId))?.last_used_at).toBeNull();
+  });
+
+  // The other shape of the same failure: prepare() succeeds and the statement
+  // rejects when the batch runs it, which is what a D1 network error or a
+  // breached write cap actually looks like.
+  it("survives the batched update rejecting at execution time", async () => {
+    const realPrepare = sqlite.db.prepare.bind(sqlite.db);
+    const failing = {
+      ...sqlite.db,
+      prepare: (sql: string) => {
+        if (!/SET last_used_at/.test(sql)) return realPrepare(sql);
+        const boom = () => Promise.reject(new Error("D1_ERROR: network error"));
+        return { bind: () => ({ run: boom, all: boom, first: boom }), run: boom, all: boom, first: boom };
+      },
+      batch: sqlite.db.batch.bind(sqlite.db),
+    };
+    const brokenEnv = makeTestEnv(undefined, { DB: failing as unknown as Env["DB"] });
+
+    const identity = await resolveIdentityFromToken(dana.token, brokenEnv);
+
+    expect(identity!.userId).toBe(dana.userId);
+    expect((await storedLastUsed(dana.userId))?.last_used_at).toBeNull();
+  });
+
+  // The stamp says "last SUCCESSFUL identity resolution", so its WHERE clause
+  // mirrors IDENTITY_SQL's. The batch always carries the statement; what stops
+  // it writing is the predicate, not the caller.
+  it("does not stamp a token whose user cannot actually resolve an identity", async () => {
+    await env.DB.prepare(
+      `INSERT INTO users (id, name, role, token_hash, suspended, created_at) VALUES ('u-orphan', 'Orphan', 'member', ?, 0, 1)`,
+    ).bind(await hashToken("orphan-token")).run();
+
+    // No personal-workspace membership, so IDENTITY_SQL's INNER JOIN finds
+    // nothing and the caller is not authenticated.
+    expect(await resolveIdentityFromToken("orphan-token", env)).toBeNull();
+    await flush();
+
+    expect((await storedLastUsed("u-orphan"))?.last_used_at).toBeNull();
+  });
+
+  it("does not stamp a suspended member's still-valid token", async () => {
+    await env.DB.prepare(`UPDATE users SET suspended = 1 WHERE id = ?`).bind(dana.userId).run();
+
+    expect(await resolveIdentityFromToken(dana.token, env)).toBeNull();
+    await flush();
+
     expect((await storedLastUsed(dana.userId))?.last_used_at).toBeNull();
   });
 

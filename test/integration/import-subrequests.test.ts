@@ -31,12 +31,18 @@ function envOf(s: SqliteD1): Env {
     DB: {
       prepare: (sql: string) => s.db.prepare(sql),
       exec: (sql: string) => s.db.exec(sql),
-      async batch(stmts: { run(): Promise<unknown> }[]) {
-        for (const st of stmts) await st.run();
+      async batch(stmts: { run(): Promise<any> }[]) {
+        const out: any[] = [];
+        for (const st of stmts) out.push(await st.run());
         // The helper logs at prepare() time, so the batch's statements are the log's
         // tail by the time this runs — collapse them into the one subrequest they are.
         s.issued.splice(s.issued.length - stmts.length, stmts.length, `BATCH(${stmts.length})`);
-        return stmts.map(() => ({ meta: { changes: 1 } }));
+        // Each statement's rows are kept, not discarded: a batch carries reads as
+        // well as writes now — identity resolution pairs its SELECT with the
+        // throttled last_used_at stamp so the pair costs one subrequest — and D1
+        // returns a result per statement. `changes: 1` is preserved for the write
+        // paths that read it.
+        return out.map((r: any) => ({ ...r, meta: { changes: 1, ...r?.meta } }));
       },
     },
   } as unknown as Env;

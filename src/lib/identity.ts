@@ -85,7 +85,6 @@ const IDENTITY_FROM =
 
 const IDENTITY_SQL =
   `SELECT u.id AS userId, u.role AS role, u.default_share AS defaultShare,` +
-  ` u.last_used_at AS lastUsedAt,` +
   ` p.id AS personalWorkspaceId, ${COMPANY_WORKSPACES_SELECT}` +
   IDENTITY_FROM +
   ` WHERE u.token_hash = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)` +
@@ -101,40 +100,47 @@ const IDENTITY_SQL =
  * caps writes per day; at one write per user per hour it cannot move that budget
  * whatever the traffic.
  *
- * Two costs come with it, both accepted deliberately:
+ * The staleness is the accepted cost: the value can be up to an hour behind, and
+ * "last used 3 minutes ago" and "last used 40 minutes ago" are the same answer
+ * to the only question anyone is asking of it. A write can also be lost to a
+ * failed or rolled-back request, which is equally fine — the next request an
+ * hour later simply retries, so the worst case is a timestamp older than the
+ * truth, never a newer one and never a failed request.
  *
- *  - The value can be up to an hour behind. "Last used 3 minutes ago" and "last
- *    used 40 minutes ago" are the same answer to the only question being asked.
- *  - A write can be dropped entirely. It is issued as a floating promise because
- *    requireIdentity has no ExecutionContext to hand it to, and threading one
- *    through the ~40 call sites is a far larger change than this metadata is
- *    worth. The runtime may cancel it when the response finishes. The next
- *    request an hour later simply retries, so the worst case is a timestamp that
- *    is older than the truth — never one that is newer, and never a failed
- *    request. Do not await it: that would put a D1 write on the latency path of
- *    every request in the deployment.
+ * What it must NOT cost is a subrequest. See LAST_USED_UPDATE_SQL.
  */
 export const LAST_USED_THROTTLE_MS = 3_600_000;
 
-const LAST_USED_UPDATE_SQL = `UPDATE users SET last_used_at = ? WHERE id = ?`;
-
 /**
- * Stamp last_used_at, at most once per user per hour. Never throws and never
- * blocks — see LAST_USED_THROTTLE_MS for why both of those are deliberate.
+ * The stamp, written as the second half of the identity read's batch.
+ *
+ * A D1 batch is ONE subrequest whatever it carries, so pairing this with
+ * IDENTITY_SQL makes the column free in the budget that actually binds here:
+ * Workers get 50 subrequests per invocation on the free plan, and GET /graph —
+ * the largest request in the app — already has no headroom. An informational
+ * column may not be what takes it over. (The earlier design issued this as a
+ * separate un-awaited statement, which cost one subrequest per user per hour on
+ * every endpoint and pushed /graph's measured team-brain cost up by one.)
+ *
+ * The throttle is therefore in the WHERE clause rather than in TypeScript: the
+ * statement has to be enqueued before the read comes back, so nothing has seen
+ * the stored timestamp yet at the point this is built. Evaluating it in SQL is
+ * also correct under concurrency, which the read-then-decide form was not — two
+ * simultaneous requests could both decide to write.
+ *
+ * The predicates mirror IDENTITY_SQL's exactly, so the column means what
+ * db/schema.sql says it means: the LAST SUCCESSFUL identity resolution. A token
+ * belonging to a suspended, removed, or workspace-less user resolves to nothing
+ * and is not stamped, even though the batch always carries this statement.
  */
-function touchLastUsed(env: Env, userId: string, lastUsedAt: number | null): void {
-  const now = Date.now();
-  if (now - (lastUsedAt ?? 0) <= LAST_USED_THROTTLE_MS) return;
-  try {
-    void env.DB.prepare(LAST_USED_UPDATE_SQL)
-      .bind(now, userId)
-      .run()
-      .catch((e) => console.error("last_used_at update failed (non-fatal):", e));
-  } catch (e) {
-    // prepare/bind can throw synchronously, which .catch() above would not see.
-    console.error("last_used_at update failed (non-fatal):", e);
-  }
-}
+const LAST_USED_UPDATE_SQL =
+  `UPDATE users SET last_used_at = ?` +
+  ` WHERE token_hash = ?` +
+  ` AND suspended = 0 AND (removed_at IS NULL OR removed_at = 0)` +
+  ` AND (last_used_at IS NULL OR ? - last_used_at > ?)` +
+  ` AND EXISTS (SELECT 1 FROM memberships mp` +
+  ` JOIN workspaces p ON p.id = mp.workspace_id AND p.kind = 'personal'` +
+  ` WHERE mp.user_id = users.id)`;
 
 /**
  * Resolve the caller's identity from their token, bootstrapping the tenancy rows
@@ -178,13 +184,15 @@ function parseCompanyWorkspaces(packed: string | null | undefined): string[] {
     .map((w) => w.id);
 }
 
-function rowToIdentity(row: {
+interface IdentityRow {
   userId: string;
   role: string;
   defaultShare: string | null;
   personalWorkspaceId: string;
   companyWorkspaces?: string | null;
-}): Identity {
+}
+
+function rowToIdentity(row: IdentityRow): Identity {
   return {
     userId: row.userId,
     role: row.role === "admin" ? "admin" : "member",
@@ -204,14 +212,29 @@ async function ensureIdentityReady(env: Env): Promise<void> {
 export async function resolveIdentityFromToken(token: string, env: Env): Promise<Identity | null> {
   if (!token) return null;
   await ensureIdentityReady(env);
-  const row = await env.DB.prepare(IDENTITY_SQL)
-    .bind(await hashToken(token))
-    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaces: string | null; lastUsedAt: number | null }>();
-  if (!row) return null;
-  // Only here, not in resolveIdentityByUserId below: this is the one path that
-  // proves someone presented the token, which is what the column reports.
-  touchLastUsed(env, row.userId, row.lastUsedAt ?? null);
-  return rowToIdentity(row);
+  const tokenHash = await hashToken(token);
+  const now = Date.now();
+  try {
+    // One batch, therefore one subrequest, for the read and the throttled stamp
+    // together. The stamp rides along here and only here — resolveIdentityByUserId
+    // below resolves by user id, not by token, so it says nothing about token use.
+    const [read] = await env.DB.batch<IdentityRow>([
+      env.DB.prepare(IDENTITY_SQL).bind(tokenHash),
+      env.DB.prepare(LAST_USED_UPDATE_SQL).bind(now, tokenHash, now, LAST_USED_THROTTLE_MS),
+    ]);
+    const row = read?.results?.[0];
+    return row ? rowToIdentity(row) : null;
+  } catch (e) {
+    // Batching put the stamp in the same transaction as the read, so a failing
+    // write would otherwise take authentication down with it — a request that
+    // reads nothing would start failing because of a column nothing reads.
+    // Retry the read on its own instead. This costs a second subrequest, but
+    // only on a path where D1 has already errored, and it keeps the property the
+    // un-awaited version had for free: the stamp can never fail a request.
+    console.error("identity batch failed, retrying the read alone (non-fatal):", e);
+    const row = await env.DB.prepare(IDENTITY_SQL).bind(tokenHash).first<IdentityRow>();
+    return row ? rowToIdentity(row) : null;
+  }
 }
 
 /**
