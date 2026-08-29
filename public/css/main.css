@@ -24,6 +24,16 @@
         --surface-2: #f2efec;
         --surface-3: #e8e3df;
 
+        /* This surface is deliberately dark in BOTH themes — it is an overlay
+           chip (the toast), not a page surface, and its ink is therefore
+           fixed rather than theme-flipping. --text-on-elevated on
+           --surface-elevated measures 14.55:1 here; --accent on it measures
+           5.12:1. Do not point .app-toast-msg at --text-primary: that token
+           flips to near-black in light mode, which on this near-black
+           surface is how this shipped unreadable in the first place. */
+        --surface-elevated: #1e1e1e;
+        --text-on-elevated: #f2efec;
+
         /* ink */
         /* Ink ramp, all three steps at WCAG AA (4.5:1) against every surface
            they are set on — #ffffff through the darkest, --surface-3 #e8e3df.
@@ -89,6 +99,22 @@
         --bg-tag-confirmed: #fd6f12;
         --surface-2: #2c2820;
         --surface-3: #38332a;
+
+        /* Same deliberately-dark overlay surface as the light theme, reusing
+           --surface-3 so the toast still separates from --bg (#161616) — the
+           flat #1e1e1e used everywhere else in this theme sits only 1.44:1
+           from --bg and reads as barely distinct. --text-on-elevated on
+           --surface-elevated measures 10.94:1. Ink stays fixed here for the
+           same reason as light: do not swap it back to --text-primary.
+           Known gap, not addressed by this change: --accent on this surface
+           measures 4.4529:1, just under the 4.5:1 AA floor, for the toast's
+           "undo"/action link in dark mode only (light mode clears it at
+           5.12:1). Fixing it means either changing --accent — a token used
+           throughout the app, out of scope here — or giving the toast action
+           its own ink, which needs a design call. Flagged rather than
+           silently patched. */
+        --surface-elevated: #38332a;
+        --text-on-elevated: #f2efec;
 
         --text-primary: #f2efec;
         --text-secondary: #c9c5c1;
@@ -3893,7 +3919,7 @@
         align-items: center;
         gap: 12px;
         padding: 10px 14px;
-        background: var(--surface-elevated, #1e1e1e);
+        background: var(--surface-elevated);
         border: 1px solid var(--border);
         border-radius: 10px;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
@@ -3912,7 +3938,7 @@
 
       .app-toast-msg {
         font-size: 13px;
-        color: var(--text-primary);
+        color: var(--text-on-elevated);
       }
 
       .app-toast-action {
