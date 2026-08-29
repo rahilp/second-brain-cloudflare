@@ -46,24 +46,37 @@ async function connect() {
  * a revocation mid-session showed up as four silently swallowed failures and a
  * screen full of numbers from before it happened.
  *
- * Self-disarming: it clears AUTH_TOKEN, and the watcher below is guarded on
- * AUTH_TOKEN, so the second 401 of a burst is a no-op. sb_url survives so the
- * address stays prefilled; only the token is dropped.
+ * Self-disarming in two layers, both load-bearing. The watcher below is guarded
+ * on AUTH_TOKEN, which covers a SEQUENTIAL burst; but refreshAll() fires four
+ * requests at once, and all four get past that guard before any of them has
+ * cleared it — so the guard on the first line here is what makes four
+ * concurrent 401s produce one overlay. sb_url survives so the address stays
+ * prefilled; only the token is dropped.
+ *
+ * Every element is guarded the same way. A missing one would throw part-way
+ * through, INSIDE the interceptor's catch, which would swallow the sign-out and
+ * leave a dead token on a screen with no message — the exact failure this whole
+ * function exists to end.
  */
 function sessionEnded(code) {
   if (!AUTH_TOKEN) return
   const url = WORKER_URL
   try { localStorage.removeItem('sb_token') } catch {}
   AUTH_TOKEN = ''
-  document.getElementById('app').style.display = 'none'
-  document.getElementById('auth-overlay').style.display = 'flex'
+  const appEl = document.getElementById('app')
+  if (appEl) appEl.style.display = 'none'
+  const overlayEl = document.getElementById('auth-overlay')
+  if (overlayEl) overlayEl.style.display = 'flex'
   const urlEl = document.getElementById('auth-url')
   if (urlEl) urlEl.value = url
   const tokEl = document.getElementById('auth-token')
   if (tokEl) tokEl.value = ''
-  document.getElementById('auth-error').textContent = t(
-    `auth.${code === 'suspended' ? 'accountSuspended' : code === 'removed' ? 'accountRemoved' : 'sessionExpired'}`,
-  )
+  const errEl = document.getElementById('auth-error')
+  if (errEl) {
+    errEl.textContent = t(
+      `auth.${code === 'suspended' ? 'accountSuspended' : code === 'removed' ? 'accountRemoved' : 'sessionExpired'}`,
+    )
+  }
 }
 
 /**
@@ -80,7 +93,12 @@ function installAuthWatch(scope) {
     const res = await native(input, opts)
     if (res.status !== 401 || !AUTH_TOKEN || !WORKER_URL) return res
     const reqUrl = typeof input === 'string' ? input : (input && input.url) || ''
-    if (!reqUrl.startsWith(WORKER_URL)) return res
+    // The boundary is the path separator, not a bare prefix: `startsWith` alone
+    // would treat `https://brain.example.com.attacker.test/x` as this Worker and
+    // let a lookalike host end a valid session. connect() strips the trailing
+    // slash from what it stores and all 45 call sites build `${WORKER_URL}/…`,
+    // so this excludes nothing the dashboard actually asks for.
+    if (reqUrl !== WORKER_URL && !reqUrl.startsWith(WORKER_URL + '/')) return res
     try {
       const body = await res.clone().json()
       if (body && body.code) sessionEnded(body.code)

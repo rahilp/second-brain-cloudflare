@@ -106,9 +106,15 @@ function makeResponse(status: number, body: unknown, counters: { clones: number 
   };
 }
 
-function setup(locale: "en" | "it" = "en") {
+/**
+ * @param missing ids whose getElementById answers null, the way a trimmed
+ *   desktop shell or a half-rendered page would.
+ */
+function setup(locale: "en" | "it" = "en", missing: string[] = []) {
+  const dropped = new Set(missing);
   const elements = new Map<string, any>();
   for (const id of IDS) {
+    if (dropped.has(id)) continue;
     const el = id === "auth-error" ? makeErrorEl() : makeEl();
     el.id = id;
     elements.set(id, el);
@@ -131,7 +137,8 @@ function setup(locale: "en" | "it" = "en") {
       documentElement: { lang: "en" },
       querySelector: () => makeEl(),
       querySelectorAll: () => [],
-      getElementById: (id?: string) => elements.get(id ?? "") ?? makeEl(),
+      getElementById: (id?: string) =>
+        dropped.has(id ?? "") ? null : (elements.get(id ?? "") ?? makeEl()),
       createElement: () => makeEl(),
       addEventListener() {},
       removeEventListener() {},
@@ -284,15 +291,49 @@ describe("a revoked token ends the session", () => {
 
   it("ignores a 401 from somewhere that is not this Worker", async () => {
     const h = setup();
-    h.signedIn();
+    h.signedIn("http://localhost:8788");
     h.ctx.installAuthWatch(h.ctx);
     h.respondWith(() => unauthorized("suspended", h.counters));
 
     await h.ctx.fetch("https://elsewhere.example/x");
+    // A prefix test is not an origin test. `http://localhost:8788.evil.test` and
+    // `http://localhost:8788-staging.evil.test` both START WITH the Worker's
+    // address while being wholly different hosts, so a lookalike a future
+    // integration happens to call could end a perfectly valid session. The
+    // boundary has to be the path separator: the address itself, or the address
+    // followed by `/`. connect() strips the trailing slash from what it stores
+    // and all 45 call sites build `${WORKER_URL}/…`, so nothing real is excluded.
+    await h.ctx.fetch("http://localhost:8788.evil.test/list?n=50");
+    await h.ctx.fetch("http://localhost:8788-staging.evil.test/list?n=50");
 
     expect(h.els.get("auth-error").writes).toBe(0);
     expect(h.token()).toBe("a-real-looking-token");
     expect(h.els.get("app").style.display).toBeUndefined();
+    expect(h.counters.clones).toBe(0);
+  });
+
+  it("still ends the session for the Worker's own root and paths", async () => {
+    const h = setup();
+    h.signedIn("http://localhost:8788");
+    h.ctx.installAuthWatch(h.ctx);
+    h.respondWith(() => unauthorized("suspended", h.counters));
+
+    // The tightened boundary must not exclude the two shapes that are real: the
+    // bare address, and the address plus a path.
+    await h.ctx.fetch("http://localhost:8788");
+
+    expect(h.token()).toBe("");
+    expect(h.els.get("auth-error").writes).toBe(1);
+
+    const p = setup();
+    p.signedIn("http://localhost:8788");
+    p.ctx.installAuthWatch(p.ctx);
+    p.respondWith(() => unauthorized("suspended", p.counters));
+
+    await p.ctx.fetch("http://localhost:8788/list?n=50");
+
+    expect(p.token()).toBe("");
+    expect(p.els.get("auth-error").writes).toBe(1);
   });
 
   it("ignores a 401 from a Worker too old to send a code", async () => {
@@ -356,9 +397,13 @@ describe("a revoked token ends the session", () => {
     h.ctx.installAuthWatch(h.ctx);
     h.respondWith(() => unauthorized("suspended", h.counters));
 
-    // Without this guard the origin check below it reads
-    // `reqUrl.startsWith('')`, which is true of every URL in existence — an
-    // empty WORKER_URL would turn the same-Worker guard into no guard at all.
+    // A root-relative request is the one shape the same-Worker check below
+    // cannot rule out when WORKER_URL is empty — `'/list'.startsWith('/')` is
+    // perfectly true — so this guard is what stops a 401 being attributed to a
+    // Worker whose address nobody knows yet. (Before the same-Worker check was
+    // tightened to a path boundary it also had to catch `startsWith('')`, which
+    // matched every URL in existence; that trap is gone, this case is not.)
+    await h.ctx.fetch("/list?n=50");
     await h.ctx.fetch("https://elsewhere.example/x");
 
     expect(h.els.get("auth-error").writes).toBe(0);
@@ -380,6 +425,50 @@ describe("a revoked token ends the session", () => {
     // The second 401 does not even reach clone(): AUTH_TOKEN is already gone.
     expect(h.counters.clones).toBe(1);
     expect(h.calls()).toBe(2);
+  });
+
+  it("writes the overlay once for four TRULY concurrent 401s", async () => {
+    const h = setup();
+    h.signedIn();
+    h.ctx.installAuthWatch(h.ctx);
+    h.respondWith(() => unauthorized("suspended", h.counters));
+
+    // refreshAll() does not await its four requests one at a time. All four get
+    // past the wrapper's AUTH_TOKEN guard before any of them has cleared it, so
+    // what holds the line here is sessionEnded's OWN `if (!AUTH_TOKEN) return` —
+    // a second layer the sequential burst above never reaches.
+    await Promise.all([
+      h.ctx.fetch("http://localhost/list?n=50"),
+      h.ctx.fetch("http://localhost/stats"),
+      h.ctx.fetch("http://localhost/health"),
+      h.ctx.fetch("http://localhost/team/members"),
+    ]);
+
+    expect(h.calls()).toBe(4);
+    // All four DID read a body — that is the point of the second layer.
+    expect(h.counters.clones).toBe(4);
+    expect(h.els.get("auth-error").writes).toBe(1);
+    expect(h.removed.filter((k) => k === "sb_token")).toHaveLength(1);
+  });
+
+  it("signs the member out even when part of the overlay is missing", async () => {
+    const h = setup("en", ["app"]);
+    h.signedIn();
+    h.ctx.installAuthWatch(h.ctx);
+    h.respondWith(() => unauthorized("suspended", h.counters));
+
+    await h.ctx.fetch("http://localhost/list?n=50");
+
+    // A missing element used to throw part-way through sessionEnded, INSIDE the
+    // interceptor's catch — which swallowed it, leaving the member with a dead
+    // token, no overlay and no message. That is the exact failure this task
+    // exists to end, so every element is guarded the same way.
+    expect(h.els.get("auth-overlay").style.display).toBe("flex");
+    expect(h.els.get("auth-error").textContent).toBe(
+      "Your account is suspended. Ask a team admin to restore it.",
+    );
+    expect(h.token()).toBe("");
+    expect(h.removed).toContain("sb_token");
   });
 
   it("wraps the global fetch once however many times it is installed", async () => {
