@@ -183,6 +183,51 @@ export async function handleAdminRoutes(
     }
   }
 
+  // POST /team/me/default-share — a member's own capture-visibility override.
+  //
+  // requireIdentity, and the body has NO id field. That is the security
+  // property: the admin route above takes a target and must therefore be gated
+  // on who the caller is, while this one cannot name a target at all, so there
+  // is no branch to get wrong. The subject is auth.userId, which came from the
+  // resolved identity and not from anything the request could say. An `id` in
+  // the body is not rejected, it is simply unreadable from here.
+  //
+  // Returns the three recomputed fields rather than { ok: true } so the caller
+  // re-renders from the server's own precedence answer instead of predicting
+  // it — the same drift GET /team/me's effectiveDefault exists to prevent.
+  if (url.pathname === "/team/me/default-share" && request.method === "POST") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { default?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (body.default !== "personal" && body.default !== "company" && body.default !== "inherit") {
+      return json({ ok: false, error: 'default must be "personal", "company", or "inherit"' }, 400);
+    }
+    // setMemberDefaultShare throws TeamAdminError(404) when no row changed, and
+    // that cannot happen here: requireIdentity already resolved this row. No
+    // try/catch — the same argument GET /team/me's unreachable 404 records
+    // above. If the invariant ever breaks, it should reach the 500 handler.
+    await setMemberDefaultShare(env, auth.userId, body.default);
+    const orgDefault = cfg.TEAM_DEFAULT_WORKSPACE === "company" ? "company" : "personal";
+    const defaultShare = body.default === "inherit" ? "" : body.default;
+    // Audited like the admin twin, with self: true. Where a person's captures
+    // land is a visibility decision whether or not an admin made it, so the
+    // compliance view must not go blind the moment members can act.
+    adminAuditEvent(env, ctx, {
+      actorId: auth.userId,
+      targetUserId: auth.userId,
+      event: "member_default_share_set",
+      payload: { default: body.default, self: true },
+    });
+    return json({
+      ok: true,
+      default: body.default,
+      defaultShare,
+      orgDefault,
+      effectiveDefault: effectiveWriteTarget({ ...auth, defaultShare }, undefined, orgDefault),
+    });
+  }
+
   // POST /team/members/remove — soft offboarding. Marks the member removed,
   // deletes the personal workspace and everything in it; company-layer entries
   // the member authored stay (they are shared memory now). Guardrails inside
