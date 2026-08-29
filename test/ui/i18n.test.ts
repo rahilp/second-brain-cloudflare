@@ -112,4 +112,32 @@ describe("dashboard i18n", () => {
       );
     }
   });
+
+  it("every key exists in both catalogs", () => {
+    const { ctx } = loadI18n("en");
+    const en = vm.runInContext("I18N_EN", ctx);
+    const it = vm.runInContext("I18N_IT", ctx);
+
+    function flatten(obj: any, prefix: string, out: string[]): string[] {
+      for (const key of Object.keys(obj)) {
+        const value = obj[key];
+        const path = prefix ? `${prefix}.${key}` : key;
+        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          flatten(value, path, out);
+        } else {
+          out.push(path);
+        }
+      }
+      return out;
+    }
+
+    const enKeys = flatten(en, "", []).sort();
+    const itKeys = flatten(it, "", []).sort();
+    const enSet = new Set(enKeys);
+    const itSet = new Set(itKeys);
+
+    expect(enKeys.length).toBeGreaterThan(400);
+    expect(enKeys.filter((k) => !itSet.has(k)), "keys missing from I18N_IT").toEqual([]);
+    expect(itKeys.filter((k) => !enSet.has(k)), "keys missing from I18N_EN").toEqual([]);
+  });
 });
