@@ -10,8 +10,12 @@ coverage/
 .wrangler/
 .wrangler-dry-run/
 .worktrees/
-docs/
+# docs/* rather than docs/ — git does not descend into an excluded
+# DIRECTORY, so a negation under `docs/` can never re-include anything.
+# The two files below are meant to be tracked.
+docs/*
 !docs/dashboard-architecture.md
+!docs/local-testing.md
 .claude/
 .cursor/
 .dev.vars
