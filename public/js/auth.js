@@ -94,7 +94,20 @@ function installAuthWatch(scope) {
   target.fetch = async (input, opts) => {
     const res = await native(input, opts)
     if (res.status !== 401 || !AUTH_TOKEN || !WORKER_URL) return res
-    const reqUrl = typeof input === 'string' ? input : (input && input.url) || ''
+    // fetch()'s first argument is a string, a Request, or a URL, and all three
+    // spell the address differently. Reading only `.url` handled the first two
+    // and silently produced `''` for a URL — which fails the same-Worker check
+    // below, so a genuine revocation was ignored with nothing logged anywhere.
+    // No call site passes a URL today; `fetch(new URL(path, WORKER_URL))` is
+    // the idiomatic way to build one, so the next one will.
+    const reqUrl =
+      typeof input === 'string'
+        ? input
+        : typeof (input && input.url) === 'string'
+          ? input.url // Request
+          : typeof (input && input.href) === 'string'
+            ? input.href // URL
+            : ''
     // The boundary is the path separator, not a bare prefix: `startsWith` alone
     // would treat `https://brain.example.com.attacker.test/x` as this Worker and
     // let a lookalike host end a valid session. connect() strips the trailing

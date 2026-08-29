@@ -585,6 +585,59 @@ describe("a revoked token ends the session", () => {
     expect(h.els.get("auth-error").writes).toBe(0);
   });
 
+  // ── What the first argument to fetch() can actually be ────────────────────
+  //
+  // The wrapper reads the request URL to decide whether a 401 came from THIS
+  // Worker. `fetch` accepts three things there, and the original read handled
+  // one and a half: a string, and `.url` for a Request. A `URL` instance has
+  // no `.url` — it has `.href` — so `reqUrl` fell to `''`, the same-Worker
+  // check failed, and a genuine revocation was ignored with no error anywhere.
+  //
+  // No call site passes a URL today. That is exactly why this needs a test
+  // rather than a comment: the failure is silent, and the next person to write
+  // `fetch(new URL(path, WORKER_URL))` — the idiomatic way to build one — gets
+  // a session watch that has quietly stopped watching.
+  const inputForms: Array<{ name: string; make: (url: string) => unknown }> = [
+    { name: "a string", make: (url) => url },
+    { name: "a Request", make: (url) => new Request(url) },
+    { name: "a URL", make: (url) => new URL(url) },
+  ];
+
+  for (const form of inputForms) {
+    it(`ends the session for a 401 requested with ${form.name}`, async () => {
+      const h = setup();
+      h.signedIn();
+      h.ctx.installAuthWatch(h.ctx);
+      h.respondWith(() => unauthorized("suspended", h.counters));
+
+      await h.ctx.fetch(form.make("http://localhost/list?n=50"));
+
+      expect(h.els.get("auth-error").writes, `${form.name} was not recognised as this Worker`).toBe(1);
+      expect(h.token()).toBe("");
+      expect(h.removed).toContain("sb_token");
+    });
+
+    it(`still ignores a 401 from another origin requested with ${form.name}`, async () => {
+      // Widening what the wrapper can read must not widen WHOSE 401s it acts
+      // on: the path-boundary check has to keep holding for every form.
+      const h = setup();
+      // A host-only lookalike rather than the port-suffixed one used above:
+      // `localhost:8788.evil.test` is not a parseable URL, so `new Request(...)`
+      // and `new URL(...)` reject it before the wrapper ever sees it. This one
+      // is the same attack — a host that STARTS WITH the Worker's address and
+      // is a wholly different origin — in a form all three inputs can carry.
+      h.signedIn("https://brain.example.test");
+      h.ctx.installAuthWatch(h.ctx);
+      h.respondWith(() => unauthorized("suspended", h.counters));
+
+      await h.ctx.fetch(form.make("https://brain.example.test.evil.test/list?n=50"));
+
+      expect(h.els.get("auth-error").writes).toBe(0);
+      expect(h.token()).toBe("a-real-looking-token");
+      expect(h.counters.clones).toBe(0);
+    });
+  }
+
   it("wraps the global fetch once however many times it is installed", async () => {
     const h = setup();
     h.signedIn();
