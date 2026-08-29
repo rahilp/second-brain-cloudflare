@@ -27,6 +27,7 @@ export async function runGraphPass(
 
   try {
     await env.DB.prepare(
+      // scope-exempt: cron: prune of low-weight inferred edges, deployment-wide by design
       `DELETE FROM edges WHERE provenance = 'inferred' AND weight < ? AND updated_at < ?`
     ).bind(EDGE_PRUNE_WEIGHT, Date.now() - EDGE_PRUNE_MIN_AGE_MS).run();
   } catch (e) {
@@ -37,6 +38,7 @@ export async function runGraphPass(
   try {
     const sliceSql = workspaceId != null ? `\n         AND workspace_id = ?` : "";
     const stmt = env.DB.prepare(
+      // scope-exempt: cron: nightly backfill, narrowed by the workspace slice in sliceSql
       `SELECT id, content FROM entries
        WHERE id NOT IN (SELECT source_id FROM edges) AND id NOT IN (SELECT target_id FROM edges)
          AND tags NOT LIKE '%"status:deprecated"%'${sliceSql}

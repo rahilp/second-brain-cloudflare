@@ -45,6 +45,7 @@ export async function generateToken(): Promise<{ token: string; tokenHash: strin
 
 export async function listMembers(env: Env): Promise<TeamMember[]> {
   const { results } = await env.DB.prepare(
+    // scope-exempt: admin member list: the subselect counts rows in each member's OWN workspace (e.workspace_id = w.id) and yields a number, never content
     `SELECT u.id AS userId, u.name, u.email, u.role, u.suspended, u.created_at AS createdAt,
             u.default_share AS defaultShare, u.last_used_at AS lastUsedAt,
             w.id AS personalWorkspaceId,
@@ -221,6 +222,7 @@ export async function removeMember(
     // Edges before entries: the edge delete resolves endpoints through the
     // entries table, so it has to run while the rows still exist.
     env.DB.prepare(
+      // scope-exempt: offboarding: deletes exactly the edges whose endpoints are in the removed member's workspace, per the two subselects
       `DELETE FROM edges WHERE source_id IN (SELECT id FROM entries WHERE workspace_id = ?) OR target_id IN (SELECT id FROM entries WHERE workspace_id = ?)`,
     ).bind(personal.wid, personal.wid),
     env.DB.prepare(`DELETE FROM entries WHERE workspace_id = ?`).bind(personal.wid),

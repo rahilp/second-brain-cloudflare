@@ -519,6 +519,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
     async ({ id }) => {
       const scope = identity ? scopeWhere(identity) : null;
       const row = await env.DB.prepare(
+        // scope-exempt: identity-less branch: production MCP always resolves an identity (src/mcp/handler.ts); this arm is unit fixtures only
         `SELECT id, content, tags, source, created_at, workspace_id, actor_id FROM entries WHERE id = ?${scope ? ` AND ${scope.clause}` : ""}`
       ).bind(...(scope ? [id, ...scope.bindings] : [id])).first() as Record<string, any> | null;
       if (!row) {

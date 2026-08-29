@@ -92,6 +92,7 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // being drawn under the old rule until the pool empties. Free: the JOIN
     // was already selecting these rows, this only widens the column list.
     const { results } = await env.DB.prepare(
+      // scope-exempt: cron: no caller to scope to. Both workspaces are projected and compared into inputWorkspaces below; a pair spanning two workspaces is written to '' — which MEMBERS cannot read but ADMINS can (readableWorkspaces pushes '' for role admin, src/lib/scope.ts), so that is a narrowing, not a quarantine. Accrual refuses to pair across workspaces (candidates.ts), so this only fires for pre-tenancy candidate rows
       `SELECT c.id, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
               a.tags AS a_tags, b.tags AS b_tags,
               a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id
@@ -117,6 +118,7 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // shipped, zero unreviewed insights meant zero comparisons and a guard that
     // could not fire at all. Reviewing promptly was switching it off.
     const { results: recentInsightRows } = await env.DB.prepare(
+      // scope-exempt: cron: system-authored novelty floor; content is compared, never returned
       `SELECT content FROM entries WHERE ${WRITTEN_INSIGHT_SQL}
        ORDER BY created_at DESC LIMIT ?`,
     ).bind(RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };

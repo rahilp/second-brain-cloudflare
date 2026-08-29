@@ -107,6 +107,7 @@ export async function compressTag(
   // every brain that existed before v3 — including test doubles that cannot evaluate
   // SQL.
   const { results: workspaceRows } = await env.DB.prepare(
+    // scope-exempt: cron: workspace discovery for the partitioned rollup below; returns workspace ids, never a row's content
     `SELECT DISTINCT workspace_id FROM entries`
   ).all();
   const workspaces = (workspaceRows as { workspace_id?: string }[]).map(r => r.workspace_id ?? "");
@@ -122,6 +123,7 @@ export async function compressTag(
     // never moves one user's content into another user's row. Where two workspaces carry
     // the same popular tag, the first pass rolls up its own rows and the guard defers the
     // rest to tomorrow's run, whose candidate query no longer sees the rolled-up rows.
+    // scope-exempt: cron: the 24h repetition cooldown is corpus-wide on purpose, but note it COUPLES tenants — a digest of a shared tag name in one workspace suppresses the same tag's digest in another for a day. No content crosses; the coupling is the cost of one global cooldown
     const recentSynth = await env.DB.prepare(`
       SELECT id FROM entries
       WHERE tags LIKE '%"synthesized"%'

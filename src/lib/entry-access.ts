@@ -28,6 +28,7 @@ export async function getReadableEntry(
   columns = "id, workspace_id, actor_id",
 ): Promise<EntryAccessRow | null> {
   if (!identity) {
+    // scope-exempt: identity-less branch: pre-tenancy callers and unit fixtures; the scoped branch is directly below
     return env.DB.prepare(`SELECT ${columns} FROM entries WHERE id = ?`)
       .bind(id)
       .first<EntryAccessRow>();

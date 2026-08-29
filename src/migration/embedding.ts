@@ -135,6 +135,7 @@ export async function estimate(
   env: Env,
 ): Promise<{ entries: number; chunks: number }> {
   const row = (await env.DB.prepare(
+    // scope-exempt: one-time re-embed migration: admin-triggered, deployment-wide, returns counts only
     `SELECT COUNT(*) AS entries,
             COALESCE(SUM(MAX(1, (LENGTH(content) + ${
               CHUNK_STRIDE - 1
@@ -168,6 +169,7 @@ function pageSql(hasCursor: boolean): string {
   const after = hasCursor
     ? `AND (created_at > ? OR (created_at = ? AND id > ?))`
     : "";
+  // scope-exempt: one-time re-embed migration: admin-triggered and deployment-wide; the rows it selects go to the embedder, and only counts reach the response
   return `SELECT id, content, tags, source, created_at, workspace_id, actor_id
             FROM entries
            WHERE ${NOT_DEPRECATED} ${after}
@@ -182,7 +184,9 @@ async function countRemaining(
 ): Promise<number> {
   const sql =
     cursorCreatedAt === null
+      // scope-exempt: one-time re-embed migration: count only
       ? `SELECT COUNT(*) AS count FROM entries WHERE ${NOT_DEPRECATED}`
+      // scope-exempt: one-time re-embed migration: count only
       : `SELECT COUNT(*) AS count FROM entries WHERE ${NOT_DEPRECATED}
            AND (created_at > ? OR (created_at = ? AND id > ?))`;
   const stmt =

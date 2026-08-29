@@ -35,4 +35,5 @@ export const PENDING_INSIGHT_SQL = `tags LIKE '%"auto-insight"%' AND tags NOT LI
  * so restating it is duplication rather than noise.
  */
 export const WRITTEN_INSIGHT_SQL =
+  // scope-exempt: SQL fragment: WRITTEN_INSIGHT_SQL is always composed with the caller's scope clause by its consumers
   `(tags LIKE '%"auto-insight"%' OR id IN (SELECT source_id FROM edges WHERE type = 'drawn_from'))`;

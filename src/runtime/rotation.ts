@@ -40,6 +40,7 @@ export async function nextWorkspace(env: Env): Promise<string | null> {
     const current = cursor?.workspace_id ?? "";
 
     const { results } = await env.DB.prepare(
+      // scope-exempt: cron: nextWorkspace takes no identity and has no caller — its whole job is to enumerate EVERY workspace in turn, so a scope clause would break the ring rather than secure it; `workspace_id > ?` is the cursor, not a filter, and one workspace id comes back, never a row
       `SELECT DISTINCT workspace_id FROM entries WHERE workspace_id > ? ORDER BY workspace_id LIMIT 1`,
     ).bind(current).all();
     let next = results[0]?.workspace_id as string | undefined;
@@ -47,6 +48,7 @@ export async function nextWorkspace(env: Env): Promise<string | null> {
     if (next === undefined) {
       // Past the end of the ring (or an empty corpus): wrap to the first workspace.
       const wrap = await env.DB.prepare(
+        // scope-exempt: cron: ring wrap-around; returns one workspace id, never a row
         `SELECT DISTINCT workspace_id FROM entries ORDER BY workspace_id LIMIT 1`,
       ).all();
       next = wrap.results[0]?.workspace_id as string | undefined;

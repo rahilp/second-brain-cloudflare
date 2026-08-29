@@ -158,6 +158,7 @@ export async function updateEntryContent(
   // vector_ids has to be read before any mutation: storeEntry overwrites it, and the
   // cleanup below needs to know which vectors the entry had on the way in.
   const row = await env.DB.prepare(
+    // scope-exempt: by-id: routes gate with getReadableEntry + assertCanEditContent
     `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
 
@@ -242,6 +243,7 @@ export async function appendToEntry(
   writeCtx: WriteContext = OWNER_WRITE_CONTEXT
 ): Promise<boolean> {
   const row = await env.DB.prepare(
+    // scope-exempt: by-id: routes gate with getReadableEntry + assertCanEditContent
     `SELECT vector_ids, workspace_id FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
 

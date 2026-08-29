@@ -69,6 +69,7 @@ export function scheduleClassifyAndTag(
       .then(async ({ importance, canonical, kind }) => {
         await env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(importance, entryId).run();
         if (!kind && !canonical) return;
+        // scope-exempt: by-id: the entry this background pass was queued for
         const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(entryId).first() as Record<string, any> | null;
         if (!row) return;
         let tags: string[] = JSON.parse(row.tags ?? "[]");

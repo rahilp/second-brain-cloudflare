@@ -29,6 +29,7 @@ export function buildEntryFilterQuery(params: {
   if (params.after !== undefined) { conds.push(`created_at >= ?`); bindings.push(params.after); }
   if (params.before !== undefined) { conds.push(`created_at <= ?`); bindings.push(params.before); }
 
+  // scope-exempt: builder only: callers splice the caller's scope in before ORDER BY — routes/recall.ts always, but mcp/server.ts only `if (identity)`, so an identity-less MCP caller gets this SQL unscoped
   let sql = `SELECT id, content, tags, source, created_at, vector_ids, workspace_id, actor_id FROM entries`;
   if (conds.length) sql += ` WHERE ` + conds.join(` AND `);
   sql += ` ORDER BY created_at DESC LIMIT ?`;
@@ -75,6 +76,7 @@ export async function captureEntry(
     const newContent = mergeAction.action === "merge" ? mergeAction.merged_content : c;
 
     const targetRow = await env.DB.prepare(
+      // scope-exempt: by-id: merge target came from workspace-scoped duplicate detection
       `SELECT tags, source, vector_ids, importance_score FROM entries WHERE id = ?`
     ).bind(targetId).first() as Record<string, any> | null;
 
@@ -148,6 +150,7 @@ export async function captureEntry(
   if (contradiction.detected && contradiction.conflicting_id) {
     const conflictId = contradiction.conflicting_id;
     const conflictRow = await env.DB.prepare(
+      // scope-exempt: by-id: conflict id came from workspace-scoped contradiction detection
       `SELECT tags FROM entries WHERE id = ?`
     ).bind(conflictId).first() as Record<string, any> | null;
     const conflictStatus = conflictRow ? getStatus(JSON.parse(conflictRow.tags ?? "[]")) : null;

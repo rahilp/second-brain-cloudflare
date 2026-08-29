@@ -139,6 +139,7 @@ function seedSql(hasCursor: boolean): string {
   // accrual walks every workspace's rows (it is a maintenance pass), but a pair
   // spanning two workspaces would have the weekly pass reason over two people's
   // memories at once, so the cross-workspace match is dropped at pairing time below.
+  // scope-exempt: cron: the accrual seed window is corpus-wide by design; workspace_id rides along so the pairing step below can drop cross-workspace pairs
   return `SELECT id, content, tags, source, created_at, importance_score, vector_ids, workspace_id
             FROM entries
             ${where}
@@ -266,6 +267,7 @@ export async function runInsightAccrual(env: Env, ctx: ExecutionContext): Promis
       const batch = neighbourIdList.slice(i, i + D1_MAX_BOUND_PARAMS);
       const placeholders = batch.map(() => "?").join(", ");
       const { results: hydrated } = await env.DB.prepare(
+        // scope-exempt: by-id: neighbour hydration for ids from the accrual seed window
         `SELECT id, content, tags, source, created_at, importance_score, workspace_id
            FROM entries
           WHERE id IN (${placeholders})`,
@@ -349,6 +351,7 @@ export async function runInsightAccrual(env: Env, ctx: ExecutionContext): Promis
     // reasoning step to accept or decline, never claims.
     try {
       const { results: superseded } = await env.DB.prepare(
+        // scope-exempt: cron: no caller to scope to; a.workspace_id = b.workspace_id is the constraint that matters here — it keeps a proposed pair inside one workspace
         `SELECT e.source_id, e.target_id,
                 a.created_at AS a_created, a.content AS a_content, a.tags AS a_tags, a.source AS a_source,
                 b.created_at AS b_created, b.content AS b_content, b.tags AS b_tags, b.source AS b_source
