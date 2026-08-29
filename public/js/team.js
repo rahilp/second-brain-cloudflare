@@ -369,6 +369,7 @@ function renderTeam() {
       </div>`
   }
   loadTeamOrgDefault()
+  loadTeamInsights()
 }
 
 async function postTeam(path, body) {
@@ -690,30 +691,79 @@ async function setMyDefaultShare(value) {
   }
 }
 
-async function loadTeamOrgDefault() {
-  const sel = document.getElementById('team-org-default')
+/**
+ * The one in-flight GET /config, shared by every select reading from it.
+ *
+ * renderTeam() starts one loader per settings row and each wants the same blob,
+ * so without this the screen issues N identical requests to render N rows. The
+ * handle lives only while the request is in flight and is dropped the moment it
+ * settles, so this coalesces concurrent readers and never serves a cached body:
+ * a later read — the reload after a refused write, say — always goes to the
+ * server. Rejections propagate to every sharer, which is what each one's own
+ * catch arm already handles.
+ */
+let teamConfigRead = null
+
+function readTeamConfig() {
+  if (!teamConfigRead) {
+    teamConfigRead = (async () => {
+      const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+      if (!res.ok) throw new Error(String(res.status))
+      return await res.json()
+    })().finally(() => {
+      teamConfigRead = null
+    })
+  }
+  return teamConfigRead
+}
+
+/**
+ * Read one config key into one <select>.
+ *
+ * `narrow` maps whatever the server has to one of the option values, because
+ * config values are free text in KV and a <select> whose value is not one of
+ * its options renders blank — which reads as "unset" for a setting that is
+ * very much set.
+ */
+async function loadTeamConfigSelect(selectId, key, narrow) {
+  const sel = document.getElementById(selectId)
   if (!sel) return
   try {
-    const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
-    if (!res.ok) throw new Error(String(res.status))
-    const data = await res.json()
-    sel.value = data?.config?.TEAM_DEFAULT_WORKSPACE === 'company' ? 'company' : 'personal'
+    const data = await readTeamConfig()
+    sel.value = narrow(data?.config?.[key])
   } catch {
-    sel.value = 'personal'
+    sel.value = narrow(undefined)
   }
 }
 
-async function setTeamOrgDefault(value) {
+/** Write one config key, and put the control back if the server refused. */
+async function setTeamConfigValue(selectId, key, value, narrow) {
   try {
     // PATCH /config is a sparse key→value patch for the whole settings blob.
     const res = await fetch(`${WORKER_URL}/config`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ TEAM_DEFAULT_WORKSPACE: value }),
+      body: JSON.stringify({ [key]: value }),
     })
     if (!res.ok) throw new Error(t('team.actionFailed'))
   } catch (e) {
     showToast(e.message || t('team.actionFailed'))
-    await loadTeamOrgDefault()
+    await loadTeamConfigSelect(selectId, key, narrow)
   }
+}
+
+async function loadTeamOrgDefault() {
+  await loadTeamConfigSelect('team-org-default', 'TEAM_DEFAULT_WORKSPACE', (v) => (v === 'company' ? 'company' : 'personal'))
+}
+
+async function setTeamOrgDefault(value) {
+  await setTeamConfigValue('team-org-default', 'TEAM_DEFAULT_WORKSPACE', value, (v) => (v === 'company' ? 'company' : 'personal'))
+}
+
+async function loadTeamInsights() {
+  await loadTeamConfigSelect('team-insights', 'TEAM_INSIGHTS', (v) => (v === 'on' ? 'on' : 'off'))
+}
+
+async function setTeamInsights(value) {
+  await setTeamConfigValue('team-insights', 'TEAM_INSIGHTS', value, (v) => (v === 'on' ? 'on' : 'off'))
 }

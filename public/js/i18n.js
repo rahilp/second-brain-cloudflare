@@ -474,6 +474,11 @@ const I18N_EN = {
     removing: 'Removing…',
     myDefaultLabel: 'New captures:',
     myDefaultSaved: 'Capture default updated',
+    insightsLabel: 'Weekly team insights',
+    insightsOff: 'Off',
+    insightsOn: 'On',
+    insightsHint:
+      'When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone’s review queue.',
   },
   invite: {
     copy: 'Copy invite message',
@@ -1139,6 +1144,11 @@ const I18N_IT = {
     removing: 'Rimozione…',
     myDefaultLabel: 'Nuove acquisizioni:',
     myDefaultSaved: 'Predefinito di acquisizione aggiornato',
+    insightsLabel: 'Approfondimenti settimanali del team',
+    insightsOff: 'Disattivati',
+    insightsOn: 'Attivi',
+    insightsHint:
+      'Quando è attivo, una volta a settimana il cervello cerca collegamenti tra i ricordi condivisi e mette ciò che trova nella coda di revisione di tutti.',
   },
   invite: {
     copy: 'Copia messaggio d’invito',
