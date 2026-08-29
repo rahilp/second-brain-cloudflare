@@ -5,7 +5,7 @@ import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from
 import { intParam, json } from "../lib/http";
 import { D1_MAX_BOUND_PARAMS, VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY } from "../constants";
 import { requireAdmin, requireIdentity, type Identity } from "../lib/identity";
-import { primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
+import { effectiveWriteTarget, primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
 import { storeEntry } from "../capture/store";
@@ -218,7 +218,29 @@ export async function handleAdminRoutes(
       `SELECT id AS userId, name, email, role FROM users WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
     ).bind(auth.userId).first<{ userId: string; name: string; email: string | null; role: string }>();
     if (!row) return json({ ok: false, error: "Not found" }, 404);
-    return json({ ok: true, profile: row });
+    // Where this member's next capture lands, and the two inputs that decided
+    // it. All three are additive — the four fields above keep their names and
+    // values, so loadProfileName() in public/js/settings.js is untouched.
+    //
+    // TEAM_DEFAULT_WORKSPACE is a free-text config key, so it is narrowed to the
+    // enum here rather than passed through: anything that is not "company" is
+    // private-by-default, matching effectiveWriteTarget's own reading of it.
+    const orgDefault = cfg.TEAM_DEFAULT_WORKSPACE === "company" ? "company" : "personal";
+    return json({
+      ok: true,
+      profile: {
+        ...row,
+        // Already on the resolved Identity — no second column read, no second query.
+        defaultShare: auth.defaultShare,
+        orgDefault,
+        // Resolved by the same function the write path calls (src/lib/scope.ts),
+        // with no explicit target, because that is the case the composer's
+        // "Default" option describes. Computed here rather than in the client:
+        // a client that re-derives the precedence order drifts from it silently,
+        // showing "Personal" while the capture lands in the company layer.
+        effectiveDefault: effectiveWriteTarget(auth, undefined, orgDefault),
+      },
+    });
   }
 
   // GET /team/workspaces — the teams the caller belongs to, with names.
