@@ -738,7 +738,7 @@ export async function handleAdminRoutes(
       // what lets scripts/check-scope.mjs attribute the clause to `m` instead of
       // counting it against whichever table reference it reaches first.
       const mScope = scopeWhere(auth);
-      // scope-exempt: the edges alias e is pinned by source_id IN (the scoped insight page above); the entries alias m carries its own clause in the ON below
+      // scope-outer-join: the edges alias e is pinned by source_id IN (the scoped insight page above), so every row here already belongs to the caller; the entries alias m is reached by a LEFT JOIN and its clause is in the ON, which nulls a column rather than dropping a row. That is sufficient HERE and only here, because m contributes exactly one column: `content`. The row itself, and the `id` beside it, come from `e.target_id` — an edge of the caller's own insight — so an unreadable source renders as { missing: true }, which is what a source DELETED after the edge was written renders as, and what GET /entry answers for that id. A WHERE predicate would drop those rows and take the "missing" signal with them
       const sourceRows = (await env.DB.prepare(
         `SELECT e.source_id AS insight_id, e.target_id AS id, m.content AS content
          FROM edges e LEFT JOIN entries m ON m.id = e.target_id AND m.${mScope.clause}
