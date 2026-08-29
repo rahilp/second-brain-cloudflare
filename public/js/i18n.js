@@ -479,6 +479,14 @@ const I18N_EN = {
     insightsOn: 'On',
     insightsHint:
       'When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone’s review queue.',
+    modeTitle: 'Team mode',
+    modeLabel: 'Shared team layer',
+    modeHint:
+      'Turning this on adds a shared layer everyone on the team can read. Your personal memories stay private.',
+    modeLocked:
+      'There are {n} people on this team, so the shared layer stays on. Remove everyone but yourself to turn it off.',
+    modeOnSaved: 'Team mode on — the shared layer is live',
+    modeOffSaved: 'Team mode off — this brain is personal again',
   },
   invite: {
     copy: 'Copy invite message',
@@ -1149,6 +1157,14 @@ const I18N_IT = {
     insightsOn: 'Attivi',
     insightsHint:
       'Quando è attivo, una volta a settimana il cervello cerca collegamenti tra i ricordi condivisi e mette ciò che trova nella coda di revisione di tutti.',
+    modeTitle: 'Modalità team',
+    modeLabel: 'Livello condiviso del team',
+    modeHint:
+      'Attivandolo aggiungi un livello condiviso che tutto il team può leggere. I tuoi ricordi personali restano privati.',
+    modeLocked:
+      'In questo team ci sono {n} persone, quindi il livello condiviso resta attivo. Rimuovi tutte le altre persone per disattivarlo.',
+    modeOnSaved: 'Modalità team attiva — il livello condiviso è operativo',
+    modeOffSaved: 'Modalità team disattivata — questo cervello torna personale',
   },
   invite: {
     copy: 'Copia messaggio d’invito',

@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { resolveConfig } from "../config";
 import { hashToken } from "./identity";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 
@@ -11,6 +12,12 @@ import { D1_MAX_BOUND_PARAMS } from "../constants";
  * identity rather than by their role: listTeamWorkspaces and listRoster take
  * the workspace ids to read as an argument, so what a caller may see is decided
  * by the identity that resolved them, not by the gate on the route.
+ *
+ * A third exception, and a different kind: countActiveMembers and isTeamBrain
+ * below answer "is this a team, and how big is it?" — a headcount and a flag,
+ * no rows and no names. GET /health is deliberately not admin-gated (every
+ * member's dashboard banner reads it), so those two are open to any signed-in
+ * identity.
  *
  * Tokens are generated server-side and shown exactly once: like AUTH_TOKEN,
  * only the SHA-256 lands in D1, so a leaked list of rows can never sign anyone
@@ -72,6 +79,32 @@ export async function countActiveMembers(env: Env): Promise<number> {
     `SELECT COUNT(*) AS n FROM users WHERE removed_at IS NULL OR removed_at = 0`,
   ).first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+/**
+ * Is this brain a team? The single answer, published by GET /health as `team`.
+ *
+ * TEAM_MODE is read HERE and nowhere else. The dashboard branches on `team`,
+ * not on the key, so "how the flag is decided" stays one function rather than a
+ * rule every consumer has to re-derive:
+ *
+ *   "on"   — a team before anyone is invited. Inference cannot express intent,
+ *            which is the whole reason the key exists.
+ *   "off"  — solo. PATCH /config refuses this while more than one person is
+ *            still on the team, so it cannot contradict a live shared layer.
+ *   "auto" — infer from active membership. The default, and anything
+ *            unrecognised (a hand-edited KV blob) lands here too: inference is
+ *            the safe direction, since it describes what is actually there.
+ *
+ * "on" and "off" are recorded intent and need no headcount, so only "auto" pays
+ * for the D1 query — which is exactly the one query /health issued before this
+ * key existed.
+ */
+export async function isTeamBrain(env: Env): Promise<boolean> {
+  const config = await resolveConfig(env);
+  if (config.TEAM_MODE === "on") return true;
+  if (config.TEAM_MODE === "off") return false;
+  return (await countActiveMembers(env)) > 1;
 }
 
 export async function listMembers(env: Env): Promise<TeamMember[]> {

@@ -104,6 +104,9 @@ const TEAM_ELEMENT_IDS = [
   "team-org-default",
   "team-insights",
   "team-insights-row",
+  "team-mode-row",
+  "team-mode-toggle",
+  "team-mode-hint",
 ];
 
 function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
@@ -1580,5 +1583,145 @@ describe("team member view", () => {
     expect(html).toContain(
       "Dove finiscono le tue acquisizioni quando non scegli un livello. Puoi comunque decidere per ogni singolo ricordo.",
     );
+  });
+});
+
+/**
+ * The team-mode switch.
+ *
+ * This is the ONE team control a solo owner must see. Every other team surface
+ * on this screen — the weekly-insights row, the layer pickers, the sharing
+ * actions — is gated on TEAM_MODE, and this one deliberately is not, because
+ * it is how a solo owner turns the feature on in the first place. A gate here
+ * would make the control unreachable exactly when it is needed.
+ */
+describe("team mode switch", () => {
+  /** Renders the admin panel with this roster and this /health answer. */
+  async function panel(members: unknown[], teamMode: boolean) {
+    const h = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ ok: true, you: "u1", members }) }),
+        },
+        { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config: {} }) }) },
+      ]),
+    );
+    vm.runInContext(`TEAM_MODE = ${teamMode}`, h.ctx);
+    await h.ctx.loadTeam();
+    await drain();
+    return h;
+  }
+
+  const OWNER = { userId: "u1", name: "Ada", email: "ada@example.com", role: "admin", suspended: false, privateEntries: 3 };
+  const COLLEAGUE = { userId: "u2", name: "Bob", email: "bob@example.com", role: "member", suspended: false, privateEntries: 1 };
+
+  it("ships visible, unlike every other team-gated row on this screen", () => {
+    const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
+    // The insights row is the control: it ships hidden and is revealed only on
+    // a team brain. Asserting both in one place is what makes the exception a
+    // stated decision rather than an omission.
+    expect(html).toMatch(/id="team-insights-row" style="display: none"/);
+    const at = html.indexOf('id="team-mode-row"');
+    // Explicitly, because slice(-1) on a missing id would leave the assertion
+    // below inspecting one character and passing on a row that is not there.
+    expect(at, "#team-mode-row is not in the markup").toBeGreaterThan(-1);
+    expect(html.slice(at, html.indexOf(">", at))).not.toContain("display: none");
+  });
+
+  it("renders the EFFECTIVE state: two active members show it on and locked", async () => {
+    const { els } = await panel([OWNER, COLLEAGUE], true);
+    const input = els.get("team-mode-toggle");
+    // Seeded false by makeEl(), so `true` here can only come from the render.
+    expect(input.checked).toBe(true);
+    expect(input.disabled).toBe(true);
+    const hint = els.get("team-mode-hint").textContent as string;
+    expect(hint).toContain("2");
+    expect(hint).toMatch(/people/i);
+  });
+
+  it("stays locked on even if /health has not said team yet — the server would refuse the write", async () => {
+    // The drift case, and the ordering case: TEAM_MODE is assigned off GET
+    // /health, which renderTeam does not wait for. Real membership is the thing
+    // PATCH /config refuses on, so it decides the lock.
+    const { els } = await panel([OWNER, COLLEAGUE], false);
+    expect(els.get("team-mode-toggle").checked).toBe(true);
+    expect(els.get("team-mode-toggle").disabled).toBe(true);
+  });
+
+  it("a solo owner gets it in BOTH branches: off and free, or on and still free", async () => {
+    const off = await panel([OWNER], false);
+    expect(off.els.get("team-mode-row").style.display).not.toBe("none");
+    expect(off.els.get("team-mode-toggle").checked).toBe(false);
+    expect(off.els.get("team-mode-toggle").disabled).toBe(false);
+    // The copy that says what turning it on actually does.
+    expect(off.els.get("team-mode-hint").textContent).toMatch(/shared/i);
+    expect(off.els.get("team-mode-hint").textContent).toMatch(/private/i);
+
+    // Same solo roster, switch already on: still visible, still toggleable —
+    // nobody is on the team to lock it.
+    const on = await panel([OWNER], true);
+    expect(on.els.get("team-mode-row").style.display).not.toBe("none");
+    expect(on.els.get("team-mode-toggle").checked).toBe(true);
+    expect(on.els.get("team-mode-toggle").disabled).toBe(false);
+  });
+
+  it("writing PATCHes /config once with exactly that one key, in both directions", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let patchCalls = 0;
+    const { ctx } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: (_u: string, i: any) => {
+            patchCalls++;
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+          },
+        },
+        { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config: {} }) }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamMode(true);
+    await ctx.setTeamMode(false);
+    expect(patchCalls).toBe(2);
+    expect(Object.keys(bodies[0])).toEqual(["TEAM_MODE"]);
+    expect(bodies[0]).toEqual({ TEAM_MODE: "on" });
+    expect(bodies[1]).toEqual({ TEAM_MODE: "off" });
+  });
+
+  it("a refused write shows the server's own reason and puts the switch back", async () => {
+    const REFUSAL = "Team mode cannot be turned off while 4 people are still on the team.";
+    const { ctx, els, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ ok: true, you: "u1", members: [OWNER] }) }),
+        },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: () => ({ ok: false, status: 400, json: async () => ({ ok: false, error: REFUSAL }) }),
+        },
+        { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config: {} }) }) },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    // Solo roster but the flag is ON: a colleague was added in another tab, so
+    // the server refuses a write this client thought was allowed. Seeding the
+    // flag TRUE is what makes the restore observable — the drag below sets the
+    // checkbox to the OTHER value.
+    vm.runInContext("TEAM_MODE = true", ctx);
+    await ctx.loadTeam();
+    await drain();
+    expect(els.get("team-mode-toggle").checked).toBe(true);
+    // A browser flips a checkbox before onchange fires; the fake DOM does not.
+    els.get("team-mode-toggle").checked = false;
+    await ctx.setTeamMode(false);
+    expect(appended[appended.length - 1].innerHTML).toContain("4 people");
+    expect(els.get("team-mode-toggle").checked).toBe(true); // put back, not left where the drag left it
   });
 });

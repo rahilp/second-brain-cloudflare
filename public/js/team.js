@@ -368,8 +368,94 @@ function renderTeam() {
         ${teamMembers.map(teamMemberRow).join('')}
       </div>`
   }
+  renderTeamMode()
   loadTeamOrgDefault()
   maybeRevealTeamInsights()
+}
+
+/**
+ * The team-mode switch, both branches, on every render of the panel.
+ *
+ * Unlike maybeRevealTeamInsights() below, this one never hides. It is the one
+ * team control a SOLO owner must see, because it is how they turn the feature
+ * on at all — gating it on TEAM_MODE would make it unreachable in exactly the
+ * state it exists for. Every other team surface stays gated; this is the
+ * stated exception.
+ *
+ * WHAT IT SHOWS is the EFFECTIVE state, never the stored key. TEAM_MODE is GET
+ * /health's `team`, which is where the server has already resolved "auto"
+ * against the headcount — so a brain storing "auto" with two members arrives
+ * here as `true` and renders on. The panel makes no extra /config read for
+ * this row: the raw value is not what the reader is asking about, and fetching
+ * it would invite rendering the wrong one.
+ *
+ * WHEN IT LOCKS is decided by real membership rather than by the flag.
+ * teamMembers comes from GET /team/members, which already excludes tombstoned
+ * rows, so `> 1` is the same headcount PATCH /config refuses the write on —
+ * and reading it here rather than TEAM_MODE covers the ordering hole
+ * maybeRevealTeamInsights documents: TEAM_MODE is assigned off a /health probe
+ * this render does not wait for, and a switch that renders unlocked for one
+ * round trip is a switch someone can press and have refused. Do not show a
+ * control that silently refuses.
+ */
+function renderTeamMode() {
+  const forced = teamMembers.length > 1
+  const input = document.getElementById('team-mode-toggle')
+  if (input) {
+    input.checked = forced || TEAM_MODE
+    input.disabled = forced
+  }
+  const hint = document.getElementById('team-mode-hint')
+  // Both branches. The free one says what turning it on actually does, because
+  // this reads as irreversible even though it is not; the locked one says how
+  // many people are keeping it on, because "you cannot" without "here is why"
+  // is where a support ticket comes from.
+  if (hint) {
+    hint.textContent = forced
+      ? t('team.modeLocked', { n: formatNumberUI(teamMembers.length) })
+      : t('team.modeHint')
+  }
+}
+
+/**
+ * Write the switch, then let the SERVER say what the brain now is.
+ *
+ * The re-probe is checkVectorize() (js/nav.js) rather than an assignment to
+ * TEAM_MODE here. That function is the one place GET /health's answer is
+ * applied — composer target, memories layer filter, recall layer filter, team
+ * name — so routing through it is what makes the reveal immediate and
+ * reload-free without team.js growing a second, drifting copy of "what /health
+ * means". It is reached defensively because this module is also loaded on its
+ * own by test harnesses that do not carry nav.js.
+ *
+ * Never writes "auto": the switch exists to record intent, and "auto" is the
+ * absence of one.
+ *
+ * renderTeamMode() runs on BOTH paths — success re-renders against the freshly
+ * probed flag, failure puts the control back where the truth is, rather than
+ * leaving it wherever the browser's own checkbox flip left it.
+ */
+async function setTeamMode(on) {
+  try {
+    const res = await fetch(`${WORKER_URL}/config`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ TEAM_MODE: on ? 'on' : 'off' }),
+    })
+    let data = {}
+    try {
+      data = await res.json()
+    } catch {}
+    // The server's own message, not a generic one: the refusal names how many
+    // people are still on the team, which is the only thing that tells the
+    // admin what to do next.
+    if (!res.ok) throw new Error(data.error || t('team.actionFailed'))
+    if (typeof checkVectorize === 'function') await checkVectorize()
+    showToast(on ? t('team.modeOnSaved') : t('team.modeOffSaved'))
+  } catch (e) {
+    showToast(e.message || t('team.actionFailed'))
+  }
+  renderTeamMode()
 }
 
 /**

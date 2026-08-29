@@ -20,6 +20,7 @@ import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
 import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember, removeMember, setMemberSuspended } from "../../src/lib/team-admin";
+import { CONFIG_KEY } from "../../src/config";
 import type { Env } from "../../src/env";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as ExecutionContext;
@@ -28,6 +29,11 @@ const ADMIN = "test-token";
 let sqlite: SqliteD1;
 let env: Env;
 let roots: { companyWorkspaceId: string; ownerUserId: string; ownerPersonalWorkspaceId: string };
+
+/** Store an explicit TEAM_MODE the way PATCH /config would. */
+function setTeamMode(value: string) {
+  return env.OAUTH_KV.put(CONFIG_KEY, JSON.stringify({ TEAM_MODE: value }));
+}
 
 /** The flag under test, read the way the dashboard reads it. */
 async function teamFlag(): Promise<boolean> {
@@ -75,6 +81,48 @@ describe("GET /health team flag counts only people who are still on the team", (
   it("still counts a suspended member — they are on the team, merely locked out", async () => {
     const bob = await createMember(env, { name: "Bob", email: "bob@example.com" });
     await setMemberSuspended(env, roots.ownerUserId, bob.member.userId, true);
+    expect(await teamFlag()).toBe(true);
+  });
+});
+
+/**
+ * Inference alone cannot express "set this up before anyone is invited", so
+ * TEAM_MODE records the intent. Three values, and `/health` is where they are
+ * read — no caller of `team` branches on the raw key.
+ *
+ * The default is "auto" and that is load-bearing rather than cosmetic: DEFAULTS
+ * is static, so a default of "off" would turn every existing team brain solo
+ * the moment this deploys and colleagues would lose the shared layer with no
+ * warning. "auto" is exactly the behaviour above.
+ */
+describe("TEAM_MODE drives GET /health's team flag", () => {
+  it('"on" makes a solo brain a team', async () => {
+    // Seeded from the state that answers the OPPOSITE way: one active member,
+    // which "auto" resolves to false two tests up.
+    expect(await teamFlag()).toBe(false);
+    await setTeamMode("on");
+    expect(await teamFlag()).toBe(true);
+  });
+
+  it('"off" makes a real team read as solo', async () => {
+    await createMember(env, { name: "Bob", email: "bob@example.com" });
+    expect(await teamFlag()).toBe(true);
+    await setTeamMode("off");
+    expect(await teamFlag()).toBe(false);
+  });
+
+  it('"auto" infers from active membership, in both directions', async () => {
+    await setTeamMode("auto");
+    expect(await teamFlag()).toBe(false);
+    await createMember(env, { name: "Bob", email: "bob@example.com" });
+    expect(await teamFlag()).toBe(true);
+  });
+
+  it("defaults to auto, so an upgrade changes nothing for an existing team", async () => {
+    await createMember(env, { name: "Bob", email: "bob@example.com" });
+    // No override blob at all — the state every brain is in on the day this
+    // ships.
+    expect(await env.OAUTH_KV.get(CONFIG_KEY)).toBeNull();
     expect(await teamFlag()).toBe(true);
   });
 });

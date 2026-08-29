@@ -14,6 +14,7 @@
 import type { Env } from "../env";
 import { json } from "../lib/http";
 import { requireIdentity } from "../lib/identity";
+import { countActiveMembers } from "../lib/team-admin";
 import {
   DEFAULTS,
   readOverrides,
@@ -51,6 +52,37 @@ export async function handleConfigRoutes(
     }
     if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
       return json({ ok: false, error: "Body must be an object of setting → value" }, 400);
+    }
+
+    // TEAM_MODE "off" while colleagues are still here is the one config write
+    // that can make the product lie: the dashboard drops every sharing control
+    // and layer picker, while the company workspace still exists and every
+    // member still holds a token that reads it. One source of truth or none.
+    //
+    // HERE, not inside writeOverrides, and not as an INVARIANT. writeOverrides
+    // is the generic write path — per-key type and range checks, plus pure
+    // synchronous invariants over the config object itself — and this rule is
+    // neither generic nor pure: it is one key's rule and it needs a D1
+    // headcount. Pushing it down would give every config write a database
+    // dependency and make the config layer import the team schema to satisfy a
+    // single setting. PATCH /config is writeOverrides' only non-test caller, so
+    // this route is a complete boundary for the rule.
+    //
+    // Before the write, so a refused patch writes NOTHING — the same
+    // all-or-nothing writeOverrides already gives a patch with a bad value in
+    // it. "on" and "auto" are never blocked: the first only ever adds the
+    // shared layer, and the second hands the decision back to what is actually
+    // there.
+    if (patch.TEAM_MODE === "off") {
+      const activeMembers = await countActiveMembers(env);
+      if (activeMembers > 1) {
+        return json({
+          ok: false,
+          error:
+            `Team mode cannot be turned off while ${activeMembers} people are still on the team. ` +
+            `Remove the other members first — their shared memories stay, and their names stay on them.`,
+        }, 400);
+      }
     }
 
     const result = await writeOverrides(env, patch as never);
