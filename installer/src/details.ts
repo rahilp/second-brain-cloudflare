@@ -13,7 +13,12 @@ import {
   teamCard,
 } from "./shared";
 import { integrationRows, toolRows } from "./shared";
-import { canRotatePassword, canUpdateWorker, roleFromDetailsProbe } from "./connection-role";
+import {
+  canRotatePassword,
+  canUpdateWorker,
+  legacyWorkerFromDetailsProbe,
+  roleFromDetailsProbe,
+} from "./connection-role";
 import { initI18n, settingsSection, t } from "./i18n";
 import "./style.css";
 
@@ -65,10 +70,17 @@ async function boot() {
    * answer, because the cost of under-claiming here is a hidden button and the
    * cost of over-claiming is the sentence above.
    */
-  const connectionRole = roleFromDetailsProbe(
-    details.teamMode,
-    details.teamMode ? await invoke<unknown>("connection_role").catch(() => null) : null,
-  );
+  const roleProbe =
+    details.teamMode ? await invoke<unknown>("connection_role").catch(() => null) : null;
+  const connectionRole = roleFromDetailsProbe(details.teamMode, roleProbe);
+  /**
+   * Whether the brain is too old to say who is asking.
+   *
+   * Read off the SAME probe, one round trip. It unlocks the Worker-update
+   * button and nothing else — see `canUpdateWorker` for why that one route, and
+   * why the password card below deliberately does not get the same treatment.
+   */
+  const legacyWorker = legacyWorkerFromDetailsProbe(roleProbe);
 
   const tools = await invoke<ToolStatus>("detect_tools");
   const update = await invoke<{ availableVersion: string } | null>(
@@ -148,7 +160,9 @@ async function boot() {
     }
     return [
       h("h2", { class: "pane-title" }, [t("details.navComputer")]),
-      ...(update ? [updateCard(update.availableVersion, canUpdateWorker(connectionRole))] : []),
+      ...(update
+        ? [updateCard(update.availableVersion, canUpdateWorker(connectionRole, legacyWorker), legacyWorker)]
+        : []),
       settingsSection(() => render()),
       logoutSection(),
     ];
@@ -196,8 +210,20 @@ async function boot() {
  * behind sees features they have read about and do not have, and the honest
  * answer is to say why and who can fix it. What they do not get is a button
  * that walks them through a Cloudflare sign-in before failing.
+ *
+ * `ownerUnconfirmed` is the third case: the brain is too old to say who is
+ * asking, so the button is offered to whoever opened this window — otherwise
+ * the brain could never be updated to the version that can say (see
+ * `canUpdateWorker`). The copy has to be straight about that. Being offered a
+ * button because the app cannot tell who you are is a different sentence from
+ * being offered it because it knows you are the owner, and printing the second
+ * one would be the app guessing out loud.
  */
-function updateCard(availableVersion: string, mayUpdate: boolean): HTMLElement {
+function updateCard(
+  availableVersion: string,
+  mayUpdate: boolean,
+  ownerUnconfirmed: boolean,
+): HTMLElement {
   const label = h("div", { class: "url-label" }, [
     t("details.updateLabel", { version: availableVersion }),
   ]);
@@ -213,7 +239,9 @@ function updateCard(availableVersion: string, mayUpdate: boolean): HTMLElement {
   button.addEventListener("click", () => void invoke("begin_worker_update"));
   return h("div", { class: "card", style: "border-color: var(--accent);" }, [
     label,
-    h("div", { class: "url-desc" }, [t("details.updateDesc")]),
+    h("div", { class: "url-desc" }, [
+      t(ownerUnconfirmed ? "details.updateDescLegacy" : "details.updateDesc"),
+    ]),
     button,
   ]);
 }

@@ -46,6 +46,15 @@ export interface RoleProbe {
    * does the rest: anything that is not a literal `true` is not ownership.
    */
   owner: boolean;
+  /**
+   * True only when `/team/me` answered with a well-formed profile that carried
+   * NO `owner` key at all — a Worker deployed before the key existed.
+   *
+   * Deliberately not read by `roleFromProbe`: a legacy Worker cannot say who is
+   * holding the token, so nobody is promoted by it. It exists for one caller,
+   * `canUpdateWorker`, and the reasoning is in that function's comment.
+   */
+  legacyWorker?: boolean;
 }
 
 export function roleFromProbe(probe: RoleProbe): ConnectionRole {
@@ -86,22 +95,59 @@ type ProbeFetch = (
 ) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
 
 /**
+ * Reads a 200 from `/team/me` into the three facts the app can act on.
+ *
+ * A 200 is not a promise about shape, and there are three different things a
+ * body can mean, not two:
+ *
+ *   1. it carries a boolean `owner` — the brain has answered, trust it;
+ *   2. it is well formed but has NO `owner` key — a Worker deployed before the
+ *      key existed, positively identified as such;
+ *   3. anything else — no profile, no string role, or an `owner` key that is
+ *      present but is not a boolean — nothing was established.
+ *
+ * (3) deliberately swallows `owner: "yes"` and friends. The key being THERE and
+ * unreadable is not the same fact as the key being ABSENT: the first is a body
+ * no brain this app talks to would send, and an unexpected body must not
+ * license anything. Only a genuine absence, alongside a role the Worker did
+ * manage to state, counts as legacy.
+ */
+function answerToProbe(body: unknown): { role: string | null; owner: boolean; legacyWorker: boolean } {
+  const profile = (body as { profile?: unknown } | null)?.profile;
+  if (profile === null || typeof profile !== "object") {
+    return { role: null, owner: false, legacyWorker: false };
+  }
+  const p = profile as { role?: unknown; owner?: unknown };
+  const role = typeof p.role === "string" ? p.role : null;
+  return {
+    role,
+    owner: p.owner === true,
+    // `in`, not `=== undefined`: JSON cannot produce an explicit `undefined`,
+    // so the key's absence is exactly the signal, and a role the Worker DID
+    // state is what makes the absence evidence rather than silence.
+    legacyWorker: role !== null && !("owner" in p),
+  };
+}
+
+/**
  * Asks a brain who is holding this token. Never rejects and never hangs.
  *
- * Every failure — a Worker too old to serve the route, a 401/403/404, a body
- * that will not parse, a request that never lands — reduces to the same
- * unanswered shape, which `roleFromProbe` turns into "member". That is the
- * point: the failure this whole module exists to fix is the app telling a
- * member they are the owner-admin, so an unanswerable probe must claim less,
- * not more.
+ * Every failure — a 401/403/404, a body that will not parse, a request that
+ * never lands — reduces to the same unanswered shape, which `roleFromProbe`
+ * turns into "member". That is the point: the failure this whole module exists
+ * to fix is the app telling a member they are the owner-admin, so an
+ * unanswerable probe must claim less, not more.
+ *
+ * A Worker too old to carry `owner` is NOT one of those failures, and the
+ * distinction is the whole of `legacyWorker` — see `answerToProbe`.
  */
 export async function fetchRoleProbe(
   fetchImpl: ProbeFetch,
   brainUrl: string,
   token: string,
   timeoutMs: number = PROBE_TIMEOUT_MS,
-): Promise<{ role: string | null; owner: boolean }> {
-  const unanswered = { role: null, owner: false };
+): Promise<{ role: string | null; owner: boolean; legacyWorker: boolean }> {
+  const unanswered = { role: null, owner: false, legacyWorker: false };
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -123,12 +169,7 @@ export async function fetchRoleProbe(
         signal: controller.signal,
       });
       if (!res.ok) return unanswered;
-      const body = (await res.json()) as { profile?: { role?: unknown; owner?: unknown } } | null;
-      const profile = body?.profile;
-      return {
-        role: typeof profile?.role === "string" ? profile.role : null,
-        owner: profile?.owner === true,
-      };
+      return answerToProbe(await res.json());
     } catch {
       return unanswered;
     }
@@ -162,6 +203,21 @@ export function roleFromDetailsProbe(teamMode: boolean, probe: unknown): Connect
   });
 }
 
+/**
+ * The same window's version of "is this brain's Worker too old to say?".
+ *
+ * Separate from `roleFromDetailsProbe` because it answers a different question
+ * and feeds a different decision: the role decides what the window CLAIMS, this
+ * decides only whether the Worker-update button is reachable. Both narrow the
+ * same `invoke` result, so the window pays for one round trip, not two.
+ *
+ * `=== true` and nothing else: a probe that failed is `null`, and a `null` probe
+ * is not a legacy Worker — it is no answer at all.
+ */
+export function legacyWorkerFromDetailsProbe(probe: unknown): boolean {
+  return (probe as { legacyWorker?: unknown } | null)?.legacyWorker === true;
+}
+
 /** Which team-card copy this role gets. Returns a key, never a string. */
 export function teamCardKeys(role: ConnectionRole): { label: string; body: string } {
   const label = "details.teamCardLabel";
@@ -170,7 +226,14 @@ export function teamCardKeys(role: ConnectionRole): { label: string; body: strin
   return { label, body: "details.teamCardBodyMember" };
 }
 
-/** Whether this install may offer to change the brain's password. */
+/**
+ * Whether this install may offer to change the brain's password.
+ *
+ * Takes a role and nothing else, and must keep taking a role and nothing else.
+ * The Worker-update route below has a legacy allowance and this one deliberately
+ * does not — the asymmetry is explained there, and the two rules are NOT the
+ * same rule wearing different names any more.
+ */
 export function canRotatePassword(role: ConnectionRole): boolean {
   return role === "owner";
 }
@@ -190,7 +253,34 @@ export function canRotatePassword(role: ConnectionRole): boolean {
  * `is_behind` is true on every launch and stays true until the owner acts.
  * Without this gate they were offered the update every single time, and it
  * could never succeed.
+ *
+ * `legacyWorker` is the escape hatch's own escape hatch, and it exists because
+ * the gate above, alone, is a DEADLOCK. The app self-updates from GitHub
+ * Releases and the Worker can only be updated FROM the app, so the app is always
+ * ahead of the deployment. On a brain whose deployed Worker predates `owner`:
+ * `/team/me` answers without it → the role is indeterminate → least privilege
+ * suppresses this route → and this route is the only thing that deploys the
+ * Worker that adds `owner`. The way out was gated on a capability only the
+ * version you are trying to reach reports.
+ *
+ * So a POSITIVELY IDENTIFIED legacy Worker (answered, well formed, no `owner`
+ * key — not "the probe failed", which stays suppressed) opens this one route.
+ * That is not a weakening: `start_worker_update` resolves the hosting account
+ * by matching the brain's workers.dev subdomain against the signed-in
+ * Cloudflare session and answers ErrorWrongCfAccount to anyone else, so the
+ * real gate here was never the role. And it self-heals — after one successful
+ * update the brain can say who is asking, and this argument is false forever
+ * after.
+ *
+ * THE ASYMMETRY WITH `canRotatePassword` IS DELIBERATE. Do not simplify the two
+ * back into one rule. Rotation gets no legacy allowance because rotation is not
+ * a way out of anything: nobody needs a new password to update a Worker, the
+ * card comes back on its own once the Worker can answer, and unlike this route
+ * the app cannot tell an owner from a member while it is suppressed.
+ *
+ * Defaults to false so that a caller who has not thought about it gets the
+ * least-privileged answer rather than the allowance.
  */
-export function canUpdateWorker(role: ConnectionRole): boolean {
-  return role === "owner";
+export function canUpdateWorker(role: ConnectionRole, legacyWorker: boolean = false): boolean {
+  return role === "owner" || legacyWorker;
 }

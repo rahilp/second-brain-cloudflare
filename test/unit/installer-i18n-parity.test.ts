@@ -57,6 +57,9 @@ describe("the three strings a member-token install depends on", () => {
     "connectExisting.passwordPlaceholder",
     // What a non-owner reads in place of the "Update my Second Brain" button.
     "details.updateDescOther",
+    // And what an owner reads NEXT TO that button on a brain too old to confirm
+    // they are the owner.
+    "details.updateDescLegacy",
   ];
 
   it("is present, non-blank and actually translated", () => {
@@ -132,6 +135,40 @@ describe("the three strings a member-token install depends on", () => {
     }
     expect(String(enFlat.get("details.updateDescOther"))).toMatch(/Cloudflare/);
     expect(String(itFlat.get("details.updateDescOther"))).toMatch(/Cloudflare/);
+  });
+
+  it("does not claim to know who is reading it on a brain that cannot say", () => {
+    // The legacy state's copy. The button IS offered here — it is the only way
+    // out of a brain whose Worker predates the `owner` key — but it is offered
+    // because the app cannot yet tell who this is, not because it has confirmed
+    // the owner. Printing the owner's own copy would be the app guessing out
+    // loud, so the two must not be the same string, and this one has to name
+    // both the uncertainty and what happens if the guess is wrong.
+    for (const catalog of [enFlat, itFlat]) {
+      const legacy = String(catalog.get("details.updateDescLegacy"));
+      expect(legacy.trim().length).toBeGreaterThan(0);
+      expect(legacy, "the legacy note must not be the confirmed owner's copy").not.toBe(
+        String(catalog.get("details.updateDesc")),
+      );
+      expect(legacy, "nor the copy for someone who cannot update at all").not.toBe(
+        String(catalog.get("details.updateDescOther")),
+      );
+      // Says what will happen if this is not in fact the owner, so the offer is
+      // not read as a promise that it will work.
+      expect(legacy).toMatch(/Cloudflare/);
+    }
+    // And it says, in each language, that the app does not know — not that it
+    // does. Positively asserted, so softening the sentence away fails.
+    expect(String(enFlat.get("details.updateDescLegacy"))).toMatch(
+      /can'?t yet tell|cannot yet tell/i,
+    );
+    expect(String(itFlat.get("details.updateDescLegacy"))).toMatch(/non sa ancora dire/i);
+    // It must never assert ownership, in either language.
+    for (const catalog of [enFlat, itFlat]) {
+      expect(String(catalog.get("details.updateDescLegacy"))).not.toMatch(
+        /owner-admin|you own|you created|sei .{0,12}propriet|hai creato/i,
+      );
+    }
   });
 
   it("says something different to each of the three roles", () => {

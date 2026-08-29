@@ -706,6 +706,13 @@ export const it: Messages = {
       "Chi ha creato questo brain deve aggiornarlo: l'aggiornamento avviene nel " +
       "suo account Cloudflare, quindi non è un'operazione che questo computer " +
       "può fare. Nel frattempo nulla di ciò che hai salvato viene toccato.",
+    updateDescLegacy:
+      "Questo brain usa una versione più vecchia, che non sa ancora dire a " +
+      "questa app chi sei: per questo l'aggiornamento viene proposto a " +
+      "chiunque apra questa finestra. Viene eseguito solo nell'account " +
+      "Cloudflare in cui il brain è stato creato — se non è il tuo, si ferma e " +
+      "te lo dice. Basta un aggiornamento perché il brain sappia rispondere, e " +
+      "questa nota sparisce.",
     updateButton: "Aggiorna il Second Brain",
     allSetTitle: "Tutto pronto",
     allSetLede: "Due link da conservare. Li trovi sempre qui in Dettagli connessione.",

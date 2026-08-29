@@ -725,6 +725,17 @@ export const en: Messages = {
       "Whoever set this brain up needs to update it — the update runs in their " +
       "own Cloudflare account, so it isn't something this computer can do. " +
       "Nothing you've saved is affected in the meantime.",
+    // The third case, and the honest version of it: this brain is running a
+    // version that predates the check, so the app genuinely does not know
+    // whether the person reading this created it. The button is offered anyway
+    // because updating is the only thing that fixes the check — but the copy
+    // must not pretend the app has confirmed anything.
+    updateDescLegacy:
+      "This brain is running an older version that can't yet tell this app who " +
+      "you are, so the update is offered to everyone who opens this window. It " +
+      "only runs in the Cloudflare account the brain was created in — if that " +
+      "isn't yours, it will stop and say so. Updating once teaches this brain " +
+      "to answer, and this note goes away.",
     updateButton: "Update my Second Brain",
     allSetTitle: "You're all set",
     allSetLede: "Two links to keep. You can always find them again in this app under Connection details.",

@@ -1094,6 +1094,15 @@ pub async fn worker_update_available(
 /// A one-person brain is exempt and asks nothing: its owner is whoever holds
 /// the token, there is nobody else on it to mislead, and a Worker old enough to
 /// be behind may well predate `/team/me` entirely.
+///
+/// A LEGACY Worker — one that answered but predates the `owner` key — is the
+/// third case, and it is offered the prompt. On its own, `probe.owner` is a
+/// deadlock: this app self-updates from GitHub Releases and the Worker can only
+/// be updated FROM this app, so a brain deployed before the key would never be
+/// offered the update that adds the key. The prompt still dead-ends at
+/// `ErrorWrongCfAccount` for anyone who does not hold the hosting account, so
+/// the allowance costs a member one dismissible dialog until the owner updates
+/// once — and after that one update this arm is unreachable forever.
 fn update_prompt_is_offerable(team_brain: bool, probe: &ConnectionRoleProbe) -> bool {
     if !team_brain {
         return true;
@@ -1102,7 +1111,11 @@ fn update_prompt_is_offerable(team_brain: bool, probe: &ConnectionRoleProbe) -> 
     // being wrong this way costs an owner one click in the tray window; being
     // wrong the other way nags every member on every launch, forever, for an
     // action that cannot succeed.
-    probe.owner
+    //
+    // `legacy_worker` is the one documented exception, and it is NOT "could not
+    // tell": it is a brain that answered and whose answer is missing the key.
+    // A probe that failed leaves both of these false.
+    probe.owner || probe.legacy_worker
 }
 
 /// The two facts [`update_prompt_is_offerable`] needs, gathered.
@@ -2429,6 +2442,15 @@ pub struct ConnectionRoleProbe {
     /// into a users row with role 'admin', so the owner and a promoted
     /// colleague are the same value there.
     pub owner: bool,
+    /// Whether `/team/me` answered with a profile that carried NO `owner` key —
+    /// a Worker deployed before the key existed, positively identified as such.
+    ///
+    /// Not the same fact as `owner: false`, and not the same fact as a probe
+    /// that failed. It licenses exactly one thing, the Worker update, because
+    /// that update is the only way OUT of this state; see
+    /// [`update_prompt_is_offerable`].
+    #[serde(rename = "legacyWorker")]
+    pub legacy_worker: bool,
 }
 
 /// How long to wait before answering without the brain.
@@ -2486,10 +2508,22 @@ pub async fn fetch_connection_role(worker_url: &str, auth_token: &str) -> Connec
 /// truthiness: a body carrying `owner: "yes"` or `owner: 1` is unexpected, and
 /// an unexpected body must not promote anyone. Same for `role`, which is only
 /// taken when it is genuinely a string.
+/// The absent `owner` key is read separately from an unreadable one. A body
+/// carrying `owner: "yes"` has the key and cannot be trusted, so it claims
+/// nothing at all; a body with no `owner` key AND a role it did manage to state
+/// is a Worker from before the key existed, which is a different fact and the
+/// one that opens the update.
 fn role_probe_from_body(body: &serde_json::Value) -> ConnectionRoleProbe {
+    let profile = body.get("profile").filter(|p| p.is_object());
+    let role = profile
+        .and_then(|p| p.get("role"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
     ConnectionRoleProbe {
-        role: body["profile"]["role"].as_str().map(str::to_string),
+        legacy_worker: role.is_some()
+            && profile.is_some_and(|p| p.get("owner").is_none()),
         owner: body["profile"]["owner"].as_bool() == Some(true),
+        role,
     }
 }
 
@@ -3046,6 +3080,10 @@ mod tests {
         let probe = fetch_connection_role(brain.base_url(), PASSWORD).await;
         assert_eq!(probe.role.as_deref(), Some("admin"), "the profile role is read");
         assert!(probe.owner, "the AUTH_TOKEN holder owns the deployment");
+        assert!(
+            !probe.legacy_worker,
+            "a brain serving the current /team/me is not a legacy Worker"
+        );
     }
 
     /// Least privilege, on every way of not getting an answer. Each of these
@@ -3090,9 +3128,12 @@ mod tests {
     /// Cloudflare account than a member does.
     #[test]
     fn the_worker_update_prompt_is_the_owners_alone() {
-        let member = ConnectionRoleProbe { role: Some("member".into()), owner: false };
-        let promoted = ConnectionRoleProbe { role: Some("admin".into()), owner: false };
-        let owner = ConnectionRoleProbe { role: Some("admin".into()), owner: true };
+        let member =
+            ConnectionRoleProbe { role: Some("member".into()), owner: false, legacy_worker: false };
+        let promoted =
+            ConnectionRoleProbe { role: Some("admin".into()), owner: false, legacy_worker: false };
+        let owner =
+            ConnectionRoleProbe { role: Some("admin".into()), owner: true, legacy_worker: false };
 
         assert!(update_prompt_is_offerable(true, &owner), "the owner still gets asked");
         assert!(!update_prompt_is_offerable(true, &member), "a member must not be nagged");
@@ -3116,6 +3157,122 @@ mod tests {
         // answer /team/me is exactly the Worker most likely to be behind.
         for probe in [ConnectionRoleProbe::default(), member.clone(), owner.clone()] {
             assert!(update_prompt_is_offerable(false, &probe), "a solo install must not change");
+        }
+    }
+
+    /// The deadlock the gate above creates on its own, and the one exception.
+    ///
+    /// This app self-updates from GitHub Releases with no Cloudflare
+    /// involvement, and the deployed Worker can only be updated FROM this app.
+    /// So the app is always AHEAD of the deployment, never behind it — and on a
+    /// brain whose Worker predates the `owner` key that closes a circle:
+    /// `/team/me` answers without `owner`, so nothing establishes the role, so
+    /// least privilege suppresses the update prompt, so the Worker that would
+    /// add `owner` is never deployed. The way out was gated on a capability
+    /// only the version you are trying to reach reports.
+    ///
+    /// A Worker that ANSWERED and simply predates the key therefore opens this
+    /// one prompt. A probe that could not be answered does not, and that is the
+    /// whole distinction: `legacy_worker` is a positive identification, not a
+    /// shrug. Accepting it costs a member one dismissible dialog until the
+    /// owner updates once — `start_worker_update` still refuses anyone who does
+    /// not hold the hosting account — and the arm is unreachable after that.
+    #[test]
+    fn a_worker_too_old_to_say_who_is_asking_can_still_be_updated() {
+        let legacy = ConnectionRoleProbe {
+            role: Some("admin".into()),
+            owner: false,
+            legacy_worker: true,
+        };
+        assert!(
+            update_prompt_is_offerable(true, &legacy),
+            "a brain deployed before the owner key could never be offered the update that adds it"
+        );
+
+        // And the exception is exactly one state wide. A probe that failed
+        // leaves `legacy_worker` false and is still suppressed — an absent
+        // answer is not an old answer.
+        assert!(!update_prompt_is_offerable(true, &ConnectionRoleProbe::default()));
+        assert!(!update_prompt_is_offerable(
+            true,
+            &ConnectionRoleProbe { role: Some("member".into()), owner: false, legacy_worker: false }
+        ));
+    }
+
+    /// The flag has to survive the hop into the webview under the name the
+    /// webview reads.
+    ///
+    /// This struct is `snake_case` and the TypeScript that narrows it is
+    /// `camelCase`, so the rename is the only thing joining them — and dropping
+    /// it fails silently and in exactly the worst way: `legacyWorker` would be
+    /// `undefined` in the details window, every legacy brain would look like a
+    /// probe that failed, and the tray window's Update button — the surface an
+    /// owner actually opens — would be deadlocked again with every test still
+    /// green.
+    #[test]
+    fn the_details_window_reads_the_flag_this_struct_writes() {
+        let json = serde_json::to_value(ConnectionRoleProbe {
+            role: Some("admin".into()),
+            owner: false,
+            legacy_worker: true,
+        })
+        .expect("the probe serialises");
+        assert_eq!(
+            json.get("legacyWorker"),
+            Some(&serde_json::json!(true)),
+            "the details window reads `legacyWorker`; this is what it gets: {json}"
+        );
+
+        let ts = include_str!("../../src/connection-role.ts");
+        assert!(
+            ts.contains("?.legacyWorker === true"),
+            "installer/src/connection-role.ts must narrow the same key, strictly"
+        );
+    }
+
+    /// Which bodies are a legacy Worker, and which are merely unreadable.
+    ///
+    /// The line is the KEY's presence, not the value's truth. `owner: "yes"`
+    /// has the key and cannot be trusted, so it claims nothing; a body with no
+    /// `owner` at all, alongside a role it did state, is a Worker from before
+    /// the key existed. Collapsing those two would hand the update prompt to
+    /// anyone who can put a surprising body in front of this app.
+    #[test]
+    fn only_an_absent_owner_key_counts_as_a_legacy_worker() {
+        use serde_json::json;
+
+        // The shape src/routes/admin.ts sent before `owner` existed.
+        for body in [
+            json!({ "ok": true, "profile": { "userId": "usr-1", "role": "admin" } }),
+            json!({ "ok": true, "profile": { "userId": "usr-2", "role": "member" } }),
+        ] {
+            let probe = role_probe_from_body(&body);
+            assert!(probe.legacy_worker, "{body} is a Worker from before the owner key");
+            assert!(!probe.owner, "and it still claims no ownership");
+            assert!(update_prompt_is_offerable(true, &probe));
+        }
+
+        // Everything else. None of these is a legacy Worker: either the key is
+        // present (and unusable), or nothing was established at all.
+        for body in [
+            json!({}),
+            json!(null),
+            json!("not an object"),
+            json!({ "ok": true, "profile": {} }),
+            json!({ "ok": true, "profile": "admin" }),
+            json!({ "ok": true, "profile": { "role": 42 } }),
+            json!({ "ok": true, "profile": { "owner": {} } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": "yes" } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": 1 } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": null } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": false } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": true } }),
+            json!({ "ok": false, "error": "Unauthorized" }),
+        ] {
+            assert!(
+                !role_probe_from_body(&body).legacy_worker,
+                "{body} was read as a Worker predating the owner key"
+            );
         }
     }
 
@@ -3186,6 +3343,7 @@ mod tests {
         }));
         assert_eq!(real.role.as_deref(), Some("admin"));
         assert!(real.owner);
+        assert!(!real.legacy_worker, "a body carrying the key is not a legacy Worker");
     }
 
     /// A rebuild that could not be asked about is not a rebuild in progress.

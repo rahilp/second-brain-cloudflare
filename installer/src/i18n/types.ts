@@ -435,6 +435,13 @@ export type Messages = {
     updateLabel: string;
     updateDesc: string;
     updateDescOther: string;
+    /**
+     * The owner's copy on a brain too old to confirm they are the owner.
+     *
+     * Says why the button is there — the brain cannot answer the question yet —
+     * rather than claiming to know who is reading it.
+     */
+    updateDescLegacy: string;
     updateButton: string;
     allSetTitle: string;
     allSetLede: string;

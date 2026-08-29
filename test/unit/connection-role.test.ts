@@ -27,6 +27,7 @@ import {
   canRotatePassword,
   canUpdateWorker,
   fetchRoleProbe,
+  legacyWorkerFromDetailsProbe,
   roleFromDetailsProbe,
   roleFromProbe,
   teamCardKeys,
@@ -107,6 +108,8 @@ describe("asking the brain who is holding this token", () => {
     await expect(fetchRoleProbe(f as never, "https://b.example.com", "sbt_x")).resolves.toEqual({
       role: "admin",
       owner: true,
+      // The key was there and was read, so this is not a legacy Worker.
+      legacyWorker: false,
     });
     // Bearer auth on the brain's own /team/me, address normalised.
     expect(f.mock.calls[0][0]).toBe("https://b.example.com/team/me");
@@ -122,7 +125,7 @@ describe("asking the brain who is holding this token", () => {
   });
 
   it("reduces every way of not getting an answer to the least-privileged one", async () => {
-    const NONE = { role: null, owner: false };
+    const NONE = { role: null, owner: false, legacyWorker: false };
     const cases: Record<string, unknown> = {
       "non-2xx": vi.fn().mockResolvedValue({ ok: false, json: async () => ({ profile: { role: "admin", owner: true } }) }),
       "network error": vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
@@ -136,8 +139,10 @@ describe("asking the brain who is holding this token", () => {
     for (const [name, f] of Object.entries(cases)) {
       const probe = await fetchRoleProbe(f as never, "https://b.example.com", "t");
       if (name === "a Worker too old for the owner flag") {
-        // role survives; ownership does not get assumed.
-        expect(probe, name).toEqual({ role: "member", owner: false });
+        // role survives; ownership does not get assumed — and the ABSENCE of
+        // the key is recorded, which is what distinguishes this brain from one
+        // that could not be asked at all. It still derives to "member" below.
+        expect(probe, name).toEqual({ role: "member", owner: false, legacyWorker: true });
       } else if (name === "200 with a numeric role") {
         expect(probe, name).toEqual(NONE);
       } else {
@@ -161,7 +166,7 @@ describe("asking the brain who is holding this token", () => {
     });
     const probe = fetchRoleProbe(hangs as never, "https://b.example.com", "t");
     await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
-    await expect(probe).resolves.toEqual({ role: null, owner: false });
+    await expect(probe).resolves.toEqual({ role: null, owner: false, legacyWorker: false });
     // And the request is asked to stop rather than left running behind the
     // screen it no longer belongs to.
     expect(aborted, "the probe must abort the request it gave up on").toBe(true);
@@ -174,7 +179,7 @@ describe("asking the brain who is holding this token", () => {
     const probe = fetchRoleProbe(slow as never, "https://b.example.com", "t");
     await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS - 1);
     settle({ ok: true, json: async () => ({ profile: { role: "admin", owner: true } }) });
-    await expect(probe).resolves.toEqual({ role: "admin", owner: true });
+    await expect(probe).resolves.toEqual({ role: "admin", owner: true, legacyWorker: false });
   });
 });
 
@@ -353,7 +358,9 @@ describe("the details window asks rather than assumes", () => {
     // offered them a button that dead-ends at ErrorWrongCfAccount. The card
     // stays: a member seeing features they do not have deserves the
     // explanation. The button does not.
-    expect(source).toMatch(/updateCard\(update\.availableVersion, canUpdateWorker\(connectionRole\)\)/);
+    expect(source).toMatch(
+      /updateCard\(update\.availableVersion, canUpdateWorker\(connectionRole, legacyWorker\), legacyWorker\)/,
+    );
     // And the non-owner branch must render prose, not a disabled button.
     const card = source.slice(source.indexOf("function updateCard("));
     expect(card.slice(0, card.indexOf("\n}"))).toMatch(/details\.updateDescOther/);
@@ -385,6 +392,217 @@ describe("who may update the Worker", () => {
     for (const role of ["owner", "admin", "member"] as ConnectionRole[]) {
       expect(canUpdateWorker(role)).toBe(canRotatePassword(role));
     }
+  });
+});
+
+/**
+ * The deadlock the gate above created, and the third state that breaks it.
+ *
+ * The desktop app self-updates from GitHub Releases with no Cloudflare
+ * involvement, and the deployed Worker can only be updated FROM the app — so
+ * the app is always ahead of the deployment and never behind it. On a brain
+ * whose deployed Worker predates the `owner` key, that composed into a lock
+ * with the key inside it: `/team/me` answers without `owner` → the role falls
+ * to the least-privileged "member" → least privilege suppresses the
+ * Worker-update route → and that route is the only thing that would deploy the
+ * Worker that adds the key. The escape hatch was gated on a capability only the
+ * version you escape TO reports.
+ *
+ * The fix is to stop collapsing two different facts into one answer. "Answered,
+ * but carried no `owner` key" is a POSITIVELY IDENTIFIED legacy Worker. "Could
+ * not be asked" is nothing at all. Only the first gets the allowance, only on
+ * the update route, and it self-heals after exactly one successful update.
+ *
+ * This is not a weakening. `start_worker_update` resolves the hosting account
+ * by matching the brain's workers.dev subdomain against the signed-in
+ * Cloudflare session, so a member who tries it gets ErrorWrongCfAccount and
+ * deploys nothing — the real gate was never the role.
+ */
+describe("a Worker deployed before /team/me carried `owner`", () => {
+  const okBody = (body: unknown) =>
+    vi.fn().mockResolvedValue({ ok: true, json: async () => body });
+  /** The body src/routes/admin.ts sent before the owner flag existed. */
+  const LEGACY = { ok: true, profile: { userId: "usr-1", role: "admin" } };
+  const BRAIN = "https://b.example.com";
+
+  it("lets whoever holds the token reach the update that is the only way out", async () => {
+    // Both rows a legacy /team/me can return, because the app cannot tell them
+    // apart and that is precisely the state being handled. The owner's own row
+    // says "admin" — src/lib/tenancy.ts hashes AUTH_TOKEN into a users row with
+    // role 'admin' — and a colleague's says "member". Without `owner`, neither
+    // reaches "owner", and neither could reach the update.
+    for (const [who, profile] of [
+      ["the owner's own row", LEGACY.profile],
+      ["a member's row", { userId: "usr-2", role: "member" }],
+    ] as const) {
+      const probe = await fetchRoleProbe(
+        okBody({ ok: true, profile }) as never,
+        BRAIN,
+        "sbt_x",
+      );
+      // The ROLE is untouched and still claims no ownership. Nothing here
+      // promotes anybody, and nothing is stored: this is re-derived on every
+      // entry, so it stops being true the moment the Worker is updated.
+      expect(roleFromProbe({ team: true, ...probe }), who).not.toBe("owner");
+      // But the route out is reachable. Both of these were false before, and a
+      // brain in this state could never be updated by the only thing that
+      // updates it.
+      expect(probe.legacyWorker, `${who}: an answer with no owner key is legacy`).toBe(true);
+      expect(
+        canUpdateWorker(roleFromProbe({ team: true, ...probe }), probe.legacyWorker),
+        `${who}: a legacy Worker must be reachable by the update`,
+      ).toBe(true);
+    }
+  });
+
+  it("does not extend the allowance to a probe that got no usable answer", async () => {
+    // State 3, unchanged and still least privilege. `owner: "yes"` is the one
+    // that matters: the key IS there, it is simply not a boolean, so the Worker
+    // is NOT positively identified as legacy and claims nothing.
+    const cases: Record<string, unknown> = {
+      "non-2xx": vi.fn().mockResolvedValue({ ok: false, json: async () => LEGACY }),
+      "network error": vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+      "malformed JSON on a 200": vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => {
+          throw new SyntaxError("Unexpected token");
+        },
+      }),
+      "a 200 whose body is not an object": okBody("not json at all"),
+      "a 200 with a null body": okBody(null),
+      "a 200 with an empty object": okBody({}),
+      "a profile with no role either": okBody({ ok: true, profile: {} }),
+      "a profile whose role is not a string": okBody({ ok: true, profile: { role: 42 } }),
+      "an owner key that is not a boolean": okBody({
+        ok: true,
+        profile: { role: "admin", owner: "yes" },
+      }),
+      "a profile that is not an object": okBody({ ok: true, profile: "admin" }),
+    };
+    for (const [name, f] of Object.entries(cases)) {
+      const probe = await fetchRoleProbe(f as never, BRAIN, "t");
+      expect(probe.legacyWorker, `${name} must not pass as a legacy Worker`).toBe(false);
+      expect(
+        canUpdateWorker(roleFromProbe({ team: true, ...probe }), probe.legacyWorker),
+        `${name} must still suppress the update route`,
+      ).toBe(false);
+    }
+  });
+
+  it("leaves a Worker that does answer with `owner` deciding for itself", async () => {
+    // State 1, unchanged: the brain is the authority whenever it can be.
+    const owner = await fetchRoleProbe(
+      okBody({ ok: true, profile: { role: "admin", owner: true } }) as never,
+      BRAIN,
+      "t",
+    );
+    expect(owner.legacyWorker).toBe(false);
+    expect(canUpdateWorker(roleFromProbe({ team: true, ...owner }), owner.legacyWorker)).toBe(true);
+
+    // And a member on a CURRENT Worker is still refused — the allowance is for
+    // the absent key, not for `owner: false`.
+    const member = await fetchRoleProbe(
+      okBody({ ok: true, profile: { role: "member", owner: false } }) as never,
+      BRAIN,
+      "t",
+    );
+    expect(member.legacyWorker).toBe(false);
+    expect(canUpdateWorker(roleFromProbe({ team: true, ...member }), member.legacyWorker)).toBe(
+      false,
+    );
+  });
+
+  it("does not hand back the password card with it", async () => {
+    // THE ASYMMETRY, asserted rather than described. Only the escape hatch gets
+    // the legacy allowance: there is no deadlock on rotation — nobody needs to
+    // change a password to update a Worker — and one successful update restores
+    // the card by making the brain answerable. A member on a legacy Worker is
+    // indistinguishable from its owner here, so the card that CAN be withheld
+    // safely is withheld.
+    for (const profile of [LEGACY.profile, { userId: "usr-2", role: "member" }]) {
+      const probe = await fetchRoleProbe(okBody({ ok: true, profile }) as never, BRAIN, "t");
+      const role = roleFromProbe({ team: true, ...probe });
+      expect(probe.legacyWorker).toBe(true);
+      expect(canRotatePassword(role), "the legacy allowance must not reach rotation").toBe(false);
+    }
+    // Said structurally too: `canRotatePassword` takes a role and nothing else,
+    // so there is no second argument for a later reader to thread through it
+    // while "simplifying" the two rules into one.
+    const rules = readFileSync(
+      resolve(import.meta.dirname, "../../installer/src/connection-role.ts"),
+      "utf8",
+    );
+    const rotate = rules.slice(rules.indexOf("export function canRotatePassword("));
+    expect(
+      rotate.slice(0, rotate.indexOf("\n}")),
+      "canRotatePassword must not read the legacy flag",
+    ).not.toMatch(/legacy/i);
+  });
+
+  it("costs a solo install nothing and asks it nothing", async () => {
+    // Both branches. A one-person brain short-circuits before any request, and
+    // the details window guards the invoke on the same fact.
+    const f = vi.fn();
+    expect(roleFromProbe({ team: false, role: null, owner: false })).toBe("owner");
+    expect(canUpdateWorker(roleFromProbe({ team: false, role: null, owner: false }))).toBe(true);
+    expect(legacyWorkerFromDetailsProbe(null)).toBe(false);
+    expect(canUpdateWorker(roleFromDetailsProbe(false, null), legacyWorkerFromDetailsProbe(null))).toBe(
+      true,
+    );
+    expect(f, "a solo install must make no request at all").not.toHaveBeenCalled();
+  });
+
+  it("survives the trip through the Rust core to the details window", () => {
+    // The window has no token, so its probe is whatever `connection_role`
+    // serialised. If the flag does not survive that hop the fix reaches the
+    // setup flow and leaves the tray window — the surface an owner actually
+    // opens to click Update — still deadlocked.
+    expect(legacyWorkerFromDetailsProbe({ role: "admin", legacyWorker: true })).toBe(true);
+    expect(legacyWorkerFromDetailsProbe({ role: "admin", owner: true })).toBe(false);
+    expect(legacyWorkerFromDetailsProbe({ role: "member", owner: false })).toBe(false);
+    // Anything unusable is state 3, exactly as a failed invoke is.
+    for (const junk of [null, undefined, {}, "nope", 0, { legacyWorker: "yes" }, { legacyWorker: 1 }]) {
+      expect(legacyWorkerFromDetailsProbe(junk), JSON.stringify(junk) ?? "undefined").toBe(false);
+    }
+    // And the role it comes back with claims no ownership either way: the
+    // legacy flag opens one button, it does not promote anybody.
+    expect(roleFromDetailsProbe(true, { role: "admin", legacyWorker: true })).toBe("admin");
+    expect(roleFromDetailsProbe(true, { role: "member", legacyWorker: true })).toBe("member");
+
+    const source = readFileSync(
+      resolve(import.meta.dirname, "../../installer/src/details.ts"),
+      "utf8",
+    );
+    expect(source, "the window must read the flag off the same probe it derives the role from")
+      .toMatch(/legacyWorkerFromDetailsProbe\(/);
+    expect(source, "and hand it to the update gate").toMatch(
+      /canUpdateWorker\(connectionRole, legacyWorker\)/,
+    );
+    // One probe, not two: a second `connection_role` invoke would be a second
+    // round trip and two chances to disagree with itself.
+    expect(source.match(/invoke<unknown>\("connection_role"\)/g)?.length).toBe(1);
+  });
+
+  it("says why the button is there rather than claiming to know who is reading", () => {
+    // The offer is honest or it is a guess printed as a fact. A legacy owner is
+    // shown the button because the app CANNOT TELL who they are, and the owner's
+    // own copy ("Update to get the latest improvements") would quietly assert
+    // the opposite. The catalogs are checked in
+    // test/unit/installer-i18n-parity.test.ts; what is checked here is that the
+    // branch reaching for the honest string is the unconfirmed one.
+    const source = readFileSync(
+      resolve(import.meta.dirname, "../../installer/src/details.ts"),
+      "utf8",
+    );
+    const card = source.slice(source.indexOf("function updateCard("));
+    const body = card.slice(0, card.indexOf("\n}"));
+    expect(body, "the legacy copy must be selected by the unconfirmed flag").toMatch(
+      /ownerUnconfirmed \? "details\.updateDescLegacy" : "details\.updateDesc"/,
+    );
+    // And it is still a button, not prose: the whole point is that this person
+    // can act. The third string stays where it was, for someone who cannot.
+    expect(body).toMatch(/details\.updateDescOther/);
+    expect(body).toMatch(/begin_worker_update/);
   });
 });
 
