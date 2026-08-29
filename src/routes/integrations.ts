@@ -10,6 +10,7 @@ import type { IntegrationRecord } from "../integrations";
 import type { Env } from "../env";
 import { json } from "../lib/http";
 import { requireAdmin, requireIdentity } from "../lib/identity";
+import { listRoster } from "../lib/team-admin";
 import { forgetEntry } from "../capture/lifecycle";
 import { getReadableEntry, assertCanMutateEntry } from "../lib/entry-access";
 import { makeMirrorStore, mirrorWriteContext } from "../integrations/mirror";
@@ -28,10 +29,35 @@ export async function handleIntegrationsRoutes(
     for (const provider of Object.values(INTEGRATION_PROVIDERS)) {
       integrations.push(integrationStatus(provider, await loadIntegration(env, provider.id)));
     }
+    // Who connected it, as a NAME. Resolved through listRoster, not
+    // lookupActorLabels: the id comes out of a KV blob rather than from an
+    // already-scoped read, and the roster is the only people-list in this
+    // codebase that is scoped to the caller's own teams. A connector who is not
+    // the caller's teammate resolves to null and the client omits the line,
+    // which is also what a solo brain gets, and what a brain whose connecting
+    // admin has since been removed gets.
+    //
+    // Resolved at read time rather than snapshotted at connect time so a rename
+    // propagates and a departure degrades to null instead of to a stale name —
+    // the same rule lookupActorLabels's soft-delete filter enforces elsewhere.
+    const ids = integrations.map((i) => i.connectedByUserId).filter(Boolean) as string[];
+    const roster = ids.length ? await listRoster(env, auth.companyWorkspaceIds) : [];
+    const nameOf = new Map(roster.map((r) => [r.userId, r.name]));
     // Read is open to every member; the write actions below are not. The flag
     // lets the dashboard render a member the connection state without also
     // rendering Connect and Disconnect buttons that can only answer 403.
-    return json({ ok: true, integrations, admin: auth.role === "admin" });
+    return json({
+      ok: true,
+      // connectedByUserId is destructured OUT: the response carries a name or
+      // null and never an id, because a member has no use for a colleague's
+      // user id and the roster's allowlist argument applies to every
+      // people-shaped field this codebase publishes.
+      integrations: integrations.map(({ connectedByUserId, ...rest }) => ({
+        ...rest,
+        connectedBy: connectedByUserId ? nameOf.get(connectedByUserId) ?? null : null,
+      })),
+      admin: auth.role === "admin",
+    });
   }
 
   // POST /integrations/:provider/(connect|sync|disconnect)
@@ -79,7 +105,13 @@ export async function handleIntegrationsRoutes(
         provider: provider.id,
         authKind: "token",
         credentials: { token },
-        config: { ...(existing?.config ?? {}), mirrorWorkspace },
+        // connectedByUserId is written on EVERY connect, reconnects included:
+        // the person who last handed the deployment a token is the person to
+        // ask about it, so it names the current connector rather than the
+        // original one. It lives in `config` beside mirrorWorkspace — the
+        // documented escape hatch, carried across reconnects by the spread, and
+        // one place to look for connection policy.
+        config: { ...(existing?.config ?? {}), mirrorWorkspace, connectedByUserId: auth.userId },
         status: "connected",
         workspaceName,
         lastSyncedAt: existing?.lastSyncedAt ?? null,
