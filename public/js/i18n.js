@@ -28,6 +28,7 @@ const I18N_EN = {
       one: '{n} memory stored',
       other: '{n} memories stored',
     },
+    vectorizeFilterDegraded: 'Workspace filtering unavailable — results are ranked across all layers',
   },
   home: {
     greetingDefault: 'Hello',
@@ -542,6 +543,7 @@ const I18N_IT = {
       one: '{n} ricordo salvato',
       other: '{n} ricordi salvati',
     },
+    vectorizeFilterDegraded: 'Filtro per spazio di lavoro non disponibile — i risultati sono ordinati su tutti i livelli',
   },
   home: {
     greetingDefault: 'Ciao',

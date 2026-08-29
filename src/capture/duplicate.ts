@@ -7,6 +7,7 @@ import {
   CANDIDATE_SCORE_THRESHOLD,
   CONTRADICTION_MAX_TOKENS,
   SMART_MERGE_MAX_TOKENS,
+  VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY,
 } from "../constants";
 import { embed, readStreamText } from "../lib/ai";
 import { queryVectorizeScoped, singleWorkspaceFilter } from "../vectorize/scope";
@@ -43,6 +44,11 @@ export async function checkDuplicateAndContradiction(
   env: Env,
   config: Readonly<Config> = DEFAULTS,
   workspaceId?: string,
+  // Optional so every existing direct caller (tests, and any future internal
+  // caller) stays callable without one. Threaded through only to hand
+  // queryVectorizeScoped a fire-and-forget KV write on filter degradation —
+  // src/vectorize/scope.ts itself stays env-free.
+  ctx?: { waitUntil(promise: Promise<unknown>): void },
 ): Promise<{
   duplicate: DuplicateResult;
   contradiction: ContradictionResult;
@@ -62,8 +68,14 @@ export async function checkDuplicateAndContradiction(
       // Dedupe/contradiction compare against the WRITE TARGET's workspace only:
       // a private note must not collide with a colleague's shared one, and
       // vice versa. Falls back to unfiltered when Vectorize rejects the filter.
+      const onDegrade = ctx
+        ? () => ctx.waitUntil(
+            env.OAUTH_KV.put(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY, String(Date.now()))
+              .catch((e: unknown) => console.error("Vectorize filter-degradation marker write failed (non-fatal):", e)),
+          )
+        : undefined;
       const { matches: filtered } = await queryVectorizeScoped<VectorizeMatch>(
-        env.VECTORIZE, values, { topK: 5, filter: singleWorkspaceFilter(workspaceId).filter },
+        env.VECTORIZE, values, { topK: 5, filter: singleWorkspaceFilter(workspaceId).filter, onDegrade },
       );
       matches = filtered;
     } else {

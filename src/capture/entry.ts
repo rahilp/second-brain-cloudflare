@@ -64,7 +64,7 @@ export async function captureEntry(
   const c = cleanContent || raw;
   const t = [...new Set([...tags.map(tag => tag.toLowerCase()), ...hashtags])];
 
-  const { duplicate: dup, contradiction, mergeAction, neighbors } = await checkDuplicateAndContradiction(c, env, cfg, writeCtx.workspaceId);
+  const { duplicate: dup, contradiction, mergeAction, neighbors } = await checkDuplicateAndContradiction(c, env, cfg, writeCtx.workspaceId, ctx);
 
   if (dup.status === "blocked") {
     return { status: "blocked", matchId: dup.matchId, score: dup.score };
