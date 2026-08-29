@@ -1079,6 +1079,38 @@ describe("team member view", () => {
     expect(memberValues).toEqual(sourceValues);
   });
 
+  /** The <label class="team-capture-label" title="..."> that wraps a capture-default
+   *  <select>: its title attribute and its own text (before the nested <span> of the
+   *  select itself) are what a user actually sees/reads on hover. */
+  function firstCaptureLabel(html: string): { title: string; label: string } {
+    const m = html.match(/<label class="team-capture-label" title="([^"]*)">\s*([^<]*)/);
+    return { title: m?.[1] ?? "", label: (m?.[2] ?? "").trim() };
+  }
+
+  it("labels each capture-default control with its own text, not a shared or swapped one", async () => {
+    // teamShareSelect() is one implementation shared by two call sites (Phase 3's whole
+    // point), but "one implementation" is not "one label": teamMemberRow (admin) and
+    // renderTeamMember (member) each pass their OWN title/label strings into it, and
+    // those two strings are legitimately different — the member reads "New captures:"
+    // (team.myDefaultLabel) about their own row, the admin reads "Captures:"
+    // (team.defaultShareLabel) about someone else's. The options-values test above
+    // only proves the two controls share one source list; it forks cleanly if either
+    // caller's label/title is pointed at the wrong key, because nothing else in the
+    // suite reads this attribute or this text. This test pins each caller's label and
+    // title to its own expected string, deliberately not asserting the two match.
+    const admin = adminSetup();
+    await admin.ctx.loadTeam();
+    const adminLabel = firstCaptureLabel(admin.els.get("team-list").innerHTML as string);
+    expect(adminLabel.label).toBe(admin.ctx.t("team.defaultShareLabel"));
+    expect(adminLabel.title).toBe(admin.ctx.t("team.defaultShareTitle"));
+
+    const member = memberSetup();
+    await member.ctx.loadTeam();
+    const memberLabel = firstCaptureLabel(member.els.get("team-member-view").innerHTML as string);
+    expect(memberLabel.label).toBe(member.ctx.t("team.myDefaultLabel"));
+    expect(memberLabel.title).toBe(member.ctx.t("team.myDefaultLabel"));
+  });
+
   /** A member view wired for POST /team/me/default-share, exercising setMyDefaultShare. */
   function memberSetupWithDefaultShare(
     opts: { me?: unknown; defaultShareReply?: () => any } = {},
