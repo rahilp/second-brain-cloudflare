@@ -21,7 +21,7 @@ import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
 import { adminAuditEvent } from "../lib/admin-audit";
-import { createMember, listMembers, listRoster, listTeamWorkspaces, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
+import { createMember, listMembers, listRoster, listTeamWorkspaces, lookupAuditNames, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -378,6 +378,100 @@ export async function handleAdminRoutes(
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
       throw e;
     }
+  }
+
+  // GET /team/activity — the compliance feed. Two INSERT-only trails, one
+  // time-ordered answer.
+  //
+  // WHAT IS SCOPED AND WHAT IS NOT, stated plainly rather than implied:
+  //
+  //  - The MEMORY half IS scoped. The LEFT JOIN below carries the caller's own
+  //    scope in its ON clause, so a title appears only for a row this caller
+  //    could read through GET /entry.
+  //  - The ADMIN-EVENT half is DEPLOYMENT-WIDE and is not scoped at all.
+  //    admin_events.workspace_id is populated only by `team_renamed`; every
+  //    member event stores "". So on a deployment with two companies, an admin
+  //    of one sees the other's member events. That is accepted, not overlooked:
+  //    it is exactly as wide as GET /team/members already is — listMembers is
+  //    scope-exempt with no membership filter — so it adds NO new exposure.
+  //    Narrowing it would mean stamping workspace_id on every admin event from
+  //    here on, which cannot repair rows already written, and would leave a feed
+  //    that is narrow for new rows and wide for old ones.
+  //
+  // requireAdmin, not requireIdentity: the feed names who suspended whom, which
+  // is administration and not a peer fact. The gate authorises this SURFACE and
+  // widens nothing about which memory rows may be read — that is the scope
+  // clause's job, below.
+  if (url.pathname === "/team/activity" && request.method === "GET") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    const limit = intParam(url, "limit", { fallback: 50, min: 1, max: 100 });
+    if (limit instanceof Response) return limit;
+    const offset = intParam(url, "offset", { fallback: 0, min: 0 });
+    if (offset instanceof Response) return offset;
+    const scope = scopeWhere(auth);
+    // ONE compound statement, not two selects merged in JavaScript. Paging is
+    // the reason: LIMIT/OFFSET over a merged list is only correct if the merge
+    // happens before the window, and two independently-paged selects stitched
+    // together in JS silently drop rows the moment one trail is busier than
+    // the other. SQLite applies the ORDER BY and LIMIT to the whole compound.
+    //
+    // The entries side is a LEFT JOIN carrying the caller's scope IN THE ON
+    // CLAUSE, exactly as the /patterns source hydration does and for the same
+    // reason: a share event the admin may read must still not hand back the
+    // text of a memory that has since moved into someone's personal layer.
+    // An unreadable memory reads exactly like a deleted one — title null —
+    // which is the same answer GET /entry gives for that id.
+    //
+    // substr in the projection, not the whole column: a compliance feed names
+    // a memory, it does not reproduce it.
+    const { results } = await env.DB.prepare(
+      `SELECT 'admin' AS kind, ae.event AS event, ae.actor_id AS actor_id,
+              ae.target_user_id AS subject_id, '' AS entry_id, NULL AS title,
+              ae.payload AS payload, ae.created_at AS created_at
+         FROM admin_events ae
+       UNION ALL
+       SELECT 'entry', ev.event, ev.actor_id, '', ev.entry_id,
+              substr(m.content, 1, 160), ev.payload, ev.created_at
+         FROM entry_events ev
+         LEFT JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}
+        WHERE ev.event IN ('shared', 'unshared')
+       ORDER BY created_at DESC
+       LIMIT ? OFFSET ?`,
+    ).bind(...scope.bindings, limit, offset).all();
+
+    const rows = results as Record<string, unknown>[];
+    // Resolved once for the page, and through lookupAuditNames rather than
+    // listRoster: see that function. `actor` and `subject` are NAMES OR NULL,
+    // never ids — the rule Phase 2 established for the roster and Phase 3 for
+    // connectedBy, applied to every people-shaped field this codebase publishes.
+    const names = await lookupAuditNames(env, rows.flatMap((r) =>
+      [String(r.actor_id ?? ""), String(r.subject_id ?? "")]));
+    const nameOf = (id: unknown) => {
+      const key = String(id ?? "");
+      return key ? names.get(key) ?? null : null;
+    };
+    // A hand-edited payload must not 500 the feed.
+    const safeParse = (x: string) => { try { return JSON.parse(x); } catch { return {}; } };
+    return json({
+      ok: true,
+      events: rows.map((r) => ({
+        at: Number(r.created_at) || 0,
+        kind: String(r.kind),
+        event: String(r.event),
+        actor: nameOf(r.actor_id),
+        subject: nameOf(r.subject_id),
+        entryId: String(r.entry_id ?? "") || null,
+        title: r.title == null ? null : String(r.title).split("\n")[0].slice(0, 120),
+        detail: safeParse(String(r.payload ?? "{}")),
+      })),
+      // There is no `total`: a COUNT(*) over the same compound is a second full
+      // scan for a number nobody acts on, and "the page came back full, so
+      // there may be more" is the same information at no cost. The client's
+      // Show-more button reads events.length === limit.
+      limit,
+      offset,
+    });
   }
 
   // GET /stats

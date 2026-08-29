@@ -789,7 +789,15 @@ describe("the checker over the real source tree", () => {
   // change WILL fail this: when it does, read the new numbers, satisfy yourself
   // that each one moved for a reason you can name, and update them here in the
   // same commit as the change that moved them.
-  it("reports exactly 88 queries, 49 documented exceptions and 7 scope-checked", () => {
+  // MOVED 88 -> 89 by Phase 4 Task 2. GET /team/activity is the one statement
+  // in that phase that references `entries`: its second UNION arm joins the
+  // table to put a title on a share event, `LEFT JOIN entries m ON m.id =
+  // ev.entry_id AND m.${scope.clause}`, which is the caller's own scope carried
+  // in the ON clause. The checker read the whole compound as ONE query, so this
+  // is +1 and not +2 — recorded as the tool printed it, with the SQL left in
+  // the shape the paging correctness needs rather than reshaped for the lexer.
+  // Exceptions stay 49 and scope-checked stays 7: nothing was exempted.
+  it("reports exactly 89 queries, 49 documented exceptions and 7 scope-checked", () => {
     const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
       cwd: ROOT,
       encoding: "utf8",
@@ -804,7 +812,7 @@ describe("the checker over the real source tree", () => {
       { queries, exempt, checked },
       "check:scope counts moved. If that was deliberate, say so out loud and " +
         "update this expectation in the same commit.",
-    ).toEqual({ queries: 88, exempt: 49, checked: 7 });
+    ).toEqual({ queries: 89, exempt: 49, checked: 7 });
   });
 
   it("is wired into package.json and CI, or nothing runs it", () => {
