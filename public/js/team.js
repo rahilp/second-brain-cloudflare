@@ -218,7 +218,10 @@ function renderTeamMember() {
   const teamName = (teamRosterTeams[0]?.name || '').trim()
   // Verbatim from effectiveDefault — see captureDefaultKey in utils.js, which
   // the composer hint reads too so the two can never say different things.
-  const defaultKey = captureDefaultKey(teamMyDefault)
+  // 'team' picks the wording for THIS screen: the hint below says only an
+  // admin can change the default, and only an admin can, so the override case
+  // is "(set for you)" here rather than the composer's "(your setting)".
+  const defaultKey = captureDefaultKey(teamMyDefault, 'team')
   view.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 24px;">
       ${teamName ? `<div>

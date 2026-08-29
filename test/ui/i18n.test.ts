@@ -423,11 +423,13 @@ describe("dashboard i18n", () => {
     const EXPECTED_DYNAMIC_CALL_SITES = [
       "public/js/brief.js t(`patterns.shapes.${shape}`)",
       // Both of these resolve through captureDefaultKey() in public/utils.js, which
-      // returns one of exactly four literals — home.auto{Shared,Personal}{Yours,Org}.
-      // The composer and the Team screen's member readout share it precisely so one
-      // profile cannot be described two ways, which is also why neither site can spell
-      // the keys out. All four are asserted verbatim in ui/composer-policy-hint.test.ts
-      // and reached again in ui/team-panel.test.ts.
+      // returns one of exactly six literals — home.auto{Shared,Personal}{Yours,Org} for
+      // the composer, plus team.auto{Shared,Personal}SetForYou, which say the same fact
+      // in the voice of a screen where only an admin can change it. The composer and the
+      // Team screen's member readout share the helper precisely so one profile cannot be
+      // described two ways, which is also why neither site can spell the keys out. The
+      // four home keys are asserted verbatim in ui/composer-policy-hint.test.ts and the
+      // two team keys in ui/team-panel.test.ts.
       "public/js/home.js t(key)",
       "public/js/team.js t(defaultKey)",
       "public/js/integrations.js t(keys[id] || 'integrations.categoryOther')",

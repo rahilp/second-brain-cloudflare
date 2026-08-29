@@ -938,11 +938,14 @@ describe("team member view", () => {
     });
     await ctx.loadTeam();
     const html = els.get("team-member-view").innerHTML as string;
-    expect(html).toContain("Auto → Personal (your setting)");
+    expect(html).toContain("Auto → Personal (set for you)");
     expect(html).not.toContain("Shared");
-    // Literally the composer's own string (public/js/home.js), so the two
-    // surfaces cannot describe one profile two ways.
-    expect(html).toContain(ctx.t("home.autoPersonalYours"));
+    expect(html).toContain(ctx.t("team.autoPersonalSetForYou"));
+    // NOT the composer's phrasing: "(your setting)" claims an agency this
+    // screen denies two lines further down, and POST /team/members/default-share
+    // is requireAdmin, so the member really cannot change it.
+    expect(html).not.toContain(ctx.t("home.autoPersonalYours"));
+    expect(html).not.toContain("your setting");
   });
 
   it("says Shared when the member overrides a personal org default the other way", async () => {
@@ -951,7 +954,8 @@ describe("team member view", () => {
     });
     await ctx.loadTeam();
     const html = els.get("team-member-view").innerHTML as string;
-    expect(html).toContain(ctx.t("home.autoSharedYours"));
+    expect(html).toContain(ctx.t("team.autoSharedSetForYou"));
+    expect(html).not.toContain("your setting");
     expect(html).not.toContain("Personal");
   });
 
@@ -1023,7 +1027,8 @@ describe("team member view", () => {
     await ctx.loadTeam();
     const html = els.get("team-member-view").innerHTML as string;
     expect(html).toContain("Amministratore");
-    expect(html).toContain(ctx.t("home.autoPersonalYours"));
+    expect(html).toContain(ctx.t("team.autoPersonalSetForYou"));
+    expect(html).not.toContain("tua impostazione");
     // Both catalogs, not just English: a key present in en and missing from it
     // renders as its own key path here rather than failing loudly.
     expect(html).not.toMatch(/(team|home|common)\.[a-zA-Z]/);
