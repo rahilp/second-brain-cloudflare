@@ -629,6 +629,8 @@ const I18N_EN = {
     evIntegrationDisconnected: 'Disconnected an integration',
     evShared: 'Shared a memory with the team',
     evUnshared: 'Made a memory personal again',
+    exportCsv: 'Export CSV',
+    exportFailed: 'Could not export the activity log.',
   },
 }
 
@@ -1240,6 +1242,8 @@ const I18N_IT = {
     evIntegrationDisconnected: 'Ha scollegato un’integrazione',
     evShared: 'Ha condiviso un ricordo col team',
     evUnshared: 'Ha reso di nuovo personale un ricordo',
+    exportCsv: 'Esporta CSV',
+    exportFailed: 'Impossibile esportare il registro attività.',
   },
 }
 

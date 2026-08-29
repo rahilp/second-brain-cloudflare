@@ -158,3 +158,73 @@ function maybeRevealActivity() {
   el.style.display = ''
   if (activityRows.length === 0) return loadTeamActivity()
 }
+
+/** Rows one export will read. Ten pages; a trail longer than this is a
+ *  database export, not a button. */
+const ACTIVITY_EXPORT_MAX = 1000
+
+/**
+ * The trail as a CSV.
+ *
+ * Built in the browser, because there is no build step and the tree ships to
+ * Workers: a server-side /team/activity.csv would be a second response format,
+ * a second content-type path and a second projection of the same rows that can
+ * drift from the JSON one — and it would have to page an unbounded trail
+ * inside one Worker invocation. The DATA is deliberately not client-side: this
+ * re-reads the same endpoint the view reads, so there is exactly one
+ * implementation of what an activity row is.
+ *
+ * The seven column names are English literals in both locales, and `when` is
+ * ISO 8601 while the screen shows a locale-formatted date. A CSV is read by a
+ * compliance tool and by a spreadsheet formula someone wrote last quarter; a
+ * header row that changes with the operator's browser language is a file
+ * format that changes with the operator's browser language.
+ */
+async function exportActivityCsv(btn) {
+  if (btn) {
+    btn.disabled = true
+    btn.textContent = t('activity.loading')
+  }
+  try {
+    // The same endpoint the view reads, page by page. Not a second query and
+    // not the rows already on screen: "export what I can see" is a different
+    // document depending on how many times someone pressed Show more.
+    const all = []
+    while (all.length < ACTIVITY_EXPORT_MAX) {
+      const res = await fetch(
+        `${WORKER_URL}/team/activity?limit=${ACTIVITY_PAGE}&offset=${all.length}`,
+        { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } },
+      )
+      if (!res.ok) throw new Error(String(res.status))
+      const data = await res.json()
+      const page = Array.isArray(data.events) ? data.events : []
+      all.push(...page)
+      if (page.length < ACTIVITY_PAGE) break
+    }
+    const ts = new Date().toISOString().slice(0, 10)
+    downloadTextFile(
+      document,
+      csvDocument(
+        ['when', 'event', 'actor', 'subject', 'memory_id', 'memory', 'detail'],
+        all.map((r) => [
+          new Date(r.at).toISOString(),
+          r.event,
+          r.actor ?? '',
+          r.subject ?? '',
+          r.entryId ?? '',
+          r.title ?? '',
+          JSON.stringify(r.detail ?? {}),
+        ]),
+      ),
+      `second-brain-activity-${ts}.csv`,
+      'text/csv;charset=utf-8',
+    )
+  } catch {
+    showToast(t('activity.exportFailed'))
+  } finally {
+    if (btn) {
+      btn.disabled = false
+      btn.textContent = t('activity.exportCsv')
+    }
+  }
+}
