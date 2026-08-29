@@ -337,6 +337,129 @@ describe("scanSource — inverse and near-miss predicates", () => {
   });
 });
 
+/**
+ * Round three. Two classes: references that VANISH (the worst shape available —
+ * the summary line gets healthier as the tree gets worse), and a licence
+ * mechanism that could be triggered by accident rather than by a human decision.
+ */
+describe("scanSource — silent drops", () => {
+  it("(A1) sees a corpus table inside a nested template inside an interpolation", () => {
+    // The natural way anyone writes an \"admin sees everything\" branch, and
+    // exactly the conditional shape (B4) exists to catch — but it was erased
+    // rather than caught: maskInterpolations skipped nested templates whole, so
+    // the second FROM entries never reached the parser, and the file sweep had
+    // already keyed this span. queries=1, zero violations.
+    const r = scanSource(
+      "const q = `SELECT id, content FROM entries WHERE workspace_id = ?" +
+      " ${includeAll ? `UNION ALL SELECT id, content FROM entries` : \"\"}" +
+      " ORDER BY created_at`;",
+    );
+    expect(r.queries).toBe(1);
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toMatch(/nested template|could not/i);
+  });
+
+  it("(A1) a hidden table can be licensed by a human, like every other category", () => {
+    // The escape hatch is deliberate. Making this one category unannotatable
+    // would leave no way past it but deleting the query, and the reason
+    // requirement is what does the work everywhere else in this file.
+    const r = scanSource([
+      "// scope-exempt: the UNION arm is admin-only and returns counts",
+      "const q = `SELECT id FROM entries WHERE workspace_id = ?" +
+      " ${includeAll ? `UNION ALL SELECT id FROM entries` : \"\"}`;",
+    ].join("\n"));
+    expect(r.violations).toEqual([]);
+    expect(r.exceptions.length).toBe(1);
+  });
+
+  it("(A1) still passes an interpolation with no corpus table in it", () => {
+    // The guard must fire on a hidden table, not on every nested template.
+    const r = scanSource(
+      "const q = `SELECT id FROM entries WHERE workspace_id = ?" +
+      " ${extra ? `AND tags LIKE ?` : \"\"}`;",
+    );
+    expect(r.violations).toEqual([]);
+  });
+
+  it("(A2) sees a quoted schema qualifier, in every spelling", () => {
+    // B3 covered main.entries and main.\"edges\"; these three still gave
+    // queries=0 with nothing reported, which is the same defect B3 was raised for.
+    for (const ref of ['"main"."entries"', "[main].[entries]", '"main".entries']) {
+      const r = scanSource(`const q = \`SELECT content FROM ${ref} ORDER BY created_at\`;`);
+      expect([ref, r.queries, r.violations.length]).toEqual([ref, 1, 1]);
+    }
+    // And still satisfiable, so this is not a blanket ban on qualified names.
+    expect(scanSource('const q = `SELECT content FROM "main"."entries" WHERE ${scope.clause}`;')
+      .violations).toEqual([]);
+  });
+});
+
+describe("scanSource — a licence must be a human decision", () => {
+  it("(A3) refuses a marker with no reason", () => {
+    const r = scanSource([
+      "// scope-exempt:",
+      "const q = `SELECT * FROM entries`;",
+    ].join("\n"));
+    expect(r.exceptions).toEqual([]);
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toMatch(/no reason/i);
+  });
+
+  it("(A4) is not licensed by the marker text appearing in a string or a doc comment", () => {
+    // A raw .includes() meant a test fixture, an error message or a JSDoc line
+    // mentioning the marker granted a real licence to the next query below it.
+    for (const line of [
+      'const ERR = "use scope-exempt: to document";',
+      "/** see scope-exempt: docs */",
+      "const help = `write scope-exempt: above the query`;",
+      "// TODO: we should add scope-exempt: here one day",
+    ]) {
+      const r = scanSource([line, "const q = `SELECT * FROM entries`;"].join("\n"));
+      expect([line, r.violations.length, r.exceptions.length]).toEqual([line, 1, 0]);
+    }
+  });
+
+  it("(A4) still accepts a marker that opens a real comment", () => {
+    for (const line of [
+      "// scope-exempt: by-id, gated at the route",
+      "  //   scope-exempt: by-id, gated at the route",
+      " * scope-exempt: by-id, gated at the route",
+    ]) {
+      const r = scanSource([line, "const q = `SELECT * FROM entries`;"].join("\n"));
+      expect([line, r.violations, r.exceptions.length]).toEqual([line, [], 1]);
+    }
+  });
+});
+
+describe("scanSource — interpolations must be in predicate position too", () => {
+  it("(A6) rejects a scope clause that is projected, ordered or limited by", () => {
+    for (const sql of [
+      "`SELECT ${scope.clause} AS x FROM entries`",
+      "`SELECT id FROM entries ORDER BY ${nodeScopeSql}`",
+      "`SELECT id FROM entries LIMIT ${scope}`",
+      "`SELECT DISTINCT ${scope.clause} FROM entries`",
+    ]) {
+      expect([sql, scanSource(`const q = ${sql};`).violations.length]).toEqual([sql, 1]);
+    }
+  });
+
+  it("(A6) still accepts every predicate position the codebase writes", () => {
+    for (const sql of [
+      "`SELECT id FROM entries WHERE ${scope.clause}`",
+      "`SELECT id FROM entries WHERE tags LIKE ? AND ${scope.clause}`",
+      "`SELECT id FROM entries a WHERE x = 1 AND a.${scope.clause}`",
+      "`SELECT SUM(CASE WHEN ${scope.clause} THEN 1 ELSE 0 END) FROM entries`",
+      "`SELECT id FROM entries WHERE (${scope.clause})`",
+      // A fragment appended after a bound parameter or a closing paren carries
+      // its own AND inside the JS. Accepted on trust — see limitation 6.
+      "`SELECT id FROM entries WHERE tags LIKE ? ${tagScopeSql}`",
+      "`SELECT id FROM entries WHERE id IN (${ph})${rcScopeSql}`",
+    ]) {
+      expect([sql, scanSource(`const q = ${sql};`).violations]).toEqual([sql, []]);
+    }
+  });
+});
+
 describe("scanSource — documented limitations, pinned so the header cannot drift", () => {
   it("limitation 3: does not parse boolean structure, so `OR 1=1` defeats a real clause", () => {
     // Asserted as CURRENT BEHAVIOUR, not as desired behaviour. The clause is
@@ -346,6 +469,19 @@ describe("scanSource — documented limitations, pinned so the header cannot dri
     // someone teaches the checker boolean structure, this test goes red and the
     // header limitation gets deleted in the same commit.
     const r = scanSource("const q = `SELECT content FROM entries WHERE ${scope.clause} OR 1=1`;");
+    expect(r.violations).toEqual([]);
+  });
+
+  it("limitation 2 + item 4: a conditional hoisted one line up is not caught", () => {
+    // Asserted as CURRENT BEHAVIOUR. The rejection in item 4 is a test on the
+    // text between ${ and }, so moving the ternary into a const defeats it —
+    // the interpolation is then a bare scope-shaped identifier. Pinned because
+    // the header now says this in as many words, and the sentence and the code
+    // must go red together if either changes.
+    const r = scanSource([
+      'const scopeSql = isAdmin ? "1=1" : scope.clause;',
+      "const q = `SELECT content FROM entries WHERE ${scopeSql}`;",
+    ].join("\n"));
     expect(r.violations).toEqual([]);
   });
 

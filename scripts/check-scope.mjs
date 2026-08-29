@@ -39,11 +39,13 @@
  *      that passed on the operator alone.
  *   3. A hard-coded literal. `workspace_id = 'ws-bob'` names a workspace the
  *      SOURCE chose, which is the opposite of scoping.
- *   4. A conditional clause. `${scope ? `AND ${scope.clause}` : ""}` is unscoped
- *      on the arm that matters. The test is structural — any `?`, `&&` or `||`
- *      in the interpolation disqualifies it — because enumerating spellings was
- *      a losing game: `: ""` was rejected while `` : `` ``, `: "1=1"`,
- *      `!scope ? "" : …`, `scope?.clause ?? ""` and `scope && `…`` all passed.
+ *   4. A conditional clause WRITTEN IN THE INTERPOLATION.
+ *      `${scope ? `AND ${scope.clause}` : ""}` is unscoped on the arm that
+ *      matters, so any `?`, `&&` or `||` inside the braces disqualifies it. That
+ *      is a test on the text between `${` and `}` and nothing more: hoist the
+ *      same ternary one line up — `const scopeSql = isAdmin ? "1=1" :
+ *      scope.clause;` and then `${scopeSql}` — and it passes, for the reason
+ *      limitation 2 gives. The rule catches the spelling, not the idea.
  *
  * Per-alias attribution is load-bearing too: `JOIN entries a … JOIN entries b …
  * WHERE a.${scope.clause}` is the /insights/dry-run leak with one alias dropped,
@@ -72,9 +74,13 @@
  *
  * A regex lexer, not a SQL parser. This list is the boundary, not an apology for
  * it — and it is the part of this file most worth keeping honest, because a
- * reader will trust it more than they will read the code. Where the lexer cannot
- * decide it fails loudly and someone annotates: a false positive costs thirty
- * seconds, a false negative is a leak with a green tick beside it.
+ * reader will trust it more than they will read the code.
+ *
+ * The intent is that where the lexer cannot decide it fails loudly, because a
+ * false positive costs thirty seconds and a false negative is a leak with a
+ * green tick beside it. The intent is not the same as the guarantee: the list
+ * below is where the two come apart, and every entry in it was found by someone
+ * attacking this file rather than by reasoning about it.
  *
  *  1. SQL assembled by concatenation is invisible. `"SELECT … FROM " +
  *     "entries WHERE …"` never contains the token `FROM entries`, so nothing
@@ -114,13 +120,33 @@
  * 10. The comment skip is per-line: a match on a line whose first non-space
  *     character is `*` or `//` is treated as prose, even in the unlikely case
  *     that the line sits inside a template literal.
+ * 11. It reads `src/**\/*.ts` and nothing else. `db/schema.sql`, `installer/`,
+ *     `integrations/`, `test/` and every migration outside src/ are never
+ *     looked at. That is survivable today because the SQL out there is DDL, but
+ *     it is not a claim about them — it is an absence of one.
  *
- * WHAT IT DOES PROVE
+ * WHAT IT DOES PROVE, AND WHAT IT DOES NOT
  *
- * Of the statements it can see — template literals, per limitation 1 — none
- * reads `entries` or `edges` without either a narrowing clause for every alias,
- * or a human-written sentence saying why not. A table reference it matches but
- * cannot parse is reported, never dropped, so the count cannot quietly shrink.
+ * This sentence has been wrong twice. Both times it was wrong in the same
+ * direction — claiming completeness the tool cannot deliver — and both times a
+ * short adversarial sweep found the counterexample. So it is now written as a
+ * description of what the script does, which is checkable, rather than as a
+ * property of the tree, which is not:
+ *
+ *   For every reference to `entries` or `edges` that this script MATCHES, it
+ *   either finds a narrowing clause attributed to each alias, or it fails —
+ *   and where it matches a reference it cannot parse, or one hidden inside a
+ *   nested template, it fails too rather than dropping it. Every failure it
+ *   does not raise is either a clause it verified or a non-empty sentence a
+ *   human wrote in a comment above the query.
+ *
+ *   It does NOT claim to have matched them all. Limitations 1 and 11 are holes
+ *   by construction, and 2 through 9 are places where a match is judged on a
+ *   name or a position rather than on meaning.
+ *
+ * Read a green run as "nothing this script can see is unscoped". Never as
+ * "nothing is unscoped". The thing that tests the actual behaviour is
+ * test/integration/team-isolation.test.ts, and it always was.
  *
  * There is no ESLint in this repo; this is a plain Node script with no
  * dependencies, run by `npm run check:scope` and by CI.
@@ -133,8 +159,25 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The tables whose rows are memory content and must never be read corpus-wide. */
+const QUALIFIER = `(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]*"|\\[[^\\]]*\\])`;
+
+/**
+ * The file-level sweep. Its job is to SEE every reference, in any spelling —
+ * `entries`, `"entries"`, `[entries]`, `main.entries`, `"main"."entries"`,
+ * `[main].[entries]`. Whether a reference can then be parsed and attributed is
+ * the statement parser's problem, and one it reports rather than drops.
+ *
+ * Getting this pattern too narrow is not a false positive, it is a DISAPPEARANCE:
+ * an unmatched reference is neither flagged nor counted, so the summary line gets
+ * healthier as the tree gets worse. That is why the qualifier alternative accepts
+ * quoted and bracketed names too — three of the six spellings used to vanish here.
+ */
 const FILE_TABLE_PATTERN =
-  /\b(?:FROM|JOIN)\s+(?:[A-Za-z_][A-Za-z0-9_$]*\s*\.\s*)?["'\[]?\s*(entries|edges)\b/gi;
+  new RegExp(`\\b(?:FROM|JOIN)\\s+(?:${QUALIFIER}\\s*\\.\\s*)?["'\\[]?\\s*(entries|edges)\\b`, "gi");
+
+/** The same reference test, for looking inside one interpolation. */
+const HIDDEN_TABLE = new RegExp(
+  `\\b(?:FROM|JOIN)\\s+(?:${QUALIFIER}\\s*\\.\\s*)?["'\\[]?\\s*(entries|edges)\\b`, "i");
 
 /** How far above a query an annotation may sit and still plainly be about it. */
 const ANNOTATION_LOOKBACK = 5;
@@ -422,15 +465,39 @@ const SCOPE_SHAPES = [
 const CONDITIONAL = /\?|&&|\|\|/;
 
 /**
+ * Positions in which an interpolation is plainly NOT a predicate: projected,
+ * ordered by, limited by, aliased.
+ *
+ * A blocklist, not an allowlist, and the difference is disclosed in limitation 6.
+ * An allowlist would reject `WHERE tags LIKE ? ${tagScopeSql}` and
+ * `WHERE id IN (${ph})${rcScopeSql}` — real, correctly scoped queries whose
+ * leading AND lives inside the JavaScript fragment, where nothing here can see
+ * it. So a fragment appended after a bound parameter or a closing paren is
+ * accepted on trust, and only the positions that cannot be a predicate are
+ * refused.
+ */
+const NON_PREDICATE_POSITION = /(?:\bSELECT|\bDISTINCT|\bBY|\bLIMIT|\bOFFSET|\bAS|,)\s*$/i;
+
+/**
  * The scope predicates in a statement, each attributed to an alias where the
- * source says which one.
+ * source says which one — plus any corpus table hidden inside an interpolation,
+ * which is reported rather than parsed.
  */
 function scopePredicates(sql) {
   const { masked, interps } = maskInterpolations(sql);
   const commentRanges = sqlCommentRanges(masked);
+  const blanked = blankSqlComments(masked);
   const predicates = [];
+  const hidden = [];
 
   for (const it of interps) {
+    // A corpus table inside a nested template inside an interpolation — the
+    // natural spelling of an "admin sees everything" branch. It used to be
+    // erased outright: masking skips nested templates whole, so the reference
+    // never reached the parser, and the file sweep had already keyed this span.
+    // Erased, not merely passed, which is the worse of the two.
+    if (HIDDEN_TABLE.test(it.inner)) hidden.push(it.inner.replace(/\s+/g, " ").trim().slice(0, 60));
+
     // A clause inside a SQL comment is not applied. `-- AND ${scope.clause}`
     // and `/* ${scope.clause} */` both passed until this ran on the
     // interpolation path as well as the literal one.
@@ -438,8 +505,14 @@ function scopePredicates(sql) {
     const inner = it.inner.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
     if (!SCOPE_SHAPES.some((re) => re.test(inner))) continue;
     if (CONDITIONAL.test(inner)) continue;
+    // Predicate position, the same requirement the literal `workspace_id` path
+    // has always had. `SELECT ${scope.clause} AS x FROM entries` renders the
+    // clause into the projection and constrains nothing.
+    const before = blanked.slice(0, it.start).replace(/[A-Za-z_][A-Za-z0-9_$]*\s*\.\s*$/, "");
+    if (NON_PREDICATE_POSITION.test(before)) continue;
     predicates.push({ alias: it.alias ? it.alias.toLowerCase() : null });
   }
+  predicates.hidden = hidden;
 
   const clean = blankSqlComments(masked);
   WORKSPACE_PREDICATE.lastIndex = 0;
@@ -465,7 +538,8 @@ function scopePredicates(sql) {
  */
 function unscopedRefs(sql) {
   const refs = tableRefs(blankSqlComments(maskInterpolations(sql).masked));
-  const pool = scopePredicates(sql).map((p) => ({ ...p, used: false }));
+  const found = scopePredicates(sql);
+  const pool = found.map((p) => ({ ...p, used: false }));
   const pending = [];
 
   for (const ref of refs) {
@@ -479,10 +553,39 @@ function unscopedRefs(sql) {
     if (shared) shared.used = true;
     else unscoped.push(ref);
   }
-  return { unscoped, unreadable: refs.unreadable, total: refs.length };
+  return { unscoped, unreadable: refs.unreadable, hidden: found.hidden, total: refs.length };
 }
 
 const describeRef = (r) => (r.name === r.table ? r.table : `${r.table} ${r.name}`);
+
+/**
+ * Read an annotation off one source line — but only where a human plainly put
+ * one there.
+ *
+ * The marker must OPEN the comment body. This was a raw `.includes()` over the
+ * line, so anything within five lines that merely contained the marker text
+ * granted a real licence to the next query: an error message
+ * (`const ERR = "use scope-exempt: to document"`), a JSDoc line explaining the
+ * convention, a test fixture, a TODO about adding one later. A licence handed
+ * out by accident is worth less than no licence at all, because the whole
+ * justification for the mechanism is that somebody decided.
+ *
+ * An empty reason is refused for the same reason: a bare marker records that
+ * someone wanted the check to stop, not why it is safe.
+ */
+function annotationOn(line) {
+  const trimmed = (line ?? "").trimStart();
+  let body = null;
+  if (trimmed.startsWith("//")) body = trimmed.slice(2).trimStart();
+  else if (trimmed.startsWith("/*")) body = trimmed.slice(2).replace(/^\*+/, "").trimStart();
+  else if (trimmed.startsWith("*")) body = trimmed.slice(1).trimStart();
+  if (body === null) return null;
+
+  const hit = MARKERS.find((mk) => body.startsWith(mk.marker));
+  if (!hit) return null;
+  const reason = body.slice(hit.marker.length).replace(/\*\/\s*$/, "").trim();
+  return { kind: hit.kind, marker: hit.marker, reason };
+}
 
 /**
  * Scan one file's source.
@@ -535,44 +638,48 @@ export function scanSource(text) {
   const claimed = new Set();
 
   for (const query of [...seen.values()].sort((a, b) => a.line - b.line)) {
-    const { unscoped, unreadable, total } = unscopedRefs(query.text);
+    const { unscoped, unreadable, hidden, total } = unscopedRefs(query.text);
     const names = unscoped.map(describeRef);
 
-    // The file sweep saw a reference here and the statement parse cannot account
-    // for it. Never silently dropped — that is the shape of a false pass.
-    if (unreadable.length || total === 0) {
-      violations.push({
-        line: query.line,
-        snippet: `could not parse the table reference: ${unreadable.join(", ") || query.text.replace(/\s+/g, " ").trim().slice(0, 60)}`,
-        unscoped: names,
-      });
-      continue;
+    // Three ways a statement can be a problem, in the order they matter. The
+    // first two are the shapes that used to VANISH — counted as nothing, so the
+    // summary line got healthier as the tree got worse — and they take priority
+    // over a missing clause, because a scope clause elsewhere in the statement
+    // says nothing about a branch that carries its own FROM.
+    let problem = null;
+    if (hidden.length) {
+      problem = `a corpus table is reached from inside a nested template, where the clause for it cannot be read: \${${hidden[0]}}`;
+    } else if (unreadable.length || total === 0) {
+      problem = `could not parse the table reference: ${unreadable.join(", ") || query.text.replace(/\s+/g, " ").trim().slice(0, 60)}`;
+    } else if (unscoped.length) {
+      problem = query.text.replace(/\s+/g, " ").trim().slice(0, 100);
     }
-    if (unscoped.length === 0) continue;
+    if (!problem) continue;
 
     const from = Math.max(0, query.line - 1 - ANNOTATION_LOOKBACK);
     let found = null;
     for (let i = query.line - 1; i >= from && !found; i--) {
       if (claimed.has(i)) continue;
-      const hit = MARKERS.find((mk) => (lines[i] ?? "").includes(mk.marker));
+      const hit = annotationOn(lines[i]);
       if (hit) found = { index: i, ...hit };
     }
     if (found) {
       claimed.add(found.index);
-      const line = lines[found.index];
-      exceptions.push({
-        line: query.line,
-        kind: found.kind,
-        reason: line.slice(line.indexOf(found.marker) + found.marker.length).trim(),
-        unscoped: names,
-      });
+      // A marker with nothing after it records that someone wanted the check to
+      // stop, not why the query is safe. That is not a reason, so it is not a
+      // licence.
+      if (!found.reason) {
+        violations.push({
+          line: query.line,
+          snippet: `\`${found.marker}\` on line ${found.index + 1} has no reason after it`,
+          unscoped: names,
+        });
+        continue;
+      }
+      exceptions.push({ line: query.line, kind: found.kind, reason: found.reason, unscoped: names });
       continue;
     }
-    violations.push({
-      line: query.line,
-      snippet: query.text.replace(/\s+/g, " ").trim().slice(0, 100),
-      unscoped: names,
-    });
+    violations.push({ line: query.line, snippet: problem, unscoped: names });
   }
 
   return { queries: seen.size, exceptions, violations };
@@ -607,10 +714,12 @@ function main() {
       `${checked.length} scope-checked (clause assembled in JS)`,
     );
     // The inventory, with the machine's own alias list beside each human
-    // sentence. Printed rather than summarised because the two drifting apart is
-    // exactly what nobody would otherwise notice: the reason says one thing about
-    // which table is unscoped, the checker says another, and only seeing them on
-    // one line makes that obvious.
+    // sentence. Behind --inventory rather than on by default: its value is as a
+    // diffable CI artifact — the reason says one thing about which table is
+    // unscoped, the checker says another, and only seeing them on one line makes
+    // that obvious — but a hundred lines on every local run is noise, and noise
+    // is how a green tick stops being read.
+    if (!process.argv.includes("--inventory")) process.exit(0);
     for (const label of ["exempt", "checked"]) {
       const rows = documented.filter((e) => e.kind === label);
       if (!rows.length) continue;
