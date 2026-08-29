@@ -3,7 +3,7 @@ import { resolveConfig } from "../config";
 import { LLM_MODEL, VECTORIZE_FIX_HINT } from "../constants";
 import { buildEntryFilterQuery } from "../capture/entry";
 import { compressTag } from "../compression/digest";
-import { CORS_HEADERS, intParam, json } from "../lib/http";
+import { CORS_HEADERS, intParam, json, readWorkspaceParam } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
 import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
@@ -27,20 +27,6 @@ function scopeEntryFilterQuery(
     ? q.sql.replace(" ORDER BY", ` AND ${scope.clause} ORDER BY`)
     : q.sql.replace(" ORDER BY", ` WHERE ${scope.clause} ORDER BY`);
   return { sql, bindings: [...q.bindings.slice(0, -1), ...scope.bindings, ...q.bindings.slice(-1)] };
-}
-
-/**
- * The ?workspace= layer filter shared by /list and /recall. Only narrows the
- * caller's readable set — "personal" and "company" both resolve from the
- * identity, so a caller can never name a workspace it does not belong to.
- */
-function readWorkspaceParam(url: URL): "personal" | "company" | undefined | Response {
-  const raw = url.searchParams.get("workspace")?.trim();
-  if (!raw) return undefined;
-  if (raw !== "personal" && raw !== "company") {
-    return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
-  }
-  return raw;
 }
 
 export async function handleRecallRoutes(

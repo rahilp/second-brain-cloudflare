@@ -3,7 +3,8 @@ import { DEFAULTS, type Config } from "../config";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { getKind } from "../memory/kind";
 import { getStatus } from "../memory/status";
-import { scopeWhere } from "../lib/scope";
+import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
+import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import type { Identity } from "../lib/identity";
 import { edgeLabel } from "./edges";
 import type { Connection, EdgeProvenance, GraphNeighbor, GraphView } from "./types";
@@ -24,8 +25,26 @@ const GRAPH_MAX_NODES = 50;
 // a deterministically dead graph tab for every free-plan brain that large, and
 // runGraphPass backfills edges nightly, so a brain arrives there on its own.
 //
-// 47 is the WARM figure. On a cold isolate the budget is shared with
-// initializeDatabase, which fires under waitUntil and spends about 12 more on
+// That formula is the IDENTITY-LESS arithmetic — the cron callers. A scoped
+// caller costs more, and it always did: the scope bindings share each
+// statement's 100-parameter budget with the ids, so the batches shrink and the
+// batch COUNT rises. Measured at N=1500 (test/integration/graph-team-aware.test.ts
+// covers the shape of it; these numbers came from counting env.DB.prepare):
+//
+//   identity-less                                    46
+//   member, personal-only view                       48
+//   member, view containing a shared node            49  (+1 actor lookup)
+//   admin (reads the legacy '' layer too), shared    50
+//
+// The actor lookup is ONE statement for the whole view, issued only when the
+// view actually contains a company-layer node, so it cannot scale with N. The
+// rest of that spread is the pre-existing binding arithmetic, not this pass.
+// With the KV config read and the identity batch on top, a 1500-node TEAM brain
+// is at or over the free-plan ceiling — the same conclusion #282 reaches for the
+// cold path, and for the same reason: the tax is fixed and it eats any N.
+//
+// 47 is the WARM figure for the identity-less path. On a cold isolate the
+// budget is shared with initializeDatabase, which fires under waitUntil and spends about 12 more on
 // its DDL, so the first request against a fresh isolate costs ~59 and is over
 // the limit — 1500 buys margin on the warm path, it does not clear the cold one.
 // That is #282 (probe sqlite_master once instead of issuing twelve blind
@@ -241,7 +260,7 @@ export async function getConnections(id: string, type: string | undefined, env: 
   return out;
 }
 
-export async function buildGraph(opts: { seed?: string; limit?: number }, env: Env, config: Readonly<Config> = DEFAULTS, identity?: Identity): Promise<GraphView> {
+export async function buildGraph(opts: { seed?: string; limit?: number; only?: "personal" | "company" }, env: Env, config: Readonly<Config> = DEFAULTS, identity?: Identity): Promise<GraphView> {
   // "No cap" resolves to GRAPH_VIEW_MAX_NODES, never to Infinity. Anything that
   // is not a positive finite number — absent, 0, negative, NaN — takes that
   // branch, so a caller who reaches here past the route's own validation still
@@ -258,9 +277,12 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
   const limit = Math.min(asked, GRAPH_VIEW_MAX_NODES);
 
   let nodeIds: string[];
-  const scope = identity ? scopeWhere(identity) : null;
+  // `only` narrows every one of the three scoped statements below — the edge
+  // scan, the seed walk and the node hydration. Narrowing one and not the rest
+  // would answer with nodes from one layer joined by edges from both.
+  const scope = identity ? scopeWhere(identity, opts.only) : null;
   if (opts.seed) {
-    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true }, env, config, identity);
+    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true, only: opts.only }, env, config, identity);
     nodeIds = [opts.seed, ...neighbors.map(n => n.id)].slice(0, limit);
   } else {
     const { results } = await env.DB.prepare(
@@ -291,17 +313,33 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     const ph = batch.map(() => "?").join(", ");
     // scope-checked: the caller's clause IS applied — nodeScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN (${ph})${nodeScopeSql}`
+      // workspace_id and actor_id ride along in the projection the hydration was
+      // already issuing: same rows, same statement, no extra read.
+      `SELECT id, content, tags, importance_score, created_at, workspace_id, actor_id FROM entries WHERE id IN (${ph})${nodeScopeSql}`
     ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
     for (const r of results) nodeRows.set(r.id as string, r);
   }
 
+  // Exactly GET /list's layer rule, so the canvas and the list badge the same
+  // row the same way. Without an Identity there is no personal or company layer
+  // to be in — the cron and unit callers get "system" on every node and no
+  // author lookup at all.
+  const layerOf = (wid: unknown): "personal" | "company" | "system" =>
+    !identity ? "system"
+    : wid === identity.personalWorkspaceId ? "personal"
+    : isCompanyWorkspace(identity, wid) ? "company"
+    : "system";
+
   const nodes: GraphView["nodes"] = [];
+  /** node id → actor_id, company-layer nodes only: the ids worth a name. */
+  const companyActors = new Map<string, string>();
   for (const id of nodeIds) {
     const r = nodeRows.get(id);
     if (!r) continue;
     const tags: string[] = JSON.parse(r.tags ?? "[]");
     if (tags.some(t => MACHINE_AUTHORED_TAGS.has(t))) continue;
+    const workspace = layerOf(r.workspace_id);
+    if (workspace === "company") companyActors.set(id, String(r.actor_id ?? ""));
     nodes.push({
       id,
       label: (r.content as string).slice(0, 80),
@@ -310,8 +348,26 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
       status: getStatus(tags),
       importance: (r.importance_score as number) ?? 0,
       created_at: r.created_at as number,
+      workspace,
+      // Filled in below for company nodes; null is the answer everywhere else.
+      actor_name: null,
     });
   }
+
+  // ONE statement for the whole view, and only when there is a shared node in
+  // it: a per-node lookup would scale the subrequest count with the node budget,
+  // which is the one thing GRAPH_VIEW_MAX_NODES is sized against. A personal
+  // brain, a personal-only view and every identity-less caller skip it entirely
+  // and cost exactly what they did before.
+  if (identity && companyActors.size) {
+    const labels = await lookupActorLabels(env, [...companyActors.values()]);
+    for (const node of nodes) {
+      const actorId = companyActors.get(node.id);
+      if (actorId === undefined) continue;
+      node.actor_name = resolveActorLabel(actorId, labels, { viewerId: identity.userId });
+    }
+  }
+
   const nodeIdSet = new Set(nodes.map(n => n.id));
   if (!nodeIdSet.size) return { nodes: [], edges: [] };
 

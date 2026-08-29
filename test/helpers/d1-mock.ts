@@ -609,11 +609,17 @@ export class D1Mock {
             .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id }));
           return { results };
         }
-        if (s.includes("SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN")) {
-          // buildGraph node hydration.
+        if (s.includes("SELECT id, content, tags, importance_score, created_at, workspace_id, actor_id FROM entries WHERE id IN")) {
+          // buildGraph node hydration. workspace_id/actor_id are what the node's
+          // `workspace` layer and `actor_name` are derived from; a row seeded
+          // without them reads as "", the pre-tenancy value.
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, importance_score: e.importance_score ?? 0, created_at: e.created_at }));
+            .map((e: any) => ({
+              id: e.id, content: e.content, tags: e.tags,
+              importance_score: e.importance_score ?? 0, created_at: e.created_at,
+              workspace_id: e.workspace_id ?? "", actor_id: e.actor_id ?? "",
+            }));
           return { results };
         }
         if (s.includes("SELECT id, tags FROM entries WHERE id IN")) {
