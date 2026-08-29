@@ -10,7 +10,7 @@ The one-shot migration script that performed this split was removed after use; d
 |-------|------|----------------|
 | Pure | `utils.js` | — (DOM optional via injection) |
 | Infra | `js/state.js`, `js/api.js` | pure |
-| UI kit | `js/theme.js`, `js/ui-chat.js` | pure, state |
+| UI kit | `js/theme.js`, `js/ui-chat.js`, `js/toast.js`, `js/confirm-sheet.js` | pure, state |
 | Feature | `js/recall.js`, `recent.js`, `remember.js`, `memory-crud.js`, `settings.js`, `integrations.js`, `graph-canvas.js` | infra, UI kit, pure |
 | Shell | `js/nav.js`, `js/auth.js`, `js/app.js` | feature, infra |
 | Entry | `index.html` | link/script tags only |
@@ -20,7 +20,8 @@ The one-shot migration script that performed this split was removed after use; d
 ## Script load order
 
 ```
-utils.js → credits.js → state.js → api.js → theme.js → ui-chat.js
+utils.js → credits.js → state.js → toast.js → confirm-sheet.js → api.js
+→ theme.js → ui-chat.js
 → recall.js → recent.js → remember.js → memory-crud.js
 → settings.js → integrations.js → graph-canvas.js
 → nav.js → auth.js → app.js
@@ -33,6 +34,8 @@ utils.js → credits.js → state.js → api.js → theme.js → ui-chat.js
 | Main CSS (head) | `css/main.css` |
 | Graph / view CSS | `css/graph.css` |
 | Global state | `js/state.js` |
+| Toasts | `js/toast.js` |
+| Destructive-action sheet (`openDangerConfirm`) | `js/confirm-sheet.js` |
 | Fetch helpers | `js/api.js` |
 | Theme toggle | `js/theme.js` |
 | Chat bubbles, markdown | `js/ui-chat.js` |

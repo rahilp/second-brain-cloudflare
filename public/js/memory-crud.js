@@ -118,12 +118,19 @@ async function saveEdit() {
 function openConfirm(id, btnOrCard) {
   pendingForgetId = id
   pendingForgetCard = btnOrCard ? (btnOrCard.classList?.contains('memory-card') ? btnOrCard : btnOrCard.closest('.memory-card')) : null
-  document.getElementById('confirm-dialog').classList.add('open')
-}
-function closeConfirm() {
-  document.getElementById('confirm-dialog').classList.remove('open')
-  pendingForgetId = null
-  pendingForgetCard = null
+  // The shared sheet, driven like any other caller — the markup's cold copy is
+  // this same wording, but it is written in explicitly so whichever action
+  // opened the sheet last cannot leave its words behind.
+  openDangerConfirm({
+    title: t('memories.confirmTitle'),
+    body: t('memories.confirmBody'),
+    confirmLabel: t('memories.forget'),
+    onConfirm: confirmForget,
+    onClose: () => {
+      pendingForgetId = null
+      pendingForgetCard = null
+    },
+  })
 }
 /**
  * Tell any open list that this memory has been dealt with.

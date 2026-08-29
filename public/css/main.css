@@ -1755,6 +1755,20 @@
         line-height: 1.55;
       }
 
+      /* The sheet's optional modifier — "and also delete the memories". A full
+         32px row because the whole label is the tap target, and secondary ink
+         because it is a qualifier on the question above, not the question. */
+      .confirm-check {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        margin-bottom: 18px;
+        min-height: 32px;
+        cursor: pointer;
+      }
+
       .view-header {
         display: flex;
         justify-content: space-between;
