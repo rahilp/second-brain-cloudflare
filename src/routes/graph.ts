@@ -2,7 +2,7 @@ import type { Env } from "../env";
 import { intParam, json } from "../lib/http";
 import { getReadableEntry } from "../lib/entry-access";
 import { requireIdentity } from "../lib/identity";
-import { createEdge, deleteEdge, isValidEdgeType } from "../graph/edges";
+import { createEdge, deleteEdge, isValidEdgeType, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { buildGraph, getConnections } from "../graph/traverse";
 import { resolveConfig } from "../config";
@@ -33,8 +33,17 @@ export async function handleGraphRoutes(
     if (!source) return json({ ok: false, error: `No entry found with ID: ${sourceId}` }, 404);
     const target = await getReadableEntry(env, auth, targetId);
     if (!target) return json({ ok: false, error: `No entry found with ID: ${targetId}` }, 404);
+    // Same-layer only. edges.workspace_id is one denormalized column copied from
+    // the source entry, and moveEntry re-stamps it by source_id alone — so a
+    // cross-layer edge has no correct value the moment either endpoint moves, and
+    // is guaranteed to go inconsistent rather than merely unusual. Refusing here
+    // gives an instruction the user can act on instead of a link that silently
+    // vanishes from their graph. Costs nothing on a solo brain: one workspace.
+    if (source.workspace_id !== target.workspace_id) {
+      return json({ ok: false, error: CROSS_WORKSPACE_LINK_MESSAGE, code: "cross_workspace_link" }, 400);
+    }
 
-    const edge = await createEdge(sourceId, targetId, type, { provenance: "explicit", weight: 1.0 }, env);
+    const edge = await createEdge(sourceId, targetId, type, { provenance: "explicit", weight: 1.0, workspaceId: source.workspace_id }, env);
     if (!edge) return json({ ok: false, error: "Cannot link an entry to itself" }, 400);
     return json({ ok: true, source_id: edge.source_id, target_id: edge.target_id, type: edge.type });
   }

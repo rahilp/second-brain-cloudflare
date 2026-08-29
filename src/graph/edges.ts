@@ -4,6 +4,18 @@ import { EDGE_TYPES, type EdgeProvenance, type EdgeType } from "./types";
 
 const DEFAULT_EDGE_WEIGHT = 0.5;
 
+/**
+ * What POST /link and the MCP `link` tool both say when a caller asks to join two
+ * entries that live in different layers.
+ *
+ * One constant rather than two string literals: the two surfaces are one
+ * operation, and the repo's parity convention (test/integration/update-parity.test.ts)
+ * is that they must not be able to drift. It names the fix — share the personal
+ * one first — because the alternative the user is offered is otherwise invisible.
+ */
+export const CROSS_WORKSPACE_LINK_MESSAGE =
+  "Both memories must be in the same layer — share the personal one first";
+
 export function isValidEdgeType(type: string): type is EdgeType {
   return Object.prototype.hasOwnProperty.call(EDGE_TYPES, type);
 }
