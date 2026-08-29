@@ -42,6 +42,10 @@
         bottom: calc(12px + env(safe-area-inset-bottom));
         z-index: 2;
       }
+      .graph-controls .graph-btn {
+        background: var(--bg-card);
+        box-shadow: var(--shadow-card);
+      }
       /* Top-right: the canvas draws its own legend pinned top-left, and the
          zoom cluster sits with .graph-controls. */
       .graph-layer {
@@ -50,9 +54,15 @@
         right: 10px;
         z-index: 2;
       }
-      .graph-controls .graph-btn {
+      /* .team-select-wrap select's shared background is var(--surface), which
+         is not defined anywhere in the stylesheet (it and .team-table are the
+         only two references). That reads as transparent-by-design on the
+         screens the shared rule was written for, but this select floats over
+         the graph canvas, so it needs an explicit, defined background rather
+         than an undefined one. --bg-card is defined in both themes and is
+         already what the floating zoom controls beside it use. */
+      .graph-layer .team-select-wrap select {
         background: var(--bg-card);
-        box-shadow: var(--shadow-card);
       }
       .graph-btn {
         background: none;

@@ -42,12 +42,18 @@ function makeEl() {
   };
 }
 
-/** Every 2D method pushes [name, ...args] onto `calls`; measureText returns a
+/**
+ * Every 2D method pushes [name, ...args] onto `calls`; measureText returns a
  * fixed width so label/legend sizing math has something deterministic to work
- * with. */
+ * with. Property WRITES (fillStyle, strokeStyle, lineWidth, globalAlpha, ...)
+ * are also recorded, as [`set:${prop}`, value], via a Proxy — a plain object
+ * only sees method calls, and the ring's whole point (thinner, more
+ * transparent, theme ink, smaller than the hover ring) lives in property
+ * writes rather than in draw-call arguments.
+ */
 function makeCtx2d() {
   const calls: unknown[][] = [];
-  const ctx: Record<string, unknown> = {
+  const target: Record<string, unknown> = {
     calls,
     measureText: (s: string) => {
       calls.push(["measureText", s]);
@@ -68,9 +74,15 @@ function makeCtx2d() {
     "setLineDash",
     "rect",
   ]) {
-    ctx[m] = (...args: unknown[]) => calls.push([m, ...args]);
+    target[m] = (...args: unknown[]) => calls.push([m, ...args]);
   }
-  return ctx;
+  return new Proxy(target, {
+    set(obj, prop, value) {
+      calls.push([`set:${String(prop)}`, value]);
+      (obj as Record<string, unknown>)[prop as string] = value;
+      return true;
+    },
+  });
 }
 
 function makeCanvasEl(ctx2d: ReturnType<typeof makeCtx2d>) {
@@ -187,16 +199,62 @@ describe("shared node ring", () => {
     );
     expect(ringStrokes.length).toBe(1);
   });
+
+  it("is thinner, more transparent, and theme-ink coloured — distinct from the hover ring", async () => {
+    const nodes = [
+      node({ id: "shared", workspace: "company" }),
+      node({ id: "mine", workspace: "personal" }),
+    ];
+    const { fn } = jsonFetch({ ok: true, nodes, edges: [] });
+    const { ctx, ctx2d } = setup(fn);
+    await ctx.loadGraph();
+    const calls = ctx2d.calls as unknown[][];
+    const ringArcIdx = calls.findIndex(
+      (c, i) => c[0] === "arc" && c[3] === 7.5 && calls[i + 1]?.[0] === "stroke",
+    );
+    expect(ringArcIdx).toBeGreaterThan(-1);
+    // Immediately before beginPath/arc/stroke: globalAlpha, strokeStyle, lineWidth,
+    // set in that order (graph-canvas.js's node loop). Property WRITES, so only
+    // visible to a recorder that tracks `set`, not just method calls.
+    // graphState is a top-level `let` in state.js, so it is not a property of the
+    // vm context object — it has to be read from inside the context.
+    const scale = vm.runInContext("graphState.cam.scale", ctx);
+    expect(calls[ringArcIdx - 4]).toEqual(["set:globalAlpha", 0.55]);
+    expect(calls[ringArcIdx - 3]).toEqual(["set:strokeStyle", "#161616"]); // light-theme inkHex
+    expect(calls[ringArcIdx - 2]).toEqual(["set:lineWidth", 1.5 / scale]);
+    expect(calls[ringArcIdx - 1]).toEqual(["beginPath"]);
+    // The hover ring (no node hovered here) would be alpha 1 / lineWidth 2 / r+3 —
+    // confirm this graph never hovers anything, so those values cannot leak in.
+    expect(calls.some((c) => c[0] === "arc" && c[3] === 5 + 3)).toBe(false);
+  });
 });
 
 describe("hover pill author", () => {
-  it("joins kind, author and text with middots when actor_name is present", async () => {
-    const nodes = [node({ id: "a", kind: "fact", actor_name: "Bob", label: "hello world" })];
-    const { fn } = jsonFetch({ ok: true, nodes, edges: [] });
-    const { ctx } = setup(fn);
+  // graphState is a top-level `let` in state.js, not a property of the vm
+  // context object, so hovering has to be driven from inside the context: stash
+  // the node reference as a sandbox property (an ordinary global, unlike `let`,
+  // so it IS visible inside), then set graphState.hover and redraw from there.
+  it("composes kind, author and text with middots into the hover pill", async () => {
+    const hoverNode = node({ id: "a", kind: "fact", actor_name: "Bob", label: "hello world" });
+    const { fn } = jsonFetch({ ok: true, nodes: [hoverNode], edges: [] });
+    const { ctx, ctx2d } = setup(fn);
     await ctx.loadGraph();
-    expect(ctx.t("graph.byAuthor", { name: "Bob" })).toBe("by Bob");
-    // Italian check lives in the i18n-only case below.
+    ctx.__hoverNode = hoverNode;
+    vm.runInContext("graphState.hover = __hoverNode; graphState.api.redraw()", ctx);
+    const calls = ctx2d.calls as unknown[][];
+    // Fails before: the old code produced "fact · hello world" with no author.
+    expect(calls.some((c) => c[0] === "fillText" && c[1] === "fact · by Bob · hello world")).toBe(true);
+  });
+
+  it("omits the author segment when actor_name is absent", async () => {
+    const hoverNode = node({ id: "a", kind: "fact", label: "hello world" });
+    const { fn } = jsonFetch({ ok: true, nodes: [hoverNode], edges: [] });
+    const { ctx, ctx2d } = setup(fn);
+    await ctx.loadGraph();
+    ctx.__hoverNode = hoverNode;
+    vm.runInContext("graphState.hover = __hoverNode; graphState.api.redraw()", ctx);
+    const calls = ctx2d.calls as unknown[][];
+    expect(calls.some((c) => c[0] === "fillText" && c[1] === "fact · hello world")).toBe(true);
   });
 
   it("translates byAuthor to Italian", () => {
@@ -235,5 +293,19 @@ describe("shared marker in the legend", () => {
     const label = ctx.t("graph.sharedLegend");
     const calls = ctx2d.calls as unknown[][];
     expect(calls.some((c) => c[0] === "fillText" && c[1] === label)).toBe(false);
+  });
+
+  it("still draws the legend for the shared-marker row alone, when every node is loose (no cluster rows)", async () => {
+    // Untagged nodes never join a cluster (assignGraphClusters puts them in the
+    // unlabelled __loose__ bucket), so clusterLegend is empty. The legend used to
+    // be gated on clusterLegend.length alone, which meant a graph of nothing but
+    // loose shared nodes drew rings with no key explaining them.
+    const nodes = [node({ id: "shared", workspace: "company" }), node({ id: "mine", workspace: "personal" })];
+    const { fn } = jsonFetch({ ok: true, nodes, edges: [] });
+    const { ctx, ctx2d } = setup(fn);
+    await ctx.loadGraph();
+    const label = ctx.t("graph.sharedLegend");
+    const calls = ctx2d.calls as unknown[][];
+    expect(calls.some((c) => c[0] === "fillText" && c[1] === label)).toBe(true);
   });
 });

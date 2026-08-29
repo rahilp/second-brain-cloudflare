@@ -115,6 +115,16 @@ describe("composer capture-policy hint", () => {
     expect(els.get("home-layer-hint").textContent).toBe("Auto → Personal (your setting)");
   });
 
+  it("shows the org-default sentence for personal when the org itself defaults to personal", async () => {
+    // The remaining table row: effectiveDefault personal, defaultShare '' — the
+    // org's fallback, not a member override. Distinct from the previous case,
+    // which is the member's own personal setting.
+    const { fn } = teamMeFetch({ defaultShare: "", orgDefault: "personal", effectiveDefault: "personal" });
+    const { ctx, els } = setup(fn);
+    await ctx.maybeRevealHomeLayer({ team: true });
+    expect(els.get("home-layer-hint").textContent).toBe("Auto → Personal (org default)");
+  });
+
   it("switches to the pinned sentence when a layer is chosen, and back to Auto when cleared", async () => {
     const { fn } = teamMeFetch({ defaultShare: "", orgDefault: "company", effectiveDefault: "company" });
     const { ctx, els } = setup(fn);
@@ -123,6 +133,16 @@ describe("composer capture-policy hint", () => {
     expect(els.get("home-layer-hint").textContent).toBe("This one goes to the whole team");
     ctx.onHomeLayerChange("");
     expect(els.get("home-layer-hint").textContent).toBe("Auto → Shared (org default)");
+  });
+
+  it("pins to personal when personal is chosen explicitly", async () => {
+    // The table's other pinned row: pinnedPersonal is independent of
+    // effectiveDefault/defaultShare, so this starts from a shared org default.
+    const { fn } = teamMeFetch({ defaultShare: "", orgDefault: "company", effectiveDefault: "company" });
+    const { ctx, els } = setup(fn);
+    await ctx.maybeRevealHomeLayer({ team: true });
+    ctx.onHomeLayerChange("personal");
+    expect(els.get("home-layer-hint").textContent).toBe("This one stays personal");
   });
 
   it("hides both the layer wrap and the hint on a solo brain, with no /team/me fetch", async () => {
@@ -136,6 +156,16 @@ describe("composer capture-policy hint", () => {
 
   it("leaves the hint hidden with empty text when /team/me rejects", async () => {
     const { fn } = teamMeFetch(null, { reject: true });
+    const { ctx, els } = setup(fn);
+    await ctx.maybeRevealHomeLayer({ team: true });
+    expect(els.get("home-layer-hint").style.display).toBe("none");
+    expect(els.get("home-layer-hint").textContent).toBe("");
+  });
+
+  it("leaves the hint hidden with empty text when /team/me answers non-ok", async () => {
+    // The other failure shape: a reachable server that answers e.g. 500, as
+    // opposed to the throw-before-a-response case above.
+    const { fn } = teamMeFetch(null, { fail: true });
     const { ctx, els } = setup(fn);
     await ctx.maybeRevealHomeLayer({ team: true });
     expect(els.get("home-layer-hint").style.display).toBe("none");

@@ -40,7 +40,7 @@ async function loadGraph() {
   const emptyEl = document.getElementById('graph-empty')
   if (!canvas) return
   try {
-    const res = await fetch(`${WORKER_URL}/graph${graphLayerFilter ? `?workspace=${graphLayerFilter}` : ''}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+    const res = await fetch(`${WORKER_URL}/graph${graphLayerFilter ? `?workspace=${encodeURIComponent(graphLayerFilter)}` : ''}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
     const data = await res.json()
     if (!data.ok || !data.nodes || !data.nodes.length) {
       graphState = null
@@ -578,7 +578,11 @@ function initGraphSim(canvas, nodes, edges) {
     // Legend (screen space): color swatch + label + count per cluster, top-left,
     // fixed while the graph pans/zooms. Ivory pill + dark text reads on both themes.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    if (clusterLegend.length) {
+    const hasSharedNode = nodes.some((n) => n.workspace === 'company')
+    // A graph of nothing but loose (uncategorised) shared nodes has no cluster
+    // rows, but the shared-with-the-team ring is still drawn on the canvas and
+    // still needs a key — the legend cannot be gated on cluster rows alone.
+    if (clusterLegend.length || hasSharedNode) {
       // The legend is an overlay sitting on top of the graph, so its size is a claim
       // on the canvas, not on the window. Bounding it by available height alone was
       // wrong: a phone is tall, so all two dozen rows fitted and buried most of the
@@ -597,7 +601,7 @@ function initGraphSim(canvas, nodes, edges) {
           : [...clusterLegend]
       // Appended after the +N more truncation so the shared-with-the-team key is
       // never the row that gets cut.
-      if (nodes.some((n) => n.workspace === 'company')) {
+      if (hasSharedNode) {
         rows.push({ label: t('graph.sharedLegend'), color: inkHex, count: '', ring: true })
       }
       ctx.font = '600 11px "Geist", system-ui, sans-serif'

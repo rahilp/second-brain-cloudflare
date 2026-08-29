@@ -3565,6 +3565,7 @@
       .home-layer-hint {
         font-size: 12px;
         color: var(--text-tertiary);
+        text-align: center;
         margin-top: 8px;
       }
 
