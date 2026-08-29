@@ -49,6 +49,31 @@ export async function generateToken(): Promise<{ token: string; tokenHash: strin
   return { token, tokenHash: await hashToken(token) };
 }
 
+/**
+ * How many people are actually on this team.
+ *
+ * Tombstoned rows are excluded with the same predicate every other read in
+ * this file uses. `removeMember` below does NOT delete the `users` row — it
+ * deletes the member's entries, edges, memberships and personal workspace and
+ * then writes `removed_at`, so shared memories the person wrote stay
+ * attributable to a name. A bare `COUNT(*) FROM users` therefore counts people
+ * who are gone, which is how a brain that ever had a second member could never
+ * read as solo again.
+ *
+ * SUSPENDED PEOPLE ARE COUNTED, deliberately and unlike identity.ts's reads:
+ * suspension locks someone out of their token, it does not take them off the
+ * team. Their memberships, their personal workspace and their shared entries
+ * are all still there, so a brain with one owner and one suspended colleague
+ * is a team and the layer controls have to stay on screen.
+ */
+export async function countActiveMembers(env: Env): Promise<number> {
+  const row = await env.DB.prepare(
+    // scope-exempt: a headcount of the deployment's own users table — it yields one number and no content, and "how many people are on this brain" is by definition not workspace-scoped
+    `SELECT COUNT(*) AS n FROM users WHERE removed_at IS NULL OR removed_at = 0`,
+  ).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 export async function listMembers(env: Env): Promise<TeamMember[]> {
   const { results } = await env.DB.prepare(
     // scope-exempt: admin member list: the subselect counts rows in each member's OWN workspace (e.workspace_id = w.id) and yields a number, never content

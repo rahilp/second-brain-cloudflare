@@ -24,7 +24,7 @@ import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
 import { adminAuditEvent } from "../lib/admin-audit";
 import { auditEvents, type AuditEventInput } from "../lib/audit";
-import { createMember, listMembers, listRoster, listTeamWorkspaces, lookupAuditNames, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
+import { countActiveMembers, createMember, listMembers, listRoster, listTeamWorkspaces, lookupAuditNames, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -666,7 +666,13 @@ export async function handleAdminRoutes(
     // target, share actions, layer filters). Layers exist on every v3 brain,
     // but until a second member is invited the toggle is noise for a solo
     // owner, so the flag reads actual membership, not provisioning.
-    const members = await env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
+    //
+    // countActiveMembers, not a bare COUNT(*): a removed member keeps their
+    // `users` row as a tombstone so their shared memories stay attributable,
+    // and counting those made "team" a one-way door — add one colleague ever,
+    // and the brain could never read as solo again. Suspended people still
+    // count; see that function's comment for why.
+    const activeMembers = await countActiveMembers(env);
     // Result-quality signal, not correctness: every hydration below this is
     // scoped at the SQL layer regardless, so a degraded filter never leaks
     // another workspace's data — it just lets foreign candidates crowd out
@@ -686,7 +692,7 @@ export async function handleAdminRoutes(
       ok: vectorize.ok,
       version: SB_VERSION,
       vectorize: { ...vectorize, workspaceFilter: { supported, degradedQueries, latchedAt } },
-      team: (members?.n ?? 0) > 1,
+      team: activeMembers > 1,
     });
   }
 
