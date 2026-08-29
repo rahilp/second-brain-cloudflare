@@ -166,6 +166,19 @@ describe("GET /team/roster", () => {
     expect(body.members.map((m: any) => m.name)).toEqual(["Bob", "Carol", "Owner"]);
   });
 
+  it("orders names case-insensitively", async () => {
+    // SQLite's default BINARY collation sorts every uppercase letter before
+    // every lowercase one, so "alice" lands after "Zoe" and a real team with
+    // mixed-case names reads as unsorted on the screen. These three names sort
+    // one way under BINARY (Bob, Zoe, alice) and another under NOCASE.
+    await sqlite.db.prepare(`UPDATE users SET name = 'alice' WHERE id = ?`).bind(bob.userId).run();
+    await sqlite.db.prepare(`UPDATE users SET name = 'Zoe' WHERE id = ?`).bind(carol.userId).run();
+    await sqlite.db.prepare(`UPDATE users SET name = 'Bob' WHERE id = ?`).bind(roots.ownerUserId).run();
+
+    const body = await jsonOf(await call("GET", "/team/roster", bob.token));
+    expect(body.members.map((m: any) => m.name)).toEqual(["alice", "Bob", "Zoe"]);
+  });
+
   it("gives an admin exactly what it gives a member", async () => {
     // requireAdmin gates a SURFACE; it has never widened which rows a caller may
     // read. /team/roster is the member-facing surface and widens nothing.

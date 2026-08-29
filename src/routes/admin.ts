@@ -60,12 +60,19 @@ export async function handleAdminRoutes(
   if (url.pathname === "/team/roster" && request.method === "GET") {
     const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
+    // Both lists are derived from the SAME resolved ids, so the teams named here
+    // and the people listed here cannot disagree about who the caller is — and
+    // because neither read depends on the other, they are issued together rather
+    // than one after the next. This is a page-load endpoint; serially awaiting
+    // two independent D1 reads inside the object literal costs both round trips.
+    const [teams, members] = await Promise.all([
+      listTeamWorkspaces(env, auth.companyWorkspaceIds),
+      listRoster(env, auth.companyWorkspaceIds),
+    ]);
     return json({
       ok: true,
-      // Both lists are derived from the SAME resolved ids, so the teams named
-      // here and the people listed here cannot disagree about who the caller is.
-      teams: await listTeamWorkspaces(env, auth.companyWorkspaceIds),
-      members: await listRoster(env, auth.companyWorkspaceIds),
+      teams,
+      members,
       you: auth.userId,
       admin: auth.role === "admin",
     });
@@ -217,6 +224,15 @@ export async function handleAdminRoutes(
     const row = await env.DB.prepare(
       `SELECT id AS userId, name, email, role FROM users WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
     ).bind(auth.userId).first<{ userId: string; name: string; email: string | null; role: string }>();
+    // Unreachable through a bearer token, and kept anyway. IDENTITY_SQL and
+    // IDENTITY_BY_ID_SQL (src/lib/identity.ts) both exclude suspended and removed
+    // users, so a caller who got past requireIdentity always has a row here — a
+    // removed member gets 401 from the auth layer, never this 404. The
+    // unreachability is therefore an invariant maintained in a DIFFERENT file:
+    // deleting this branch would trade one line for a non-null assertion or a
+    // crash if that invariant ever loosened, so it stays and fails closed.
+    // Do not write a test for this 404 through the HTTP surface — the state it
+    // guards cannot be reached from one.
     if (!row) return json({ ok: false, error: "Not found" }, 404);
     // Where this member's next capture lands, and the two inputs that decided
     // it. All three are additive — the four fields above keep their names and

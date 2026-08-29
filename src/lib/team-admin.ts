@@ -114,6 +114,12 @@ export interface RosterMember {
  *
  * DISTINCT because a colleague in two of the caller's teams is two membership
  * rows and one person.
+ *
+ * COLLATE NOCASE on the sort because SQLite's default BINARY collation orders
+ * every uppercase letter before every lowercase one, so "alice" would come
+ * after "Zoe" and a team with mixed-case names would read as unsorted. `u.id`
+ * stays as the tiebreaker so two people with the same name still have a stable
+ * order.
  */
 export async function listRoster(env: Env, companyWorkspaceIds: string[]): Promise<RosterMember[]> {
   // A member of no team has no peers. Returning early also keeps the IN () list
@@ -127,7 +133,7 @@ export async function listRoster(env: Env, companyWorkspaceIds: string[]): Promi
       WHERE m.workspace_id IN (${placeholders})
         AND u.suspended = 0
         AND (u.removed_at IS NULL OR u.removed_at = 0)
-      ORDER BY u.name ASC, u.id ASC`,
+      ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`,
   ).bind(...companyWorkspaceIds).all<{ userId: string; name: string | null; role: string }>();
   return (results ?? []).map((r) => ({
     userId: r.userId,
