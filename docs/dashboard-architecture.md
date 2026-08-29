@@ -11,7 +11,7 @@ The one-shot migration script that performed this split was removed after use; d
 | Pure | `utils.js` | — (DOM optional via injection) |
 | Infra | `js/state.js`, `js/api.js` | pure |
 | UI kit | `js/theme.js`, `js/ui-chat.js`, `js/toast.js`, `js/coach.js`, `js/confirm-sheet.js` | pure, state |
-| Feature | `js/recall.js`, `recent.js`, `remember.js`, `memory-crud.js`, `settings.js`, `integrations.js`, `graph-canvas.js` | infra, UI kit, pure |
+| Feature | `js/recall.js`, `recent.js`, `remember.js`, `memory-crud.js`, `settings.js`, `integrations.js`, `team.js`, `activity.js`, `graph-canvas.js` | infra, UI kit, pure |
 | Shell | `js/nav.js`, `js/auth.js`, `js/app.js` | feature, infra |
 | Entry | `index.html` | link/script tags only |
 
@@ -23,7 +23,7 @@ The one-shot migration script that performed this split was removed after use; d
 utils.js → credits.js → state.js → toast.js → coach.js → confirm-sheet.js → api.js
 → theme.js → ui-chat.js
 → recall.js → recent.js → remember.js → memory-crud.js
-→ settings.js → integrations.js → graph-canvas.js
+→ settings.js → integrations.js → team.js → activity.js → graph-canvas.js
 → nav.js → auth.js → app.js
 ```
 
@@ -46,6 +46,7 @@ utils.js → credits.js → state.js → toast.js → coach.js → confirm-sheet
 | Append/edit/forget/view/related | `js/memory-crud.js` |
 | Menu stats, digest, vectorize, classify, export | `js/settings.js` |
 | Integrations sheet | `js/integrations.js` |
+| Team activity feed (`loadTeamActivity`) | `js/activity.js` |
 | Graph canvas | `js/graph-canvas.js` |
 | Tab nav, tag/time filters | `js/nav.js` |
 | Auth connect / showApp | `js/auth.js` |

@@ -603,6 +603,37 @@ const I18N_EN = {
     lockBody:
       'Once a memory is shared, only the person who shared it — or an admin — can edit or delete it. Everyone else can read it and link to it.',
   },
+  // The admin activity feed. The ev* family is reached only through
+  // activityEventLabel()'s map in js/activity.js, keyed by the audit event
+  // name — which is why it is declared in DYNAMICALLY_REFERENCED.
+  activity: {
+    title: 'Recent activity',
+    intro: 'Who changed what, newest first. Kept as a record — nothing here can be edited.',
+    loading: 'Loading…',
+    empty: 'Nothing has happened on this team yet.',
+    loadFailed: 'Could not load the activity log.',
+    more: 'Show more',
+    // A trail outlives the people in it: an actor row can point at an account
+    // that is gone, and a shared-memory row at a memory that is.
+    unknownActor: 'Removed account',
+    memoryGone: 'Memory no longer readable',
+    evMemberCreated: 'Added a member',
+    evMemberRemoved: 'Removed a member',
+    evMemberSuspended: 'Suspended a member',
+    evMemberUnsuspended: 'Restored a member',
+    evMemberTokenRotated: 'Issued a new sign-in token',
+    evMemberDefaultShareSet: 'Changed where new captures land',
+    evMemberProfileUpdated: 'Edited a profile',
+    evTeamRenamed: 'Renamed the team',
+    evIntegrationConnected: 'Connected an integration',
+    evIntegrationDisconnected: 'Disconnected an integration',
+    evShared: 'Shared a memory with the team',
+    evUnshared: 'Made a memory personal again',
+    evInsightConfirmed: 'Confirmed an insight',
+    evInsightDismissed: 'Dismissed an insight',
+    exportCsv: 'Export CSV',
+    exportFailed: 'Could not export the activity log.',
+  },
 }
 
 const I18N_IT = {
@@ -1190,6 +1221,33 @@ const I18N_IT = {
     lockTitle: 'Solo chi l’ha condiviso può modificarlo',
     lockBody:
       'Quando un ricordo è condiviso, solo chi l’ha condiviso — o un amministratore — può modificarlo o eliminarlo. Le altre persone possono leggerlo e collegarlo.',
+  },
+  activity: {
+    title: 'Attività recente',
+    intro:
+      'Chi ha cambiato cosa, dal più recente. Conservato come registro: nulla di ciò che vedi qui è modificabile.',
+    loading: 'Caricamento…',
+    empty: 'Non è ancora successo nulla in questo team.',
+    loadFailed: 'Impossibile caricare il registro attività.',
+    more: 'Mostra altro',
+    unknownActor: 'Account rimosso',
+    memoryGone: 'Ricordo non più leggibile',
+    evMemberCreated: 'Ha aggiunto una persona',
+    evMemberRemoved: 'Ha rimosso una persona',
+    evMemberSuspended: 'Ha sospeso una persona',
+    evMemberUnsuspended: 'Ha riattivato una persona',
+    evMemberTokenRotated: 'Ha emesso un nuovo token di accesso',
+    evMemberDefaultShareSet: 'Ha cambiato dove finiscono le nuove acquisizioni',
+    evMemberProfileUpdated: 'Ha modificato un profilo',
+    evTeamRenamed: 'Ha rinominato il team',
+    evIntegrationConnected: 'Ha collegato un’integrazione',
+    evIntegrationDisconnected: 'Ha scollegato un’integrazione',
+    evShared: 'Ha condiviso un ricordo col team',
+    evUnshared: 'Ha reso di nuovo personale un ricordo',
+    evInsightConfirmed: 'Ha confermato un insight',
+    evInsightDismissed: 'Ha ignorato un insight',
+    exportCsv: 'Esporta CSV',
+    exportFailed: 'Impossibile esportare il registro attività.',
   },
 }
 

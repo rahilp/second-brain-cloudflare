@@ -543,6 +543,10 @@ describe("dashboard i18n", () => {
    */
   const DYNAMICALLY_REFERENCED: Array<{ prefix?: string; keys?: string[]; by: string }> = [
     {
+      prefix: "activity.ev",
+      by: "activityEventLabel() in public/js/activity.js, keyed by the audit event name",
+    },
+    {
       prefix: "common.source",
       by: "public/utils.js t(key), through the SOURCE_LABELS map keyed by the capture's `source` value",
     },
@@ -718,6 +722,10 @@ describe("dashboard i18n", () => {
     // expressions), but a same-file, same-expression duplicate must still force a decision
     // rather than being silently absorbed into a set of one.
     const EXPECTED_DYNAMIC_CALL_SITES = [
+      // activityEventLabel()'s map, keyed by the audit event name. Deliberately
+      // the same shape as memory-crud.js's timelineEventLabel below — one known
+      // form for this indirection is what keeps this list readable.
+      "public/js/activity.js t(keys[event])",
       "public/js/brief.js t(`patterns.shapes.${shape}`)",
       // Both of these resolve through captureDefaultKey() in public/utils.js, which
       // returns one of exactly four literals — home.auto{Shared,Personal}{Yours,Org}.

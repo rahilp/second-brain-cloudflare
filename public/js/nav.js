@@ -80,7 +80,24 @@ function switchTab(tab) {
   if (tab === 'home') refreshIfStale()
   // Suspensions and rotations can happen while the window sits open, so the
   // roster refetches on every visit rather than trusting the last one.
-  if (tab === 'team' && typeof loadTeam === 'function') loadTeam()
+  //
+  // The activity feed reveals itself here rather than from renderTeam(), so the
+  // decision that the Team screen is being looked at stays in the one place
+  // that already makes it. Both branches live in maybeRevealActivity: a solo
+  // brain gets the section hidden and no request.
+  //
+  // It waits for loadTeam because loadTeam IS the admin probe. Fired alongside
+  // it, the feed's own request goes out before anyone knows whether this member
+  // is allowed to make it, and a member pays for a 403 on every Team-tab visit.
+  if (tab === 'team') {
+    const probe = typeof loadTeam === 'function' ? loadTeam() : null
+    if (typeof maybeRevealActivity === 'function') {
+      Promise.resolve(probe).then(
+        () => maybeRevealActivity(),
+        () => maybeRevealActivity(),
+      )
+    }
+  }
 }
 
 /**

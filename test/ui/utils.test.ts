@@ -26,7 +26,7 @@ i18nCtx.initI18n("en");
 (globalThis as any).localeTag = i18nCtx.localeTag;
 (globalThis as any).getLocale = i18nCtx.getLocale;
 
-const { parseRecallResult, escHtml, escAttr, toDateStr, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip } = require("../../public/utils.js");
+const { parseRecallResult, escHtml, escAttr, toDateStr, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, csvCell, csvDocument } = require("../../public/utils.js");
 
 // Minimal fake document so the banner DOM glue can be tested in the node
 // environment without jsdom. appendChild registers the element by id so a later
@@ -445,5 +445,91 @@ describe("syncWorkspaceFilterChip", () => {
     expect(res).toBeNull();
     expect(doc.getElementById("vectorize-filter-chip")).toBeNull();
     expect(doc.body.style.paddingTop).toBe("");
+  });
+});
+
+/**
+ * The CSV primitives behind the activity export.
+ *
+ * Two properties are worth pinning. RFC 4180 quoting, which is what makes a
+ * comma or a newline inside a member's name survive the trip; and the leading
+ * apostrophe on a cell that starts =, +, - or @, which is not about CSV at all
+ * — those cells are FORMULAS to Excel, Numbers and Sheets, and this file is an
+ * audit log full of names and memory titles that people type.
+ */
+describe("csvCell", () => {
+  it("always quotes, and doubles an internal quote", () => {
+    expect(csvCell('a"b')).toBe('"a""b"');
+    expect(csvCell("plain")).toBe('"plain"');
+  });
+
+  it("carries a comma and a newline through intact", () => {
+    expect(csvCell("a,b")).toBe('"a,b"');
+    expect(csvCell("a\nb")).toBe('"a\nb"');
+  });
+
+  it("renders nothing as an empty cell, but zero as zero", () => {
+    expect(csvCell(null)).toBe('""');
+    expect(csvCell(undefined)).toBe('""');
+    // The falsy trap: 0 is a value, not an absence.
+    expect(csvCell(0)).toBe('"0"');
+    expect(csvCell(false)).toBe('"false"');
+    expect(csvCell("")).toBe('""');
+  });
+
+  it("defuses every cell a spreadsheet would run as a formula", () => {
+    expect(csvCell("=1+1")).toBe("\"'=1+1\"");
+    expect(csvCell("+1")).toBe("\"'+1\"");
+    expect(csvCell("-1")).toBe("\"'-1\"");
+    expect(csvCell("@SUM(A1)")).toBe("\"'@SUM(A1)\"");
+    expect(csvCell("\tcmd")).toBe("\"'\tcmd\"");
+    expect(csvCell("\rcmd")).toBe("\"'\rcmd\"");
+    // The real one: a memory someone titled to attack whoever opens the export.
+    expect(csvCell('=cmd|\' /C calc\'!A0')).toBe("\"'=cmd|' /C calc'!A0\"");
+  });
+
+  it("leaves a cell that merely contains one of those characters alone", () => {
+    expect(csvCell("a=b")).toBe('"a=b"');
+    expect(csvCell("Anne-Marie")).toBe('"Anne-Marie"');
+  });
+
+  it("defuses a formula that hides behind leading whitespace", () => {
+    // OWASP's set is about the FIRST character, and a spreadsheet that trims
+    // before it parses sees " =1+1" as the formula. Belt and braces on the one
+    // file the person with the most access opens.
+    expect(csvCell(" =1+1")).toBe("\"' =1+1\"");
+    expect(csvCell("  +1")).toBe("\"'  +1\"");
+    expect(csvCell("\n=1+1")).toBe("\"'\n=1+1\"");
+    expect(csvCell("\t @SUM(A1)")).toBe("\"'\t @SUM(A1)\"");
+    expect(csvCell(" -1")).toBe("\"' -1\"");
+  });
+
+  it("still leaves leading whitespace that leads nowhere alone", () => {
+    // Only whitespace-then-formula is guarded. An indented name is a name.
+    expect(csvCell(" Anne-Marie")).toBe('" Anne-Marie"');
+    expect(csvCell("  hello")).toBe('"  hello"');
+    expect(csvCell("   ")).toBe('"   "');
+    expect(csvCell("\n")).toBe('"\n"');
+  });
+});
+
+describe("csvDocument", () => {
+  it("puts the header first and separates rows with CRLF, per RFC 4180", () => {
+    expect(csvDocument(["a"], [["b"]])).toBe('"a"\r\n"b"');
+  });
+
+  it("keeps the columns in the order it was given and the rows in theirs", () => {
+    const doc = csvDocument(
+      ["when", "who"],
+      [
+        ["2026-08-01", "Ada"],
+        ["2026-08-02", "Bob"],
+      ],
+    );
+    expect(doc).toBe('"when","who"\r\n"2026-08-01","Ada"\r\n"2026-08-02","Bob"');
+  });
+
+  it("is a header alone when there are no rows", () => {
+    expect(csvDocument(["a", "b"], [])).toBe('"a","b"');
   });
 });

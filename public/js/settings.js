@@ -514,13 +514,10 @@ async function exportMemories(format) {
       mime = 'text/markdown'
     }
 
-    const blob = new Blob([content], { type: mime })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
+    // The one downloader (public/utils.js), shared with the activity CSV
+    // export. Same content, same filename, same mime as when those five lines
+    // lived here — the BOM branch inside it is for text/csv only.
+    downloadTextFile(document, content, filename, mime)
   } catch (e) {
     showToast(t('menu.exportFailed', { message: e.message }))
   }
