@@ -1,5 +1,9 @@
 // ── Force-directed graph view (issue #16) ─────────────────────────────────
 
+/** '' | 'personal' | 'company' | null — mirrors #layer-filter-recent so the graph
+ * and the memories list share one filter vocabulary. null means "all layers". */
+let graphLayerFilter = null
+
 // Graph nodes only carry an 80-char label; fetch the full memory on tap so the
 // view sheet shows the whole thing. Falls back to the label if the fetch fails
 // (offline etc.) so the graph never dead-ends.
@@ -17,12 +21,26 @@ async function openNodeView(node) {
   }
 }
 
+/** #graph-layer-wrap ships hidden; TEAM_MODE is the single source of truth for
+ * revealing it, so a re-probe (team dissolved, etc.) always corrects a stale
+ * reveal rather than leaving a control from a state the brain has left. */
+function maybeRevealGraphLayer() {
+  const wrap = document.getElementById('graph-layer-wrap')
+  if (wrap) wrap.style.display = TEAM_MODE ? '' : 'none'
+}
+
+function onGraphLayerChange(value) {
+  graphLayerFilter = value || null
+  loadGraph()
+}
+
 async function loadGraph() {
+  maybeRevealGraphLayer()
   const canvas = document.getElementById('graph-canvas')
   const emptyEl = document.getElementById('graph-empty')
   if (!canvas) return
   try {
-    const res = await fetch(`${WORKER_URL}/graph`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+    const res = await fetch(`${WORKER_URL}/graph${graphLayerFilter ? `?workspace=${graphLayerFilter}` : ''}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
     const data = await res.json()
     if (!data.ok || !data.nodes || !data.nodes.length) {
       graphState = null
@@ -438,6 +456,20 @@ function initGraphSim(canvas, nodes, edges) {
       ctx.beginPath()
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
       ctx.fill()
+      // Shared-with-the-team marker: an outline, not a fill or a hue — fill colour
+      // is already the cluster palette, so a shared-vs-personal hue would collide
+      // with the topic key the canvas is built around. Deliberately thinner, more
+      // transparent and smaller than the hover ring below, so the two never read
+      // as the same thing.
+      if (n.workspace === 'company') {
+        ctx.globalAlpha = 0.55
+        ctx.strokeStyle = inkHex
+        ctx.lineWidth = 1.5 / cam.scale
+        ctx.beginPath()
+        ctx.arc(n.x, n.y, r + 2.5, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+      }
       if (n === hover) {
         ctx.globalAlpha = 1
         ctx.strokeStyle = inkHex
@@ -538,7 +570,9 @@ function initGraphSim(canvas, nodes, edges) {
     if (hover) {
       const full = (hover.label || '').replace(/\s+/g, ' ').trim()
       const text = full.length > 48 ? full.slice(0, 48).trimEnd() + '…' : full
-      const withKind = hover.kind ? `${hover.kind} · ${text}` : text
+      const withKind = [hover.kind, hover.actor_name ? t('graph.byAuthor', { name: hover.actor_name }) : null, text]
+        .filter(Boolean)
+        .join(' · ')
       labelPill(withKind, hover.x, hover.y + nodeRadius(hover) + 4, true, 1)
     }
     // Legend (screen space): color swatch + label + count per cluster, top-left,
@@ -560,7 +594,12 @@ function initGraphSim(canvas, nodes, edges) {
       const rows =
         hidden > 0
           ? [...clusterLegend.slice(0, maxRows - 1), { label: `+${hidden + 1} more`, color: LOOSE_COLOR, count: '' }]
-          : clusterLegend
+          : [...clusterLegend]
+      // Appended after the +N more truncation so the shared-with-the-team key is
+      // never the row that gets cut.
+      if (nodes.some((n) => n.workspace === 'company')) {
+        rows.push({ label: t('graph.sharedLegend'), color: inkHex, count: '', ring: true })
+      }
       ctx.font = '600 11px "Geist", system-ui, sans-serif'
       let maxW = 0
       for (const r of rows) maxW = Math.max(maxW, ctx.measureText(r.label).width + ctx.measureText(String(r.count)).width)
@@ -578,10 +617,16 @@ function initGraphSim(canvas, nodes, edges) {
       ctx.textBaseline = 'middle'
       rows.forEach((r, i) => {
         const y = 10 + padX + i * rowH + rowH / 2 - 4
-        ctx.fillStyle = r.color
         ctx.beginPath()
         ctx.arc(10 + padX + sw / 2, y, sw / 2, 0, Math.PI * 2)
-        ctx.fill()
+        if (r.ring) {
+          ctx.strokeStyle = r.color
+          ctx.lineWidth = 1.5
+          ctx.stroke()
+        } else {
+          ctx.fillStyle = r.color
+          ctx.fill()
+        }
         ctx.textAlign = 'left'
         ctx.fillStyle = '#161616'
         ctx.fillText(r.label, 10 + padX + sw + 6, y)

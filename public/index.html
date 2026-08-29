@@ -237,6 +237,13 @@
             </div>
 
             <div class="mem-graph" id="mem-graph" hidden>
+              <span id="graph-layer-wrap" class="graph-layer" style="display: none">
+                <span class="team-select-wrap"><select class="team-select" id="graph-layer" onchange="onGraphLayerChange(this.value)" title="Show one layer, or both" data-i18n="graph.layerTitle" data-i18n-attr="title">
+                  <option value="" data-i18n="graph.layerAll">All layers</option>
+                  <option value="personal" data-i18n="graph.layerPersonal">Personal</option>
+                  <option value="company" data-i18n="graph.layerShared">Shared</option>
+                </select><i class="ti ti-chevron-down"></i></span>
+              </span>
               <canvas id="graph-canvas"></canvas>
               <div class="graph-empty" id="graph-empty" style="display: none" data-i18n="graph.empty">No connections yet — link memories, or let them auto-connect as you add more.</div>
               <!-- Floating over the canvas rather than in the bar: the bar is
