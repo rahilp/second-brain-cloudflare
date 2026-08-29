@@ -1,12 +1,20 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { buildMcpServer } from "../../src/mcp/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
+import { makeTestEnv, makeTestDb, makeVectorizeMock, makeMemoryKV } from "../helpers/make-env";
 import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
+// The layer-parameter pin at the foot of this file drives the real Worker over
+// HTTP, because `POST /capture` and `GET /list` are two of the four surfaces it
+// exists to hold still and neither is reachable through the MCP transport.
+import worker from "../../src/index";
+import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
+import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
+import { ensureTenantBootstrap } from "../../src/lib/tenancy";
+import { createMember } from "../../src/lib/team-admin";
 
 const ctx = { waitUntil: (_: Promise<unknown>) => {} } as ExecutionContext;
 
@@ -374,5 +382,161 @@ describe("README's memory-tools table matches the server", () => {
 
     expect(documented.length).toBeGreaterThan(0);
     expect([...documented].sort()).toEqual([...EXPECTED_TOOLS].sort());
+  });
+});
+
+/**
+ * The four surfaces every non-browser client reaches for, pinned by name.
+ *
+ * `second-brain-cf-cli` — the `brain` binary — lives in a SEPARATE git
+ * repository (`~/Projects/second-brain/second-brain-cli`). It is not a
+ * submodule, nothing here builds it, and CI never sees it. Its `src/client.ts`
+ * posts to `/capture`, reads `GET /list`, and reaches `recall` through the MCP
+ * transport, and its `--workspace` flag is nothing but the parameter below
+ * passed through. The Worker already accepts all of it, so the flag needed no
+ * server change — what it needs is for these four surfaces to stop being able
+ * to change silently underneath a client this repository cannot see.
+ *
+ * **This is a pin, not a behavioural change, and it did not fail before it was
+ * written.** Every assertion below passed against the commit that introduced
+ * it. The usual fails-before rule is satisfied by saying so here rather than by
+ * inventing a change to make it red: the value of this block is entirely in the
+ * future tense — it is the only thing in this tree that breaks when someone
+ * renames `workspace`, narrows its enum, or rewords the 400, which is the one
+ * failure mode a client in another repository cannot protect itself from.
+ */
+describe("the layer parameter every non-browser client depends on", () => {
+  const LAYERS = ["personal", "company"];
+  const WRONG_LAYER_ERROR = 'workspace must be "personal" or "company"';
+  /** Every MCP tool the CLI's client.ts can pass a layer to. */
+  const LAYERED_TOOLS = ["remember", "recall", "list_recent"];
+
+  const mcpEnv = makeTestEnv(makeTestDb());
+
+  async function inputSchemaFor(name: string): Promise<any> {
+    let schema: any = {};
+    await withMcpClient(mcpEnv, async (client) => {
+      const { tools } = await client.listTools();
+      schema = tools.find((t) => t.name === name)?.inputSchema ?? {};
+    });
+    return schema;
+  }
+
+  for (const tool of LAYERED_TOOLS) {
+    it(`${tool} takes an optional workspace of exactly personal or company`, async () => {
+      const schema = await inputSchemaFor(tool);
+      const workspace = schema.properties?.workspace;
+      expect(workspace, `${tool} has no workspace parameter`).toBeTruthy();
+      // Sorted, so the pin is on the SET of accepted values: adding a third
+      // layer here is a client-visible change and has to be a deliberate edit.
+      expect([...(workspace.enum ?? [])].sort()).toEqual([...LAYERS].sort());
+      // Optional, because omitting it is what every CLI installed before the
+      // flag existed does, and that has to keep meaning "you decide".
+      expect(schema.required ?? []).not.toContain("workspace");
+    });
+  }
+
+  it("refuses a third layer name at the MCP boundary", async () => {
+    await withMcpClient(mcpEnv, async (client) => {
+      const outcome = await client
+        .callTool({ name: "remember", arguments: { content: "x", workspace: "team" } })
+        .then((r) => r, (e: unknown) => e);
+      const text =
+        outcome instanceof Error
+          ? outcome.message
+          : JSON.stringify((outcome as { content?: unknown }).content ?? outcome);
+      // Either shape is a refusal; what must not happen is a silent accept.
+      const refused = outcome instanceof Error || (outcome as { isError?: boolean }).isError === true;
+      expect(refused, `workspace:"team" was accepted — ${text}`).toBe(true);
+      expect(text).toMatch(/workspace/i);
+    });
+  });
+
+  describe("over HTTP, where the CLI actually writes and reads", () => {
+    let sqlite: SqliteD1;
+    let httpEnv: Env;
+    let token = "";
+
+    const call = (method: string, path: string, body?: unknown) =>
+      worker.fetch(
+        new Request(`http://localhost${path}`, {
+          method,
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        }),
+        httpEnv,
+        ctx,
+      );
+
+    async function listLayers(query: string): Promise<{ id: string; workspace: string }[]> {
+      const res = await call("GET", `/list${query}`);
+      expect(res.status, await res.clone().text()).toBe(200);
+      return (await res.json()) as { id: string; workspace: string }[];
+    }
+
+    beforeEach(async () => {
+      resetDatabaseInit();
+      sqlite = makeSqliteD1();
+      httpEnv = makeTestEnv(undefined, {
+        DB: sqlite.db as unknown as Env["DB"],
+        OAUTH_KV: makeMemoryKV(),
+      });
+      await initializeDatabase(httpEnv);
+      await ensureTenantBootstrap(httpEnv);
+      token = (await createMember(httpEnv, { name: "Cli User" })).token;
+    });
+
+    afterEach(() => sqlite?.close());
+
+    it("stores a capture in the company layer when asked for it by name", async () => {
+      const res = await call("POST", "/capture", {
+        content: "Company: the release train leaves on Thursdays",
+        tags: ["work"],
+        source: "cli",
+        workspace: "company",
+      });
+      const body = (await res.json()) as { ok: boolean; id: string };
+      expect(res.status, JSON.stringify(body)).toBe(200);
+
+      const company = await listLayers("?workspace=company");
+      expect(company.map((r) => r.id)).toContain(body.id);
+      expect(company.every((r) => r.workspace === "company")).toBe(true);
+      // And it is genuinely elsewhere, not merely also here.
+      expect((await listLayers("?workspace=personal")).map((r) => r.id)).not.toContain(body.id);
+    });
+
+    it("rejects any other layer name with the exact string the CLI prints", async () => {
+      const res = await call("POST", "/capture", { content: "nope", workspace: "team" });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe(WRONG_LAYER_ERROR);
+    });
+
+    it("filters a listing to one layer and returns nothing from the other", async () => {
+      const priv = (await (await call("POST", "/capture", { content: "Private: dentist Tuesday" })).json()) as { id: string };
+      const shared = (await (await call("POST", "/capture", {
+        content: "Company: on-call rota is weekly",
+        workspace: "company",
+      })).json()) as { id: string };
+
+      expect((await listLayers("?workspace=company")).map((r) => r.id)).toEqual([shared.id]);
+      expect((await listLayers("?workspace=personal")).map((r) => r.id)).toEqual([priv.id]);
+      // Omitted, the parameter narrows nothing — which is the request every
+      // already-installed CLI makes, and it has to keep returning both layers.
+      expect(new Set((await listLayers("")).map((r) => r.id))).toEqual(new Set([priv.id, shared.id]));
+    });
+
+    it("puts a capture with no workspace exactly where it always went", async () => {
+      // The absence axis. A `brain remember` with no --workspace sends a body
+      // byte-identical to the one it sent before the flag existed, and this is
+      // the assertion that says so: personal, not the org default's business.
+      const res = await call("POST", "/capture", {
+        content: "Unlabelled: buy milk",
+        tags: [],
+        source: "cli",
+      });
+      const body = (await res.json()) as { id: string };
+      expect((await listLayers("?workspace=personal")).map((r) => r.id)).toEqual([body.id]);
+      expect(await listLayers("?workspace=company")).toEqual([]);
+    });
   });
 });
