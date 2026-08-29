@@ -1048,6 +1048,37 @@ describe("team member view", () => {
     expect(companyOption).toContain(" selected");
   });
 
+  /** The option values inside the FIRST <select> in a chunk of markup — a
+   *  member's view has exactly one; an admin's roster has one per row, and
+   *  every row's is identical, so the first stands for all of them. */
+  function firstSelectOptionValues(html: string): string[] {
+    const select = html.match(/<select[^>]*>([\s\S]*?)<\/select>/);
+    if (!select) return [];
+    return [...select[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
+  }
+
+  it("derives both capture-default selects' options from one shared list, not two copies that merely agree today", async () => {
+    // Both call sites (teamMemberRow for the admin, renderTeamMember for the
+    // member) build their <option>s from team.js's TEAM_SHARE_VALUES via the
+    // shared teamShareSelect() helper. Reading the source directly is what
+    // makes this a test of ONE list rather than a coincidence between two —
+    // if a future edit forked the helper again and gave only one call site a
+    // fourth option, this comparison would catch it because the two selects
+    // would stop agreeing with the same source list.
+    const admin = adminSetup();
+    await admin.ctx.loadTeam();
+    const adminValues = firstSelectOptionValues(admin.els.get("team-list").innerHTML as string);
+
+    const member = memberSetup();
+    await member.ctx.loadTeam();
+    const memberValues = firstSelectOptionValues(member.els.get("team-member-view").innerHTML as string);
+
+    const sourceValues = vm.runInContext("TEAM_SHARE_VALUES", admin.ctx);
+    expect(sourceValues.length).toBeGreaterThan(0);
+    expect(adminValues).toEqual(sourceValues);
+    expect(memberValues).toEqual(sourceValues);
+  });
+
   /** A member view wired for POST /team/me/default-share, exercising setMyDefaultShare. */
   function memberSetupWithDefaultShare(
     opts: { me?: unknown; defaultShareReply?: () => any } = {},

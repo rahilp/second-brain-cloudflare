@@ -175,7 +175,13 @@ describe("integrations sheet: connection provenance", () => {
     expect(html).not.toContain("Synced memories land in the shared team layer");
   });
 
-  it("omits the provenance line entirely for a pre-Task-6 record, and is otherwise byte-identical to the pre-task render", () => {
+  // NOT "byte-identical to the pre-task render": this task's provenance slot
+  // (`${provenance ? ... : ''}`) always adds one line to the template, and for
+  // this fixture that line is empty — a real but whitespace-only difference
+  // from the pre-task string. Comparing non-blank lines is what makes this
+  // test actually able to catch a REAL content drift instead of being pinned
+  // to a literal that already includes the harmless line it should ignore.
+  it("adds no visible content for a pre-Task-6 record with none of the three provenance fields", () => {
     const ctx = load(false);
     // A pre-Task-6 record: no connectedBy, no mirrorWorkspace, no connectedAt.
     // (A real solo brain's connectedBy is the owner's name, not this — see
@@ -183,21 +189,17 @@ describe("integrations sheet: connection provenance", () => {
     const html = ctx.renderIntegrationCard({ ...BASE });
     expect(html).not.toContain("Synced memories land in the personal layer");
     expect(html).not.toContain("Synced memories land in the shared team layer");
-    expect(html).toBe(
-      [
-        "",
-        '    <div class="integration-row">',
-        '      <div class="integration-head"><i class="ti ti-brand-notion"></i><span>Notion</span><span class="integration-state connected">Acme Notion</span></div>',
-        `      <p class="digest-note" id="note-notion">5 items synced &middot; Last sync: ${new Date(BASE.lastSyncedAt).toLocaleString(ctx.localeTag())}</p>`,
-        "      ",
-        "      ",
-        '      <div class="integration-actions">',
-        '        <button class="digest-btn" onclick="syncIntegration(\'notion\', this)"><i class="ti ti-refresh"></i> Sync now</button>',
-        '        <button class="digest-btn danger" onclick="disconnectIntegration(\'notion\', this)">Disconnect</button>',
-        "      </div>",
-        "    </div>",
-      ].join("\n"),
-    );
+    const nonBlankLines = (html as string).split("\n").map((l: string) => l.trim()).filter(Boolean);
+    expect(nonBlankLines).toEqual([
+      '<div class="integration-row">',
+      '<div class="integration-head"><i class="ti ti-brand-notion"></i><span>Notion</span><span class="integration-state connected">Acme Notion</span></div>',
+      `<p class="digest-note" id="note-notion">5 items synced &middot; Last sync: ${new Date(BASE.lastSyncedAt).toLocaleString(ctx.localeTag())}</p>`,
+      '<div class="integration-actions">',
+      '<button class="digest-btn" onclick="syncIntegration(\'notion\', this)"><i class="ti ti-refresh"></i> Sync now</button>',
+      '<button class="digest-btn danger" onclick="disconnectIntegration(\'notion\', this)">Disconnect</button>',
+      "</div>",
+      "</div>",
+    ]);
   });
 
   it("speaks Italian", () => {

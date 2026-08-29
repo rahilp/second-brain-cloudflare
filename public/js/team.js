@@ -237,16 +237,13 @@ function renderTeamMember() {
             <div class="team-name">${escHtml(t(defaultKey))}</div>
             <div class="team-sub">${escHtml(t('team.yourCaptureHint'))}</div>
           </div>
-          <label class="team-capture-label" title="${escAttr(t('team.myDefaultLabel'))}">
-            ${escHtml(t('team.myDefaultLabel'))}
-            <span class="team-select-wrap">
-              <select class="team-select" id="team-my-default" onchange="setMyDefaultShare(this.value)">
-                ${['personal', 'company', 'inherit']
-                  .map((v) => `<option value="${v}"${(teamMyDefault.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
-                  .join('')}
-              </select><i class="ti ti-chevron-down"></i>
-            </span>
-          </label>
+          ${teamShareSelect({
+            id: 'team-my-default',
+            onchange: 'setMyDefaultShare(this.value)',
+            selected: teamMyDefault.defaultShare,
+            title: t('team.myDefaultLabel'),
+            label: t('team.myDefaultLabel'),
+          })}
         </div></div>
       </div>` : ''}
       <div>
@@ -322,16 +319,12 @@ function teamMemberRow(m) {
         <div class="team-name">${escHtml(teamMemberLabel(m))} ${chips}</div>
         ${subline ? `<div class="team-sub">${subline}</div>` : ''}
       </div>
-      <label class="team-capture-label" title="${escAttr(t('team.defaultShareTitle'))}">
-        ${escHtml(t('team.defaultShareLabel'))}
-        <span class="team-select-wrap">
-          <select class="team-select" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)">
-            ${['personal', 'company', 'inherit']
-              .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
-              .join('')}
-          </select><i class="ti ti-chevron-down"></i>
-        </span>
-      </label>
+      ${teamShareSelect({
+        onchange: `setMemberDefaultShare('${escAttr(m.userId)}', this.value)`,
+        selected: m.defaultShare,
+        title: t('team.defaultShareTitle'),
+        label: t('team.defaultShareLabel'),
+      })}
       <div class="team-actions">${actions.join('')}</div>
     </div>`
 }
@@ -603,6 +596,38 @@ function teamDefaultShareLabel(value) {
   return value === 'company' ? t('team.shareCompany') : value === 'personal' ? t('team.sharePersonal') : t('team.shareInherit')
 }
 
+/** The three values every capture-default control offers, in display order. */
+const TEAM_SHARE_VALUES = ['personal', 'company', 'inherit']
+
+/**
+ * The capture-default control itself: an admin picks it for a member's row
+ * (teamMemberRow), and a member now picks it for their own (renderTeamMember).
+ * "The member's control is the admin's control, byte for byte" only holds if
+ * there is exactly one control to change — two copies of the same markup can
+ * still drift the moment someone adds a fourth option to one and not the
+ * other. This is that one place.
+ *
+ * `title`/`label` are already-resolved strings, not i18n keys: each caller
+ * translates with its own literal key before reaching here. Threading the
+ * KEY through instead and translating it in here would read as the same
+ * amount of sharing, but it turns a lookup the i18n suite's call-site
+ * checker can verify into an opaque forwarded variable it cannot — trading a
+ * caught typo for a silently-broken translation.
+ */
+function teamShareSelect({ id, onchange, selected, title, label }) {
+  const idAttr = id ? ` id="${escAttr(id)}"` : ''
+  return `<label class="team-capture-label" title="${escAttr(title)}">
+        ${escHtml(label)}
+        <span class="team-select-wrap">
+          <select class="team-select"${idAttr} onchange="${onchange}">
+            ${TEAM_SHARE_VALUES
+              .map((v) => `<option value="${v}"${(selected || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
+              .join('')}
+          </select><i class="ti ti-chevron-down"></i>
+        </span>
+      </label>`
+}
+
 async function setMemberDefaultShare(id, value) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
@@ -618,9 +643,17 @@ async function setMemberDefaultShare(id, value) {
 }
 
 /**
- * The member's own copy of setMemberDefaultShare: same endpoint shape, same
- * re-render-on-failure discipline, but writing the caller's own row rather
- * than a row an admin picked — POST /team/me/default-share carries no `id`.
+ * The member's own copy of setMemberDefaultShare: same endpoint shape, but
+ * writing the caller's own row rather than one an admin picked — POST
+ * /team/me/default-share carries no `id`.
+ *
+ * The failure path is lighter on purpose, not by oversight: neither function
+ * mutates its in-memory copy until the response confirms success, so a bare
+ * re-render is always safe here. setMemberDefaultShare still reloads the
+ * whole roster on failure, matching the other admin mutations (remove,
+ * suspend) that touch state shared across the team; this one only ever
+ * touches the caller's own already-in-hand profile, so there is nothing a
+ * reload would refresh that a re-render does not already have.
  */
 async function setMyDefaultShare(value) {
   try {

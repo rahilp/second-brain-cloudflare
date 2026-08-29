@@ -206,6 +206,12 @@ function renderIntegrationCard(info) {
   // "lands in the personal layer" names a distinction that does not exist.
   const provenance = [
     info.connectedBy ? t('integrations.connectedByLabel', { name: info.connectedBy }) : null,
+    // The backticks below are load-bearing, not decorative: the i18n
+    // suite's call-site checker only resolves a ternary of quoted literals
+    // when it is the sole `${}` inside a template literal (the form
+    // public/js/auth.js uses) — the SAME ternary passed as a bare argument,
+    // with no surrounding template literal, is invisible to it and registers
+    // as an unpinned dynamic call site instead.
     TEAM_MODE ? t(`${info.mirrorWorkspace === 'company' ? 'integrations.mirrorShared' : 'integrations.mirrorPersonal'}`) : null,
     info.connectedAt ? t('integrations.connectedOn', { when: new Date(info.connectedAt).toLocaleDateString(localeTag()) }) : null,
   ].filter(Boolean).join(' · ')
