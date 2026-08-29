@@ -89,6 +89,8 @@ const TEAM_ELEMENT_IDS = [
   "confirm-check-row",
   "confirm-check-label",
   "confirm-checkbox",
+  "team-invite-copy-btn",
+  "team-invite-mail-btn",
 ];
 
 function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
@@ -104,6 +106,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     "sb-team-name",
     "topbar-team-name",
     "confirm-check-row",
+    "team-invite-mail-btn",
   ]);
   for (const id of TEAM_ELEMENT_IDS) {
     const el = makeEl();
@@ -116,6 +119,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
   // dummy element here would silently swallow the toast's real DOM write and
   // this test group exists specifically to observe that write.
   const appended: any[] = [];
+  const copied: string[] = [];
   const doc = {
     documentElement: { lang: "en" },
     querySelector: () => makeEl(),
@@ -130,7 +134,14 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     console,
     document: doc,
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    navigator: { language: "en-US" },
+    navigator: {
+      language: "en-US",
+      clipboard: {
+        writeText: (s: string) => {
+          copied.push(s);
+        },
+      },
+    },
     fetch: fetchImpl,
     // team.js's suspend/remove/rotate flows must never reach for the
     // browser's native dialog — the sheet from confirm-sheet.js replaces it.
@@ -144,6 +155,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     exports: undefined,
   };
   ctx.window = ctx;
+  ctx.location = { href: "" };
   vm.createContext(ctx);
   vm.runInContext(SRC, ctx);
   // The page connects before anything team-related can run. These are top-level
@@ -151,7 +163,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
   // set as sandbox properties.
   vm.runInContext(`WORKER_URL = "http://localhost"; AUTH_TOKEN = "tok"; var TEAM_MODE = true`, ctx);
   ctx.initI18n("en");
-  return { ctx, els: elements, appended };
+  return { ctx, els: elements, appended, copied };
 }
 
 const ADMIN_OK = {
@@ -294,6 +306,73 @@ describe("team panel", () => {
     expect(els.get("team-token-for").textContent).toContain("Bob");
     // Form reset after success.
     expect(els.get("team-add-name").value).toBe("");
+  });
+
+  /** Adds Bob (email optional) and returns the harness so a test can act on the reveal. */
+  function addBob(email: string) {
+    const harness = setup(
+      jsonFetch([
+        {
+          match: (u, i) => u.endsWith("/team/members") && i?.method === "POST",
+          reply: () => ({
+            ok: true,
+            status: 201,
+            json: async () => ({ ok: true, member: { userId: "u2", name: "Bob", role: "member" }, token: "one-time-secret" }),
+          }),
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    harness.els.get("team-add-name").value = "Bob";
+    harness.els.get("team-add-email").value = email;
+    return harness;
+  }
+
+  it("copying the invite message writes Bob's name, the worker URL and the one-time token", async () => {
+    const { ctx, copied } = addBob("bob@example.com");
+    await ctx.submitNewMember();
+    ctx.copyInviteMessage();
+    expect(copied).toHaveLength(1);
+    expect(copied[0]).toContain("Bob");
+    expect(copied[0]).toContain("http://localhost");
+    expect(copied[0]).toContain("one-time-secret");
+    expect(copied[0]).toContain("stays personal");
+  });
+
+  it("shows the mail button only when the new member has an email", async () => {
+    const withEmail = addBob("bob@example.com");
+    await withEmail.ctx.submitNewMember();
+    expect(withEmail.els.get("team-invite-mail-btn").style.display).toBe("");
+
+    const withoutEmail = addBob("");
+    await withoutEmail.ctx.submitNewMember();
+    expect(withoutEmail.els.get("team-invite-mail-btn").style.display).toBe("none");
+  });
+
+  it("emailing the invite opens a mailto: link addressed to the new member with the invite body", async () => {
+    const { ctx } = addBob("bob@example.com");
+    await ctx.submitNewMember();
+    ctx.emailInvite();
+    expect(ctx.window.location.href).toMatch(/^mailto:bob%40example\.com\?subject=/);
+    const url = new URL(ctx.window.location.href.replace(/^mailto:/, "http://x?"));
+    expect(url.searchParams.get("body")).toBe(ctx.inviteMessage());
+  });
+
+  it("dismissing the token reveal drops the token, so copying afterwards writes nothing", async () => {
+    const { ctx, copied } = addBob("bob@example.com");
+    await ctx.submitNewMember();
+    ctx.closeTeamTokenReveal();
+    ctx.copyInviteMessage();
+    expect(copied).toHaveLength(0);
+  });
+
+  it("the invite message is translated in Italian — impossible when the admin wrote it by hand", async () => {
+    const { ctx, copied } = addBob("bob@example.com");
+    ctx.initI18n("it");
+    await ctx.submitNewMember();
+    ctx.copyInviteMessage();
+    expect(copied[0]).toContain("Second Brain condiviso");
+    expect(copied[0]).toContain("Incolla questo token");
   });
 
   it("surfaces a duplicate email instead of a token", async () => {

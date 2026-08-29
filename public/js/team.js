@@ -11,9 +11,10 @@ let teamMembers = []
 let teamYouId = null
 /** The caller's teams, oldest first — [0] is the one "share with the team" means. */
 let teamWorkspaces = []
-// The plaintext token the server hands back exactly once. Dropped the moment
-// the reveal is dismissed — after that, rotation is the only way back.
-let lastTeamToken = ''
+// The plaintext token the server hands back exactly once, plus who it is for.
+// The token is dropped the moment the reveal is dismissed — after that,
+// rotation is the only way back.
+let lastTeamInvite = { name: '', email: '', token: '' }
 
 /**
  * The team's name, for everyone.
@@ -231,8 +232,8 @@ function showTeamError(message) {
  * the point is to sit there until it has been copied, and a modal invites
  * dismissing it by accident.
  */
-function showTeamToken(token, name) {
-  lastTeamToken = token
+function showTeamToken(token, name, email) {
+  lastTeamInvite = { name, email: email || '', token }
   const wrap = document.getElementById('team-token-reveal')
   if (!wrap) return
   const sub = document.getElementById('team-token-for')
@@ -241,6 +242,9 @@ function showTeamToken(token, name) {
   if (val) val.textContent = token
   const copyBtn = document.getElementById('team-copy-btn')
   if (copyBtn) copyBtn.textContent = t('team.copy')
+  const mailBtn = document.getElementById('team-invite-mail-btn')
+  // Both branches: a member added without an email has no address to mail.
+  if (mailBtn) mailBtn.style.display = lastTeamInvite.email ? '' : 'none'
   wrap.style.display = ''
   if (wrap.scrollIntoView) wrap.scrollIntoView({ block: 'nearest' })
 }
@@ -250,18 +254,39 @@ function closeTeamTokenReveal() {
   if (wrap) wrap.style.display = 'none'
   const val = document.getElementById('team-token-value')
   if (val) val.textContent = ''
-  lastTeamToken = ''
+  lastTeamInvite.token = ''
 }
 
 function copyTeamToken() {
-  if (!lastTeamToken || !navigator.clipboard) return
-  navigator.clipboard.writeText(lastTeamToken)
+  if (!lastTeamInvite.token || !navigator.clipboard) return
+  navigator.clipboard.writeText(lastTeamInvite.token)
   const btn = document.getElementById('team-copy-btn')
   if (!btn) return
   btn.textContent = t('team.copied')
   setTimeout(() => {
     btn.textContent = t('team.copy')
   }, 1500)
+}
+
+/** The covering note an admin would otherwise have to compose by hand, every time. */
+function inviteMessage() {
+  return t('invite.body', { name: lastTeamInvite.name, url: WORKER_URL, token: lastTeamInvite.token })
+}
+
+function copyInviteMessage() {
+  if (!lastTeamInvite.token || !navigator.clipboard) return
+  navigator.clipboard.writeText(inviteMessage())
+  const btn = document.getElementById('team-invite-copy-btn')
+  if (!btn) return
+  btn.textContent = t('invite.copied')
+  setTimeout(() => {
+    btn.textContent = t('invite.copy')
+  }, 1500)
+}
+
+function emailInvite() {
+  if (!lastTeamInvite.token) return
+  window.location.href = `mailto:${encodeURIComponent(lastTeamInvite.email)}?subject=${encodeURIComponent(t('invite.subject'))}&body=${encodeURIComponent(inviteMessage())}`
 }
 
 async function submitNewMember() {
@@ -285,7 +310,7 @@ async function submitNewMember() {
     const r = await postTeam('/team/members', { name, ...(email ? { email } : {}), role })
     if (r.status === 409) throw new Error(t('team.duplicateEmail'))
     if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    showTeamToken(r.data.token, r.data.member?.name || name)
+    showTeamToken(r.data.token, r.data.member?.name || name, email)
     if (nameEl) nameEl.value = ''
     if (emailEl) emailEl.value = ''
     if (roleEl) roleEl.value = 'member'
@@ -311,7 +336,7 @@ async function rotateTeamToken(id) {
       try {
         const r = await postTeam('/team/members/token', { id })
         if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-        showTeamToken(r.data.token, teamMemberLabel(m))
+        showTeamToken(r.data.token, teamMemberLabel(m), m.email)
       } catch (e) {
         showToast(e.message || t('team.actionFailed'))
       }

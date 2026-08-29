@@ -432,6 +432,14 @@ const I18N_EN = {
     removeTitle: 'Remove this member?',
     restoredToast: 'Access restored',
   },
+  invite: {
+    copy: 'Copy invite message',
+    copied: 'Invite copied',
+    email: 'Email invite',
+    subject: 'Your Second Brain team invite',
+    body:
+      'Hi {name},\n\nYou have been added to our shared Second Brain — one memory the whole team can search.\n\n1. Open {url}\n2. Paste this one-time sign-in token:\n{token}\n3. Press Connect.\n\nAnything you capture stays personal unless you share it with the team. The token is shown once, so keep this message until you have signed in.',
+  },
   brief: {
     eyebrow: 'Your brain, lately',
     lastDays: 'Last {n} days',
@@ -953,6 +961,14 @@ const I18N_IT = {
     suspendTitle: 'Sospendere questa persona?',
     removeTitle: 'Rimuovere questa persona?',
     restoredToast: 'Accesso ripristinato',
+  },
+  invite: {
+    copy: 'Copia messaggio d’invito',
+    copied: 'Invito copiato',
+    email: 'Invia per email',
+    subject: 'Il tuo invito al team di Second Brain',
+    body:
+      'Ciao {name},\n\nSei stata/o aggiunta/o al nostro Second Brain condiviso — una memoria che tutto il team può consultare.\n\n1. Apri {url}\n2. Incolla questo token di accesso monouso:\n{token}\n3. Premi Connetti.\n\nTutto ciò che salvi resta personale finché non lo condividi col team. Il token viene mostrato una sola volta, quindi conserva questo messaggio finché non hai effettuato l’accesso.',
   },
   brief: {
     eyebrow: 'Il tuo cervello, di recente',
