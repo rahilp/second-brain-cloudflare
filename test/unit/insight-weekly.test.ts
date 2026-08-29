@@ -633,6 +633,158 @@ describe("runWeeklyInsights()", () => {
     logSpy.mockRestore();
   });
 
+  /**
+   * Task 18. The workspace comparison used to sit BELOW `reasonOverPair`: the
+   * pair went into one prompt first, and `inputWorkspaces` then decided only
+   * where to file the sentence that came back. So two members' private memories
+   * could be synthesised into a single sentence — and the insight's vocabulary
+   * floor requires that sentence to name something particular to each side, so
+   * the text carries specifics from both. It was then written to "", which
+   * `readableWorkspaces` grants to admins, and printed on /patterns.
+   *
+   * Accrual refuses cross-workspace pairs in both of its paths, so the reachable
+   * shape is a candidate row accrued before tenancy — exactly what a v2 brain
+   * carries into an upgrade, which is what these cases seed.
+   */
+  describe("workspaces are compared before the pair is reasoned over", () => {
+    const A_TEXT = "Decision: price the Meridian tier flat at nine dollars a month.";
+    const B_TEXT = "Decision: move the Meridian tier to usage-based billing instead.";
+
+    // No `updated_at`: that column arrives by runtime ALTER inside
+    // initializeDatabase, which runWeeklyInsights has not called yet when these
+    // rows are seeded. Every other column is in db/schema.sql.
+    function seedInWorkspace(id: string, workspaceId: string, content: string, createdAt: number) {
+      sqlite.db.prepare(
+        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id)
+         VALUES (?, ?, '["pricing"]', 'api', ?, '[]', ?, '')`,
+      ).bind(id, content, createdAt, workspaceId).run();
+    }
+
+    function seedPair(aWorkspace: string, bWorkspace: string) {
+      seedInWorkspace("a-x", aWorkspace, A_TEXT, NOW - 120 * DAY);
+      seedInWorkspace("b-x", bWorkspace, B_TEXT, NOW);
+      sqlite.db.prepare(
+        `INSERT INTO insight_candidates (id, a_id, b_id, similarity, gap_ms, score, signal, status, created_at)
+         VALUES ('cand-x', 'a-x', 'b-x', 0.87, ?, 9, 'vector', 'pending', ?)`,
+      ).bind(120 * DAY, NOW).run();
+    }
+
+    /** Records every prompt so the model's INPUT can be asserted on. */
+    function recordingAI(prompts: string[]): Ai {
+      const sse = (text: string) => new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(text)}}\n\n`));
+          c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+          c.close();
+        },
+      });
+      return {
+        run: vi.fn().mockImplementation(async (model: string, opts: any) => {
+          if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
+          const prompt = String(opts?.messages?.[0]?.content ?? "");
+          prompts.push(prompt);
+          return sse(prompt.includes("Memory A:") ? GOOD : "3");
+        }),
+      } as unknown as Ai;
+    }
+
+    const insightRows = async () =>
+      ((await sqlite.db.prepare(
+        `SELECT id, content, workspace_id FROM entries WHERE tags LIKE '%"auto-insight"%'`,
+      ).all()).results) as { id: string; content: string; workspace_id: string }[];
+
+    it("never puts two workspaces' memories into one prompt", async () => {
+      seedPair("ws-alice", "ws-bob");
+      const prompts: string[] = [];
+      const env = makeTestEnv(undefined, {
+        DB: sqlite.db as any, AI: recordingAI(prompts), OAUTH_KV: makeMemoryKV(),
+      });
+
+      await runWeeklyInsights(env, ctx);
+
+      // Asserted on what the model was GIVEN, not on how often it was called: a
+      // sentence synthesised from both sides is the leak, whatever it then says.
+      expect(prompts.join("\n")).not.toContain(A_TEXT);
+      expect(prompts.join("\n")).not.toContain(B_TEXT);
+      expect(prompts.filter(p => p.includes("Memory A:"))).toEqual([]);
+    });
+
+    it("writes no insight to the legacy/system workspace from such a pair", async () => {
+      seedPair("ws-alice", "ws-bob");
+      const env = makeTestEnv(undefined, {
+        DB: sqlite.db as any, AI: makeAI(GOOD), OAUTH_KV: makeMemoryKV(),
+      });
+
+      await runWeeklyInsights(env, ctx);
+
+      // "" is the space readableWorkspaces hands to admins, so an insight filed
+      // there is one an admin reads on /patterns.
+      expect(await insightRows()).toEqual([]);
+      // Settled rather than left pending, so the pass does not re-draw and
+      // re-skip the same disqualified row every week.
+      expect(await statusOf(sqlite, "cand-x")).toBe("used");
+      expect(await drawnFrom(sqlite)).toEqual([]);
+    });
+
+    it("still reasons over — and files — a pair that shares a workspace", async () => {
+      // The narrowing must not stop weekly insights working. Both sides in one
+      // team workspace: reasoned, written, and filed to that workspace.
+      seedPair("ws-alice", "ws-alice");
+      const prompts: string[] = [];
+      const env = makeTestEnv(undefined, {
+        DB: sqlite.db as any, AI: recordingAI(prompts), OAUTH_KV: makeMemoryKV(),
+      });
+
+      await runWeeklyInsights(env, ctx);
+
+      expect(prompts.filter(p => p.includes("Memory A:"))).toHaveLength(1);
+      const rows = await insightRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].workspace_id).toBe("ws-alice");
+      expect(rows[0].content).toContain(GOOD_TEXT);
+      expect(await statusOf(sqlite, "cand-x")).toBe("used");
+    });
+
+    it("is unchanged on a solo brain, where every candidate is one workspace", async () => {
+      // A pre-tenancy brain has "" on both sides. The comparison is size-1 there,
+      // so the pass reasons and files exactly as it did.
+      seedPair("", "");
+      const prompts: string[] = [];
+      const env = makeTestEnv(undefined, {
+        DB: sqlite.db as any, AI: recordingAI(prompts), OAUTH_KV: makeMemoryKV(),
+      });
+
+      await runWeeklyInsights(env, ctx);
+
+      expect(prompts.filter(p => p.includes("Memory A:"))).toHaveLength(1);
+      const rows = await insightRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].workspace_id).toBe("");
+      expect(rows[0].content).toContain(GOOD_TEXT);
+      expect(await drawnFrom(sqlite)).toEqual([
+        { source_id: rows[0].id, target_id: "a-x", provenance: "system" },
+        { source_id: rows[0].id, target_id: "b-x", provenance: "system" },
+      ]);
+    });
+
+    it("does not count a skipped cross-workspace pair as reasoned over", async () => {
+      // candidatesReasoned is the D2 instrumentation the spec reads to decide
+      // whether the corpus is running dry. A pair that never reached the model
+      // must not inflate it, the same rule the D1 pair-rule rejection follows.
+      seedPair("ws-alice", "ws-bob");
+      const env = makeTestEnv(undefined, {
+        DB: sqlite.db as any, AI: makeAI(GOOD), OAUTH_KV: makeMemoryKV(),
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await runWeeklyInsights(env, ctx);
+
+      const [, payload] = logSpy.mock.calls.filter(c => String(c[0]).includes("insight"))[0];
+      expect(payload).toMatchObject({ candidatesDrawn: 1, candidatesReasoned: 0, written: 0 });
+      logSpy.mockRestore();
+    });
+  });
+
   it("does not throw when the pass fails", async () => {
     const broken = { prepare: () => { throw new Error("D1 down"); } } as any;
     await expect(

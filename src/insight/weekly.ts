@@ -92,7 +92,7 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // being drawn under the old rule until the pool empties. Free: the JOIN
     // was already selecting these rows, this only widens the column list.
     const { results } = await env.DB.prepare(
-      // scope-exempt: cron: no caller to scope to. Both workspaces are projected and compared into inputWorkspaces below; a pair spanning two workspaces is written to '' — which MEMBERS cannot read but ADMINS can (readableWorkspaces pushes '' for role admin, src/lib/scope.ts), so that is a narrowing, not a quarantine. Accrual refuses to pair across workspaces (candidates.ts), so this only fires for pre-tenancy candidate rows
+      // scope-exempt: cron: no caller to scope to. Both workspaces are projected, and the loop below compares them BEFORE the pair reaches the model: a candidate whose two entries sit in different workspaces is skipped and settled, never reasoned over and never written anywhere. Accrual refuses to pair across workspaces (candidates.ts), so that only fires for pre-tenancy candidate rows
       `SELECT c.id, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
               a.tags AS a_tags, b.tags AS b_tags,
               a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id
@@ -167,6 +167,40 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
         continue;
       }
 
+      // THE INSIGHT-WORKSPACE RULE, applied as a GATE on synthesis rather than as
+      // placement afterwards.
+      //
+      // reasonOverPair puts `a.content` and `b.content` in ONE prompt, and the
+      // insight's vocabulary floor requires the sentence that comes back to name
+      // something particular to each side — so a pair spanning two workspaces was
+      // synthesised into a sentence carrying specifics from both before anything
+      // looked at where it belonged. Filing that sentence in "" narrowed who could
+      // read it, but readableWorkspaces hands "" to admins, so it still reached a
+      // reader on /patterns. There is no correct place for it: it should never have
+      // been written.
+      //
+      // Free: the candidate join already projects both sides' workspace_id, so
+      // this needs no extra query. Marked `used` for the same reason the D1
+      // pair-rule rejection above is — the pair is disqualified outright, and
+      // re-accrual would re-insert the identical row, so leaving it `pending`
+      // would only have the pass re-draw and re-skip it every week.
+      //
+      // An insight inherits its inputs' workspace when they agree: the synthesis is
+      // then that workspace's own content turned back on itself, and hiding it from
+      // the people who wrote it would make insights unreadable by their owners.
+      //
+      // Accrual (src/insight/candidates.ts) already refuses to pair across
+      // workspaces in both paths, so this only fires for candidates that predate
+      // tenancy — which is every candidate an upgraded v2 brain carries in. Team
+      // insights are a Phase 4 feature (spec 4.5), deliberately scoped to the
+      // company workspace and attributed; this is not that.
+      const inputWorkspaces = new Set([candidate.a_workspace_id ?? "", candidate.b_workspace_id ?? ""]);
+      if (inputWorkspaces.size !== 1) {
+        used.push(candidate.id);
+        continue;
+      }
+      const insightWorkspace = [...inputWorkspaces][0];
+
       candidatesReasoned++;
       const result = await reasonOverPair(
         { content: candidate.a_content },
@@ -203,20 +237,7 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       }
       writtenThisRun.push(result.text);
 
-      // Where a written insight lives (THE INSIGHT-WORKSPACE RULE):
-      //
-      // An insight inherits its inputs' workspace only when both sides agree —
-      // the synthesis is then that workspace's own content turned back on
-      // itself, and hiding it from the people who wrote it would make insights
-      // unreadable by their owners. When the pair spans two workspaces, no
-      // member may see a row built partly from someone else's private memory,
-      // so the entry is written to "" — owner/system space, outside every
-      // member's readable set. Accrual (src/insight/candidates.ts) already
-      // refuses to pair across workspaces, so this branch only fires for
-      // candidates that predate tenancy.
-      const inputWorkspaces = new Set([candidate.a_workspace_id ?? "", candidate.b_workspace_id ?? ""]);
-      const insightWorkspace = inputWorkspaces.size === 1 ? [...inputWorkspaces][0] : "";
-
+      // insightWorkspace was settled above, before the pair reached the model.
       const content = `${result.text}\n\n[Insight: ${result.shape} — drawn from 2 memories]`;
       // actorId stays "": the insight is system-authored regardless of whose
       // workspace it inherits.
