@@ -402,6 +402,10 @@ const I18N_EN = {
           'At appleid.apple.com → Sign-In and Security → <b>App-Specific Passwords</b>, generate one, then enter your iCloud email and that password.',
       },
     },
+    connectedByLabel: 'Connected by {name}',
+    mirrorPersonal: 'Synced memories land in the personal layer',
+    mirrorShared: 'Synced memories land in the shared team layer',
+    connectedOn: 'Connected {when}',
   },
   team: {
     title: 'Team',
@@ -419,13 +423,7 @@ const I18N_EN = {
     adminsOnly: 'Only workspace admins can manage team members.',
     rosterHint: 'Everyone on this team. Only admins can add or remove people.',
     yourCaptureTitle: 'Your new captures',
-    yourCaptureHint: 'Only a team admin can change this. You can still choose where any single capture goes.',
-    // The composer's home.auto*Yours strings say "(your setting)", which is
-    // right where the member is choosing. Here it sits above the line saying
-    // only an admin can change it, and the override is written by the
-    // admin-only POST /team/members/default-share, so it is "(set for you)".
-    autoPersonalSetForYou: 'Auto → Personal (set for you)',
-    autoSharedSetForYou: 'Auto → Shared (set for you)',
+    yourCaptureHint: 'Where your captures go when you don’t pick a layer. You can still choose per memory.',
     roleAdmin: 'Admin',
     roleMember: 'Member',
     you: 'you',
@@ -472,6 +470,8 @@ const I18N_EN = {
     rotating: 'Resetting…',
     suspending: 'Suspending…',
     removing: 'Removing…',
+    myDefaultLabel: 'New captures:',
+    myDefaultSaved: 'Capture default updated',
   },
   invite: {
     copy: 'Copy invite message',
@@ -975,6 +975,10 @@ const I18N_IT = {
           'Su appleid.apple.com → Accesso e sicurezza → <b>Password specifiche per le app</b>, genera una, poi inserisci l’email iCloud e quella password.',
       },
     },
+    connectedByLabel: 'Collegata da {name}',
+    mirrorPersonal: 'I ricordi sincronizzati finiscono nel livello personale',
+    mirrorShared: 'I ricordi sincronizzati finiscono nel livello condiviso del team',
+    connectedOn: 'Collegata il {when}',
   },
   team: {
     title: 'Team',
@@ -992,9 +996,7 @@ const I18N_IT = {
     adminsOnly: 'Solo gli amministratori possono gestire i membri del team.',
     rosterHint: 'Tutte le persone di questo team. Solo gli amministratori possono aggiungerle o rimuoverle.',
     yourCaptureTitle: 'Le tue nuove acquisizioni',
-    yourCaptureHint: 'Solo un amministratore del team può cambiarlo. Puoi comunque scegliere dove finisce una singola acquisizione.',
-    autoPersonalSetForYou: 'Auto → Personale (impostato per te)',
-    autoSharedSetForYou: 'Auto → Condiviso (impostato per te)',
+    yourCaptureHint: 'Dove finiscono le tue acquisizioni quando non scegli un livello. Puoi comunque decidere per ogni singolo ricordo.',
     roleAdmin: 'Amministratore',
     roleMember: 'Membro',
     you: 'tu',
@@ -1041,6 +1043,8 @@ const I18N_IT = {
     rotating: 'Reimpostazione…',
     suspending: 'Sospensione…',
     removing: 'Rimozione…',
+    myDefaultLabel: 'Nuove acquisizioni:',
+    myDefaultSaved: 'Predefinito di acquisizione aggiornato',
   },
   invite: {
     copy: 'Copia messaggio d’invito',

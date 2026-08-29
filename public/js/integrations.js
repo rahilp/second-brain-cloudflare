@@ -200,10 +200,26 @@ function renderIntegrationCard(info) {
   const err = info.lastSyncError
     ? `<div class="integration-error">${escHtml(t('integrations.lastSyncFailed', { error: info.lastSyncError }))}</div>`
     : ''
+  // Who to ask, and where a synced page lands — a member can read what the
+  // connection IS even though only an admin can act on it (adminsOnly below).
+  // Gated on TEAM_MODE, not on mirrorWorkspace having a value: on a solo brain
+  // "lands in the personal layer" names a distinction that does not exist.
+  const provenance = [
+    info.connectedBy ? t('integrations.connectedByLabel', { name: info.connectedBy }) : null,
+    // The backticks below are load-bearing, not decorative: the i18n
+    // suite's call-site checker only resolves a ternary of quoted literals
+    // when it is the sole `${}` inside a template literal (the form
+    // public/js/auth.js uses) — the SAME ternary passed as a bare argument,
+    // with no surrounding template literal, is invisible to it and registers
+    // as an unpinned dynamic call site instead.
+    TEAM_MODE ? t(`${info.mirrorWorkspace === 'company' ? 'integrations.mirrorShared' : 'integrations.mirrorPersonal'}`) : null,
+    info.connectedAt ? t('integrations.connectedOn', { when: new Date(info.connectedAt).toLocaleDateString(localeTag()) }) : null,
+  ].filter(Boolean).join(' · ')
   return `
     <div class="integration-row">
       <div class="integration-head"><i class="ti ${icon}"></i><span>${escHtml(info.name)}</span><span class="integration-state connected">${escHtml(info.workspaceName || t('integrations.connected'))}</span></div>
       <p class="digest-note" id="note-${p}">${escHtml(count)} &middot; ${escHtml(t('integrations.lastSync', { when: last }))}</p>
+      ${provenance ? `<p class="digest-note">${escHtml(provenance)}</p>` : ''}
       ${err}
       ${integrationsAdmin
         ? `<div class="integration-actions">
