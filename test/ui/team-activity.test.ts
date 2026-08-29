@@ -405,6 +405,26 @@ describe("the activity feed", () => {
     }
   });
 
+  it("keeps the row list an array, so the next tab switch does not throw", async () => {
+    // THE GUARD'S OWN BEHAVIOUR, and not the outer catch's. Both are reachable
+    // from a wrong-shaped 200, and both produce the same failure line — which
+    // is why deleting `activityEventsFrom`'s throw used to pass the whole
+    // suite. What only the guard does is stop `activityRows` being assigned
+    // the malformed value: with it gone, `{ ok: true, events: null }` makes
+    // activityRows null, and the NEXT maybeRevealActivity reads
+    // `activityRows.length` OUTSIDE any try/catch, synchronously, from
+    // switchTab. That is a broken Team tab, not a failed feed.
+    for (const body of [{ ok: true, events: null }, { ok: true }, { ok: true, events: "nope" }]) {
+      const { ctx, els } = setup(async () => ({ ok: true, status: 200, json: async () => body }));
+      await ctx.maybeRevealActivity();
+      expect(els.get("activity-list").innerHTML, JSON.stringify(body))
+        .toContain("Could not load the activity log.");
+      expect(vm.runInContext("Array.isArray(activityRows)", ctx), JSON.stringify(body)).toBe(true);
+      expect(() => ctx.maybeRevealActivity(), JSON.stringify(body)).not.toThrow();
+      await flush();
+    }
+  });
+
   it("does not ask for the feed at all once the roster probe has said not-an-admin", async () => {
     // GET /team/activity is requireAdmin: for a member it can only ever be a
     // 403, one per Team-tab visit. team.js's probe has already answered the
