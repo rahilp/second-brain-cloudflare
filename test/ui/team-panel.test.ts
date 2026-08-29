@@ -922,10 +922,15 @@ describe("team member view", () => {
       expect(html, `${fn} must not be reachable from the member view`).not.toContain(fn);
     }
     expect(html).not.toContain("<button");
-    expect(html).not.toContain("<select");
     expect(html).not.toContain("<input");
     expect(html).not.toContain("onclick");
-    expect(html).not.toContain("onchange");
+    // The one interactive element the member view carries: their own
+    // capture-default control. Both id and handler are pinned so this stays a
+    // positive anchor for that one exception rather than a blank check that
+    // would also quietly permit an admin control landing here later.
+    expect(html.match(/<select/g)).toHaveLength(1);
+    expect(html.match(/onchange="/g)).toHaveLength(1);
+    expect(html).toContain('<select class="team-select" id="team-my-default" onchange="setMyDefaultShare(this.value)">');
     // And the admin panel itself stays shut.
     expect(els.get("team-body").style.display).toBe("none");
   });
@@ -938,14 +943,12 @@ describe("team member view", () => {
     });
     await ctx.loadTeam();
     const html = els.get("team-member-view").innerHTML as string;
-    expect(html).toContain("Auto → Personal (set for you)");
+    expect(html).toContain("Auto → Personal (your setting)");
     expect(html).not.toContain("Shared");
-    expect(html).toContain(ctx.t("team.autoPersonalSetForYou"));
-    // NOT the composer's phrasing: "(your setting)" claims an agency this
-    // screen denies two lines further down, and POST /team/members/default-share
-    // is requireAdmin, so the member really cannot change it.
-    expect(html).not.toContain(ctx.t("home.autoPersonalYours"));
-    expect(html).not.toContain("your setting");
+    // Same key the composer would read for this profile: POST
+    // /team/me/default-share (below) makes the member its owner, so there is
+    // no separate Team-screen phrasing left to disagree with the composer.
+    expect(html).toContain(ctx.t("home.autoPersonalYours"));
   });
 
   it("says Shared when the member overrides a personal org default the other way", async () => {
@@ -954,9 +957,10 @@ describe("team member view", () => {
     });
     await ctx.loadTeam();
     const html = els.get("team-member-view").innerHTML as string;
-    expect(html).toContain(ctx.t("team.autoSharedSetForYou"));
-    expect(html).not.toContain("your setting");
-    expect(html).not.toContain("Personal");
+    expect(html).toContain(ctx.t("home.autoSharedYours"));
+    // The resolved sentence says Shared, not Personal — "Personal (private)"
+    // legitimately appears as one of the control's three options below it.
+    expect(html).not.toContain("Auto → Personal");
   });
 
   it("attributes the default to the org when the member has no override of their own", async () => {
@@ -1027,10 +1031,97 @@ describe("team member view", () => {
     await ctx.loadTeam();
     const html = els.get("team-member-view").innerHTML as string;
     expect(html).toContain("Amministratore");
-    expect(html).toContain(ctx.t("team.autoPersonalSetForYou"));
-    expect(html).not.toContain("tua impostazione");
+    expect(html).toContain(ctx.t("home.autoPersonalYours"));
     // Both catalogs, not just English: a key present in en and missing from it
     // renders as its own key path here rather than failing loudly.
     expect(html).not.toMatch(/(team|home|common)\.[a-zA-Z]/);
+  });
+
+  it("renders the member's own capture-default control, seeded from GET /team/me", async () => {
+    const { ctx, els } = memberSetup({
+      me: ME({ defaultShare: "company", orgDefault: "personal", effectiveDefault: "company" }),
+    });
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain('id="team-my-default"');
+    const companyOption = html.match(/<option value="company"[^>]*>/)?.[0] ?? "";
+    expect(companyOption).toContain(" selected");
+  });
+
+  /** A member view wired for POST /team/me/default-share, exercising setMyDefaultShare. */
+  function memberSetupWithDefaultShare(
+    opts: { me?: unknown; defaultShareReply?: () => any } = {},
+  ) {
+    const bodies: any[] = [];
+    const harness = setup(async (url: string, init?: any) => {
+      if (url.endsWith("/team/members")) {
+        return { ok: false, status: 403, json: async () => ({ ok: false, error: "Forbidden" }) };
+      }
+      if (url.endsWith("/team/roster")) {
+        return { ok: true, status: 200, json: async () => ROSTER_OK };
+      }
+      if (url.endsWith("/team/me/default-share")) {
+        bodies.push(JSON.parse(init?.body ?? "{}"));
+        return (
+          opts.defaultShareReply?.() ?? { ok: true, status: 200, json: async () => ({ ok: true }) }
+        );
+      }
+      if (url.endsWith("/team/me")) return { ok: true, status: 200, json: async () => opts.me ?? ME() };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    return { ...harness, bodies };
+  }
+
+  it("posts the member's own default-share change with no id, unlike the admin's", async () => {
+    const { ctx, bodies } = memberSetupWithDefaultShare();
+    await ctx.loadTeam();
+    await ctx.setMyDefaultShare("personal");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toEqual({ default: "personal" });
+    expect(bodies[0]).not.toHaveProperty("id");
+  });
+
+  it("re-renders with the server's resolved default and toasts success", async () => {
+    const { ctx, els, appended } = memberSetupWithDefaultShare({
+      defaultShareReply: () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          default: "personal",
+          defaultShare: "personal",
+          orgDefault: "company",
+          effectiveDefault: "personal",
+        }),
+      }),
+    });
+    await ctx.loadTeam();
+    await ctx.setMyDefaultShare("personal");
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain(ctx.t("home.autoPersonalYours"));
+    expect(appended[appended.length - 1].innerHTML).toContain("Capture default updated");
+  });
+
+  it("reports a failed change through the toast and re-renders with the original value selected", async () => {
+    const { ctx, els, appended } = memberSetupWithDefaultShare({
+      me: ME({ defaultShare: "personal", orgDefault: "company", effectiveDefault: "personal" }),
+      defaultShareReply: () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: "nope" }) }),
+    });
+    await ctx.loadTeam();
+    await ctx.setMyDefaultShare("company");
+    expect(appended[appended.length - 1].innerHTML).toContain("nope");
+    const html = els.get("team-member-view").innerHTML as string;
+    const personalOption = html.match(/<option value="personal"[^>]*>/)?.[0] ?? "";
+    expect(personalOption).toContain(" selected");
+  });
+
+  it("translates the capture-default hint into Italian", async () => {
+    const { ctx, els } = memberSetup();
+    ctx.initI18n("it");
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain(
+      "Dove finiscono le tue acquisizioni quando non scegli un livello. Puoi comunque decidere per ogni singolo ricordo.",
+    );
   });
 });

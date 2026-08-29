@@ -218,10 +218,10 @@ function renderTeamMember() {
   const teamName = (teamRosterTeams[0]?.name || '').trim()
   // Verbatim from effectiveDefault — see captureDefaultKey in utils.js, which
   // the composer hint reads too so the two can never say different things.
-  // 'team' picks the wording for THIS screen: the hint below says only an
-  // admin can change the default, and only an admin can, so the override case
-  // is "(set for you)" here rather than the composer's "(your setting)".
-  const defaultKey = captureDefaultKey(teamMyDefault, 'team')
+  // POST /team/me/default-share (below, setMyDefaultShare) makes the member
+  // the owner of this value on both screens, so this is the same key the
+  // composer would read for the same profile — no per-screen wording.
+  const defaultKey = captureDefaultKey(teamMyDefault)
   view.innerHTML = `
     <div style="display: flex; flex-direction: column; gap: 24px;">
       ${teamName ? `<div>
@@ -237,6 +237,16 @@ function renderTeamMember() {
             <div class="team-name">${escHtml(t(defaultKey))}</div>
             <div class="team-sub">${escHtml(t('team.yourCaptureHint'))}</div>
           </div>
+          <label class="team-capture-label" title="${escAttr(t('team.myDefaultLabel'))}">
+            ${escHtml(t('team.myDefaultLabel'))}
+            <span class="team-select-wrap">
+              <select class="team-select" id="team-my-default" onchange="setMyDefaultShare(this.value)">
+                ${['personal', 'company', 'inherit']
+                  .map((v) => `<option value="${v}"${(teamMyDefault.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
+                  .join('')}
+              </select><i class="ti ti-chevron-down"></i>
+            </span>
+          </label>
         </div></div>
       </div>` : ''}
       <div>
@@ -604,6 +614,32 @@ async function setMemberDefaultShare(id, value) {
   } catch (e) {
     showToast(e.message || t('team.actionFailed'))
     await loadTeam()
+  }
+}
+
+/**
+ * The member's own copy of setMemberDefaultShare: same endpoint shape, same
+ * re-render-on-failure discipline, but writing the caller's own row rather
+ * than a row an admin picked — POST /team/me/default-share carries no `id`.
+ */
+async function setMyDefaultShare(value) {
+  try {
+    const r = await postTeam('/team/me/default-share', { default: value })
+    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+    teamMyDefault = {
+      defaultShare: r.data.defaultShare,
+      orgDefault: r.data.orgDefault,
+      effectiveDefault: r.data.effectiveDefault,
+    }
+    renderTeamMember()
+    showToast(t('team.myDefaultSaved'))
+    // The composer's copy of this profile was loaded on a /health reveal
+    // this screen does not wait for, so without this the hint under the
+    // layer dropdown keeps describing the policy the member just changed.
+    if (typeof loadCaptureDefault === 'function') loadCaptureDefault()
+  } catch (e) {
+    showToast(e.message || t('team.actionFailed'))
+    renderTeamMember()
   }
 }
 

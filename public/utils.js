@@ -786,26 +786,24 @@ function packGraphCircles(radii, gap) {
  * Shared so the composer hint (js/home.js) and the Team screen's readout
  * (js/team.js) cannot end up describing one profile two different ways.
  *
- * SURFACE changes only the wording of the override case, never the answer.
- * "(your setting)" is right in the composer, where it distinguishes a choice
- * that belongs to the member from the org's fallback. On the Team screen it
- * sits directly above "Only a team admin can change this", and it is the
- * admin-only POST /team/members/default-share that writes `defaultShare` — so
- * there the same fact is "(set for you)". The org-default wording needs no
- * variant: nobody reads "(org default)" as something they own.
+ * There used to be a SURFACE parameter that gave the override case a second
+ * voice on the Team screen — "(set for you)" instead of the composer's "(your
+ * setting)" — justified by only an admin being able to write `defaultShare`.
+ * POST /team/me/default-share makes the member the owner of that value on
+ * both screens, so "(your setting)" is true wherever this is read, and a
+ * helper whose whole job is to stop one profile being described two ways has
+ * no business carrying a parameter whose job was to describe it two ways.
  *
  * @param profile {{ effectiveDefault?: string, defaultShare?: string }|null}
- * @param surface {'composer'|'team'} whose voice the sentence is in
  * @returns an i18n key path, or null when nothing is known yet.
  */
-function captureDefaultKey(profile, surface) {
+function captureDefaultKey(profile) {
   if (!profile) return null
   const own = !!profile.defaultShare
-  const team = surface === 'team'
   if (profile.effectiveDefault === 'company') {
-    return own ? (team ? 'team.autoSharedSetForYou' : 'home.autoSharedYours') : 'home.autoSharedOrg'
+    return own ? 'home.autoSharedYours' : 'home.autoSharedOrg'
   }
-  return own ? (team ? 'team.autoPersonalSetForYou' : 'home.autoPersonalYours') : 'home.autoPersonalOrg'
+  return own ? 'home.autoPersonalYours' : 'home.autoPersonalOrg'
 }
 
 if (typeof module !== 'undefined' && module.exports) {
