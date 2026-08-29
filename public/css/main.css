@@ -4184,3 +4184,33 @@
           order: 2;
         }
       }
+
+      /* The admin activity feed. Rows are separated by a rule rather than by a
+         card each: this is a record to be scanned top to bottom, and fifty
+         cards read as fifty things to act on. --border, --text-primary and
+         --text-tertiary are all defined in the token block above, in both the
+         light and dark palettes; nothing here invents a token or carries a
+         var() fallback for one that does not exist.
+
+         No new tappable control lives here — #activity-more and
+         #activity-export both reuse .digest-btn, which already carries the
+         phone tap target. */
+      .activity-row {
+        padding: 9px 0;
+        border-top: 1px solid var(--border);
+      }
+
+      .activity-row:first-child {
+        border-top: none;
+      }
+
+      .activity-line {
+        font-size: 12.5px;
+        color: var(--text-primary);
+      }
+
+      .activity-when {
+        font-size: 11.5px;
+        color: var(--text-tertiary);
+        margin-top: 2px;
+      }

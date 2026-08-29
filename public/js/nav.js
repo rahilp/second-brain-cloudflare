@@ -81,6 +81,11 @@ function switchTab(tab) {
   // Suspensions and rotations can happen while the window sits open, so the
   // roster refetches on every visit rather than trusting the last one.
   if (tab === 'team' && typeof loadTeam === 'function') loadTeam()
+  // The activity feed reveals itself here rather than from renderTeam(), so the
+  // decision that the Team screen is being looked at stays in the one place
+  // that already makes it. Both branches live in maybeRevealActivity: a solo
+  // brain gets the section hidden and no request.
+  if (tab === 'team' && typeof maybeRevealActivity === 'function') maybeRevealActivity()
 }
 
 /**

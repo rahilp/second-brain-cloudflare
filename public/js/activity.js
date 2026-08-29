@@ -1,0 +1,160 @@
+// The admin activity feed — who changed what on this team, newest first.
+//
+// A separate module rather than a section of team.js: team.js is already the
+// roster, the token reveal, the team name and the org capture default, and a
+// feed with its own paging, its own failure state and its own vocabulary is a
+// module by any reading of the layer table in docs/dashboard-architecture.md.
+//
+// Admin-only by construction, not by a check in here. The whole section lives
+// inside #team-body, which only renders once GET /team/members has answered
+// 200 — and GET /team/activity is behind requireAdmin on the Worker, so a
+// member who reached this code would get a 403 and the failure line.
+//
+// Nothing here is editable. That is the point of a record: the screen shows
+// what the trail says and offers no way to make it say something else.
+
+/** Rows per page. The Worker caps `limit`; this is the request, not the cap. */
+const ACTIVITY_PAGE = 50
+
+/** Everything loaded so far, in the order the server sent it. Never re-sorted
+ *  here — the server decides what "newest first" means, and two orderings of
+ *  the same audit trail is one ordering too many. */
+let activityRows = []
+
+/**
+ * Fetch a page of the trail.
+ *
+ * `append` is the whole difference between the two callers: a cold load
+ * replaces and may state a failure, an append extends and must not — losing
+ * fifty rows on screen because the fifty-first page timed out is a worse
+ * outcome than the missing page.
+ */
+async function loadTeamActivity({ append = false } = {}) {
+  if (!WORKER_URL || !AUTH_TOKEN) return
+  const list = document.getElementById('activity-list')
+  try {
+    const res = await fetch(
+      `${WORKER_URL}/team/activity?limit=${ACTIVITY_PAGE}&offset=${append ? activityRows.length : 0}`,
+      { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } },
+    )
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    if (!Array.isArray(data.events)) throw new Error('failed')
+    activityRows = append ? [...activityRows, ...data.events] : data.events
+    renderActivity()
+  } catch {
+    if (append) {
+      // The rows stay. The button goes back to being a button, because a
+      // Show-more left disabled says there is more and refuses to fetch it.
+      const btn = document.getElementById('activity-more')
+      if (btn) {
+        btn.disabled = false
+        btn.textContent = t('activity.more')
+      }
+    } else if (list) {
+      list.innerHTML = `<p class="digest-note"><i class="ti ti-wifi-off"></i> ${escHtml(t('activity.loadFailed'))}</p>`
+    }
+  }
+}
+
+/** Same shape loadMorePatterns already uses: disable, say so, then fetch. */
+function loadMoreActivity(btn) {
+  btn.disabled = true
+  btn.textContent = t('activity.loading')
+  loadTeamActivity({ append: true })
+}
+
+/**
+ * The audit event name → the sentence a person reads.
+ *
+ * A literal map, deliberately the same shape as timelineEventLabel() in
+ * memory-crud.js: it is the one dynamic i18n call site this work is allowed,
+ * and keeping it to a single known form is what lets test/ui/i18n.test.ts hold
+ * the set of dynamic sites closed. An event name with no entry falls through
+ * to itself rather than to a blank line, so a Worker that grows a thirteenth
+ * event kind before this file hears about it degrades to the raw name.
+ */
+function activityEventLabel(event) {
+  const keys = {
+    member_created: 'activity.evMemberCreated',
+    member_removed: 'activity.evMemberRemoved',
+    member_suspended: 'activity.evMemberSuspended',
+    member_unsuspended: 'activity.evMemberUnsuspended',
+    member_token_rotated: 'activity.evMemberTokenRotated',
+    member_default_share_set: 'activity.evMemberDefaultShareSet',
+    member_profile_updated: 'activity.evMemberProfileUpdated',
+    team_renamed: 'activity.evTeamRenamed',
+    integration_connected: 'activity.evIntegrationConnected',
+    integration_disconnected: 'activity.evIntegrationDisconnected',
+    shared: 'activity.evShared',
+    unshared: 'activity.evUnshared',
+  }
+  return keys[event] ? t(keys[event]) : event || ''
+}
+
+/**
+ * One line of the record: who, what, to whom, about which memory.
+ *
+ * An actor the trail has outlived is named "Removed account" rather than left
+ * blank — a blank subject reads as a bug, and "someone removed Bob" with the
+ * someone missing is the half of the sentence that matters. A memory whose
+ * row is gone gets the same treatment for the same reason.
+ */
+function activityRow(row) {
+  return (
+    `<div class="activity-row">` +
+    `<div class="activity-line">${[
+      escHtml(row.actor || t('activity.unknownActor')),
+      escHtml(activityEventLabel(row.event)),
+      row.subject ? escHtml(row.subject) : '',
+      row.kind === 'entry' ? escHtml(row.title ? `“${row.title}”` : t('activity.memoryGone')) : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')}</div>` +
+    `<div class="activity-when">${escHtml(new Date(row.at).toLocaleString(localeTag()))}</div>` +
+    `</div>`
+  )
+}
+
+/**
+ * Paint the rows and re-state the button.
+ *
+ * The button's three properties are set on BOTH branches. `hidden` follows the
+ * last page's size — a page that came back short is the last page — and
+ * `disabled`/`textContent` are reset unconditionally, so the control cannot be
+ * left mid-fetch by a render that happened to arrive from somewhere else.
+ */
+function renderActivity() {
+  const list = document.getElementById('activity-list')
+  if (list) {
+    list.innerHTML = activityRows.length
+      ? activityRows.map(activityRow).join('')
+      : `<p class="digest-note">${escHtml(t('activity.empty'))}</p>`
+  }
+  const btn = document.getElementById('activity-more')
+  if (btn) {
+    btn.hidden = activityRows.length % ACTIVITY_PAGE !== 0 || activityRows.length === 0
+    btn.disabled = false
+    btn.textContent = t('activity.more')
+  }
+}
+
+/**
+ * Show or hide the section, and load it the first time it is looked at.
+ *
+ * Called from switchTab, which is already the one place that decides the Team
+ * screen is being looked at. BOTH branches are written: a brain whose second
+ * member was just removed can be a team one render and a solo one the next,
+ * and a reveal that only ever reveals leaves the feed on screen for a brain
+ * that no longer has a team.
+ */
+function maybeRevealActivity() {
+  const el = document.getElementById('team-activity')
+  if (!el) return
+  if (!TEAM_MODE) {
+    el.style.display = 'none'
+    return
+  }
+  el.style.display = ''
+  if (activityRows.length === 0) return loadTeamActivity()
+}

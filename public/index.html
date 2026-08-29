@@ -369,6 +369,17 @@
                     <p class="integration-error" id="team-add-error" style="display: none; margin-top: 8px;"></p>
                   </form>
                 </div>
+
+                <!-- Recent activity. Admin-only by construction: this whole panel is
+                     #team-body, which only renders when GET /team/members answered 200. -->
+                <div id="team-activity">
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="activity.title">Recent activity</div>
+                  <p class="digest-note" data-i18n="activity.intro">Who changed what, newest first. Kept as a record — nothing here can be edited.</p>
+                  <div id="activity-list"></div>
+                  <div class="filter-inner" style="margin-top: 10px;">
+                    <button class="digest-btn" id="activity-more" type="button" hidden onclick="loadMoreActivity(this)" data-i18n="activity.more">Show more</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -604,6 +615,7 @@
     <script src="js/stale.js"></script>
     <script src="js/integrations.js"></script>
     <script src="js/team.js"></script>
+    <script src="js/activity.js"></script>
     <script src="js/graph-canvas.js"></script>
     <script src="js/brief.js"></script>
     <script src="js/home.js"></script>
