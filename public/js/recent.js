@@ -9,6 +9,8 @@ let memoryLayerFilter = null
 let memoryActorFilter = null
 /** { members, you } from GET /team/roster; null = not fetched yet. */
 let memoryAuthors = null
+/** The in-flight roster request, shared by concurrent callers. */
+let memoryAuthorsPending = null
 
 function maybeRevealMemoryLayerFilter(health) {
   // The outer span is what carries display:none — the select's immediate
@@ -32,18 +34,27 @@ function maybeRevealMemoryLayerFilter(health) {
  * an unreachable or older Worker costs one request and not one per change of
  * filter.
  */
-async function loadMemoryAuthors() {
-  if (!TEAM_MODE || memoryAuthors !== null) return
-  try {
-    const res = await fetch(`${WORKER_URL}/team/roster`, {
-      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-    })
-    if (!res.ok) throw new Error(String(res.status))
-    const data = await res.json()
-    memoryAuthors = { members: Array.isArray(data.members) ? data.members : [], you: data.you ?? null }
-  } catch {
-    memoryAuthors = { members: [], you: null }
-  }
+function loadMemoryAuthors() {
+  if (!TEAM_MODE || memoryAuthors !== null) return Promise.resolve()
+  // Memoised on the REQUEST, not on its result. Now that loadRecent no longer
+  // waits for this, two loads can be in flight at once, and a result-only
+  // memo would let both of them see `null` and both send the request.
+  if (memoryAuthorsPending) return memoryAuthorsPending
+  memoryAuthorsPending = (async () => {
+    try {
+      const res = await fetch(`${WORKER_URL}/team/roster`, {
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      const data = await res.json()
+      memoryAuthors = { members: Array.isArray(data.members) ? data.members : [], you: data.you ?? null }
+    } catch {
+      memoryAuthors = { members: [], you: null }
+    } finally {
+      memoryAuthorsPending = null
+    }
+  })()
+  return memoryAuthorsPending
 }
 
 function renderAuthorOptions() {
@@ -86,13 +97,21 @@ async function maybeRevealActorFilter() {
 }
 
 async function loadRecent() {
-  await maybeRevealActorFilter()
   const list = document.getElementById('recent-list')
   // Only show the loading state on a cold list. A refresh after a capture
   // would otherwise blank out rows the user is reading and snap them back.
   if (!allEntries.length) {
     list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>${escHtml(t('memories.loadingShort'))}</span></div>`
   }
+  // Started here, deliberately NOT awaited. Its synchronous half — showing or
+  // hiding the wrap, and clearing a filter that is going out of view — has
+  // already run by the time this returns, which is all the request below
+  // needs. Its asynchronous half is a roster fetch with no timeout and no
+  // abort, and waiting for it would let one slow endpoint leave the memories
+  // screen showing stale rows with no spinner and no error, indefinitely. The
+  // author filter is a refinement of a list nobody can act on until it exists,
+  // so it is allowed to populate a moment late.
+  maybeRevealActorFilter()
   try {
     allEntries = await apiList(50, memoryLayerFilter, memoryActorFilter)
     // Through the filters, not straight to render: reloading used to reset the

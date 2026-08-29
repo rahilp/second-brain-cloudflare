@@ -65,6 +65,10 @@ const ROSTER = {
 
 type Opts = {
   rosterRejects?: boolean;
+  /** A /team/roster that never answers at all — no timeout, no abort. */
+  rosterHangs?: boolean;
+  /** Element ids getElementById should report as absent. */
+  missing?: string[];
   listRejects?: boolean;
   /** A /list body that is not an array at all — an error object, say. */
   listBody?: unknown;
@@ -74,6 +78,8 @@ type Opts = {
 function setup(opts: Opts = {}) {
   const byId = new Map<string, any>();
   const urls: string[] = [];
+  const listAtRosterTime: Array<string | null> = [];
+  const absent = new Set(opts.missing ?? []);
   // A real store: the coach mark below is dismissed through it, and the
   // solo-brain case asserts nothing was ever written to it.
   const store = new Map<string, string>();
@@ -90,6 +96,11 @@ function setup(opts: Opts = {}) {
   const fetchImpl = async (url: string) => {
     urls.push(url);
     if (url.includes("/team/roster")) {
+      // What the memories list held at the moment the roster was asked for.
+      // The loading state has to be painted by then, or the roster is being
+      // waited on before the screen says anything at all.
+      listAtRosterTime.push(byId.get("recent-list")?.innerHTML ?? null);
+      if (opts.rosterHangs) return new Promise(() => {});
       if (opts.rosterRejects) throw new Error("offline");
       return { ok: true, status: 200, json: async () => ROSTER };
     }
@@ -102,6 +113,7 @@ function setup(opts: Opts = {}) {
     document: {
       documentElement: { lang: "en" },
       getElementById(id: string) {
+        if (absent.has(id)) return null;
         if (!byId.has(id)) {
           const el = makeEl();
           el.id = id;
@@ -141,8 +153,19 @@ function setup(opts: Opts = {}) {
   const settle = async () => {
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
   };
-  return { ctx, el, urls, lists, rosters, settle, writes };
+  return { ctx, el, urls, lists, rosters, settle, writes, listAtRosterTime };
 }
+
+const row = (over: Record<string, unknown> = {}) => ({
+  id: "m1",
+  content: "Renewal date is 3 March",
+  tags: "[]",
+  source: "web-ui",
+  created_at: Date.now(),
+  vector_ids: "[]",
+  workspace: "personal",
+  ...over,
+});
 
 /** The query string of the most recent GET /list. */
 const q = (url: string) => url.slice(url.indexOf("/list?") + "/list?".length);
@@ -250,6 +273,60 @@ describe("memories author filter", () => {
     expect(el("actor-filter-wrap").style.display).toBe("");
   });
 
+  it("paints the list without waiting for the roster to answer", async () => {
+    // The roster is a refinement of a list the user cannot act on until it
+    // exists, so it must never hold the list hostage. A /team/roster with no
+    // timeout and no abort that simply hangs used to leave the memories screen
+    // showing stale rows with no spinner and no error, indefinitely.
+    const { ctx, el, lists, rosters, listAtRosterTime, settle } = setup({
+      rosterHangs: true,
+      entries: [row({ workspace: "company" })],
+    });
+    ctx.onLayerFilterChange("company");
+    await settle();
+
+    expect(rosters().length, "the roster is still requested").toBe(1);
+    // Painted before the roster went out, not after it came back.
+    expect(listAtRosterTime[0]).toContain("Loading");
+    // And the list itself completed while the roster is still pending.
+    expect(q(lists()[lists().length - 1])).toBe("n=50&workspace=company");
+    expect(vm.runInContext("allEntries.length", ctx)).toBe(1);
+    // loadRecent ran all the way to its last statement.
+    expect(el("coach-memories").hidden).toBe(false);
+    // The filter is revealed and honestly empty until the roster answers.
+    expect(el("actor-filter-wrap").style.display).toBe("");
+    expect(el("actor-filter-recent").innerHTML).toBe("");
+  });
+
+  it("does not stack up roster requests when two loads overlap", async () => {
+    // Now that the list no longer awaits the roster, two loads can be in
+    // flight at once — so the memoisation has to be on the request and not
+    // only on its result.
+    const { ctx, rosters, settle } = setup();
+    ctx.onLayerFilterChange("company");
+    ctx.loadRecent();
+    ctx.loadRecent();
+    await settle();
+    expect(rosters().length).toBe(1);
+  });
+
+  it("clears the author filter even when the filter control is not on the page", async () => {
+    // maybeRevealActorFilter returns before its clear when #actor-filter-wrap
+    // is absent, so onLayerFilterChange's own clear is the only one that runs.
+    // Without it the list would keep sending ?actor= for a control that is not
+    // merely hidden but not there at all.
+    const { ctx, lists, settle } = setup({ missing: ["actor-filter-wrap"] });
+    ctx.onLayerFilterChange("company");
+    await settle();
+    ctx.onActorFilterChange("u2");
+    await settle();
+    expect(q(lists()[lists().length - 1])).toBe("n=50&workspace=company&actor=u2");
+
+    ctx.onLayerFilterChange("");
+    await settle();
+    expect(q(lists()[lists().length - 1])).toBe("n=50");
+  });
+
   it("translates the option list into Italian", async () => {
     const { ctx, el, settle } = setup();
     ctx.initI18n("it");
@@ -259,17 +336,6 @@ describe("memories author filter", () => {
     expect(html).toContain("Tutti gli autori");
     expect(html).toContain("Tu");
   });
-});
-
-const row = (over: Record<string, unknown> = {}) => ({
-  id: "m1",
-  content: "Renewal date is 3 March",
-  tags: "[]",
-  source: "web-ui",
-  created_at: Date.now(),
-  vector_ids: "[]",
-  workspace: "personal",
-  ...over,
 });
 
 /**

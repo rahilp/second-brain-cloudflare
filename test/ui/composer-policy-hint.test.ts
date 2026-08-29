@@ -53,8 +53,12 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
   // and the solo-brain case asserts that nothing was ever written to it.
   const store = new Map<string, string>();
   const writes: string[] = [];
+  const reads: string[] = [];
   const localStorage = {
-    getItem: (k: string) => store.get(k) ?? null,
+    getItem(k: string) {
+      reads.push(k);
+      return store.get(k) ?? null;
+    },
     setItem(k: string, v: string) {
       writes.push(k);
       store.set(k, v);
@@ -92,7 +96,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
   vm.runInContext(SRC, ctx);
   vm.runInContext(`WORKER_URL = "http://localhost"; AUTH_TOKEN = "tok"`, ctx);
   ctx.initI18n("en");
-  return { ctx, els: elements, writes };
+  return { ctx, els: elements, writes, reads };
 }
 
 function teamMeFetch(profile: Record<string, unknown> | null, opts: { fail?: boolean; reject?: boolean } = {}) {
@@ -250,13 +254,18 @@ describe("composer coach marks", () => {
     expect(els.get("coach-home").innerHTML).toContain("Shared means the whole team");
   });
 
-  it("renders no mark and writes no dismissal record on a solo brain", async () => {
+  it("renders no mark and never touches the dismissal record on a solo brain", async () => {
+    // Not written, and not READ either. Deciding WHICH of the two marks is due
+    // means consulting the record, so the TEAM_MODE gate has to come first
+    // here as well as inside the primitive — otherwise coach.js's claim that a
+    // solo brain does not so much as read the key would be false.
     const { fn } = teamMeFetch(teamProfile);
-    const { ctx, els, writes } = setup(fn);
+    const { ctx, els, writes, reads } = setup(fn);
     await ctx.maybeRevealHomeLayer({ team: false });
     expect(els.get("coach-home").hidden).toBe(true);
     expect(els.get("coach-home").innerHTML).toBe("");
     expect(writes, "a solo brain must never write sb_coach_dismissed").not.toContain("sb_coach_dismissed");
+    expect(reads, "a solo brain must never read sb_coach_dismissed").not.toContain("sb_coach_dismissed");
   });
 
   it("still teaches what shared means when /team/me has not answered", async () => {

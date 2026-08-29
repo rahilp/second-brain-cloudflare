@@ -97,6 +97,16 @@ function renderCaptureHint() {
  * function's, which is also why the !TEAM_MODE case needs no branch here.
  */
 function renderComposerCoach() {
+  // The primitive gates on TEAM_MODE too, but it is restated here because
+  // choosing WHICH of the two marks is due means consulting the dismissal
+  // record — and coach.js's guarantee is that a solo brain does not so much as
+  // read that key. Leaning on the primitive alone would read it on every
+  // renderCaptureHint() and quietly falsify the claim. A null copy is the
+  // primitive's own hide branch, so this still states both branches.
+  if (!TEAM_MODE) {
+    renderCoachMark('coach-home', 'shared', null)
+    return
+  }
   if (!coachDismissed('shared')) {
     renderCoachMark('coach-home', 'shared', { title: t('coach.sharedTitle'), body: t('coach.sharedBody') })
     return

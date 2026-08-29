@@ -63,8 +63,10 @@ function setup(opts: Opts = {}) {
   if (opts.seed !== undefined) store.set(KEY, opts.seed);
   /** Every write, so a test can prove the solo branch wrote nothing at all. */
   const writes: Array<[string, string]> = [];
+  const reads: string[] = [];
   const localStorage = {
     getItem(k: string) {
+      reads.push(k);
       // Only the coach key misbehaves: i18n.js reads sb-locale through the
       // same object and a blanket throw would be testing initI18n instead.
       if (opts.getThrows && k === KEY) throw new Error("localStorage read denied");
@@ -106,7 +108,7 @@ function setup(opts: Opts = {}) {
   vm.runInContext(`TEAM_MODE = true`, ctx);
   ctx.initI18n("en");
   const coachWrites = () => writes.filter(([k]) => k === KEY);
-  return { ctx, els: elements, store, writes, coachWrites };
+  return { ctx, els: elements, store, writes, reads, coachWrites };
 }
 
 const SHARED = { title: "Shared means the whole team", body: "A shared memory can be found by everyone." };
@@ -164,13 +166,16 @@ describe("coach-mark primitive", () => {
     expect(coachWrites()).toEqual([]);
   });
 
-  it("renders nothing and writes nothing on a solo brain, on every call", () => {
-    const { ctx, els, coachWrites } = setup();
+  it("renders nothing and touches no storage on a solo brain, on every call", () => {
+    const { ctx, els, coachWrites, reads } = setup();
     vm.runInContext(`TEAM_MODE = false`, ctx);
+    reads.length = 0;
     ctx.renderCoachMark("coach-home", "shared", SHARED);
     expect(els.get("coach-home").hidden).toBe(true);
     expect(els.get("coach-home").innerHTML).toBe("");
     expect(coachWrites(), "a solo brain must never write sb_coach_dismissed").toEqual([]);
+    // The gate is checked before the record, so the key is not even read.
+    expect(reads, "a solo brain must never read sb_coach_dismissed").not.toContain(KEY);
   });
 
   it("re-hides a mark that was already on screen when the brain stops being a team", () => {
