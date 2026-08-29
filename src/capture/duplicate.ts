@@ -110,13 +110,36 @@ export async function checkDuplicateAndContradiction(
         candidates.map(m => (m.metadata as any)?.parentId ?? m.id)
       )] as string[];
 
+      // Scoped, not by-id-exempt. src/lib/scope.ts licenses an unscoped by-id
+      // lookup when the ids came from an already-scoped read; these came from a
+      // Vectorize query, and its workspace filter is best-effort by contract
+      // (src/vectorize/scope.ts degrades to an unfiltered query on a
+      // filter-shaped rejection and latches that per isolate). In that degraded
+      // mode the ids can name another member's entry — and this is not a
+      // ranking list: `rows` becomes the merge/contradiction prompt, and
+      // captureEntry rewrites whichever row the model names as the target. So
+      // the predicate below is what actually keeps a colleague's memory out of
+      // the prompt and their row out of the write.
+      //
+      // A predicate on the query that was already being issued, not a second
+      // statement: capture is the hot path and this adds no subrequest. `?? ""`
+      // is the pre-tenancy workspace, which is where an entry written without a
+      // WriteContext lives, so a solo brain compares exactly the rows it did.
+      const writerWorkspaceId = workspaceId ?? "";
       const placeholders = parentIds.map(() => "?").join(", ");
       const { results: rows } = await env.DB.prepare(
-        // scope-exempt: by-id: parent ids come from the Vectorize query above, which is workspace-filtered ONLY when a workspaceId was passed and Vectorize accepted the filter (queryVectorizeScoped falls back to unfiltered); the ids are re-checked against the caller's scope by the callers that have one
-        `SELECT id, content FROM entries WHERE id IN (${placeholders})`
-      ).bind(...parentIds).all() as { results: { id: string; content: string }[] };
+        `SELECT id, content FROM entries WHERE id IN (${placeholders}) AND workspace_id = ?`
+      ).bind(...parentIds, writerWorkspaceId).all() as { results: { id: string; content: string }[] };
 
       if (rows.length) {
+        // The ids the model is allowed to name back. `parentIds` is the raw
+        // Vectorize answer and can still hold a row in another workspace when the
+        // metadata filter degraded; `rows` is what survived the workspace
+        // predicate above, which is also exactly what the prompt below shows.
+        // Validating against the wider list would let a model that named an id it
+        // was never shown reach captureEntry's by-id merge, which rewrites its
+        // target — so the two lists must be the same list.
+        const offeredIds = rows.map(r => r.id);
         const existingList = rows
           .map((r, i) => `[${i + 1}] ID: ${r.id}\n${r.content}`)
           .join("\n\n");
@@ -151,13 +174,13 @@ Respond with JSON only. No text outside the JSON.
               const action = parsed.action as string;
 
               if (action === "contradiction" && parsed.conflicting_id) {
-                const validId = parentIds.find(id => id === parsed.conflicting_id);
+                const validId = offeredIds.find(id => id === parsed.conflicting_id);
                 if (validId) contradiction = { detected: true, conflicting_id: validId, reason: parsed.reason };
               } else if (action === "replace" && parsed.target_id) {
-                const validId = parentIds.find(id => id === parsed.target_id);
+                const validId = offeredIds.find(id => id === parsed.target_id);
                 mergeAction = validId ? { action: "replace", target_id: validId } : { action: "keep_both" };
               } else if (action === "merge" && parsed.target_id && parsed.merged_content?.trim()) {
-                const validId = parentIds.find(id => id === parsed.target_id);
+                const validId = offeredIds.find(id => id === parsed.target_id);
                 mergeAction = validId
                   ? { action: "merge", target_id: validId, merged_content: parsed.merged_content.trim() }
                   : { action: "keep_both" };
@@ -194,7 +217,7 @@ Respond with JSON only. No text outside the JSON object.
             if (jsonMatch) {
               const parsed = JSON.parse(jsonMatch[0]);
               if (parsed.contradicts && parsed.conflicting_id) {
-                const validId = parentIds.find(id => id === parsed.conflicting_id);
+                const validId = offeredIds.find(id => id === parsed.conflicting_id);
                 if (validId) contradiction = { detected: true, conflicting_id: validId, reason: parsed.reason };
               }
             }
