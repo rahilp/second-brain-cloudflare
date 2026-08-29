@@ -3,11 +3,15 @@
  *
  * A connected card used to tell a non-admin nothing but "Admins only" — no
  * hint at who to ask, or whether a synced page lands in their own private
- * layer or the team's. This adds one prose line. Only the mirror-layer
- * clause is gated on TEAM_MODE — a solo brain still gets a "Connected by"
- * name (ensureTenantBootstrap makes the owner a member of a company
- * workspace on every brain), it just has no shared/personal distinction to
- * report.
+ * layer or the team's. This adds one prose line, and the WHOLE line is gated
+ * on TEAM_MODE.
+ *
+ * Gating only the mirror-layer clause was the original shape and it was wrong:
+ * `connectedAt` predates this phase entirely and `connectedBy` resolves on any
+ * brain with a named roster, so a solo install that merely upgraded grew a
+ * provenance line out of data it already had, with no action by its owner. New
+ * UI on an untouched solo brain is the one thing the compatibility constraint
+ * rules out, so the gate moved to cover all three clauses.
  *
  * Harness copied from disconnect-sheet.test.ts's `load()`, which already
  * builds the right vm context for integrations.js.
@@ -164,13 +168,13 @@ describe("integrations sheet: connection provenance", () => {
 
   // ensureTenantBootstrap creates a company workspace and joins the owner to it
   // on every brain, including a one-person one — so on a real solo brain
-  // connectedBy is the owner's own name, not null. TEAM_MODE alone decides
-  // whether the mirror-layer sentence makes sense; connectedBy is never gated
-  // on it.
-  it("still names the connector on a solo brain, without the mirror-layer sentence a one-person install has no use for", () => {
+  // connectedBy resolves to the owner's OWN name rather than null. That is
+  // precisely why the emptiness of the fields cannot be what suppresses this
+  // line: the data is there, and TEAM_MODE is the only thing that isn't.
+  it("names no connector on a solo brain even though the name resolves", () => {
     const ctx = load(false);
     const html = ctx.renderIntegrationCard({ ...BASE, connectedBy: "Owner", mirrorWorkspace: "personal" });
-    expect(html).toContain("Connected by Owner");
+    expect(html).not.toContain("Connected by Owner");
     expect(html).not.toContain("Synced memories land in the personal layer");
     expect(html).not.toContain("Synced memories land in the shared team layer");
   });
@@ -200,6 +204,60 @@ describe("integrations sheet: connection provenance", () => {
       "</div>",
       "</div>",
     ]);
+  });
+
+  // THE BACKWARDS-COMPATIBILITY CASE, and the reason the whole line is gated
+  // rather than only its middle clause.
+  //
+  // `connectedAt` is not a field this phase added — it has been on the record
+  // since integrations shipped. So a solo user who connected Notion months ago
+  // and merely upgrades gets a "Connected 3 Mar 2026" line they never had, with
+  // no action of their own. That is new UI on an untouched solo brain, which
+  // the phase's compatibility constraint forbids outright. The fixture below is
+  // deliberately a FULLY POPULATED record: gating only on "the fields happen to
+  // be empty" would pass while the constraint was still broken.
+  it("renders a solo brain's card exactly as it did before this phase, even with every provenance field populated", () => {
+    const ctx = load(false);
+    const html = ctx.renderIntegrationCard({
+      ...BASE,
+      connectedBy: "Owner",
+      mirrorWorkspace: "personal",
+      connectedAt: 1772000000000,
+    });
+    expect(html).not.toContain("Connected by");
+    expect(html).not.toContain("Connected ");
+    expect(html).not.toContain("Synced memories land in");
+
+    const nonBlankLines = (html as string).split("\n").map((l: string) => l.trim()).filter(Boolean);
+    expect(nonBlankLines).toEqual([
+      '<div class="integration-row">',
+      '<div class="integration-head"><i class="ti ti-brand-notion"></i><span>Notion</span><span class="integration-state connected">Acme Notion</span></div>',
+      `<p class="digest-note" id="note-notion">5 items synced &middot; Last sync: ${new Date(BASE.lastSyncedAt).toLocaleString(ctx.localeTag())}</p>`,
+      '<div class="integration-actions">',
+      '<button class="digest-btn" onclick="syncIntegration(\'notion\', this)"><i class="ti ti-refresh"></i> Sync now</button>',
+      '<button class="digest-btn danger" onclick="disconnectIntegration(\'notion\', this)">Disconnect</button>',
+      "</div>",
+      "</div>",
+    ]);
+  });
+
+  // The other branch of the same gate, stated so neither can be removed
+  // silently: on a TEAM brain all three clauses render together.
+  it("renders all three provenance clauses on a team brain", () => {
+    const ctx = load(true);
+    const html = ctx.renderIntegrationCard({
+      ...BASE,
+      connectedBy: "Alice",
+      mirrorWorkspace: "company",
+      connectedAt: 1772000000000,
+    });
+    expect(html).toContain("Connected by Alice");
+    expect(html).toContain("Synced memories land in the shared team layer");
+    expect(html).toContain(
+      ctx.t("integrations.connectedOn", {
+        when: new Date(1772000000000).toLocaleDateString(ctx.localeTag()),
+      }),
+    );
   });
 
   it("speaks Italian", () => {
