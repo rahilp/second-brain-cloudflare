@@ -141,6 +141,10 @@
                 <!-- What Auto resolves to, or which layer is pinned for this capture.
                      Hidden on solo brains and until /team/me answers. -->
                 <div class="home-layer-hint" id="home-layer-hint" style="display: none"></div>
+                <!-- First-run coach marks for the composer, written by
+                     renderComposerCoach() in js/home.js. Empty and hidden on a
+                     solo brain, and once both marks have been dismissed. -->
+                <div class="coach-mark" id="coach-home" hidden></div>
                 <!-- The one thing worth keeping from the deleted Remember tab:
                      it was the only place hashtags were ever taught. -->
                 <div class="home-hint" data-i18n="home.hintHtml" data-i18n-html>Add <span class="hashtag">#tags</span> anywhere to file it</div>
