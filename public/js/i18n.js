@@ -634,6 +634,40 @@ const I18N_EN = {
     exportCsv: 'Export CSV',
     exportFailed: 'Could not export the activity log.',
   },
+  bulk: {
+    select: 'Select',
+    exit: 'Done',
+    selectAll: 'Select all',
+    clear: 'Clear',
+    count: {
+      one: '{n} selected',
+      other: '{n} selected',
+    },
+    shareAction: 'Share with team',
+    privateAction: 'Make private',
+    confirmShareTitle: {
+      one: 'Share this memory with the team?',
+      other: 'Share {n} memories with the team?',
+    },
+    confirmShareBody:
+      'Everyone on this team will be able to find them. You can make each one personal again afterwards.',
+    confirmPrivateTitle: {
+      one: 'Make this memory personal again?',
+      other: 'Make {n} memories personal again?',
+    },
+    confirmPrivateBody:
+      'They move back to your personal layer. Anything written by someone else is refused and stays shared.',
+    working: 'Moving {done} of {total}…',
+    resultMoved: {
+      one: '{n} moved',
+      other: '{n} moved',
+    },
+    resultRefused: {
+      one: '{n} refused — still selected',
+      other: '{n} refused — still selected',
+    },
+    resultNone: 'Nothing moved',
+  },
 }
 
 const I18N_IT = {
@@ -1248,6 +1282,40 @@ const I18N_IT = {
     evInsightDismissed: 'Ha ignorato un insight',
     exportCsv: 'Esporta CSV',
     exportFailed: 'Impossibile esportare il registro attività.',
+  },
+  bulk: {
+    select: 'Seleziona',
+    exit: 'Fatto',
+    selectAll: 'Seleziona tutto',
+    clear: 'Deseleziona',
+    count: {
+      one: '{n} selezionato',
+      other: '{n} selezionati',
+    },
+    shareAction: 'Condividi col team',
+    privateAction: 'Rendi privato',
+    confirmShareTitle: {
+      one: 'Condividere questo ricordo col team?',
+      other: 'Condividere {n} ricordi col team?',
+    },
+    confirmShareBody:
+      'Tutte le persone del team potranno trovarli. Potrai renderli di nuovo personali uno alla volta.',
+    confirmPrivateTitle: {
+      one: 'Rendere di nuovo personale questo ricordo?',
+      other: 'Rendere di nuovo personali {n} ricordi?',
+    },
+    confirmPrivateBody:
+      'Torneranno nel tuo livello personale. Ciò che ha scritto qualcun altro viene rifiutato e resta condiviso.',
+    working: 'Spostamento {done} di {total}…',
+    resultMoved: {
+      one: '{n} spostato',
+      other: '{n} spostati',
+    },
+    resultRefused: {
+      one: '{n} rifiutato — resta selezionato',
+      other: '{n} rifiutati — restano selezionati',
+    },
+    resultNone: 'Niente spostato',
   },
 }
 

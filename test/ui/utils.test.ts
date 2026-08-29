@@ -26,7 +26,7 @@ i18nCtx.initI18n("en");
 (globalThis as any).localeTag = i18nCtx.localeTag;
 (globalThis as any).getLocale = i18nCtx.getLocale;
 
-const { parseRecallResult, escHtml, escAttr, toDateStr, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, csvCell, csvDocument } = require("../../public/utils.js");
+const { parseRecallResult, escHtml, escAttr, toDateStr, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, csvCell, csvDocument, layerChipHtml } = require("../../public/utils.js");
 
 // Minimal fake document so the banner DOM glue can be tested in the node
 // environment without jsdom. appendChild registers the element by id so a later
@@ -531,5 +531,60 @@ describe("csvDocument", () => {
 
   it("is a header alone when there are no rows", () => {
     expect(csvDocument(["a", "b"], [])).toBe('"a","b"');
+  });
+});
+
+/**
+ * The "shared" badge, which is now ONE implementation with two callers.
+ *
+ * `makeRecentCard` built this expression inline and the review queue built
+ * nothing, so a member ruling on a pattern could not tell their own
+ * half-formed thought from something the whole team can read. The fix is not a
+ * second chip that looks like the first — it is this function, called from
+ * both, so a change to it changes both surfaces by construction.
+ *
+ * `teamMode` is a parameter and not the global, for the reason
+ * `workspaceFilterChip` takes `health`: this file loads before `api.js`
+ * declares TEAM_MODE, and a pure helper that reads a binding from three
+ * modules downstream is only pure by accident. It is also what lets these
+ * assertions call it directly instead of standing up a whole sandbox.
+ */
+describe("layerChipHtml", () => {
+  it("names the author on a shared row", () => {
+    const html = layerChipHtml({ workspace: "company", actor_name: "Second Brain" }, true);
+    expect(html).toContain("tag-chip--shared");
+    expect(html).toContain("shared · Second Brain");
+    expect(html).toContain("ti-users-group");
+    expect(html).toContain("Visible to the whole team");
+  });
+
+  it("renders the bare chip when there is no author, and never the word null", () => {
+    const html = layerChipHtml({ workspace: "company", actor_name: null }, true);
+    expect(html).toContain("tag-chip--shared");
+    expect(html).toContain("</i> shared</span>");
+    expect(html).not.toContain("null");
+    expect(html).not.toContain("·");
+  });
+
+  it("stays silent on a personal row, a system row, a legacy row, no row at all, and a solo brain", () => {
+    // Five branches, five assertions. The last is the one that matters most:
+    // a helper relying only on the DATA guard would badge a solo brain the day
+    // someone gave one of its rows a company workspace. The row projection
+    // emits `workspace` on every row, so all of these arrive in practice —
+    // "system" is what the rows nobody authored surface as, and a legacy row
+    // whose column was never backfilled arrives with the empty string.
+    expect(layerChipHtml({ workspace: "personal", actor_name: "Second Brain" }, true)).toBe("");
+    expect(layerChipHtml({ workspace: "system", actor_name: "Second Brain" }, true)).toBe("");
+    expect(layerChipHtml({ workspace: "", actor_name: "Second Brain" }, true)).toBe("");
+    expect(layerChipHtml(null, true)).toBe("");
+    expect(layerChipHtml({ workspace: "company", actor_name: "Second Brain" }, false)).toBe("");
+  });
+
+  it("escapes an author name in both the text and the title", () => {
+    const html = layerChipHtml({ workspace: "company", actor_name: "<script>" }, true);
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    // And the title attribute is still a single well-formed attribute.
+    expect(html).toContain('title="Visible to the whole team');
   });
 });

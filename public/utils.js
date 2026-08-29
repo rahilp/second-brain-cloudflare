@@ -856,9 +856,34 @@ function downloadTextFile(doc, content, filename, mime) {
   URL.revokeObjectURL(url)
 }
 
+/**
+ * The "shared" badge, for any row that reports a workspace and an author.
+ *
+ * ONE implementation, two callers — makeRecentCard (js/recent.js) and
+ * patternRow (js/patterns.js). The card built this expression inline and the
+ * review queue built nothing, so a member ruling on a pattern could not tell
+ * their own half-formed thought from something the whole team can read, and
+ * those are different acts. Two chips that merely looked alike would drift the
+ * first time either was touched; this cannot.
+ *
+ * teamMode is a parameter and not the global, for the reason
+ * workspaceFilterChip takes `health`: this file loads before api.js declares
+ * TEAM_MODE, and a pure helper that reads a binding from three modules
+ * downstream is only pure by accident. It is also the difference between a
+ * function a unit test can call and one that needs a whole sandbox.
+ *
+ * Personal rows and system rows get nothing. That is the same silence the
+ * card has always kept — a badge on every row is not a badge.
+ */
+function layerChipHtml(entry, teamMode) {
+  if (!teamMode || !entry || entry.workspace !== 'company') return ''
+  const who = entry.actor_name ? `${t('memories.sharedChip')} · ${entry.actor_name}` : t('memories.sharedChip')
+  return `<span class="tag-chip tag-chip--shared" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(who)}</span>`
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   // downloadTextFile is deliberately absent: it needs a live URL and Blob, and
   // it is exercised through its two callers (exportMemories in js/settings.js
   // and exportActivityCsv in js/activity.js) rather than in isolation.
-  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles, captureDefaultKey, csvCell, csvDocument };
+  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles, captureDefaultKey, csvCell, csvDocument, layerChipHtml };
 }

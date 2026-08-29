@@ -64,7 +64,7 @@ would diverge the first time either was restyled.
 openDangerConfirm({
   title, body, confirmLabel,          // already translated
   checkboxLabel,                      // optional modifier; '' or omitted hides the row
-  onConfirm: async (checked, done) => { /* … */ done() },
+  onConfirm: async (checked, done, progress) => { /* … */ done() },
   onClose: () => { /* reset the caller's own state */ },
 })
 ```
@@ -94,6 +94,17 @@ has been dismissed and replaced. That matters because your POST can resolve
 long after the user moved on: without it, a slow disconnect closes — and fires
 the `onClose` of — whatever sheet is on screen by then.
 
+The same applies to the words on the accept button, which is why `onConfirm`
+gets a third argument. `progress(text)` writes `#confirm-accept-btn` and is
+scoped by the same lexical generation, so it goes quiet once your question has
+been superseded. **Anything you write to the sheet AFTER an `await` has to go
+through it**; a write before your first `await` is on your own question by
+definition, which is why `confirmForget`'s single "Forgetting…" is safe written
+directly. The bulk layer move is the caller that proves the rule: it writes
+"Moving 3 of 3…" from inside a loop, and writing the element directly meant a
+batch the user had dismissed went on labelling the *forget* question that
+replaced it — "Forget this memory?" under a button reading "Moving 3 of 3…".
+
 `closeConfirm()` takes no argument and closes whatever is currently open. The
 rule is about where it is called FROM, not about how many places call it: it is
 for ambient dismissals — a caller that genuinely means "close what is on
@@ -102,10 +113,14 @@ and nothing in the sheet can make it so: an action can be suspended at an
 `await` while another action runs, so there is no "currently running action"
 for a module-level variable to hold.
 
-In tree the sheet has six callers — memory forget and link removal
-(`memory-crud.js`), integration disconnect (`integrations.js`), and token
-rotation, suspension and removal (`team.js`) — and every one of them closes
-with its `done()`. `closeConfirm` itself has four callers, all ambient. Three
+In tree the sheet has seven callers — memory forget and link removal
+(`memory-crud.js`), integration disconnect (`integrations.js`), token
+rotation, suspension and removal (`team.js`), and the memories list's bulk
+layer move (`recent.js`) — and every one of them closes with its `done()`. The
+bulk move is the one whose action is long enough for the double-submit guard to
+matter in practice: it posts one `/share` per selected row, sequentially, and
+closes with the `done()` it was handed after the last of them, never with
+`closeConfirm()`. `closeConfirm` itself has four callers, all ambient. Three
 are the user dismissing what they can see: the Cancel button in `index.html`,
 the backdrop listener in `app.js`, and the Escape handler in
 `confirm-sheet.js`. The fourth is `confirmForget`'s `done || closeConfirm`
@@ -137,6 +152,17 @@ Two hazards the sheet handles for you, both created by replacing a modal
 dropped and the accept button is held down for the duration (no double POST),
 and the button is released again if your action throws. Your action's errors
 propagate — the sheet does not swallow them.
+
+**The double-submit guard is per QUESTION, not per caller**, and dismissing a
+sheet does not cancel the action it started. So an action long enough to be
+dismissed mid-flight owns two things the sheet cannot: stopping itself, and
+refusing to start twice. The bulk layer move does both — an `onClose` that sets
+a `cancelled` flag its loop checks at the top of every turn, and a
+`bulkMoveInFlight` flag it returns early on (and renders its two buttons
+disabled from, so it is a held control rather than a dead one). Without them,
+Escape mid-batch and a re-confirm ran two loops over the same ids: six POSTs
+for three rows, and with opposite targets, two `/share` calls racing over one
+row with its final layer decided by whichever response landed last.
 
 `openDangerConfirm` returns the question's generation number. It is there for
 tests and logging; it is not how you close, and nothing is load-bearing on it.
