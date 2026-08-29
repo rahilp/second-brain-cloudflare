@@ -336,9 +336,15 @@ export const en: Messages = {
   },
   connectExisting: {
     title: "Connect your Second Brain",
+    // The lede on `manualEntryScreen`, which is where "none found", "Enter the
+    // address myself" and a pasted address all land — so it is the screen a
+    // team member reaches, their brain being in the owner's Cloudflare account
+    // rather than their own. It sits directly above a field that accepts either
+    // credential and must name both.
     lede:
-      "Setting up a new computer? Enter the address and password of the " +
-      "Second Brain you already have — nothing will be changed or reset.",
+      "Setting up a new computer? Enter the address of the Second Brain you " +
+      "already have, then your password — or, if someone invited you to their " +
+      "team, the token they sent you. Nothing will be changed or reset.",
     addressPlaceholder: "Your Second Brain address (…workers.dev)",
     passwordPlaceholder: "Your password, or your team invite token",
     connect: "Connect",
@@ -722,7 +728,9 @@ export const en: Messages = {
     teamCardBodyAdmin:
       "You're signed in as a team admin. Open your dashboard and use the Team panel to invite people — every member gets their own token. Changing this brain's password is done by whoever set it up, in their Cloudflare account.",
     teamCardBodyMember:
-      "You're signed in as a team member. Your own memories stay private; anything you share lands in the team layer, where everyone can find it. Ask a team admin for a new sign-in token if this one stops working.",
+      "You're signed in as a team member. Your own memories stay private; " +
+      "anything you share lands in the company layer, where everyone can find " +
+      "it. Ask a team admin for a new sign-in token if this one stops working.",
     openDashboard: "Open my Second Brain",
   },
   integrations: {

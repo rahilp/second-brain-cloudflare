@@ -2365,6 +2365,89 @@ fn settings_target(app: &AppHandle) -> Result<(String, String, Locale), String> 
     Ok((url, token, locale))
 }
 
+/// What `GET /team/me` says about the token this machine is set up with.
+///
+/// Two fields and no verdict: the rules that turn this into a role live in
+/// `installer/src/connection-role.ts`, in one place, so the setup flow and the
+/// Connection details window cannot drift apart about the same person.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ConnectionRoleProbe {
+    /// `profile.role` — "admin" or "member", or absent if it could not be read.
+    pub role: Option<String>,
+    /// `profile.owner` — true only for the identity holding this deployment's
+    /// AUTH_TOKEN. `role` cannot say this: src/lib/tenancy.ts hashes AUTH_TOKEN
+    /// into a users row with role 'admin', so the owner and a promoted
+    /// colleague are the same value there.
+    pub owner: bool,
+}
+
+/// How long to wait before answering without the brain.
+///
+/// Shorter than `migration::TIMEOUT` on purpose: this one runs while a window
+/// is drawing itself, and the answer it is waiting for only decides which of
+/// two paragraphs to show.
+const ROLE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Asks the brain who is holding this token. **Never fails.**
+///
+/// Every way of not getting an answer — a Worker too old to serve the route, a
+/// 401 from a revoked token, an unreachable brain, a body that will not parse —
+/// returns the default, which `roleFromProbe` reads as "member". Returning a
+/// `Result` here would push that decision onto every caller, and the one thing
+/// this must not do is claim more than it knows: over-claiming is the sentence
+/// the whole change exists to delete.
+///
+/// Split out from the command so a test can drive it — the command takes an
+/// `AppHandle` and nothing in this crate can build one.
+pub async fn fetch_connection_role(worker_url: &str, auth_token: &str) -> ConnectionRoleProbe {
+    let none = ConnectionRoleProbe::default();
+    let url = format!("{}/team/me", worker_url.trim_end_matches('/'));
+    let resp = match reqwest::Client::new()
+        .get(url)
+        .bearer_auth(auth_token)
+        .timeout(ROLE_PROBE_TIMEOUT)
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            log::warn!("/team/me answered {} — claiming nothing about this token", r.status());
+            return none;
+        }
+        Err(e) => {
+            log::warn!("could not ask who holds this token: {e}");
+            return none;
+        }
+    };
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("/team/me was not the expected shape: {e}");
+            return none;
+        }
+    };
+    ConnectionRoleProbe {
+        role: body["profile"]["role"].as_str().map(str::to_string),
+        // `as_bool() == Some(true)`, not truthiness: a body carrying
+        // `owner: "yes"` is unexpected, and unexpected must not promote anyone.
+        owner: body["profile"]["owner"].as_bool() == Some(true),
+    }
+}
+
+/// The Connection details window asking who it is rendering for.
+///
+/// The webview never handles the token — it stays in this process — so this is
+/// the only way that window can know, and until it existed the window said
+/// "You're signed in as this brain's owner-admin" to every member who opened it.
+///
+/// Only ever called on a brain this machine recorded as a team brain; a solo
+/// install makes no request at all.
+#[tauri::command]
+pub async fn connection_role(app: AppHandle) -> Result<ConnectionRoleProbe, String> {
+    let (url, token, _locale) = settings_target(&app)?;
+    Ok(fetch_connection_role(&url, &token).await)
+}
+
 #[tauri::command]
 pub async fn get_brain_settings(app: AppHandle) -> Result<crate::settings::SettingsView, String> {
     let (url, token, locale) = settings_target(&app)?;
@@ -2402,7 +2485,8 @@ mod tests {
     use super::{
         app_mode, bindings_are_a_brains, blocked_by_migration, brain_index_names,
         clear_pending_rotation, cloudflare_client_for_brain, confirm_target_is_a_brain,
-        dashboard_credentials, for_log, normalize_worker_url, password_opens_brain,
+        dashboard_credentials, fetch_connection_role, for_log, normalize_worker_url,
+        password_opens_brain, ConnectionRoleProbe,
         previous_index_for, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
         rotation_address, rotation_block, rotation_failure, rotation_target, RotateError,
         SetupSession, LOG_DETAIL_MAX,
@@ -2878,6 +2962,56 @@ mod tests {
                  a state users stay in deliberately, and rotation does not care."
             );
         }
+    }
+
+    /// Who is holding the token this machine is set up with — asked of the
+    /// brain, because nothing local can answer it.
+    ///
+    /// The Connection details window used to hardcode "owner". Every team member
+    /// who opened it read "You're signed in as this brain's owner-admin" and was
+    /// offered a password change that walks them through a Cloudflare sign-in
+    /// and a new password before failing with ErrorWrongCfAccount. The webview
+    /// never handles the token — it stays here — so the window could not ask
+    /// until this command existed.
+    ///
+    /// `owner`, not `role`: src/lib/tenancy.ts hashes AUTH_TOKEN into a users
+    /// row with role 'admin', so the person who created the brain and a
+    /// colleague they promoted are indistinguishable by role alone.
+    #[tokio::test]
+    async fn connection_role_reads_what_the_brain_says_about_this_token() {
+        let brain = crate::demo_brain::scoped_brain();
+        const PASSWORD: &str = "the-password-this-role-probe-test-sets";
+        crate::demo_brain::rotate_to(PASSWORD);
+
+        let probe = fetch_connection_role(brain.base_url(), PASSWORD).await;
+        assert_eq!(probe.role.as_deref(), Some("admin"), "the profile role is read");
+        assert!(probe.owner, "the AUTH_TOKEN holder owns the deployment");
+    }
+
+    /// Least privilege, on every way of not getting an answer. Each of these
+    /// must reach `{ role: None, owner: false }`, which `roleFromProbe` in
+    /// installer/src/connection-role.ts turns into "member" — because the
+    /// failure this whole change exists to fix is the app claiming MORE than it
+    /// knows, and a probe that cannot be completed knows nothing.
+    #[tokio::test]
+    async fn a_probe_that_cannot_be_answered_claims_nothing() {
+        let brain = crate::demo_brain::scoped_brain();
+        const PASSWORD: &str = "the-password-this-least-privilege-test-sets";
+        crate::demo_brain::rotate_to(PASSWORD);
+
+        // A 401: the wrong token, which is what a member holding a token this
+        // brain has revoked would get.
+        let refused = fetch_connection_role(brain.base_url(), "not-the-password").await;
+        assert_eq!(refused, ConnectionRoleProbe::default(), "a 401 must not claim ownership");
+
+        // Nothing listening at all. Port 1 is reserved and never bound.
+        let unreachable = fetch_connection_role("http://127.0.0.1:1", PASSWORD).await;
+        assert_eq!(unreachable, ConnectionRoleProbe::default());
+
+        // A route that is not there — a Worker too old to serve /team/me, which
+        // is the ordinary state for anyone who updated the app first.
+        let old = fetch_connection_role(&format!("{}/nope", brain.base_url()), PASSWORD).await;
+        assert_eq!(old, ConnectionRoleProbe::default());
     }
 
     /// A rebuild that could not be asked about is not a rebuild in progress.

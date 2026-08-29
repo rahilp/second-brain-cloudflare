@@ -13,29 +13,11 @@ import {
   teamCard,
 } from "./shared";
 import { integrationRows, toolRows } from "./shared";
-import { canRotatePassword, type ConnectionRole } from "./connection-role";
+import { canRotatePassword, roleFromDetailsProbe } from "./connection-role";
 import { initI18n, settingsSection, t } from "./i18n";
 import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
-
-/**
- * The role this window renders for.
- *
- * A constant, and not a probe: the webview never handles the token — it stays
- * in the Rust core, and `get_connection_details` returns URLs and a boolean —
- * so this window has nothing to call `/team/me` with, and giving it one means a
- * new Tauri command. Until that exists, "owner" is the honest answer: this
- * window is reached from the app menu on a machine whose setup is already
- * stored, and guessing "member" here would tell the brain's actual owner to ask
- * an admin for a token and take away the only in-app route to changing their
- * password.
- *
- * The derived role lives in `main.ts`, where the connect flow has the token in
- * hand. Both windows go through the same two helpers, so when this one gains a
- * way to ask, one line changes and the card and the gate below both follow.
- */
-const connectionRole: ConnectionRole = "owner";
 
 async function boot() {
   initI18n();
@@ -59,6 +41,35 @@ async function boot() {
     renderNotSetup();
     return;
   }
+  /**
+   * Who this window is rendering for.
+   *
+   * Derived on every open, never stored: a member promoted to admin in the
+   * dashboard next month must not be looking at a card this app wrote on the
+   * day they installed it.
+   *
+   * This used to be a hardcoded constant naming the owner, on the reasoning
+   * that the webview never handles the token — it stays in the Rust core — so
+   * this window had nothing to call `/team/me` with. It now has:
+   * `connection_role` asks on its behalf. The constant meant every team member
+   * who opened this window from the menu or the tray read "You're signed in as
+   * this brain's owner-admin" and was offered a "Change my password" button
+   * that walks them through a Cloudflare sign-in and inventing a password
+   * before failing with ErrorWrongCfAccount — one click from a setup screen
+   * that had just called them a member.
+   *
+   * A solo brain asks nothing at all: `teamMode` comes from the keychain, and
+   * `roleFromDetailsProbe` short-circuits on it before any request. Any failure
+   * — the command erroring, an unreachable brain, a Worker too old for the
+   * route — is a `null` probe, which resolves to "member": the least-privileged
+   * answer, because the cost of under-claiming here is a hidden button and the
+   * cost of over-claiming is the sentence above.
+   */
+  const connectionRole = roleFromDetailsProbe(
+    details.teamMode,
+    details.teamMode ? await invoke<unknown>("connection_role").catch(() => null) : null,
+  );
+
   const tools = await invoke<ToolStatus>("detect_tools");
   const update = await invoke<{ availableVersion: string } | null>(
     "worker_update_available",

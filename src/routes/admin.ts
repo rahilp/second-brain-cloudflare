@@ -6,6 +6,7 @@ import { intParam, json } from "../lib/http";
 import { D1_MAX_BOUND_PARAMS, VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY } from "../constants";
 import { requireAdmin, requireIdentity, type Identity } from "../lib/identity";
 import { effectiveWriteTarget, primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
+import { ensureTenantBootstrap } from "../lib/tenancy";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
 import { storeEntry } from "../capture/store";
@@ -287,10 +288,28 @@ export async function handleAdminRoutes(
     // enum here rather than passed through: anything that is not "company" is
     // private-by-default, matching effectiveWriteTarget's own reading of it.
     const orgDefault = cfg.TEAM_DEFAULT_WORKSPACE === "company" ? "company" : "personal";
+    // Who owns the deployment — the one thing `role` cannot say. tenancy.ts
+    // hashes this brain's AUTH_TOKEN into a users row with role 'admin'
+    // (invariant 4), and rowToIdentity narrows role to "admin" | "member", so
+    // the person who created the brain and a colleague they promoted are the
+    // same value on this route. The desktop app has to tell them apart: a
+    // password change and a Worker update both need a Cloudflare session for
+    // the account the Worker is deployed into, and only the owner has one.
+    // Offering either to a promoted admin dead-ends at ErrorWrongCfAccount
+    // after a full sign-in; withholding them from the owner takes away their
+    // only in-app route to both.
+    //
+    // Free: requireIdentity above has already awaited this bootstrap, which is
+    // memoised per DB binding, so no second query is issued and the scope
+    // checker sees no new statement.
+    const roots = await ensureTenantBootstrap(env);
     return json({
       ok: true,
       profile: {
         ...row,
+        // Consumed by installer/src-tauri/src/commands.rs::connection_role,
+        // which hands it to installer/src/connection-role.ts.
+        owner: row.userId === roots.ownerUserId,
         // Already on the resolved Identity — no second column read, no second query.
         defaultShare: auth.defaultShare,
         orgDefault,

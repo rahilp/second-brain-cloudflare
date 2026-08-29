@@ -14,7 +14,7 @@ import {
   teamCard,
   toolRows,
 } from "./shared";
-import { roleFromProbe, type ConnectionRole } from "./connection-role";
+import { PROBE_TIMEOUT_MS, fetchRoleProbe, roleFromProbe, type ConnectionRole } from "./connection-role";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { initI18n, LOCALE_CHANGE_EVENT, t } from "./i18n";
 import {
@@ -158,17 +158,38 @@ async function deriveConnectionRole(
   brainUrl: string,
   brainPassword: string,
 ): Promise<ConnectionRole> {
-  const role = await fetch(`${brainUrl}/team/me`, {
-    headers: { Authorization: `Bearer ${brainPassword}` },
-  })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => d?.profile?.role ?? null)
-    .catch(() => null);
-  return roleFromProbe({
-    team: true,
-    role,
-    hasCloudflareSession: signedInToCloudflare(),
-  });
+  // The brain is the only authority here. A Cloudflare sign-in used to count as
+  // evidence of ownership and must never again: `signedInToCloudflare()` is
+  // `accounts.length > 0`, which any successful `connect_cloudflare` in this
+  // window sets and nothing clears — including the one the primary connect
+  // button performs for a member whose brain lives in somebody else's account.
+  // `fetchRoleProbe` bounds itself, so a brain that never answers reaches the
+  // same "member" a refused one does instead of holding this screen open.
+  return roleFromProbe({ team: true, ...(await fetchRoleProbe(fetch, brainUrl, brainPassword)) });
+}
+
+/**
+ * `/health`, with the same bound as the probe above.
+ *
+ * A rejected fetch already fell through to the audience question; one that never
+ * settles did not, and this screen awaits it. Two unbounded requests on the
+ * first-connect path was one more than the change that added the second should
+ * have shipped.
+ */
+async function brainReportsMembers(brainUrl: string, brainPassword: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${brainUrl}/health`, {
+      headers: { Authorization: `Bearer ${brainPassword}` },
+      signal: controller.signal,
+    });
+    return await res.json().then((d) => !!d.team).catch(() => false);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /// Same question as audienceScreen, asked AFTER an existing brain connects.
@@ -185,20 +206,25 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string) {
     // the role is not — it is re-derived here rather than skipped, because the
     // token in hand may be a member's and this branch is exactly the one a
     // returning member takes.
+    //
+    // `teamMode` is set as well as the role, and that is not tidiness: it is
+    // the only thing `detailsScreen` consults before rendering the team card
+    // (`teamMode ? [teamCard(connectionRole)] : []`) and before choosing
+    // between the team lede and the solo one. Without it this branch derived a
+    // role nothing read, and a returning member — the person this branch
+    // exists for — finished setup on the solo "all set" copy with no card at
+    // all. The keychain already says this is a team brain; this is that fact
+    // reaching the screen.
+    teamMode = true;
     connectionRole = await deriveConnectionRole(brainUrl, brainPassword);
     return void toolsScreen();
   }
-  try {
-    const res = await fetch(`${brainUrl}/health`, {
-      headers: { Authorization: `Bearer ${brainPassword}` },
-    })
-    if (await res.json().then((d) => !!d.team).catch(() => false)) {
-      teamMode = true;
-      connectionRole = await deriveConnectionRole(brainUrl, brainPassword);
-      await invoke("set_team_mode", { teamMode: true }).catch(() => {});
-      return void toolsScreen();
-    }
-  } catch {}
+  if (await brainReportsMembers(brainUrl, brainPassword)) {
+    teamMode = true;
+    connectionRole = await deriveConnectionRole(brainUrl, brainPassword);
+    await invoke("set_team_mode", { teamMode: true }).catch(() => {});
+    return void toolsScreen();
+  }
   // Below here the brain reported no members, so `roleFromProbe` would answer
   // "owner" whatever /team/me said. `connectionRole` is already "owner" and no
   // second request is made — a solo install pays nothing for any of this.

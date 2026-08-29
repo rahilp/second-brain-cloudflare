@@ -78,6 +78,43 @@ describe("the three strings a member-token install depends on", () => {
     expect(String(en.connectExisting.unlockLede)).toMatch(/invite/i);
   });
 
+  it("tells a member what to type on the screen a member actually reaches", () => {
+    // `unlockLede` was rewritten first, and it belongs to `unlockBrainScreen` —
+    // reached only from the brain picker, i.e. only when `discover_brains`
+    // found the brain in the CONNECTING user's own Cloudflare account. A
+    // member's brain is in the owner's account, so that screen is, for them,
+    // nearly unreachable.
+    //
+    // `connectExisting.lede` is the one they read: `manualEntryScreen` is where
+    // "none found" lands them, where "Enter the address myself" lands them, and
+    // where a pasted address lands them. It sat directly above a field already
+    // relabelled "Your password, or your team invite token" and still said to
+    // enter "the address and password".
+    for (const catalog of [enFlat, itFlat]) {
+      expect(String(catalog.get("connectExisting.lede"))).toMatch(/token/i);
+    }
+    // And the screen that was already fixed stays fixed.
+    for (const catalog of [enFlat, itFlat]) {
+      expect(String(catalog.get("connectExisting.unlockLede"))).toMatch(/token/i);
+    }
+  });
+
+  it("calls the shared layer what the rest of the product calls it", () => {
+    // The Worker's enum is z.enum(["personal","company"]), POST /capture's 400
+    // says `workspace must be "personal" or "company"`, the dashboard says
+    // "company", and the owner's own card three lines above the member's said
+    // "the company layer". Only the member's card invented "team layer" — a
+    // name that appears nowhere the member could go and look for it.
+    for (const [path, value] of [...enFlat, ...itFlat]) {
+      expect(String(value), `${path} names a layer the product does not have`).not.toMatch(
+        /\bteam layer\b|\blivello del team\b/i,
+      );
+    }
+    // Said positively, so deleting the phrase rather than correcting it fails.
+    expect(String(enFlat.get("details.teamCardBodyMember"))).toMatch(/company layer/i);
+    expect(String(itFlat.get("details.teamCardBodyMember"))).toMatch(/livello aziendale/i);
+  });
+
   it("says something different to each of the three roles", () => {
     for (const catalog of [enFlat, itFlat]) {
       const bodies = [
