@@ -637,18 +637,24 @@ describe("GET /team/activity — gate and parameters", () => {
   });
 });
 
-describe("GET /team/activity — cost", () => {
-  function countPrepares(): { feed: number; names: number } {
-    const counts = { feed: 0, names: 0 };
-    const real = env.DB.prepare.bind(env.DB);
-    (env.DB as any).prepare = (sql: string) => {
-      if (sql.includes("FROM admin_events")) counts.feed++;
-      if (/SELECT id, name\s+FROM users WHERE id IN/.test(sql)) counts.names++;
-      return real(sql);
-    };
-    return counts;
-  }
+/**
+ * Start counting the route's own two statements. Module scope rather than
+ * inside the cost group below, because the solo group at the bottom of this
+ * file asks the same question of the same route on the other kind of brain,
+ * and one counter means the two answers are directly comparable.
+ */
+function countPrepares(): { feed: number; names: number } {
+  const counts = { feed: 0, names: 0 };
+  const real = env.DB.prepare.bind(env.DB);
+  (env.DB as any).prepare = (sql: string) => {
+    if (sql.includes("FROM admin_events")) counts.feed++;
+    if (/SELECT id, name\s+FROM users WHERE id IN/.test(sql)) counts.names++;
+    return real(sql);
+  };
+  return counts;
+}
 
+describe("GET /team/activity — cost", () => {
   it("issues one statement for the feed and one for the names", async () => {
     await adminRow(clock, "member_suspended", roots.ownerUserId, bob.member.userId);
     const counts = countPrepares();
@@ -673,5 +679,68 @@ describe("GET /team/activity — cost", () => {
     const body = await activity();
     expect(body.events).toEqual([]);
     expect(counts).toEqual({ feed: 1, names: 0 });
+  });
+});
+
+/**
+ * The solo brain — the shape every deployed brain has today.
+ *
+ * requireAdmin is not a team gate. src/lib/tenancy.ts hashes this deployment's
+ * AUTH_TOKEN into a users row with role 'admin' (invariant 4), so on a brain
+ * with one person that one person passes it, and this route answers them 200.
+ * Which means "does /team/activity 403 on a solo brain?" is the wrong question:
+ * it does not, and cannot be made to without taking the feed away from the
+ * owner of a real team as well. The right questions are what it RETURNS to
+ * them, and what it COSTS them — a route the dashboard never calls on a solo
+ * brain (js/activity.js hides the section and issues no request) still runs for
+ * anyone who types the URL, and phase 4 is the release that gave a solo brain
+ * rows to put in it: POST /patterns/resolve now audits insight_confirmed /
+ * insight_dismissed, and the integrations routes now audit connect/disconnect.
+ *
+ * The answer both tests establish: what comes back is a record of the one
+ * person's own administration of their own brain — no team, no second name, no
+ * subject, and no second statement to say so.
+ */
+describe("GET /team/activity — a solo brain", () => {
+  beforeEach(async () => {
+    // The outer beforeEach invites Bob, which is the whole of what makes that
+    // fixture a team. Removing him leaves the v2-upgrade shape exactly: one
+    // users row, the owner's, holding AUTH_TOKEN.
+    await env.DB.prepare(`DELETE FROM memberships WHERE user_id = ?`).bind(bob.member.userId).run();
+    await env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(bob.member.userId).run();
+    // The dashboard's own gate agrees this is a solo brain, so the two halves
+    // of this audit are talking about the same fixture: /health drives
+    // TEAM_MODE, and TEAM_MODE is what hides the section this route feeds.
+    expect((await jsonOf(await call("GET", "/health", ALICE))).team).toBe(false);
+  });
+
+  it("answers the owner 200 with an empty feed, in one statement", async () => {
+    const counts = countPrepares();
+    const body = await activity();
+    expect(body).toEqual({ ok: true, events: [], limit: 50, offset: 0 });
+    // One compound SELECT and NO name lookup: lookupAuditNames issues nothing
+    // for an empty id list, which is the case a solo brain is almost always in.
+    expect(counts).toEqual({ feed: 1, names: 0 });
+  });
+
+  it("shows the solo owner their own administration and nobody else's", async () => {
+    // The two trails a solo brain now actually writes, both new in this phase.
+    await entry("e-solo", "Weekly review ritual", roots.ownerPersonalWorkspaceId, "");
+    await entryRow(clock, "insight_confirmed", "e-solo", roots.ownerUserId);
+    tick();
+    await adminRow(clock, "integration_connected", roots.ownerUserId);
+
+    const body = await activity();
+    expect(body.events.map((e: any) => e.event)).toEqual([
+      "integration_connected", "insight_confirmed",
+    ]);
+    // Named, not id'd, on a brain whose only name is the owner's — and with no
+    // subject on any row, because there is nobody to be the subject of an
+    // administrative act here.
+    expect(body.events.map((e: any) => e.actor)).toEqual(["Owner", "Owner"]);
+    expect(body.events.map((e: any) => e.subject)).toEqual([null, null]);
+    // The memory arm is scoped at the row on this brain too: the owner's own
+    // personal memory is one they can read, so its event carries a title.
+    expect(body.events[1].title).toBe("Weekly review ritual");
   });
 });

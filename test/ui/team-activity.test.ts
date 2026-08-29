@@ -61,11 +61,12 @@ function setup(
     el.id = id;
     elements.set(id, el);
   }
-  // #team-activity ships with NO inline style and no CSS rule of its own — the
-  // hiding it inherits comes from #team-body (public/index.html), which team.js
-  // reveals. It is pre-set to none here on purpose, as the harder starting
-  // point: a maybeRevealActivity that only ever reveals would pass from a blank
-  // style, and the flip-back test below is what actually proves the else-branch.
+  // #team-activity ships display:none in public/index.html — its own gate, not
+  // the one it inherits from #team-body, which team.js reveals for a solo
+  // brain's owner too ("ships hidden, because #team-body is not a gate on a
+  // solo brain" below). Mirrored here as the harder starting point as well: a
+  // maybeRevealActivity that only ever reveals would pass from a blank style,
+  // and the flip-back test below is what actually proves the else-branch.
   // The Show-more button ships hidden until a full page proves there is more.
   elements.get("team-activity").style.display = "none";
   elements.get("activity-more").hidden = true;
@@ -304,6 +305,27 @@ describe("the activity feed", () => {
     expect(html).toContain("loadMoreActivity(this)");
     const nav = readFileSync(resolve(ROOT, "public/js/nav.js"), "utf8");
     expect(nav).toContain("maybeRevealActivity");
+  });
+
+  it("ships hidden, because #team-body is not a gate on a solo brain", () => {
+    // The section's containing panel is NOT enough on its own. #team-body is
+    // display:none in the markup, but team.js reveals it for anyone GET
+    // /team/members answers 200 for — and on a SOLO brain that is the owner:
+    // src/lib/tenancy.ts hashes AUTH_TOKEN into a users row with role 'admin'.
+    //
+    // switchTab('team') then puts that panel on screen SYNCHRONOUSLY and only
+    // calls maybeRevealActivity once the roster probe has come back (js/nav.js),
+    // so with no inline display:none a solo owner reads "Recent activity", its
+    // intro sentence and an Export CSV button for a whole network round trip —
+    // and can press the button, which pages GET /team/activity up to twenty
+    // times. A probe that never settles leaves it there for good.
+    //
+    // This is the producing half of the gate. maybeRevealActivity's own
+    // assignment is pinned by the reveal/flip-back cases above; neither pin
+    // survives the other's deletion.
+    const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
+    const open = html.match(/<div id="team-activity"[^>]*>/)?.[0] ?? "";
+    expect(open, "#team-activity must ship hidden").toContain("display: none");
   });
 
   it("pages on the page size, never on a count the feed does not send", async () => {

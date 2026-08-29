@@ -369,7 +369,42 @@ function renderTeam() {
       </div>`
   }
   loadTeamOrgDefault()
-  loadTeamInsights()
+  maybeRevealTeamInsights()
+}
+
+/**
+ * The weekly-team-insights row, both branches, on every render of the panel.
+ *
+ * This panel is NOT a team-only surface and that is the whole reason this
+ * function exists. src/lib/tenancy.ts hashes the deployment's AUTH_TOKEN into a
+ * users row with role 'admin', so on a solo brain GET /team/members answers 200
+ * for the owner and renderTeam() reveals #team-body just as it does for a team
+ * admin — which is how a solo owner invites their first colleague. Membership of
+ * that panel therefore gates nothing, and a setting whose own copy says "puts
+ * what it finds in everyone's review queue" needs TEAM_MODE, the one flag that
+ * does.
+ *
+ * Both branches, never a one-way reveal, for the reason renderTeamName states:
+ * a brain that stops being a team has to lose this row rather than merely never
+ * gain it.
+ *
+ * A solo brain does not read the value either. Hidden is not the same claim as
+ * free, and a control nobody can see that still fetches is still a request the
+ * v2 dashboard never made. The panel's one GET /config is loadTeamOrgDefault's,
+ * exactly as it was before this row existed.
+ *
+ * ORDERING: TEAM_MODE is assigned in maybeRevealHomeLayer (js/home.js) off GET
+ * /health, and js/auth.js fires loadTeam() alongside that request rather than
+ * after it, so renderTeam CAN read a false flag on a team brain. It cannot stick
+ * that way: the panel is unreachable without a switchTab('team'), which re-runs
+ * loadTeam → renderTeam → here. Reading early fails CLOSED, which is the
+ * direction that costs a team admin one tab visit and a solo owner nothing.
+ */
+function maybeRevealTeamInsights() {
+  const row = document.getElementById('team-insights-row')
+  if (row) row.style.display = TEAM_MODE ? '' : 'none'
+  if (!TEAM_MODE) return Promise.resolve()
+  return loadTeamInsights()
 }
 
 async function postTeam(path, body) {

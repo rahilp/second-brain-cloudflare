@@ -367,15 +367,25 @@
                       <option value="company" data-i18n="team.shareCompany">Company (shared)</option>
                     </select><i class="ti ti-chevron-down"></i></span>
                   </div>
-                  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
-                    <i class="ti ti-bulb" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
-                    <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.insightsLabel">Weekly team insights</span>
-                    <span class="team-select-wrap"><select class="team-select" id="team-insights" onchange="setTeamInsights(this.value)">
-                      <option value="off" data-i18n="team.insightsOff">Off</option>
-                      <option value="on" data-i18n="team.insightsOn">On</option>
-                    </select><i class="ti ti-chevron-down"></i></span>
+                  <!-- Team brains only. Being inside #team-body is NOT a gate:
+                       this deployment's AUTH_TOKEN hashes into a users row with
+                       role 'admin', so a solo owner's GET /team/members answers
+                       200 and the panel opens for them exactly as it does for a
+                       team admin. Ships hidden; maybeRevealTeamInsights() in
+                       js/team.js sets this display in both branches on every
+                       render. The hint is inside the wrapper too — it is the
+                       half that says "everyone's review queue" out loud. -->
+                  <div id="team-insights-row" style="display: none">
+                    <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
+                      <i class="ti ti-bulb" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                      <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.insightsLabel">Weekly team insights</span>
+                      <span class="team-select-wrap"><select class="team-select" id="team-insights" onchange="setTeamInsights(this.value)">
+                        <option value="off" data-i18n="team.insightsOff">Off</option>
+                        <option value="on" data-i18n="team.insightsOn">On</option>
+                      </select><i class="ti ti-chevron-down"></i></span>
+                    </div>
+                    <p class="digest-note" data-i18n="team.insightsHint">When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone's review queue.</p>
                   </div>
-                  <p class="digest-note" data-i18n="team.insightsHint">When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone's review queue.</p>
                   <div id="team-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
                 </div>
 
@@ -396,8 +406,16 @@
                 </div>
 
                 <!-- Recent activity. Admin-only by construction: this whole panel is
-                     #team-body, which only renders when GET /team/members answered 200. -->
-                <div id="team-activity">
+                     #team-body, which only renders when GET /team/members answered 200.
+                     That answers "not a member"; it does not answer "not solo" —
+                     a solo owner holds AUTH_TOKEN, which is an admin row, so the
+                     panel opens for them too. Hence its own display:none:
+                     switchTab('team') shows the panel synchronously and only
+                     calls maybeRevealActivity (js/activity.js, both branches)
+                     once the roster probe answers, so without this the section
+                     and its Export CSV button are on screen for that whole round
+                     trip — and for good if the probe never settles. -->
+                <div id="team-activity" style="display: none">
                   <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="activity.title">Recent activity</div>
                   <p class="digest-note" data-i18n="activity.intro">Who changed what, newest first. Kept as a record — nothing here can be edited.</p>
                   <div id="activity-list"></div>

@@ -103,6 +103,7 @@ const TEAM_ELEMENT_IDS = [
   "team-invite-mail-btn",
   "team-org-default",
   "team-insights",
+  "team-insights-row",
 ];
 
 function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
@@ -120,6 +121,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     "topbar-team-name",
     "confirm-check-row",
     "team-invite-mail-btn",
+    "team-insights-row",
   ]);
   for (const id of TEAM_ELEMENT_IDS) {
     const el = makeEl();
@@ -921,6 +923,97 @@ describe("team panel", () => {
     const { ctx } = setup(async () => ({ ok: true, status: 200, json: async () => ADMIN_OK }));
     ctx.initI18n("it");
     expect(ctx.t("team.insightsLabel")).toBe("Approfondimenti settimanali del team");
+  });
+
+  // ── The row itself is team-only, not just the setting behind it ──────────
+  //
+  // #team-body OPENS ON A SOLO BRAIN. src/lib/tenancy.ts hashes this
+  // deployment's AUTH_TOKEN into a users row with role 'admin', so GET
+  // /team/members answers 200 for the owner and renderTeam() reveals the whole
+  // panel — "changes nothing on a solo brain, in either branch" below pins
+  // exactly that, deliberately. Being inside #team-body is therefore NOT a gate,
+  // and anything this phase adds to the panel needs its own, or it is new UI on
+  // a brain the phase promised to leave alone. "Weekly team insights … puts what
+  // it finds in everyone's review queue" describes an everyone a solo brain does
+  // not have.
+  //
+  // Both producers of the gate are pinned here, because either alone survives
+  // the other's deletion: the inline display:none that decides what is on screen
+  // BEFORE any render, and the assignment in maybeRevealTeamInsights that
+  // decides it after.
+  const adminAndConfig = (config: Record<string, unknown>, seen?: string[]) =>
+    jsonFetch([
+      {
+        match: (u) => u.endsWith("/team/members"),
+        reply: (u: string) => {
+          seen?.push(u);
+          return { ok: true, status: 200, json: async () => ADMIN_OK };
+        },
+      },
+      {
+        match: (u) => u.endsWith("/config"),
+        reply: (u: string) => {
+          seen?.push(u);
+          return { ok: true, status: 200, json: async () => ({ config }) };
+        },
+      },
+    ]);
+
+  it("ships hidden in the markup, so a solo owner cannot see it before a render decides", () => {
+    const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
+    const open = html.match(/<div id="team-insights-row"[^>]*>/)?.[0] ?? "";
+    expect(open, "#team-insights-row must exist and ship hidden").toContain("display: none");
+    // The control AND the sentence explaining it are both inside the wrapper.
+    // The hint is the half that names the team out loud, so a wrapper that
+    // covered only the <select> would still say "everyone's review queue" to
+    // someone whose brain has no everyone.
+    const region = html.slice(html.indexOf('id="team-insights-row"'), html.indexOf('id="team-list"'));
+    expect(region).toContain('id="team-insights"');
+    expect(region).toContain('data-i18n="team.insightsHint"');
+  });
+
+  it("reveals the row and reads its value on a team brain", async () => {
+    const { ctx, els } = setup(adminAndConfig({ TEAM_INSIGHTS: "on" }));
+    await ctx.loadTeam();
+    await drain();
+    expect(els.get("team-insights-row").style.display).toBe("");
+    expect(els.get("team-insights").value).toBe("on");
+  });
+
+  it("stays hidden on a solo brain, and the panel still makes exactly one /config read", async () => {
+    const seen: string[] = [];
+    const { ctx, els } = setup(adminAndConfig({ TEAM_INSIGHTS: "on" }, seen));
+    vm.runInContext("TEAM_MODE = false", ctx);
+    await ctx.loadTeam();
+    await drain();
+    expect(els.get("team-insights-row").style.display).toBe("none");
+    // The one read is the org-default row's, which predates this phase. The
+    // insights row adds no second one: it does not read at all when hidden,
+    // and readTeamConfig would coalesce it with the first if it did. Counted
+    // rather than argued, because "hidden" and "free" are different claims and
+    // a hidden element that still fetches is still a regression.
+    expect(seen.filter((u) => u.endsWith("/config"))).toHaveLength(1);
+    expect(els.get("team-insights").value).toBe("");
+  });
+
+  it("re-states both branches on every render, which is what closes the ordering hazard", async () => {
+    // TEAM_MODE is assigned in ONE place — maybeRevealHomeLayer (js/home.js),
+    // off GET /health — and js/auth.js fires loadTeam() ALONGSIDE that request
+    // rather than after it. So renderTeam() genuinely can run first and read a
+    // false flag on a team brain. That is not a stuck reveal, and this is the
+    // proof rather than the assumption: the panel cannot be looked at without a
+    // switchTab('team'), switchTab('team') re-runs loadTeam → renderTeam, and
+    // the row's visibility is re-derived from the flag every time.
+    const { ctx, els } = setup(adminAndConfig({ TEAM_INSIGHTS: "on" }));
+    vm.runInContext("TEAM_MODE = false", ctx);
+    await ctx.loadTeam(); // the early render, before /health has answered
+    await drain();
+    expect(els.get("team-insights-row").style.display).toBe("none");
+    vm.runInContext("TEAM_MODE = true", ctx);
+    await ctx.loadTeam(); // the next visit to the Team tab
+    await drain();
+    expect(els.get("team-insights-row").style.display).toBe("");
+    expect(els.get("team-insights").value).toBe("on");
   });
 
   it("dismissed token reveal clears the plaintext token", async () => {
