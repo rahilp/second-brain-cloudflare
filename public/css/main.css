@@ -3537,6 +3537,12 @@
         margin-top: 10px;
       }
 
+      .home-layer-hint {
+        font-size: 12px;
+        color: var(--text-tertiary);
+        margin-top: 8px;
+      }
+
       .home-hint .hashtag {
         color: var(--accent-ink);
         font-style: italic;

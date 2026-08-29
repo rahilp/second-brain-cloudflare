@@ -76,6 +76,12 @@ const I18N_EN = {
       'Memories is everything you have kept — as a list by date, or as a graph of how it connects.',
     firstRunStep3:
       'Settings is where you connect Claude, ChatGPT, Cursor, your email and calendar, so they read from and add to this same memory.',
+    autoPersonalYours: 'Auto → Personal (your setting)',
+    autoPersonalOrg: 'Auto → Personal (org default)',
+    autoSharedYours: 'Auto → Shared (your setting)',
+    autoSharedOrg: 'Auto → Shared (org default)',
+    pinnedPersonal: 'This one stays personal',
+    pinnedShared: 'This one goes to the whole team',
   },
   recall: {
     eyebrow: 'Recall',
@@ -601,6 +607,12 @@ const I18N_IT = {
       'Ricordi è tutto ciò che hai tenuto — come elenco per data, o come grafo di come si collega.',
     firstRunStep3:
       'Impostazioni è dove colleghi Claude, ChatGPT, Cursor, email e calendario, così leggono e aggiungono a questa stessa memoria.',
+    autoPersonalYours: 'Auto → Personale (tua impostazione)',
+    autoPersonalOrg: 'Auto → Personale (predefinito dell’organizzazione)',
+    autoSharedYours: 'Auto → Condiviso (tua impostazione)',
+    autoSharedOrg: 'Auto → Condiviso (predefinito dell’organizzazione)',
+    pinnedPersonal: 'Questo resta personale',
+    pinnedShared: 'Questo va a tutto il team',
   },
   recall: {
     eyebrow: 'Richiamo',

@@ -21,17 +21,73 @@ let homeModeLocked = false
 // default decides. The dropdown only exists on team brains — /health says so
 // and checkVectorize() reveals it; solo brains never see layer UI anywhere.
 
+/** { defaultShare, orgDefault, effectiveDefault } from GET /team/me, or null
+ * before it has answered (or on a solo brain, where it is never fetched). */
+let captureDefault = null
+
 function onHomeLayerChange(value) {
   homeLayer = value || null
+  renderCaptureHint()
+}
+
+/** GET /team/me tells the composer what Auto will resolve to, and whose choice
+ * that is — the member's own, or the org's fallback. Failure (offline, an
+ * older Worker, a non-ok status) clears the hint rather than showing a stale
+ * or guessed one. */
+async function loadCaptureDefault() {
+  try {
+    const res = await fetch(`${WORKER_URL}/team/me`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    const p = data.profile || {}
+    captureDefault = { defaultShare: p.defaultShare, orgDefault: p.orgDefault, effectiveDefault: p.effectiveDefault }
+  } catch {
+    captureDefault = null
+  }
+  renderCaptureHint()
+}
+
+/**
+ * Writes #home-layer-hint. Exhaustive table (a defaultShare that disagrees
+ * with effectiveDefault cannot occur — the server computes one from the
+ * other):
+ *
+ *   homeLayer | effectiveDefault | defaultShare | key
+ *   null      | personal         | 'personal'   | autoPersonalYours
+ *   null      | personal         | ''           | autoPersonalOrg
+ *   null      | company          | 'company'    | autoSharedYours
+ *   null      | company          | ''           | autoSharedOrg
+ *   'personal'| —                | —            | pinnedPersonal
+ *   'company' | —                | —            | pinnedShared
+ */
+function renderCaptureHint() {
+  const el = document.getElementById('home-layer-hint')
+  if (!el) return
+  if (!TEAM_MODE || captureDefault === null) {
+    el.style.display = 'none'
+    el.textContent = ''
+    return
+  }
+  let key
+  if (homeLayer === 'personal') key = 'home.pinnedPersonal'
+  else if (homeLayer === 'company') key = 'home.pinnedShared'
+  else if (captureDefault.effectiveDefault === 'company') key = captureDefault.defaultShare ? 'home.autoSharedYours' : 'home.autoSharedOrg'
+  else key = captureDefault.defaultShare ? 'home.autoPersonalYours' : 'home.autoPersonalOrg'
+  el.style.display = ''
+  el.textContent = t(key)
 }
 
 /** /health reports whether more than one member exists; solo brains never see layer UI. */
-function maybeRevealHomeLayer(health) {
+async function maybeRevealHomeLayer(health) {
   TEAM_MODE = !!(health && health.team)
   // Every layer control states both branches: the flag is the single source of
   // truth, so a re-probe can always correct a stale reveal.
   const wrap = document.getElementById('home-layer-wrap')
   if (wrap) wrap.style.display = TEAM_MODE ? '' : 'none'
+  // Both branches: a brain that stops being a team drops the hint rather than
+  // leaving it to describe a policy that no longer applies to anyone.
+  if (TEAM_MODE) await loadCaptureDefault()
+  else renderCaptureHint()
 }
 
 /** Leading words that make a sentence a question even without a question mark. */
