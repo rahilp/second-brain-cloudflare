@@ -776,6 +776,46 @@ describe("GET /team/activity — the bound-parameter ceiling", () => {
     expect(worstBind(executed)).toBe(D1_MAX_BOUND_PARAMS);
     expect(nameStatements(executed).length).toBe(1);
   });
+
+  it("asks about each person ONCE, however many rows name them", async () => {
+    // The dedup the merge's safety argument rests on, pinned as a cost.
+    //
+    // 60 rows naming 30 actors and 30 subjects between them: 120 ids off the
+    // feed, 60 distinct people to ask about. Deduplicated that is ONE
+    // statement binding 60; without the dedup it is 120 bound parameters,
+    // which the ceiling splits into a second statement this page does not owe
+    // — a whole extra subrequest spent asking D1 about people it has already
+    // been told about. A busy team's feed is mostly the same few
+    // administrators over and over, so this is the ordinary page and not a
+    // contrived one.
+    //
+    // Correctness is asserted alongside the count on purpose: the cheaper
+    // shape must still name everybody, including a person who appears only in
+    // the last rows of the page.
+    for (let i = 0; i < 60; i++) {
+      await adminRow(clock + i, "member_created", `a-${i % 30}`, `s-${i % 30}`);
+    }
+    await named("a-0", "Ada");
+    await named("s-0", "Zoe");
+
+    const executed = withBoundParamLimit();
+    const res = await call("GET", "/team/activity?limit=100", ALICE);
+    await settle();
+
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.events.length).toBe(60);
+    const names = nameStatements(executed);
+    expect(names.length).toBe(1);
+    expect(names[0].params).toBe(60);
+    // Every distinct person is already accounted for by the newest 30 rows, so
+    // the oldest row is answered entirely out of ids the list collapsed —
+    // which is the case a dedup that dropped names instead of duplicates
+    // would get wrong.
+    const oldest = body.events[59];
+    expect(oldest.actor).toBe("Ada");
+    expect(oldest.subject).toBe("Zoe");
+  });
 });
 
 /**
@@ -802,6 +842,37 @@ describe("GET /team/activity — an unreadable feed is not an empty one", () => 
     const failing: any = { bind: () => failing, all: locked, first: locked, run: locked };
     (env.DB as any).prepare = (sql: string) =>
       sql.includes("FROM admin_events") ? failing : real(sql);
+
+    await expect(call("GET", "/team/activity", ALICE)).rejects.toThrow(/D1_ERROR/);
+    await settle();
+  });
+
+  it("lets a rejected NAME lookup through rather than answering it with nobody", async () => {
+    // The SECOND lie the ruling rejects, and the more tempting one to write:
+    // `lookupAuditNames(...).catch(() => new Map())` keeps every row on screen
+    // and answers 200, so the page still looks like a trail — it is just a
+    // trail in which a hundred administrative acts were performed by nobody
+    // upon nobody. `actor` and `subject` are documented on this wire as a name
+    // OR NULL, with null meaning "no actor", so nulling a page of them states
+    // something false about every row rather than admitting a failure.
+    //
+    // Same technique as the feed case above: rejected at EXECUTION, because a
+    // stub that threw from prepare() would be unreachable by the `.catch()` a
+    // degrading fix reaches for and so could not tell a catch from no catch.
+    await adminRow(clock, "member_suspended", roots.ownerUserId, bob.member.userId);
+
+    // First, unfailed: the names really do resolve on this exact request, so
+    // the case below is about the lookup being SWALLOWED and not about a page
+    // that had no names to lose.
+    const clean = await activity();
+    expect(clean.events[0].actor).toBe("Owner");
+    expect(clean.events[0].subject).toBe("Bob");
+
+    const real = env.DB.prepare.bind(env.DB);
+    const locked = () => Promise.reject(new Error("D1_ERROR: database is locked"));
+    const failing: any = { bind: () => failing, all: locked, first: locked, run: locked };
+    (env.DB as any).prepare = (sql: string) =>
+      /SELECT id, name\s+FROM users WHERE id IN/.test(sql) ? failing : real(sql);
 
     await expect(call("GET", "/team/activity", ALICE)).rejects.toThrow(/D1_ERROR/);
     await settle();
