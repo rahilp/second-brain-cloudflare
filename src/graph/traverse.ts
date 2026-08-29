@@ -4,7 +4,7 @@ import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { getKind } from "../memory/kind";
 import { getStatus } from "../memory/status";
 import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
-import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
+import { resolveActorLabel } from "../lib/actors";
 import type { Identity } from "../lib/identity";
 import { edgeLabel } from "./edges";
 import type { Connection, EdgeProvenance, GraphNeighbor, GraphView } from "./types";
@@ -28,20 +28,22 @@ const GRAPH_MAX_NODES = 50;
 // That formula is the IDENTITY-LESS arithmetic — the cron callers. A scoped
 // caller costs more, and it always did: the scope bindings share each
 // statement's 100-parameter budget with the ids, so the batches shrink and the
-// batch COUNT rises. Measured at N=1500 (test/integration/graph-team-aware.test.ts
-// covers the shape of it; these numbers came from counting env.DB.prepare):
+// batch COUNT rises. Measured at N=1500 by counting D1 calls (a batch counts
+// once, as the platform charges it):
 //
 //   identity-less                                    46
-//   member, personal-only view                       48
-//   member, view containing a shared node            49  (+1 actor lookup)
-//   admin (reads the legacy '' layer too), shared    50
+//   member, any view — personal, company or both     48
+//   admin (reads the legacy '' layer too)            49
 //
-// The actor lookup is ONE statement for the whole view, issued only when the
-// view actually contains a company-layer node, so it cannot scale with N. The
-// rest of that spread is the pre-existing binding arithmetic, not this pass.
-// With the KV config read and the identity batch on top, a 1500-node TEAM brain
-// is at or over the free-plan ceiling — the same conclusion #282 reaches for the
-// cold path, and for the same reason: the tax is fixed and it eats any N.
+// Layer and author cost NOTHING on top of that: workspace_id and actor_id ride
+// in the hydration's projection and the author's name arrives through a LEFT
+// JOIN on it, so there is no per-view statement and no per-author bound
+// parameter. A whole served request adds the identity batch and the KV config
+// read: 50 for a member at N=1500, the entire free-plan budget with nothing
+// spare. THAT TOTAL IS PINNED by "costs exactly this many subrequests at
+// GRAPH_VIEW_MAX_NODES" in test/integration/graph-team-aware.test.ts — change it
+// deliberately or not at all, and remember a cold isolate still pays
+// initializeDatabase's DDL on top (#282).
 //
 // 47 is the WARM figure for the identity-less path. On a cold isolate the
 // budget is shared with initializeDatabase, which fires under waitUntil and spends about 12 more on
@@ -305,19 +307,53 @@ export async function buildGraph(opts: { seed?: string; limit?: number; only?: "
   if (!nodeIds.length) return { nodes: [], edges: [] };
 
   const nodeRows = new Map<string, Record<string, any>>();
-  const nodeScopeSql = scope ? ` AND ${scope.clause}` : "";
+  /**
+   * actor_id → display name, read off the join below rather than looked up.
+   *
+   * The author names cost NO statement and NO bound parameter: a second query
+   * would have to bind one parameter per distinct author against D1's hard
+   * ceiling of 100 (D1_MAX_BOUND_PARAMS), and this is the one caller that cannot
+   * promise to stay under it — GET /list is bounded by its page size and GET
+   * /entry by one row, but a GRAPH_VIEW_MAX_NODES view can span every author on
+   * the deployment. At 101 distinct authors that statement is rejected outright
+   * and the whole graph request 500s. node:sqlite has no such limit, so no test
+   * against it can show this; the join is what removes the possibility.
+   */
+  const actorNames = new Map<string, string>();
+  // Aliased, and the scope clause names the alias: once a second table is in the
+  // statement, an unqualified `workspace_id` is a clause a reader (and the scope
+  // checker) has to resolve by knowing which table has the column.
+  const nodeScope = identity ? scopeWhere(identity, opts.only, "e.workspace_id") : null;
+  const nodeScopeSql = nodeScope ? ` AND ${nodeScope.clause}` : "";
   // Scope bindings share the statement's bound-parameter budget with the ids.
-  const nodeTake = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  const nodeTake = D1_MAX_BOUND_PARAMS - (nodeScope?.bindings.length ?? 0);
   for (let i = 0; i < nodeIds.length; i += nodeTake) {
     const batch = nodeIds.slice(i, i + nodeTake);
     const ph = batch.map(() => "?").join(", ");
-    // scope-checked: the caller's clause IS applied — nodeScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
+    // workspace_id, actor_id and source ride along in the projection the
+    // hydration was already issuing, and the author's name arrives with them
+    // through a join on the users primary key: same rows, same statement, no
+    // extra read. The join is soft-delete aware exactly as lookupActorLabels is,
+    // so a removed member still resolves to "Former member" rather than to a
+    // stale name.
+    //
+    // Keep the annotation below immediately above the statement: it is spent by
+    // the first query within five lines of it, and prose in between silently
+    // pushes the statement out of that window.
+    // scope-checked: the caller's clause IS applied — nodeScopeSql is built as ` AND ${nodeScope.clause}` above, against the `e` alias, and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. The joined `users` rows are labels for the entries this clause already admitted, never a second source of rows. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
-      // workspace_id and actor_id ride along in the projection the hydration was
-      // already issuing: same rows, same statement, no extra read.
-      `SELECT id, content, tags, importance_score, created_at, workspace_id, actor_id FROM entries WHERE id IN (${ph})${nodeScopeSql}`
-    ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
-    for (const r of results) nodeRows.set(r.id as string, r);
+      `SELECT e.id, e.content, e.tags, e.importance_score, e.created_at,
+              e.workspace_id, e.actor_id, e.source, u.name AS actor_display_name
+       FROM entries e
+       LEFT JOIN users u ON u.id = e.actor_id AND (u.removed_at IS NULL OR u.removed_at = 0)
+       WHERE e.id IN (${ph})${nodeScopeSql}`
+    ).bind(...batch, ...(nodeScope?.bindings ?? [])).all() as { results: Record<string, any>[] };
+    for (const r of results) {
+      nodeRows.set(r.id as string, r);
+      if (r.actor_id && r.actor_display_name) {
+        actorNames.set(String(r.actor_id), String(r.actor_display_name));
+      }
+    }
   }
 
   // Exactly GET /list's layer rule, so the canvas and the list badge the same
@@ -331,15 +367,12 @@ export async function buildGraph(opts: { seed?: string; limit?: number; only?: "
     : "system";
 
   const nodes: GraphView["nodes"] = [];
-  /** node id → actor_id, company-layer nodes only: the ids worth a name. */
-  const companyActors = new Map<string, string>();
   for (const id of nodeIds) {
     const r = nodeRows.get(id);
     if (!r) continue;
     const tags: string[] = JSON.parse(r.tags ?? "[]");
     if (tags.some(t => MACHINE_AUTHORED_TAGS.has(t))) continue;
     const workspace = layerOf(r.workspace_id);
-    if (workspace === "company") companyActors.set(id, String(r.actor_id ?? ""));
     nodes.push({
       id,
       label: (r.content as string).slice(0, 80),
@@ -349,23 +382,17 @@ export async function buildGraph(opts: { seed?: string; limit?: number; only?: "
       importance: (r.importance_score as number) ?? 0,
       created_at: r.created_at as number,
       workspace,
-      // Filled in below for company nodes; null is the answer everywhere else.
-      actor_name: null,
+      // Named by the same resolver /list and /entry use, given the same inputs —
+      // including `source`, so a row the pipeline wrote reads "System" on the
+      // canvas exactly as it does in the list. Only company-layer nodes have an
+      // author to name; `viewerId` is what turns the caller's own into "You".
+      actor_name: workspace === "company"
+        ? resolveActorLabel(String(r.actor_id ?? ""), actorNames, {
+            viewerId: identity?.userId,
+            source: String(r.source ?? ""),
+          })
+        : null,
     });
-  }
-
-  // ONE statement for the whole view, and only when there is a shared node in
-  // it: a per-node lookup would scale the subrequest count with the node budget,
-  // which is the one thing GRAPH_VIEW_MAX_NODES is sized against. A personal
-  // brain, a personal-only view and every identity-less caller skip it entirely
-  // and cost exactly what they did before.
-  if (identity && companyActors.size) {
-    const labels = await lookupActorLabels(env, [...companyActors.values()]);
-    for (const node of nodes) {
-      const actorId = companyActors.get(node.id);
-      if (actorId === undefined) continue;
-      node.actor_name = resolveActorLabel(actorId, labels, { viewerId: identity.userId });
-    }
   }
 
   const nodeIdSet = new Set(nodes.map(n => n.id));
