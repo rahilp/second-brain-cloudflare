@@ -34,7 +34,7 @@ async function saveProfileName() {
     if (!res.ok || !data.ok) throw new Error(data.error || t('team.actionFailed'))
     showToast(t('team.profileSaved'))
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+    showToast(e.message || t('team.actionFailed'))
   }
 }
 
@@ -522,6 +522,6 @@ async function exportMemories(format) {
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
-    alert(t('menu.exportFailed', { message: e.message }))
+    showToast(t('menu.exportFailed', { message: e.message }))
   }
 }

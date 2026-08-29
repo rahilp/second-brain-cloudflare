@@ -1755,6 +1755,20 @@
         line-height: 1.55;
       }
 
+      /* The sheet's optional modifier — "and also delete the memories". A full
+         32px row because the whole label is the tap target, and secondary ink
+         because it is a qualifier on the question above, not the question. */
+      .confirm-check {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        margin-bottom: 18px;
+        min-height: 32px;
+        cursor: pointer;
+      }
+
       .view-header {
         display: flex;
         justify-content: space-between;
@@ -3985,6 +3999,22 @@
         font-size: 12px;
         color: var(--text-secondary);
         padding: 4px 0;
+      }
+
+      /* Why the two view buttons below are unavailable. Tertiary ink: it is a
+         footnote on the history, not another entry in it. */
+      .view-timeline-note {
+        font-size: 12px;
+        color: var(--text-tertiary);
+        padding: 6px 0 0;
+      }
+
+      /* Dimming rather than a colour change — the view buttons already vary
+         colour by role (.btn-view-forget carries --danger), and overriding that
+         would lose the role while trying to say "unavailable". */
+      .view-btn--locked {
+        opacity: 0.45;
+        cursor: not-allowed;
       }
 
       /* ── Phone-width overrides ─────────────────────────────────────

@@ -291,32 +291,47 @@ async function syncIntegration(provider, btn) {
   }
 }
 
+/**
+ * Drop a connection, optionally taking what it synced with it.
+ *
+ * This used to ask twice in a row: disconnect?, then delete the memories?.
+ * Two stacked dialogs for one action is what teaches people to click through
+ * without reading, and the second question was never a second decision — it
+ * modifies the first. So it is a checkbox on the one sheet, and it is only
+ * offered when there is actually something to delete. A hidden checkbox
+ * reports false, which is the same default the second confirm had.
+ */
 async function disconnectIntegration(provider, btn) {
   const info = integrationsInfo.find((i) => i.provider === provider) || {}
-  if (!confirm(t('integrations.disconnectConfirm', { name: info.name || provider }))) return
-  let purge = false
-  if (info.itemCount > 0) {
-    purge = confirm(
-      tPlural('integrations.purgeConfirm', info.itemCount, {
-        noun: tPlural('integrations.nounMemory', info.itemCount),
-      }),
-    )
-  }
-  btn.disabled = true
-  btn.textContent = t('integrations.disconnecting')
-  try {
-    const res = await fetch(`${WORKER_URL}/integrations/${provider}/disconnect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ purge }),
-    })
-    const data = await res.json()
-    if (!res.ok || !data.ok) throw new Error(data.error || t('integrations.disconnectFailed'))
-    await loadIntegrations()
-    if (purge) refreshAll()
-  } catch (e) {
-    btn.disabled = false
-    btn.textContent = t('menu.disconnect')
-    alert(e.message || t('integrations.disconnectFailed'))
-  }
+  openDangerConfirm({
+    title: t('danger.disconnectTitle'),
+    body: t('integrations.disconnectConfirm', { name: info.name || provider }),
+    confirmLabel: t('menu.disconnect'),
+    checkboxLabel:
+      info.itemCount > 0
+        ? tPlural('integrations.purgeConfirm', info.itemCount, {
+            noun: tPlural('integrations.nounMemory', info.itemCount),
+          })
+        : '',
+    onConfirm: async (purge, done) => {
+      btn.disabled = true
+      btn.textContent = t('integrations.disconnecting')
+      try {
+        const res = await fetch(`${WORKER_URL}/integrations/${provider}/disconnect`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+          body: JSON.stringify({ purge }),
+        })
+        const data = await res.json()
+        if (!res.ok || !data.ok) throw new Error(data.error || t('integrations.disconnectFailed'))
+        await loadIntegrations()
+        if (purge) refreshAll()
+      } catch (e) {
+        btn.disabled = false
+        btn.textContent = t('menu.disconnect')
+        showToast(e.message || t('integrations.disconnectFailed'))
+      }
+      done()
+    },
+  })
 }

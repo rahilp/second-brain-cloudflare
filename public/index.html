@@ -335,11 +335,15 @@
 
     <div id="confirm-dialog">
       <div class="confirm-sheet">
-        <h3 data-i18n="memories.confirmTitle">Forget this memory?</h3>
-        <p data-i18n="memories.confirmBody">This can't be undone. The memory will be removed from your brain.</p>
+        <h3 id="confirm-title" data-i18n="memories.confirmTitle">Forget this memory?</h3>
+        <p id="confirm-body" data-i18n="memories.confirmBody">This can't be undone. The memory will be removed from your brain.</p>
+        <label class="confirm-check" id="confirm-check-row" style="display: none">
+          <input type="checkbox" id="confirm-checkbox" />
+          <span id="confirm-check-label"></span>
+        </label>
         <div class="confirm-actions">
-          <button class="btn-cancel" onclick="closeConfirm()" data-i18n="memories.cancel">Cancel</button>
-          <button class="btn-delete" onclick="confirmForget()" data-i18n="memories.forget">Forget</button>
+          <button class="btn-cancel" id="confirm-cancel-btn" onclick="closeConfirm()" data-i18n="memories.cancel">Cancel</button>
+          <button class="btn-delete" id="confirm-accept-btn" onclick="runConfirmAction()" data-i18n="memories.forget">Forget</button>
         </div>
       </div>
     </div>
@@ -532,6 +536,7 @@
     <script src="credits.js"></script>
     <script src="js/state.js"></script>
     <script src="js/toast.js"></script>
+    <script src="js/confirm-sheet.js"></script>
     <script src="js/api.js"></script>
     <script src="js/theme.js"></script>
     <script src="js/ui-chat.js"></script>

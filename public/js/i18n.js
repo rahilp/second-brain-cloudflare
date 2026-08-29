@@ -188,6 +188,15 @@ const I18N_EN = {
     removeLink: 'Remove link',
     removeLinkConfirm: 'Remove this link? The memories stay; only the connection is deleted.',
     untitled: 'Untitled memory',
+    evCreated: 'Captured',
+    evUpdated: 'Edited',
+    evAppended: 'Added to',
+    evDeleted: 'Deleted',
+    evStatusChanged: 'Status changed',
+    evShared: 'Shared with the team',
+    evUnshared: 'Made personal again',
+    authorLockedTitle: 'Only the author can change a shared memory',
+    authorLocked: 'Shared by {name} — only they can edit or delete it',
   },
   graph: {
     empty: 'No connections yet — link memories, or let them auto-connect as you add more.',
@@ -330,9 +339,12 @@ const I18N_EN = {
     lastSync: 'Last sync: {when}',
     never: 'never',
     disconnectConfirm: 'Disconnect {name}? It will stop syncing.',
+    // A checkbox label, not a dialog: it names what ticking it does. It used to
+    // end "OK = delete them / Cancel = keep them", which described a pair of
+    // buttons that are no longer on screen.
     purgeConfirm: {
-      one: 'Also delete the {n} synced {noun}?\n\nOK = delete them\nCancel = keep them as regular memories',
-      other: 'Also delete the {n} synced {noun}?\n\nOK = delete them\nCancel = keep them as regular memories',
+      one: 'Also delete the {n} synced {noun}',
+      other: 'Also delete the {n} synced {noun}',
     },
     disconnecting: 'Disconnecting…',
     disconnectFailed: 'Disconnect failed',
@@ -519,6 +531,11 @@ const I18N_EN = {
     sourceClaudeCode: 'claude code',
     invalidResponse: 'Invalid response',
     mcpError: 'MCP error',
+  },
+  danger: {
+    removeLinkTitle: 'Remove this link?',
+    removeLinkAction: 'Remove link',
+    disconnectTitle: 'Disconnect this integration?',
   },
 }
 
@@ -708,6 +725,15 @@ const I18N_IT = {
     removeLinkConfirm:
       'Rimuovere questo collegamento? I ricordi restano; viene eliminata solo la connessione.',
     untitled: 'Ricordo senza titolo',
+    evCreated: 'Salvato',
+    evUpdated: 'Modificato',
+    evAppended: 'Integrato',
+    evDeleted: 'Eliminato',
+    evStatusChanged: 'Stato cambiato',
+    evShared: 'Condiviso col team',
+    evUnshared: 'Reso di nuovo personale',
+    authorLockedTitle: 'Solo l’autore può modificare un ricordo condiviso',
+    authorLocked: 'Condiviso da {name} — solo questa persona può modificarlo o eliminarlo',
   },
   graph: {
     empty:
@@ -851,8 +877,8 @@ const I18N_IT = {
     never: 'mai',
     disconnectConfirm: 'Disconnettere {name}? Smetterà di sincronizzare.',
     purgeConfirm: {
-      one: 'Eliminare anche il {n} {noun} sincronizzato?\n\nOK = eliminali\nAnnulla = tienili come ricordi normali',
-      other: 'Eliminare anche i {n} {noun} sincronizzati?\n\nOK = eliminali\nAnnulla = tienili come ricordi normali',
+      one: 'Elimina anche il {n} {noun} sincronizzato',
+      other: 'Elimina anche i {n} {noun} sincronizzati',
     },
     disconnecting: 'Disconnessione…',
     disconnectFailed: 'Disconnessione non riuscita',
@@ -1040,6 +1066,11 @@ const I18N_IT = {
     sourceClaudeCode: 'claude code',
     invalidResponse: 'Risposta non valida',
     mcpError: 'Errore MCP',
+  },
+  danger: {
+    removeLinkTitle: 'Rimuovere questo collegamento?',
+    removeLinkAction: 'Rimuovi collegamento',
+    disconnectTitle: 'Disconnettere questa integrazione?',
   },
 }
 

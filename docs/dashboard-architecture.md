@@ -10,7 +10,7 @@ The one-shot migration script that performed this split was removed after use; d
 |-------|------|----------------|
 | Pure | `utils.js` | — (DOM optional via injection) |
 | Infra | `js/state.js`, `js/api.js` | pure |
-| UI kit | `js/theme.js`, `js/ui-chat.js` | pure, state |
+| UI kit | `js/theme.js`, `js/ui-chat.js`, `js/toast.js`, `js/confirm-sheet.js` | pure, state |
 | Feature | `js/recall.js`, `recent.js`, `remember.js`, `memory-crud.js`, `settings.js`, `integrations.js`, `graph-canvas.js` | infra, UI kit, pure |
 | Shell | `js/nav.js`, `js/auth.js`, `js/app.js` | feature, infra |
 | Entry | `index.html` | link/script tags only |
@@ -20,7 +20,8 @@ The one-shot migration script that performed this split was removed after use; d
 ## Script load order
 
 ```
-utils.js → credits.js → state.js → api.js → theme.js → ui-chat.js
+utils.js → credits.js → state.js → toast.js → confirm-sheet.js → api.js
+→ theme.js → ui-chat.js
 → recall.js → recent.js → remember.js → memory-crud.js
 → settings.js → integrations.js → graph-canvas.js
 → nav.js → auth.js → app.js
@@ -33,6 +34,8 @@ utils.js → credits.js → state.js → api.js → theme.js → ui-chat.js
 | Main CSS (head) | `css/main.css` |
 | Graph / view CSS | `css/graph.css` |
 | Global state | `js/state.js` |
+| Toasts | `js/toast.js` |
+| Destructive-action sheet (`openDangerConfirm`) | `js/confirm-sheet.js` |
 | Fetch helpers | `js/api.js` |
 | Theme toggle | `js/theme.js` |
 | Chat bubbles, markdown | `js/ui-chat.js` |
@@ -48,6 +51,81 @@ utils.js → credits.js → state.js → api.js → theme.js → ui-chat.js
 | Sheet listeners, `init()` | `js/app.js` |
 | Escaping, graph layout, vectorize banner | `utils.js` (existing) |
 | About credits | `credits.js` |
+
+## The destructive-action sheet (`js/confirm-sheet.js`)
+
+One `#confirm-dialog` element, parameterised. Every irreversible action in the
+dashboard goes through it; there is deliberately no second sheet, because two
+would diverge the first time either was restyled.
+
+```js
+openDangerConfirm({
+  title, body, confirmLabel,          // already translated
+  checkboxLabel,                      // optional modifier; '' or omitted hides the row
+  onConfirm: async (checked, done) => { /* … */ done() },
+  onClose: () => { /* reset the caller's own state */ },
+})
+```
+
+Four rules. Rules 1 and 2 are about the sheet; rules 3 and 4 are the ones that
+have actually bitten, and both are about the order you touch your own state in.
+
+**1. The sheet does not close on accept.** The action decides when it is done,
+which is what lets it show progress copy on the accept button (`confirmForget`
+writes `t('memories.forgetting')` there). Close it yourself, with `done()`.
+
+So every path through your action has to reach `done()`. If none does, nothing
+closes the sheet: it stays on screen with its accept button still disabled,
+because the sheet releases the double-submit guard when your action resolves
+but only re-enables the button when your action *throws*. The user can then
+neither accept nor retry — only Cancel or the backdrop gets them out. Leaving
+the sheet open on a failure path is a legitimate choice, and `confirmForget`
+makes it deliberately so the user can retry after a failed forget;
+`disconnectIntegration` takes the other option and closes on both paths,
+reporting the failure in a toast. What is never right is falling off the end of
+an action without having done either.
+
+**2. Close with the `done()` you were handed — never with `closeConfirm()`.**
+`done` is the second argument to `onConfirm`. It is bound by lexical scope to
+the question your action is answering, and it does nothing once that question
+has been dismissed and replaced. That matters because your POST can resolve
+long after the user moved on: without it, a slow disconnect closes — and fires
+the `onClose` of — whatever sheet is on screen by then.
+
+`closeConfirm()` takes no argument and closes whatever is currently open. The
+rule is about where it is called FROM, not about how many places call it: it is
+for ambient dismissals — a caller that genuinely means "close what is on
+screen" — and it must never be called from inside an action. It is not scoped,
+and nothing in the sheet can make it so: an action can be suspended at an
+`await` while another action runs, so there is no "currently running action"
+for a module-level variable to hold.
+
+In tree it has three callers, all ambient. Two are the user dismissing what
+they can see: the Cancel button in `index.html` and the backdrop listener in
+`app.js`. The third is `confirmForget`'s `done || closeConfirm` fallback
+(`memory-crud.js`), which only takes effect when something invokes
+`confirmForget()` directly rather than through the sheet — a test, or Phase 1
+code — so it is not an action-internal call either.
+
+**3. Snapshot your state BEFORE you close.** Closing fires your `onClose`, and
+`onClose` is where your state reset lives, so anything you read *after* your own
+`done()` reads `null`. `confirmForget` copies `pendingForgetId` and
+`pendingForgetCard` into locals as its first act, and depends on that.
+
+**4. Set your pending state AFTER calling `openDangerConfirm`, not before.**
+Opening dismisses the sheet it replaces, and that dismissal runs the outgoing
+caller's `onClose`. If the sheet being replaced was one of your own, its
+`onClose` clears exactly the state you just set. `openConfirm` opens first and
+assigns afterwards for this reason.
+
+Two hazards the sheet handles for you, both created by replacing a modal
+`confirm()`: a second `runConfirmAction()` while your action is in flight is
+dropped and the accept button is held down for the duration (no double POST),
+and the button is released again if your action throws. Your action's errors
+propagate — the sheet does not swallow them.
+
+`openDangerConfirm` returns the question's generation number. It is there for
+tests and logging; it is not how you close, and nothing is load-bearing on it.
 
 ## Tests
 
