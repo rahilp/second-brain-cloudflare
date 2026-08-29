@@ -159,6 +159,54 @@ describe("sharing a memory with the team", () => {
     expect(done).toBe(0);
   });
 
+  it("says so when the undo itself is refused, instead of failing quietly", async () => {
+    // The share succeeds and the undo does not. Undo is the one control whose
+    // whole purpose is reversing a mistake; silence here leaves the memory
+    // shared and the user believing they put it back.
+    let n = 0;
+    const ctx = load([], async () => {
+      n++;
+      return n === 1
+        ? { ok: true, status: 200, json: async () => ({ ok: true }) }
+        : { ok: true, status: 200, json: async () => ({ ok: false, error: "not yours to move" }) };
+    });
+    let done = 0;
+    await ctx.toggleEntryLayer("m1", "personal", () => done++);
+    expect(done).toBe(1);
+
+    await ctx.__toast().querySelector(".app-toast-action").onclick();
+    expect(ctx.__toast().innerHTML).toContain("not yours to move");
+    // No second onDone: nothing moved back, so nothing is re-rendered as if it
+    // had. And the failure notice offers no Undo of its own.
+    expect(done).toBe(1);
+    expect(ctx.__toast().innerHTML).not.toContain("app-toast-action");
+  });
+
+  it("says so when the undo cannot reach the Worker at all", async () => {
+    let n = 0;
+    const ctx = load([], async () => {
+      n++;
+      if (n === 1) return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      throw new Error("Failed to fetch");
+    });
+    let done = 0;
+    await ctx.toggleEntryLayer("m1", "company", () => done++);
+    await ctx.__toast().querySelector(".app-toast-action").onclick();
+    expect(ctx.__toast().innerHTML).toContain("Failed to fetch");
+    expect(done).toBe(1);
+  });
+
+  it("still reports the completed undo when it works", async () => {
+    const ctx = load();
+    let done = 0;
+    await ctx.toggleEntryLayer("m1", "personal", () => done++);
+    await ctx.__toast().querySelector(".app-toast-action").onclick();
+    // The success path is unchanged: the caller is told a second time so its
+    // list re-renders with the memory back where it started.
+    expect(done).toBe(2);
+    expect(ctx.__toast().innerHTML).toContain("Shared with the team");
+  });
+
   it("speaks Italian, which a browser dialog could not have done", async () => {
     const ctx = load();
     ctx.initI18n("it");

@@ -67,7 +67,19 @@ async function toggleEntryLayer(id, currentLayer, onDone) {
     showToast(goingShared ? t('team.sharedToast') : t('team.unsharedToast'), {
       action: t('team.undo'),
       onAction: async () => {
-        await apiShare(id, previous)
+        // Checked and caught, unlike the fire-and-forget this replaced. This
+        // is the one control in the dashboard whose entire job is reversing a
+        // mistake, and a refused or unreachable undo used to leave the memory
+        // exactly where the user did not want it while saying nothing at all —
+        // so their correction looked identical to their error. Reported the
+        // same way the outer failure is, through the toast.
+        try {
+          const undone = await apiShare(id, previous)
+          if (!undone.ok) throw new Error(undone.error || t('team.actionFailed'))
+        } catch (e) {
+          showToast(e.message || t('team.actionFailed'))
+          return
+        }
         if (typeof onDone === 'function') onDone()
         else if (typeof refreshAll === 'function') refreshAll()
       },
