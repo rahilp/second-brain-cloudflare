@@ -350,3 +350,141 @@ describe("removing a link", () => {
     expect((ctx.calls as any[]).some((c) => c.url.includes("/unlink"))).toBe(false);
   });
 });
+
+/**
+ * The history line on a shared memory, and who is allowed to change it.
+ *
+ * The timeline printed the Worker's own event names, so a colleague's memory
+ * read `Bob · status_changed · 3 Mar 2026`. And Edit and Forget were wired on
+ * any entry with an id, so a member tapped Edit on someone else's shared
+ * memory, typed, saved, and only then learned the Worker would refuse.
+ */
+describe("the history of a shared memory", () => {
+  const timeline = [
+    { event: "created", actor_name: "Bob", created_at: 1 },
+    { event: "shared", actor_name: "Bob", created_at: 2 },
+    { event: "status_changed", actor_name: "You", created_at: 3 },
+  ];
+
+  it("says what happened in words, never the Worker's event names", () => {
+    const ctx = load();
+    ctx.renderViewTimeline({ workspace: "company", actor_name: "Bob", timeline });
+    const html = ctx.__els.get("view-timeline").innerHTML as string;
+    expect(html).toContain("Captured");
+    expect(html).toContain("Shared with the team");
+    expect(html).toContain("Status changed");
+    for (const raw of ["created", "shared", "status_changed"]) {
+      expect(html, raw).not.toContain(raw);
+    }
+  });
+
+  it("covers every event the Worker can write", () => {
+    const ctx = load();
+    const labels = ["created", "updated", "appended", "deleted", "status_changed", "shared", "unshared"].map((e) =>
+      ctx.timelineEventLabel(e),
+    );
+    expect(labels).toEqual([
+      "Captured",
+      "Edited",
+      "Added to",
+      "Deleted",
+      "Status changed",
+      "Shared with the team",
+      "Made personal again",
+    ]);
+  });
+
+  it("prints an event it has never heard of rather than a blank", () => {
+    // A Worker that grows an eighth name degrades to today's behaviour.
+    const ctx = load();
+    expect(ctx.timelineEventLabel("exhumed")).toBe("exhumed");
+    ctx.renderViewTimeline({ workspace: "company", actor_name: "Bob", timeline: [{ event: "exhumed", actor_name: "Bob", created_at: 1 }] });
+    expect(ctx.__els.get("view-timeline").innerHTML).toContain("exhumed");
+  });
+
+  it("translates the history too", () => {
+    const ctx = load();
+    ctx.initI18n("it");
+    ctx.renderViewTimeline({ workspace: "company", actor_name: "Bob", timeline });
+    expect(ctx.__els.get("view-timeline").innerHTML).toContain("Condiviso col team");
+  });
+});
+
+describe("who may change a shared memory", () => {
+  const shared = (over: Record<string, unknown> = {}) => ({
+    id: "x",
+    content: "c",
+    tags: [],
+    workspace: "company",
+    actor_name: "Bob",
+    ...over,
+  });
+
+  /** openView with no network, so nothing upgrades the entry underneath us. */
+  function opened(entry: any) {
+    const ctx = load();
+    ctx.openView(entry, null);
+    return ctx;
+  }
+
+  it("disables both controls on a memory someone else shared", () => {
+    const ctx = opened(shared({ can_edit: false }));
+    for (const id of ["view-btn-edit", "view-btn-forget"]) {
+      const btn = ctx.__els.get(id);
+      expect(btn.disabled, id).toBe(true);
+      expect(btn.classList.contains("view-btn--locked"), id).toBe(true);
+      expect(btn.getAttribute("aria-disabled"), id).toBe("true");
+      expect(btn.title, id).toBe("Only the author can change a shared memory");
+    }
+  });
+
+  it("leaves them working on a memory you may change", () => {
+    const ctx = opened(shared({ can_edit: true }));
+    for (const id of ["view-btn-edit", "view-btn-forget"]) {
+      const btn = ctx.__els.get(id);
+      expect(btn.disabled, id).toBe(false);
+      expect(btn.classList.contains("view-btn--locked"), id).toBe(false);
+      expect(btn.getAttribute("aria-disabled"), id).toBe("false");
+      expect(btn.title, id).toBe("");
+    }
+  });
+
+  it("leaves a solo brain and an older Worker untouched", () => {
+    // No can_edit at all — a recall card that carries no flag, or a Worker
+    // from before the flag existed. Absent is not the same as denied.
+    const ctx = opened({ id: "x", content: "c", tags: [] });
+    for (const id of ["view-btn-edit", "view-btn-forget"]) {
+      const btn = ctx.__els.get(id);
+      expect(btn.disabled, id).toBe(false);
+      expect(btn.classList.contains("view-btn--locked"), id).toBe(false);
+    }
+  });
+
+  it("says why, rather than leaving two buttons mysteriously grey", () => {
+    const ctx = load();
+    ctx.renderViewTimeline(shared({ can_edit: false, timeline: [{ event: "created", actor_name: "Bob", created_at: 1 }] }));
+    const html = ctx.__els.get("view-timeline").innerHTML as string;
+    expect(html).toContain("Shared by Bob");
+    expect(html).toContain("view-timeline-note");
+  });
+
+  it("says nothing of the sort when the memory is yours to change", () => {
+    const ctx = load();
+    ctx.renderViewTimeline(shared({ can_edit: true, timeline: [{ event: "created", actor_name: "Bob", created_at: 1 }] }));
+    expect(ctx.__els.get("view-timeline").innerHTML).not.toContain("Shared by Bob");
+  });
+
+  it("re-applies the lock once /entry answers with the authoritative flag", async () => {
+    // openView renders from whatever the caller happened to hold — a recall
+    // card has no can_edit — and hydrateView upgrades it in place.
+    const ctx = load(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, entry: shared({ can_edit: false, timeline: [] }) }),
+    }));
+    ctx.openView({ id: "x", content: "c", tags: [] }, null);
+    expect(ctx.__els.get("view-btn-edit").disabled).toBe(false);
+    await ctx.hydrateView("x");
+    expect(ctx.__els.get("view-btn-edit").disabled).toBe(true);
+    expect(ctx.__els.get("view-btn-forget").classList.contains("view-btn--locked")).toBe(true);
+  });
+});

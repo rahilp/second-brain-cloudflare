@@ -310,7 +310,31 @@ async function hydrateView(id) {
     renderViewMeta(data.entry)
     renderViewBrain(data.entry)
     renderViewTimeline(data.entry)
+    // openView rendered from whatever the caller happened to hold; /entry is
+    // the only source that knows whether this is the reader's to change.
+    applyAuthorLock(data.entry)
   } catch {}
+}
+
+/**
+ * The Worker's event name as a sentence.
+ *
+ * `src/lib/audit.ts` writes seven names and the timeline printed them raw, so
+ * the history of a shared memory read `Bob · status_changed · 3 Mar 2026`.
+ * An eighth name from a newer Worker returns unchanged rather than blank —
+ * degrading to today's behaviour beats rendering nothing.
+ */
+function timelineEventLabel(event) {
+  const keys = {
+    created: 'memories.evCreated',
+    updated: 'memories.evUpdated',
+    appended: 'memories.evAppended',
+    deleted: 'memories.evDeleted',
+    status_changed: 'memories.evStatusChanged',
+    shared: 'memories.evShared',
+    unshared: 'memories.evUnshared',
+  }
+  return keys[event] ? t(keys[event]) : event || ''
 }
 
 function renderViewTimeline(entry) {
@@ -330,10 +354,36 @@ function renderViewTimeline(entry) {
     const when = item.created_at
       ? formatDateUI(item.created_at, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
       : ''
-    lines.push(`<div class="view-timeline-item">${escHtml(item.actor_name || '')} · ${escHtml(item.event || '')}${when ? ` · ${escHtml(when)}` : ''}</div>`)
+    lines.push(`<div class="view-timeline-item">${escHtml(item.actor_name || '')} · ${escHtml(timelineEventLabel(item.event))}${when ? ` · ${escHtml(when)}` : ''}</div>`)
+  }
+  // Two greyed-out buttons with no explanation read as a broken screen, so the
+  // reason sits at the end of the history that establishes it.
+  if (entry.can_edit === false && entry.actor_name) {
+    lines.push(`<div class="view-timeline-note">${escHtml(t('memories.authorLocked', { name: entry.actor_name }))}</div>`)
   }
   el.style.display = ''
   el.innerHTML = `<div class="view-timeline-label">${escHtml(t('memories.timelineLabel'))}</div>${lines.join('')}`
+}
+
+/**
+ * Show whether this memory is the caller's to change.
+ *
+ * A member used to tap Edit on a colleague's shared memory, type, save, and
+ * only then be told the Worker refuses. Strictly `=== false`: a recall card
+ * that carries no flag, and any Worker from before the flag existed, are not
+ * locked — which is what keeps a solo brain identical to what it is today.
+ */
+function applyAuthorLock(entry) {
+  const editBtn = document.getElementById('view-btn-edit')
+  const forgetBtn = document.getElementById('view-btn-forget')
+  const locked = entry.can_edit === false
+  for (const btn of [editBtn, forgetBtn]) {
+    if (!btn) continue
+    btn.disabled = locked
+    btn.classList.toggle('view-btn--locked', locked)
+    btn.title = locked ? t('memories.authorLockedTitle') : ''
+    btn.setAttribute('aria-disabled', String(locked))
+  }
 }
 
 /** Which memory the sheet is currently showing, so a late response can tell. */
@@ -391,6 +441,7 @@ function openView(entry, cardElement) {
   } else {
     editBtn.style.display = 'none'
   }
+  applyAuthorLock(entry)
   document.getElementById('view-sheet').classList.add('open')
 }
 function closeView() {

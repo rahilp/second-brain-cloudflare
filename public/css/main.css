@@ -4001,6 +4001,22 @@
         padding: 4px 0;
       }
 
+      /* Why the two view buttons below are unavailable. Tertiary ink: it is a
+         footnote on the history, not another entry in it. */
+      .view-timeline-note {
+        font-size: 12px;
+        color: var(--text-tertiary);
+        padding: 6px 0 0;
+      }
+
+      /* Dimming rather than a colour change — the view buttons already vary
+         colour by role (.btn-view-forget carries --danger), and overriding that
+         would lose the role while trying to say "unavailable". */
+      .view-btn--locked {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
       /* ── Phone-width overrides ─────────────────────────────────────
          Last in the file on purpose. A media query adds no specificity,
          so these have to come after every base rule they override or the

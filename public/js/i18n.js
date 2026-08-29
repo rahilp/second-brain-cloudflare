@@ -188,6 +188,15 @@ const I18N_EN = {
     removeLink: 'Remove link',
     removeLinkConfirm: 'Remove this link? The memories stay; only the connection is deleted.',
     untitled: 'Untitled memory',
+    evCreated: 'Captured',
+    evUpdated: 'Edited',
+    evAppended: 'Added to',
+    evDeleted: 'Deleted',
+    evStatusChanged: 'Status changed',
+    evShared: 'Shared with the team',
+    evUnshared: 'Made personal again',
+    authorLockedTitle: 'Only the author can change a shared memory',
+    authorLocked: 'Shared by {name} — only they can edit or delete it',
   },
   graph: {
     empty: 'No connections yet — link memories, or let them auto-connect as you add more.',
@@ -713,6 +722,15 @@ const I18N_IT = {
     removeLinkConfirm:
       'Rimuovere questo collegamento? I ricordi restano; viene eliminata solo la connessione.',
     untitled: 'Ricordo senza titolo',
+    evCreated: 'Salvato',
+    evUpdated: 'Modificato',
+    evAppended: 'Integrato',
+    evDeleted: 'Eliminato',
+    evStatusChanged: 'Stato cambiato',
+    evShared: 'Condiviso col team',
+    evUnshared: 'Reso di nuovo personale',
+    authorLockedTitle: 'Solo l’autore può modificare un ricordo condiviso',
+    authorLocked: 'Condiviso da {name} — solo questa persona può modificarlo o eliminarlo',
   },
   graph: {
     empty:
