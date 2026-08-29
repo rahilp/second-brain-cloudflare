@@ -351,6 +351,15 @@
                       <option value="company" data-i18n="team.shareCompany">Company (shared)</option>
                     </select><i class="ti ti-chevron-down"></i></span>
                   </div>
+                  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
+                    <i class="ti ti-bulb" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                    <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.insightsLabel">Weekly team insights</span>
+                    <span class="team-select-wrap"><select class="team-select" id="team-insights" onchange="setTeamInsights(this.value)">
+                      <option value="off" data-i18n="team.insightsOff">Off</option>
+                      <option value="on" data-i18n="team.insightsOn">On</option>
+                    </select><i class="ti ti-chevron-down"></i></span>
+                  </div>
+                  <p class="digest-note" data-i18n="team.insightsHint">When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone's review queue.</p>
                   <div id="team-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
                 </div>
 

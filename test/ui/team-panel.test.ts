@@ -102,6 +102,7 @@ const TEAM_ELEMENT_IDS = [
   "team-invite-copy-btn",
   "team-invite-mail-btn",
   "team-org-default",
+  "team-insights",
 ];
 
 function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
@@ -653,6 +654,101 @@ describe("team panel", () => {
     await ctx.setTeamOrgDefault("company");
     expect(els.get("team-org-default").value).toBe("personal"); // reloaded after failure
     expect(appended[appended.length - 1].innerHTML).toContain("did not work");
+  });
+
+  // team-insights shares loadTeamConfigSelect/setTeamConfigValue with
+  // team-org-default above — the extraction this task exists to make. These
+  // cover team-insights on all four axes, and the org-default case right
+  // after them is the non-regression check that the shared helpers did not
+  // change the org-default control's behaviour.
+
+  it("narrows a team-insights config value to one of its two options, including an unexpected one", async () => {
+    async function insightsValueFor(config: Record<string, unknown>) {
+      const { ctx, els } = setup(
+        jsonFetch([
+          { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+          { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config }) }) },
+        ]),
+      );
+      await ctx.loadTeam();
+      await ctx.loadTeamInsights();
+      return els.get("team-insights").value;
+    }
+    expect(await insightsValueFor({ TEAM_INSIGHTS: "on" })).toBe("on");
+    expect(await insightsValueFor({ TEAM_INSIGHTS: "off" })).toBe("off");
+    expect(await insightsValueFor({})).toBe("off"); // absent
+    expect(await insightsValueFor({ TEAM_INSIGHTS: "YES" })).toBe("off"); // unexpected value
+  });
+
+  it("writing team-insights PATCHes /config once with exactly that one key", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let patchCalls = 0;
+    const { ctx } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: (_u: string, i: any) => {
+            patchCalls++;
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+          },
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamInsights("on");
+    expect(patchCalls).toBe(1);
+    expect(Object.keys(bodies[0])).toEqual(["TEAM_INSIGHTS"]);
+    expect(bodies[0]).toEqual({ TEAM_INSIGHTS: "on" });
+  });
+
+  it("a failing team-insights change reports through the toast (never alert) and reloads the server's value", async () => {
+    const { ctx, els, appended } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: () => ({ ok: false, status: 400, json: async () => ({}) }),
+        },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ config: { TEAM_INSIGHTS: "on" } }) }),
+        },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam();
+    await ctx.setTeamInsights("off");
+    expect(els.get("team-insights").value).toBe("on"); // reloaded after failure, server's value
+    expect(appended[appended.length - 1].innerHTML).toContain("did not work");
+  });
+
+  it("setTeamOrgDefault still PATCHes exactly its one key after sharing the helper with team-insights", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const { ctx } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: (_u: string, i: any) => {
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+          },
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamOrgDefault("company");
+    expect(bodies).toEqual([{ TEAM_DEFAULT_WORKSPACE: "company" }]);
+  });
+
+  it("translates the team-insights label in Italian", async () => {
+    const { ctx } = setup(async () => ({ ok: true, status: 200, json: async () => ADMIN_OK }));
+    ctx.initI18n("it");
+    expect(ctx.t("team.insightsLabel")).toBe("Approfondimenti settimanali del team");
   });
 
   it("dismissed token reveal clears the plaintext token", async () => {
