@@ -40,6 +40,56 @@ async function connect() {
 }
 
 /**
+ * The session ended underneath us: an admin suspended or removed this member,
+ * or rotated their token, while the window sat open. Phase 1 made the Worker
+ * say WHY on every guarded route; connect() was the only thing reading it, so
+ * a revocation mid-session showed up as four silently swallowed failures and a
+ * screen full of numbers from before it happened.
+ *
+ * Self-disarming: it clears AUTH_TOKEN, and the watcher below is guarded on
+ * AUTH_TOKEN, so the second 401 of a burst is a no-op. sb_url survives so the
+ * address stays prefilled; only the token is dropped.
+ */
+function sessionEnded(code) {
+  if (!AUTH_TOKEN) return
+  const url = WORKER_URL
+  try { localStorage.removeItem('sb_token') } catch {}
+  AUTH_TOKEN = ''
+  document.getElementById('app').style.display = 'none'
+  document.getElementById('auth-overlay').style.display = 'flex'
+  const urlEl = document.getElementById('auth-url')
+  if (urlEl) urlEl.value = url
+  const tokEl = document.getElementById('auth-token')
+  if (tokEl) tokEl.value = ''
+  document.getElementById('auth-error').textContent = t(
+    `auth.${code === 'suspended' ? 'accountSuspended' : code === 'removed' ? 'accountRemoved' : 'sessionExpired'}`,
+  )
+}
+
+/**
+ * One interceptor rather than 45 call sites. Every authenticated request in
+ * the dashboard goes through the global fetch, and nothing else does; the
+ * response is returned untouched, so no caller's behaviour changes.
+ */
+function installAuthWatch(scope) {
+  const target = scope || (typeof globalThis !== 'undefined' ? globalThis : null)
+  if (!target || typeof target.fetch !== 'function' || target.__sbAuthWatch) return
+  const native = target.fetch
+  target.__sbAuthWatch = true
+  target.fetch = async (input, opts) => {
+    const res = await native(input, opts)
+    if (res.status !== 401 || !AUTH_TOKEN || !WORKER_URL) return res
+    const reqUrl = typeof input === 'string' ? input : (input && input.url) || ''
+    if (!reqUrl.startsWith(WORKER_URL)) return res
+    try {
+      const body = await res.clone().json()
+      if (body && body.code) sessionEnded(body.code)
+    } catch {}
+    return res
+  }
+}
+
+/**
  * The sign-in overlay renders before any authenticated request, so TEAM_MODE
  * (set from GET /health, which requires a valid token) is not knowable here.
  * Probing team-mode unauthenticated would tell any visitor whether this

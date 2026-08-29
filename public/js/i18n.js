@@ -23,6 +23,7 @@ const I18N_EN = {
     inviteStep1: 'Leave the address above as it is — it is already this team’s Second Brain.',
     inviteStep2: 'Paste the one-time token your admin sent you into the field above.',
     inviteStep3: 'Press Connect. Everything you capture stays personal until you share it with the team.',
+    sessionExpired: 'Your access token is no longer valid. Sign in again with a current token.',
   },
   nav: {
     home: 'Home',
@@ -597,6 +598,7 @@ const I18N_IT = {
     inviteStep1: 'Lascia l’indirizzo qui sopra com’è — è già il Second Brain di questo team.',
     inviteStep2: 'Incolla nel campo qui sopra il token monouso che ti ha inviato l’amministratore.',
     inviteStep3: 'Premi Connetti. Tutto ciò che salvi resta personale finché non lo condividi col team.',
+    sessionExpired: 'Il tuo token di accesso non è più valido. Accedi di nuovo con un token aggiornato.',
   },
   nav: {
     home: 'Inizio',
