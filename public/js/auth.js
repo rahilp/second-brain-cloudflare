@@ -39,6 +39,34 @@ async function connect() {
   }
 }
 
+/**
+ * The sign-in overlay renders before any authenticated request, so TEAM_MODE
+ * (set from GET /health, which requires a valid token) is not knowable here.
+ * Probing team-mode unauthenticated would tell any visitor whether this
+ * deployment has members — deployment shape leaking to the public internet.
+ * So this ships unconditionally, as a single collapsed text link that issues
+ * no request and causes no layout shift until pressed.
+ */
+function toggleInviteHelp() {
+  const help = document.getElementById('auth-invite-help')
+  const btn = document.getElementById('auth-invite-toggle')
+  if (!help || !btn) return
+  const opening = help.style.display === 'none'
+  help.style.display = opening ? '' : 'none'
+  btn.setAttribute('aria-expanded', String(opening))
+  btn.textContent = opening ? t('auth.inviteHide') : t('auth.haveInvite')
+  if (!opening) return
+  // An invited member is, by construction, already looking at the Worker that
+  // invited them — the URL is the one thing they do not have to be told, and
+  // the token is the only thing they hold. Guarded on emptiness so this never
+  // overwrites a URL someone typed; init() already prefills it anyway, so this
+  // is a belt-and-braces path for a page loaded from a bookmark.
+  const url = document.getElementById('auth-url')
+  if (url && !url.value) url.value = window.location.origin
+  const tok = document.getElementById('auth-token')
+  if (tok) tok.focus()
+}
+
 function showApp() {
   document.getElementById('auth-overlay').style.display = 'none'
   document.getElementById('app').style.display = 'flex'

@@ -41,6 +41,14 @@
           <button id="auth-connect" type="submit" data-i18n="auth.connect">Connect</button>
         </form>
         <div id="auth-error"></div>
+        <button type="button" class="auth-link" id="auth-invite-toggle" aria-expanded="false" aria-controls="auth-invite-help" onclick="toggleInviteHelp()" data-i18n="auth.haveInvite">I received a team invite</button>
+        <div class="auth-invite-help" id="auth-invite-help" style="display: none">
+          <ol>
+            <li data-i18n="auth.inviteStep1">Leave the address above as it is — it is already this team's Second Brain.</li>
+            <li data-i18n="auth.inviteStep2">Paste the one-time token your admin sent you into the field above.</li>
+            <li data-i18n="auth.inviteStep3">Press Connect. Everything you capture stays personal until you share it with the team.</li>
+          </ol>
+        </div>
       </div>
     </div>
 
@@ -130,6 +138,9 @@
                     <button class="send-btn" onclick="submitHome()"><i class="ti ti-arrow-up"></i></button>
                   </div>
                 </div>
+                <!-- What Auto resolves to, or which layer is pinned for this capture.
+                     Hidden on solo brains and until /team/me answers. -->
+                <div class="home-layer-hint" id="home-layer-hint" style="display: none"></div>
                 <!-- The one thing worth keeping from the deleted Remember tab:
                      it was the only place hashtags were ever taught. -->
                 <div class="home-hint" data-i18n="home.hintHtml" data-i18n-html>Add <span class="hashtag">#tags</span> anywhere to file it</div>
@@ -237,6 +248,13 @@
             </div>
 
             <div class="mem-graph" id="mem-graph" hidden>
+              <span id="graph-layer-wrap" class="graph-layer" style="display: none">
+                <span class="team-select-wrap"><select class="team-select" id="graph-layer" onchange="onGraphLayerChange(this.value)" title="Show one layer, or both" data-i18n="graph.layerTitle" data-i18n-attr="title">
+                  <option value="" data-i18n="graph.layerAll">All layers</option>
+                  <option value="personal" data-i18n="graph.layerPersonal">Personal</option>
+                  <option value="company" data-i18n="graph.layerShared">Shared</option>
+                </select><i class="ti ti-chevron-down"></i></span>
+              </span>
               <canvas id="graph-canvas"></canvas>
               <div class="graph-empty" id="graph-empty" style="display: none" data-i18n="graph.empty">No connections yet — link memories, or let them auto-connect as you add more.</div>
               <!-- Floating over the canvas rather than in the bar: the bar is
