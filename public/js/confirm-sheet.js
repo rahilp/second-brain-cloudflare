@@ -8,15 +8,18 @@
 // from this one the first time either was restyled, so there is exactly one,
 // and memory delete is now just its first caller.
 //
-// Two hazards come with replacing a modal browser dialog, and both are handled
-// here rather than left to each caller, because a caller can only get them
-// wrong by omission and every future caller would have to remember:
+// Two hazards come with replacing a modal browser dialog with one reused
+// element, and both are handled here rather than left to each caller:
 //
-//   1. IDENTITY. `confirm()` was one dialog per call; this is one element
-//      reused. A slow action whose sheet has since been dismissed and replaced
-//      would otherwise close — and reset the state of — whatever question is
-//      on screen now. Every open takes a generation, and a close from a
-//      superseded generation is a no-op.
+//   1. IDENTITY. `confirm()` was one dialog per call. Here a slow action whose
+//      sheet has since been dismissed and replaced would otherwise close — and
+//      reset the state behind — whatever question is on screen now. So an
+//      action is not given a way to say "close the sheet"; it is given a
+//      handle that can only close ITS OWN question, and does nothing once that
+//      question has been superseded. The identity comes out of lexical scope,
+//      which is the only thing that survives two actions being in flight at
+//      once. Anything the module remembered about "which action is running"
+//      would be ambient state, and two overlapping actions corrupt it.
 //   2. DOUBLE SUBMIT. `confirm()` blocked the page, so it could not be
 //      answered twice. An accept button can be tapped twice, and two POSTs go
 //      out. `runConfirmAction` holds the button down for the duration.
@@ -29,21 +32,22 @@ let pendingConfirmAction = null
 let pendingConfirmClose = null
 
 /**
- * Which question is on screen. Bumped on every open, so a caller can say
- * "close the sheet I opened" rather than "close whatever is open now".
+ * Which question is on screen. Monotonic, and read only to compare — never
+ * saved and restored, which is what makes it safe under interleaving.
  */
 let confirmGeneration = 0
 
-/**
- * The generation whose action is running right now, so an unscoped
- * `closeConfirm()` from inside an action still resolves to that action's own
- * sheet. Saved and restored around the await, which keeps it correct when a
- * second action starts while the first is still in flight.
- */
-let activeConfirmGeneration = 0
-
 /** Generations with an action in flight — one sheet cannot submit twice. */
 const runningConfirmActions = new Set()
+
+/** Take the sheet down and hand the outgoing caller its state back. */
+function dismissConfirmSheet() {
+  document.getElementById('confirm-dialog').classList.remove('open')
+  const onClose = pendingConfirmClose
+  pendingConfirmAction = null
+  pendingConfirmClose = null
+  if (onClose) onClose()
+}
 
 /**
  * Ask before something irreversible.
@@ -52,10 +56,12 @@ const runningConfirmActions = new Set()
  * @param {string} opts.title          headline, already translated
  * @param {string} opts.body           the consequence, in plain words
  * @param {string} opts.confirmLabel   what the accept button says
- * @param {(checked: boolean, token: number) => any} opts.onConfirm  run on accept
+ * @param {(checked: boolean, done: () => void) => any} opts.onConfirm  run on
+ *   accept. `done()` closes this question and only this one.
  * @param {() => void} [opts.onClose]  run on dismiss, for the caller's state
  * @param {string} [opts.checkboxLabel] shows a modifier tick when non-empty
- * @returns {number} this question's token, for `closeConfirm(token)`
+ * @returns {number} this question's generation — for tests and logging; the
+ *   handle passed to `onConfirm` is what callers close with.
  */
 function openDangerConfirm(opts) {
   // A sheet being replaced never got its dismissal, and its caller is still
@@ -100,33 +106,26 @@ function openDangerConfirm(opts) {
 }
 
 /**
- * Dismiss the sheet.
+ * Dismiss whatever question is on screen.
  *
- * Keeps this name because the backdrop listener in `app.js` and the markup's
- * Cancel button both call it, and because an action that succeeds closes the
- * sheet itself.
- *
- * @param {number} [token] the value `openDangerConfirm` returned, or the second
- *   argument handed to `onConfirm`. When it names a question that has already
- *   been replaced, this does nothing — a POST that resolves late must not
- *   dismiss, or reset the state behind, whatever is on screen now. Called
- *   without a token from inside an action, the running action's own generation
- *   is assumed; called without one from outside (Cancel, the backdrop), the
- *   user means the sheet they are looking at.
+ * This is the AMBIENT dismissal, and it is for the two places that genuinely
+ * mean "close what I am looking at": the Cancel button in the markup and the
+ * backdrop listener in `app.js`. It is deliberately not what an action uses —
+ * an action can resolve long after its own sheet was replaced, and by then
+ * "what is on screen" is someone else's question. Actions close with the
+ * handle `runConfirmAction` gives them.
  */
-function closeConfirm(token) {
-  const claimed = typeof token === 'number' ? token : activeConfirmGeneration || confirmGeneration
-  if (claimed !== confirmGeneration) return
-  document.getElementById('confirm-dialog').classList.remove('open')
-  const onClose = pendingConfirmClose
-  pendingConfirmAction = null
-  pendingConfirmClose = null
-  if (onClose) onClose()
+function closeConfirm() {
+  dismissConfirmSheet()
 }
 
 /**
- * Run the open sheet's action, telling it whether the modifier was ticked and
- * which question it is answering.
+ * Run the open sheet's action.
+ *
+ * The action receives whether the modifier was ticked, and a `done()` bound by
+ * lexical scope to the question it is answering — calling it after that
+ * question has been superseded does nothing, with no bookkeeping to get wrong
+ * and nothing for the caller to remember to pass back.
  *
  * The sheet owns the button's DISABLED state — a second tap while the first
  * request is in flight must not issue a second POST — and each caller owns its
@@ -143,17 +142,18 @@ async function runConfirmAction() {
 
   const checked = document.getElementById('confirm-checkbox')?.checked === true
   const accept = document.getElementById('confirm-accept-btn')
+  const done = () => {
+    if (generation === confirmGeneration) dismissConfirmSheet()
+  }
+
   runningConfirmActions.add(generation)
   if (accept) accept.disabled = true
-  const outer = activeConfirmGeneration
-  activeConfirmGeneration = generation
   try {
-    await action(checked, generation)
+    await action(checked, done)
   } catch (e) {
     if (accept && confirmGeneration === generation) accept.disabled = false
     throw e
   } finally {
-    activeConfirmGeneration = outer
     runningConfirmActions.delete(generation)
   }
 }

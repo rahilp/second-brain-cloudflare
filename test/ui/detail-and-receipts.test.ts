@@ -427,7 +427,7 @@ describe("who may change a shared memory", () => {
     return ctx;
   }
 
-  it("disables both controls on a memory someone else shared", () => {
+  it("disables every control on a memory someone else shared", () => {
     const ctx = opened(shared({ can_edit: false }));
     for (const id of ["view-btn-append", "view-btn-edit", "view-btn-forget"]) {
       const btn = ctx.__els.get(id);

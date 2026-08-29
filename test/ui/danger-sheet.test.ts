@@ -238,9 +238,9 @@ describe("whose sheet is this", () => {
       title: "Disconnect",
       body: "B",
       confirmLabel: "Go",
-      onConfirm: async (_checked: boolean, token: number) => {
+      onConfirm: async (_checked: boolean, done: () => void) => {
         await slow.promise;
-        ctx.closeConfirm(token);
+        done();
       },
     });
     expect(typeof firstToken).toBe("number");
@@ -265,35 +265,6 @@ describe("whose sheet is this", () => {
     expect(secondClosed).toBe(0);
   });
 
-  it("protects the live sheet even from a caller that forgot to say which sheet it meant", async () => {
-    // Same sequence, but the stale action calls closeConfirm() with no token.
-    // The guard has to live in the sheet, or every future caller re-introduces
-    // this by omission.
-    const ctx = load();
-    const slow = deferred();
-    ctx.openDangerConfirm({
-      title: "Disconnect",
-      body: "B",
-      confirmLabel: "Go",
-      onConfirm: async () => {
-        await slow.promise;
-        ctx.closeConfirm();
-      },
-    });
-    const running = ctx.runConfirmAction();
-    ctx.closeConfirm();
-
-    let secondClosed = 0;
-    ctx.openDangerConfirm({ title: "Forget this memory?", body: "B2", confirmLabel: "Forget", onConfirm: () => {}, onClose: () => secondClosed++ });
-
-    slow.resolve();
-    await running;
-
-    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
-    expect(ctx.__els.get("confirm-title").textContent).toBe("Forget this memory?");
-    expect(secondClosed).toBe(0);
-  });
-
   it("still lets a caller close the sheet it actually opened", async () => {
     const ctx = load();
     let closed = 0;
@@ -301,7 +272,7 @@ describe("whose sheet is this", () => {
       title: "T",
       body: "B",
       confirmLabel: "Go",
-      onConfirm: (_c: boolean, token: number) => ctx.closeConfirm(token),
+      onConfirm: (_c: boolean, done: () => void) => done(),
       onClose: () => closed++,
     });
     await ctx.runConfirmAction();
@@ -420,5 +391,133 @@ describe("opening a second question of the same kind", () => {
     ctx.openConfirm("m2", null);
     expect(vm.runInContext("pendingForgetId", ctx)).toBe("m2");
     expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
+  });
+});
+
+/**
+ * Two actions in flight at once.
+ *
+ * Reachable with correct callers: accept Forget, dismiss it via the backdrop,
+ * open Disconnect, accept that too, and now two POSTs are outstanding against
+ * one shared element. Anything the sheet remembers about "which action is
+ * running" is ambient state that these orderings corrupt, so the sheet must
+ * remember nothing — each invocation gets a handle closed over its own
+ * generation, and identity comes out of lexical scope.
+ */
+describe("two actions in flight at once", () => {
+  /** Opens a sheet whose action resolves only when its returned handle is released. */
+  function slowSheet(ctx: any, title: string) {
+    const gate = deferred();
+    let closes = 0;
+    ctx.openDangerConfirm({
+      title,
+      body: "B",
+      confirmLabel: "Go",
+      onConfirm: async (_c: boolean, done: () => void) => {
+        await gate.promise;
+        done();
+      },
+      onClose: () => closes++,
+    });
+    return { gate, running: ctx.runConfirmAction(), closed: () => closes };
+  }
+
+  it("leaves the sheet dismissable when the OUTER action finishes first", async () => {
+    // The wedge. With a save/restore global, the second action restores a
+    // generation the first captured, and every later unscoped close — Cancel
+    // and the backdrop — compares against a stale value and returns early. The
+    // user can then never dismiss anything again for the life of the page.
+    const ctx = load();
+    const first = slowSheet(ctx, "Forget");
+    ctx.closeConfirm(); // backdrop, while the forget POST is still out
+    const second = slowSheet(ctx, "Disconnect");
+
+    first.gate.resolve();
+    await first.running;
+    second.gate.resolve();
+    await second.running;
+
+    // A fresh question, and Cancel must still work.
+    ctx.openDangerConfirm({ title: "Third", body: "B", confirmLabel: "Go", onConfirm: () => {} });
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
+    ctx.closeConfirm();
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(false);
+  });
+
+  it("leaves it dismissable when the INNER action finishes first", async () => {
+    const ctx = load();
+    const first = slowSheet(ctx, "Forget");
+    ctx.closeConfirm();
+    const second = slowSheet(ctx, "Disconnect");
+
+    second.gate.resolve();
+    await second.running;
+    first.gate.resolve();
+    await first.running;
+
+    ctx.openDangerConfirm({ title: "Third", body: "B", confirmLabel: "Go", onConfirm: () => {} });
+    ctx.closeConfirm();
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(false);
+  });
+
+  it("never lets either stale action dismiss the third sheet or fire its onClose", async () => {
+    const ctx = load();
+    const first = slowSheet(ctx, "Forget");
+    ctx.closeConfirm();
+    const second = slowSheet(ctx, "Disconnect");
+    ctx.closeConfirm();
+
+    let thirdClosed = 0;
+    ctx.openDangerConfirm({ title: "Third", body: "B", confirmLabel: "Go", onConfirm: () => {}, onClose: () => thirdClosed++ });
+
+    first.gate.resolve();
+    await first.running;
+    second.gate.resolve();
+    await second.running;
+
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
+    expect(ctx.__els.get("confirm-title").textContent).toBe("Third");
+    expect(thirdClosed).toBe(0);
+  });
+
+  it("a handle held long after its sheet was superseded does nothing", async () => {
+    // The guarantee stated in the contract note, on its own.
+    const ctx = load();
+    let handle: (() => void) | null = null;
+    ctx.openDangerConfirm({
+      title: "First",
+      body: "B",
+      confirmLabel: "Go",
+      onConfirm: (_c: boolean, done: () => void) => {
+        handle = done;
+      },
+    });
+    await ctx.runConfirmAction();
+    expect(typeof handle).toBe("function");
+
+    let secondClosed = 0;
+    ctx.openDangerConfirm({ title: "Second", body: "B", confirmLabel: "Go", onConfirm: () => {}, onClose: () => secondClosed++ });
+    handle!();
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
+    expect(ctx.__els.get("confirm-title").textContent).toBe("Second");
+    expect(secondClosed).toBe(0);
+  });
+
+  it("an action that throws mid-flight leaves the sheet dismissable", async () => {
+    const ctx = load();
+    ctx.openDangerConfirm({
+      title: "First",
+      body: "B",
+      confirmLabel: "Go",
+      onConfirm: async () => {
+        throw new Error("server said no");
+      },
+    });
+    await expect(ctx.runConfirmAction()).rejects.toThrow("server said no");
+    ctx.closeConfirm();
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(false);
+    ctx.openDangerConfirm({ title: "Second", body: "B", confirmLabel: "Go", onConfirm: () => {} });
+    ctx.closeConfirm();
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(false);
   });
 });

@@ -153,12 +153,16 @@ function notifyMemoryResolved(id) {
   if (typeof dropFromStaleQueue === 'function') dropFromStaleQueue(id)
 }
 
-async function confirmForget(_checked, token) {
+async function confirmForget(_checked, done) {
   if (!pendingForgetId) return
-  // Snapshot BEFORE closing: closeConfirm fires this sheet's onClose, which is
-  // what nulls these two. Anything read after the close reads null.
+  // Snapshot BEFORE closing: closing fires this sheet's onClose, which is what
+  // nulls these two. Anything read after the close reads null.
   const idToForget = pendingForgetId
   const cardElement = pendingForgetCard
+  // `done` closes this question and no other. It is absent only when something
+  // calls confirmForget() directly rather than through the sheet, and then
+  // "close whatever is open" is the honest reading.
+  const closeThis = done || closeConfirm
   const btn = document.querySelector('#confirm-dialog .btn-delete')
   if (btn) {
     btn.disabled = true
@@ -167,7 +171,7 @@ async function confirmForget(_checked, token) {
 
   try {
     await apiMcp('forget', { id: idToForget })
-    closeConfirm(token)
+    closeThis()
     if (cardElement) {
       cardElement.style.transition = 'none'
       cardElement.classList.add('explode-out')
@@ -504,7 +508,7 @@ async function loadRelated(id, el) {
           title: t('danger.removeLinkTitle'),
           body: t('memories.removeLinkConfirm'),
           confirmLabel: t('danger.removeLinkAction'),
-          onConfirm: async (_checked, token) => {
+          onConfirm: async (_checked, done) => {
             try {
               await fetch(`${WORKER_URL}/unlink`, {
                 method: 'POST',
@@ -513,7 +517,7 @@ async function loadRelated(id, el) {
               })
             } catch {}
             await loadRelated(id, el)
-            closeConfirm(token)
+            done()
           },
         })
       }

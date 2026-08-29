@@ -59,45 +59,54 @@ dashboard goes through it; there is deliberately no second sheet, because two
 would diverge the first time either was restyled.
 
 ```js
-const token = openDangerConfirm({
+openDangerConfirm({
   title, body, confirmLabel,          // already translated
   checkboxLabel,                      // optional modifier; '' or omitted hides the row
-  onConfirm: async (checked, token) => { /* … */ closeConfirm(token) },
+  onConfirm: async (checked, done) => { /* … */ done() },
   onClose: () => { /* reset the caller's own state */ },
 })
 ```
 
-Three rules a caller has to know. The first two are enforced by the sheet, so
-forgetting them is safe; the third is not, and is the one that bites.
+Four rules. Rules 1 and 2 are about the sheet; rules 3 and 4 are the ones that
+have actually bitten, and both are about the order you touch your own state in.
 
 **1. The sheet does not close on accept.** The action decides when it is done,
 which is what lets it show progress copy on the accept button (`confirmForget`
-writes `t('memories.forgetting')` there). Call `closeConfirm(token)` yourself.
+writes `t('memories.forgetting')` there). Close it yourself, with `done()`.
 
-**2. Pass the token, and treat a close as scoped.** `openDangerConfirm` returns
-a generation, and `onConfirm` receives the same value as its second argument.
-`closeConfirm(token)` is a **no-op** if that question has since been dismissed
-and replaced — without this, a slow POST resolving after the user moved on
-closes, and fires the `onClose` of, whatever question is on screen now. A close
-with no token made from inside a running action is scoped to that action
-anyway, so a caller that forgets is still safe; `closeConfirm()` from the
-backdrop or the Cancel button is unscoped, which is what a user dismissing what
-they can see means.
+**2. Close with the `done()` you were handed — never with `closeConfirm()`.**
+`done` is the second argument to `onConfirm`. It is bound by lexical scope to
+the question your action is answering, and it does nothing once that question
+has been dismissed and replaced. That matters because your POST can resolve
+long after the user moved on: without it, a slow disconnect closes — and fires
+the `onClose` of — whatever sheet is on screen by then.
 
-**3. Snapshot caller state BEFORE you close.** `closeConfirm` fires your
-`onClose`, and `onClose` is where your state reset lives — so anything you read
-*after* your own close reads `null`. `confirmForget` copies `pendingForgetId`
-and `pendingForgetCard` into locals as its first act, and depends on that.
-For the same reason, set your pending state **after** calling
-`openDangerConfirm`, not before: opening dismisses the sheet it replaces, and
-if that was a sheet of the same kind, its `onClose` would clear the state you
-just set (see `openConfirm`).
+`closeConfirm()` takes no argument and closes whatever is currently open. It is
+for the two genuinely ambient dismissals only: the Cancel button in
+`index.html` and the backdrop listener in `app.js`. Do not call it from inside
+an action. It is not scoped, and nothing in the sheet can make it so — an
+action can be suspended at an `await` while another action runs, so there is no
+"currently running action" for a module-level variable to hold.
+
+**3. Snapshot your state BEFORE you close.** Closing fires your `onClose`, and
+`onClose` is where your state reset lives, so anything you read *after* your own
+`done()` reads `null`. `confirmForget` copies `pendingForgetId` and
+`pendingForgetCard` into locals as its first act, and depends on that.
+
+**4. Set your pending state AFTER calling `openDangerConfirm`, not before.**
+Opening dismisses the sheet it replaces, and that dismissal runs the outgoing
+caller's `onClose`. If the sheet being replaced was one of your own, its
+`onClose` clears exactly the state you just set. `openConfirm` opens first and
+assigns afterwards for this reason.
 
 Two hazards the sheet handles for you, both created by replacing a modal
 `confirm()`: a second `runConfirmAction()` while your action is in flight is
 dropped and the accept button is held down for the duration (no double POST),
 and the button is released again if your action throws. Your action's errors
 propagate — the sheet does not swallow them.
+
+`openDangerConfirm` returns the question's generation number. It is there for
+tests and logging; it is not how you close, and nothing is load-bearing on it.
 
 ## Tests
 
