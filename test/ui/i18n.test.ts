@@ -533,8 +533,15 @@ describe("dashboard i18n", () => {
    * (one per provider, one per shape). The staleness check below still requires
    * each prefix to match at least one real key, so a family that disappears
    * cannot leave its licence behind.
+   *
+   * `keys` is the other shape: an exact set, used where the runtime value is
+   * drawn from a small closed set the code enumerates (or is a single literal
+   * reached only through an indirection the scanner can't follow) rather than
+   * a generated family. A `prefix` there would license any future sibling key
+   * with the same stem and no consumer at all — exactly the hole this list
+   * exists to close.
    */
-  const DYNAMICALLY_REFERENCED: Array<{ prefix: string; by: string }> = [
+  const DYNAMICALLY_REFERENCED: Array<{ prefix?: string; keys?: string[]; by: string }> = [
     {
       prefix: "common.source",
       by: "public/utils.js t(key), through the SOURCE_LABELS map keyed by the capture's `source` value",
@@ -556,11 +563,25 @@ describe("dashboard i18n", () => {
       by: "public/js/integrations.js t(keys[id] || 'integrations.categoryOther')",
     },
     {
-      prefix: "integrations.noun",
+      // NOT a prefix: `integrationNounKey` only ever returns one of these
+      // three literals (branching on whether the provider id starts with
+      // "calendar" or "email", falling through to nounItem otherwise).
+      // "integrations.nounMemory" also starts with "integrations.noun" but is
+      // never one of integrationNounKey's return values — it is reached by
+      // the separate, already-static `tPlural('integrations.nounMemory', …)`
+      // call in disconnectIntegration — so a prefix here would license a
+      // future nounWhatever sibling with no consumer at all.
+      keys: ["integrations.nounEvent", "integrations.nounEmail", "integrations.nounItem"],
       by: "integrationNounKey(provider) in public/js/integrations.js, via tPlural",
     },
     {
-      prefix: "integrations.appPassword",
+      // NOT a prefix: the fallbackKey argument at this call site is the single
+      // literal "integrations.appPassword", not a generated family.
+      // "integrations.appPasswordAria" also starts with "integrations.appPassword"
+      // but is reached by its own literal `t('integrations.appPasswordAria')`
+      // call right next to this one, so it is already static — a prefix here
+      // would license a future appPasswordWhatever sibling with no consumer.
+      keys: ["integrations.appPassword"],
       by: "public/js/integrations.js, passed to integrationConnectI18n as the fallbackKey argument and reached through t(fallbackKey)",
     },
     {
@@ -597,7 +618,8 @@ describe("dashboard i18n", () => {
     expect(staticHits.length).toBeGreaterThan(300);
 
     const referenced = new Set(staticHits.map((h) => h.key));
-    const licensed = (key: string) => DYNAMICALLY_REFERENCED.some((d) => key.startsWith(d.prefix));
+    const licensed = (key: string) =>
+      DYNAMICALLY_REFERENCED.some((d) => (d.keys ? d.keys.includes(key) : key.startsWith(d.prefix!)));
 
     const orphans = units.filter((k) => !referenced.has(k) && !licensed(k)).sort();
     expect(
@@ -619,13 +641,16 @@ describe("dashboard i18n", () => {
 
     const stale: string[] = [];
     for (const entry of DYNAMICALLY_REFERENCED) {
-      const matched = units.filter((k) => k.startsWith(entry.prefix));
+      const label = entry.keys ? entry.keys.join(", ") : entry.prefix!;
+      const matched = entry.keys
+        ? entry.keys.filter((k) => units.includes(k))
+        : units.filter((k) => k.startsWith(entry.prefix!));
       if (!matched.length) {
-        stale.push(`${entry.prefix} — matches no key in I18N_EN`);
+        stale.push(`${label} — matches no key in I18N_EN`);
         continue;
       }
       if (matched.every((k) => referenced.has(k))) {
-        stale.push(`${entry.prefix} — every key it covers is now named by a static call site`);
+        stale.push(`${label} — every key it covers is now named by a static call site`);
       }
     }
     expect(stale, "stale entries in DYNAMICALLY_REFERENCED").toEqual([]);
