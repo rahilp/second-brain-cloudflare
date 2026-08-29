@@ -440,7 +440,12 @@ export type Messages = {
     /** Team setups only: replaces allSetLede, and the team card below appears. */
     allSetTeamLede: string;
     teamCardLabel: string;
+    /** The owner-admin's copy: what only they can do, and where. */
     teamCardBody: string;
+    /** A team admin can invite from the dashboard but cannot rotate AUTH_TOKEN. */
+    teamCardBodyAdmin: string;
+    /** A member can do neither, and needs to know who to ask. */
+    teamCardBodyMember: string;
     openDashboard: string;
   };
   integrations: {

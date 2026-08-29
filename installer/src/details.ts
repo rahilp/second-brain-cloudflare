@@ -13,10 +13,29 @@ import {
   teamCard,
 } from "./shared";
 import { integrationRows, toolRows } from "./shared";
+import { canRotatePassword, type ConnectionRole } from "./connection-role";
 import { initI18n, settingsSection, t } from "./i18n";
 import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
+
+/**
+ * The role this window renders for.
+ *
+ * A constant, and not a probe: the webview never handles the token — it stays
+ * in the Rust core, and `get_connection_details` returns URLs and a boolean —
+ * so this window has nothing to call `/team/me` with, and giving it one means a
+ * new Tauri command. Until that exists, "owner" is the honest answer: this
+ * window is reached from the app menu on a machine whose setup is already
+ * stored, and guessing "member" here would tell the brain's actual owner to ask
+ * an admin for a token and take away the only in-app route to changing their
+ * password.
+ *
+ * The derived role lives in `main.ts`, where the connect flow has the token in
+ * hand. Both windows go through the same two helpers, so when this one gains a
+ * way to ask, one line changes and the card and the gate below both follow.
+ */
+const connectionRole: ConnectionRole = "owner";
 
 async function boot() {
   initI18n();
@@ -91,8 +110,13 @@ async function boot() {
         // Team setups only, and before the password card: it is what the owner
         // is expected to do next. "Copy both" below still copies exactly the
         // two URL cards above, so nothing lands between them.
-        ...(details.teamMode ? [teamCard()] : []),
-        passwordCard(rotationBlocked),
+        ...(details.teamMode ? [teamCard(connectionRole)] : []),
+        // Absent, not disabled, for anyone who cannot rotate. `passwordCard`'s
+        // other branch already renders a greyed-out card with an escape hatch,
+        // and reusing that shape for a member would say "not right now" about
+        // something that is not theirs to do at all — and then dead-end them at
+        // a Cloudflare sign-in for an account they have no login to.
+        ...(canRotatePassword(connectionRole) ? [passwordCard(rotationBlocked)] : []),
         h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
         disconnectSection(),
       ];

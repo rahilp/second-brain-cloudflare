@@ -14,6 +14,7 @@ import {
   teamCard,
   toolRows,
 } from "./shared";
+import { roleFromProbe, type ConnectionRole } from "./connection-role";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { initI18n, LOCALE_CHANGE_EVENT, t } from "./i18n";
 import {
@@ -60,6 +61,20 @@ let details: ConnectionDetails | null = null;
  * sets it — a connected brain's mode is unknown.
  */
 let teamMode = false;
+
+/**
+ * Who is holding the token this window connected with (#4.7).
+ *
+ * "owner" until a team brain says otherwise, which is what the provisioning
+ * path always is — the person who just created the brain owns it. Only
+ * `existingTeamScreen` moves it, and only on a brain that reports members, so a
+ * solo install never leaves this value and never pays for a second request.
+ *
+ * Derived per connect and deliberately not written to the keychain beside
+ * `team-mode`: a member promoted to admin in the dashboard next month must not
+ * be looking at a card this app wrote on the day they installed it.
+ */
+let connectionRole: ConnectionRole = "owner";
 
 /** Which setup screen is visible — used to re-render on locale change. */
 let currentScreen: (() => void) | null = null;
@@ -129,6 +144,33 @@ function audienceScreen() {
   );
 }
 
+/**
+ * Asks the brain who this token belongs to. Only ever called on a brain that
+ * has already reported members, so `team` is true by construction.
+ *
+ * Every way of not getting an answer — a Worker too old to serve /team/me, a
+ * 401/403/404, a body that will not parse, a request that never lands — reduces
+ * to `null`, and `roleFromProbe` turns `null` into "member". That is the point:
+ * the failure this whole change exists to fix is the app telling a member they
+ * are the owner-admin, so an unanswerable probe must claim less, not more.
+ */
+async function deriveConnectionRole(
+  brainUrl: string,
+  brainPassword: string,
+): Promise<ConnectionRole> {
+  const role = await fetch(`${brainUrl}/team/me`, {
+    headers: { Authorization: `Bearer ${brainPassword}` },
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => d?.profile?.role ?? null)
+    .catch(() => null);
+  return roleFromProbe({
+    team: true,
+    role,
+    hasCloudflareSession: signedInToCloudflare(),
+  });
+}
+
 /// Same question as audienceScreen, asked AFTER an existing brain connects.
 /// ONE-TIME by two independent locks, either of which settles it:
 ///   1. this machine already recorded a choice (keychain via details.teamMode);
@@ -138,17 +180,28 @@ function audienceScreen() {
 /// The question only ever runs on a solo brain whose mode was never recorded.
 async function existingTeamScreen(brainUrl: string, brainPassword: string) {
   currentScreen = () => existingTeamScreen(brainUrl, brainPassword);
-  if (details?.teamMode) return void toolsScreen();
+  if (details?.teamMode) {
+    // A team brain this machine has already recorded. The mode is settled, but
+    // the role is not — it is re-derived here rather than skipped, because the
+    // token in hand may be a member's and this branch is exactly the one a
+    // returning member takes.
+    connectionRole = await deriveConnectionRole(brainUrl, brainPassword);
+    return void toolsScreen();
+  }
   try {
     const res = await fetch(`${brainUrl}/health`, {
       headers: { Authorization: `Bearer ${brainPassword}` },
     })
     if (await res.json().then((d) => !!d.team).catch(() => false)) {
       teamMode = true;
+      connectionRole = await deriveConnectionRole(brainUrl, brainPassword);
       await invoke("set_team_mode", { teamMode: true }).catch(() => {});
       return void toolsScreen();
     }
   } catch {}
+  // Below here the brain reported no members, so `roleFromProbe` would answer
+  // "owner" whatever /team/me said. `connectionRole` is already "owner" and no
+  // second request is made — a solo install pays nothing for any of this.
 
   const justMe = h("button", { class: "btn-primary" }, [t("audience.justMe")]);
   justMe.addEventListener("click", async () => {
@@ -720,7 +773,7 @@ function detailsScreen() {
     h("p", { class: "lede" }, [t(teamMode ? "details.allSetTeamLede" : "details.allSetLede")]),
     // Before the URL cards: it is the one thing a team owner is expected to do
     // next, and the links below it are for keeping, not acting on.
-    ...(teamMode ? [teamCard()] : []),
+    ...(teamMode ? [teamCard(connectionRole)] : []),
     ...detailCards(details!),
     h("div", { class: "actions-spread" }, [copyBothButton(details!), emailButton(details!)]),
     h("div", { style: "height:14px" }),

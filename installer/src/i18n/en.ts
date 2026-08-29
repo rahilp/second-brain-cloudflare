@@ -340,7 +340,7 @@ export const en: Messages = {
       "Setting up a new computer? Enter the address and password of the " +
       "Second Brain you already have — nothing will be changed or reset.",
     addressPlaceholder: "Your Second Brain address (…workers.dev)",
-    passwordPlaceholder: "Your password",
+    passwordPlaceholder: "Your password, or your team invite token",
     connect: "Connect",
     footnote:
       "The address is in Connection details on your other computer, " +
@@ -371,7 +371,8 @@ export const en: Messages = {
       "else — another space, or your own web address — enter the address below.",
     unlockTitle: "Enter your password",
     unlockLede:
-      "This is the password you chose when you first set up your Second Brain. " +
+      "This is the password you chose when you first set up your Second Brain — " +
+      "or, if someone invited you to their team, the token they sent you. " +
       "Nothing will be changed or reset.",
     lostPassword: "I don't have my password",
   },
@@ -718,6 +719,10 @@ export const en: Messages = {
     teamCardLabel: "Your team's Second Brain",
     teamCardBody:
       "You're signed in as this brain's owner-admin. Open your dashboard and use the Team panel to invite people — every member gets their own token. Each member's private memories stay private, and anything they share lands in the company layer, visible to everyone.",
+    teamCardBodyAdmin:
+      "You're signed in as a team admin. Open your dashboard and use the Team panel to invite people — every member gets their own token. Changing this brain's password is done by whoever set it up, in their Cloudflare account.",
+    teamCardBodyMember:
+      "You're signed in as a team member. Your own memories stay private; anything you share lands in the team layer, where everyone can find it. Ask a team admin for a new sign-in token if this one stops working.",
     openDashboard: "Open my Second Brain",
   },
   integrations: {
