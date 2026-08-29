@@ -162,10 +162,18 @@ export async function inferEdgesOnWrite(
     //
     // A neighbour with no `entries` row at all — a vector whose entry has since
     // been forgotten — is NOT refused here. It has no workspace to disagree
-    // with, so it is not the case this check is about, and the edge it produces
-    // is inert: every graph read hydrates its endpoints through the caller's
-    // scope and drops the ones that are missing. Narrowing that too would change
-    // what the pass does for a reason unrelated to tenancy.
+    // with, so it is not the case this check is about, and narrowing that too
+    // would change what the pass does for a reason unrelated to tenancy.
+    //
+    // The edge it produces is inert FOR READS, which is not the same as inert:
+    // every graph read hydrates both endpoints through the caller's scope and
+    // drops the ones that are missing, so nothing can be reached through it
+    // today. But a dangling id is not permanently dangling — src/entries/import.ts
+    // accepts caller-supplied entry ids, so a later import can create a row with
+    // that id in ANOTHER workspace and turn this into a live crossing edge that
+    // an audit query over `edges` would find. Low reachability, and the read
+    // paths still contain it, but it is a row that can become wrong rather than
+    // one that is harmless.
     //
     // Within one workspace nothing changes at all, which is every pair on a
     // solo brain.

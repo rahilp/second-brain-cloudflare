@@ -3,7 +3,6 @@ import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { initializeDatabase } from "../db/init";
 import { embed } from "../lib/ai";
 import { inferEdgesOnWrite } from "./edges";
-import { queryVectorizeScoped, singleWorkspaceFilter } from "../vectorize/scope";
 
 const GRAPH_PASS_BACKFILL_LIMIT = 25;
 const EDGE_PRUNE_WEIGHT = 0.3;
@@ -35,22 +34,18 @@ export async function runGraphPass(
     console.error("Graph prune failed (non-fatal):", e);
   }
 
-  // workspace_id rides along on the row the backfill already selects — the
-  // neighbour search below has to be asked within the workspace of the row being
-  // processed, and this is where that workspace is known. Projecting it costs no
-  // extra statement, and it is not a scope clause: the slice above is.
-  let unlinked: { id: string; content: string; workspace_id: string | null }[] = [];
+  let unlinked: { id: string; content: string }[] = [];
   try {
     const sliceSql = workspaceId != null ? `\n         AND workspace_id = ?` : "";
     const stmt = env.DB.prepare(
       // scope-exempt: cron: nightly backfill, narrowed by the workspace slice in sliceSql
-      `SELECT id, content, workspace_id FROM entries
+      `SELECT id, content FROM entries
        WHERE id NOT IN (SELECT source_id FROM edges) AND id NOT IN (SELECT target_id FROM edges)
          AND tags NOT LIKE '%"status:deprecated"%'${sliceSql}
        ORDER BY created_at DESC LIMIT ${GRAPH_PASS_BACKFILL_LIMIT}`
     );
     const { results } = await (workspaceId != null ? stmt.bind(workspaceId) : stmt)
-      .all() as { results: { id: string; content: string; workspace_id: string | null }[] };
+      .all() as { results: { id: string; content: string }[] };
     unlinked = results;
   } catch (e) {
     console.error("Graph backfill query failed (non-fatal):", e);
@@ -59,20 +54,36 @@ export async function runGraphPass(
   for (const entry of unlinked) {
     try {
       const values = await embed(entry.content, env, cfg);
-      // Neighbours from the row's OWN workspace. Unfiltered, this asked the whole
-      // index and routinely answered with another member's private near-duplicate,
-      // which inferEdgesOnWrite then linked. Same one Vectorize call either way —
-      // a filter is a query argument, not a second subrequest.
+      // DELIBERATELY UNFILTERED, and the containment is enforced instead by
+      // inferEdgesOnWrite, which refuses a pair whose endpoints sit in different
+      // workspaces — reading the workspaces from `entries`, the authoritative
+      // source, rather than from vector metadata.
       //
-      // Best-effort, by the contract in src/vectorize/scope.ts: a deployment whose
-      // index rejects metadata filters degrades to an unfiltered query. What makes
-      // the invariant true rather than merely likely is inferEdgesOnWrite's
-      // endpoint check, which does not depend on this.
-      const { matches } = await queryVectorizeScoped<VectorizeMatch>(
-        env.VECTORIZE,
-        values,
-        { topK: 5, filter: singleWorkspaceFilter(entry.workspace_id ?? "").filter },
-      );
+      // A workspace metadata filter here would be a result-quality optimisation
+      // (it keeps foreign candidates out of the five slots), never the
+      // correctness mechanism. On this path it cannot even be relied on for
+      // that, because the pass runs over the WHOLE corpus, including rows whose
+      // vectors predate src/capture/store.ts stamping `workspace_id` at all —
+      // and tenancy bootstrap backfills the entries ROWS
+      // (src/lib/tenancy.ts) without ever restamping their vectors. On an
+      // upgraded brain the row therefore has a real workspace and its vector has
+      // none.
+      //
+      // Whether Vectorize's `$in` matches a vector that is MISSING the field is
+      // not determinable from this repo: Vectorize has no local emulation
+      // (wrangler binds it "remote"), and the type declarations do not say. Under
+      // the unfavourable reading a filtered query returns nothing for every such
+      // row, and the nightly pass silently stops inferring any edges at all on
+      // exactly the brains the upgrade path produces — which is the
+      // same-workspace narrowing this fix is forbidden to cause. Unfiltered is
+      // correct under BOTH readings, and is no narrower than the pre-tenancy
+      // behaviour; the only cost is that foreign candidates can still occupy
+      // result slots, which is a ranking imperfection and not a leak.
+      //
+      // Reinstating the filter is a one-line change once vectors are restamped
+      // on upgrade (restampVectorWorkspace in src/capture/share.ts already does
+      // this for a share) — at which point it is worth it for the slots.
+      const { matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
       const scores = new Map<string, number>();
       for (const m of matches) {
         const pid = (m.metadata as any)?.parentId ?? m.id;

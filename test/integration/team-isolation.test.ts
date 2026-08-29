@@ -545,54 +545,92 @@ describe("cross-user isolation — maintenance passes", () => {
    * let the two cases below pass without the pass ever having had the chance to
    * bridge two workspaces.
    */
-  const crossWorkspaceVectorize = () => ({
-    ...env.VECTORIZE,
-    query: vi.fn().mockResolvedValue({
-      matches: [
-        { id: "alice-link", score: 0.97, metadata: { parentId: "alice-link" } },
-        { id: "bob-link", score: 0.96, metadata: { parentId: "bob-link" } },
-      ],
-    }),
-  }) as unknown as VectorizeIndex;
+  /**
+   * A Vectorize double that APPLIES the metadata filter rather than only
+   * noticing that one is present.
+   *
+   * That distinction is what let a real regression through: doubles which only
+   * checked `if (opts.filter)` were green against a pass that filtered on a
+   * field the vectors did not carry.
+   *
+   * `workspaceId: undefined` models a vector with NO `workspace_id` metadata at
+   * all — an entry indexed before src/capture/store.ts started stamping it. Such
+   * vectors are the normal case on an upgraded brain: tenancy bootstrap
+   * backfills the `entries` ROWS (src/lib/tenancy.ts) but never restamps their
+   * vectors, so the row has a real workspace and the vector has none.
+   *
+   * `absentFieldMatches` is the thing about Vectorize this repo cannot verify
+   * locally — `vectorize` has no local emulation (wrangler binds it "remote"),
+   * and neither the type declarations nor the docs in this repo say whether an
+   * absent field satisfies `$in`. Both readings are therefore modelled, and the
+   * cases below are asserted under each.
+   */
+  function indexDouble(opts: {
+    vectors: { id: string; workspaceId?: string; score: number }[];
+    absentFieldMatches: boolean;
+    rejectFilters?: boolean;
+  }): VectorizeIndex {
+    return {
+      ...env.VECTORIZE,
+      query: vi.fn().mockImplementation(async (_values: number[], o: any) => {
+        if (o?.filter && opts.rejectFilters) {
+          throw new Error("VECTORIZE_QUERY_ERROR (code = 40006): unsupported metadata filter");
+        }
+        const wanted: string[] | undefined = o?.filter?.workspace_id?.$in;
+        const matches = opts.vectors
+          .filter(v => {
+            if (!wanted) return true;
+            if (v.workspaceId === undefined) return opts.absentFieldMatches;
+            return wanted.includes(v.workspaceId);
+          })
+          .map(v => ({
+            id: v.id,
+            score: v.score,
+            metadata: {
+              parentId: v.id,
+              ...(v.workspaceId === undefined ? {} : { workspace_id: v.workspaceId }),
+            },
+          }));
+        return { matches };
+      }),
+    } as unknown as VectorizeIndex;
+  }
+
+  /**
+   * Alice's and Bob's near-identical rows as each other's nearest neighbour,
+   * both vectors stamped — the shape a brain written entirely after stamping has.
+   */
+  const crossWorkspaceVectorize = (absentFieldMatches = true) => indexDouble({
+    absentFieldMatches,
+    vectors: [
+      { id: "alice-link", workspaceId: aliceWorkspaceId, score: 0.97 },
+      { id: "bob-link", workspaceId: bobWorkspaceId, score: 0.96 },
+    ],
+  });
 
   /**
    * The same index, but one that REJECTS the workspace metadata filter — the
    * documented degraded mode of `queryVectorizeScoped`, which retries unfiltered
    * and latches that per isolate.
-   *
-   * This is why filtering the pass's query cannot be the whole fix: on a
-   * deployment whose index cannot filter, the pass sees exactly the neighbour
-   * list the unfixed code saw. What has to hold there is the endpoint check in
-   * inferEdgesOnWrite.
    */
-  const filterRejectingVectorize = () => ({
-    ...env.VECTORIZE,
-    query: vi.fn().mockImplementation(async (_values: number[], opts: any) => {
-      if (opts?.filter) throw new Error("VECTORIZE_QUERY_ERROR (code = 40006): unsupported metadata filter");
-      return {
-        matches: [
-          { id: "alice-link", score: 0.97, metadata: { parentId: "alice-link" } },
-          { id: "bob-link", score: 0.96, metadata: { parentId: "bob-link" } },
-        ],
-      };
-    }),
-  }) as unknown as VectorizeIndex;
+  const filterRejectingVectorize = () => indexDouble({
+    absentFieldMatches: true,
+    rejectFilters: true,
+    vectors: [
+      { id: "alice-link", workspaceId: aliceWorkspaceId, score: 0.97 },
+      { id: "bob-link", workspaceId: bobWorkspaceId, score: 0.96 },
+    ],
+  });
 
   /** Two of Alice's own rows as each other's nearest neighbour. */
-  const sameWorkspaceVectorize = (rejectFilters: boolean) => ({
-    ...env.VECTORIZE,
-    query: vi.fn().mockImplementation(async (_values: number[], opts: any) => {
-      if (rejectFilters && opts?.filter) {
-        throw new Error("VECTORIZE_QUERY_ERROR (code = 40006): unsupported metadata filter");
-      }
-      return {
-        matches: [
-          { id: "alice-one", score: 0.97, metadata: { parentId: "alice-one" } },
-          { id: "alice-two", score: 0.96, metadata: { parentId: "alice-two" } },
-        ],
-      };
-    }),
-  }) as unknown as VectorizeIndex;
+  const sameWorkspaceVectorize = (rejectFilters: boolean) => indexDouble({
+    absentFieldMatches: true,
+    rejectFilters,
+    vectors: [
+      { id: "alice-one", workspaceId: aliceWorkspaceId, score: 0.97 },
+      { id: "alice-two", workspaceId: aliceWorkspaceId, score: 0.96 },
+    ],
+  });
 
   /**
    * A ctx that can be awaited. src/index.ts hands every nightly pass to
@@ -692,24 +730,108 @@ describe("cross-user isolation — maintenance passes", () => {
     expect(crossings).toEqual([]);
   });
 
-  it("still refuses the cross-workspace pair when Vectorize rejects the filter", async () => {
-    // The filter is best-effort by contract (src/vectorize/scope.ts). With it
-    // rejected, the pass gets the identical neighbour list the unfixed code got,
-    // so this is the case that shows the invariant is held by the endpoint check
-    // and not by the filter.
+  it("asks the index for neighbours with no metadata filter at all, and still creates no crossing", async () => {
+    // The pass deliberately does not filter (src/graph/pass.ts): its candidate
+    // rows include entries whose vectors predate workspace stamping, and a
+    // filter on a field those vectors do not carry can match nothing. So the
+    // containment is the endpoint check's alone, and this asserts both halves —
+    // that no filter is sent, and that the crossing is refused anyway.
+    //
+    // The double here REJECTS any filtered query, so if the pass ever starts
+    // sending one again this case fails loudly rather than degrading quietly.
     seed("alice-link", aliceWorkspaceId, aliceUserId,
       "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
     seed("bob-link", bobWorkspaceId, bobUserId,
       "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
-    env.VECTORIZE = filterRejectingVectorize();
+    const index = filterRejectingVectorize();
+    env.VECTORIZE = index;
 
     await parkCursorBefore(aliceWorkspaceId);
     await nightly();
 
-    // The degraded path was really taken: without this the case could pass
-    // because the filter worked, which is the thing it is meant to rule out.
-    expect(vectorizeFilterState()).toMatchObject({ supported: false });
-    expect(vectorizeFilterState().degradedQueries).toBeGreaterThan(0);
+    const calls = (index.query as unknown as { mock: { calls: any[][] } }).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [, opts] of calls) expect(opts?.filter).toBeUndefined();
+    // Nothing degraded, because nothing was filtered — so the cron cannot latch
+    // the isolate into unfiltered mode for the recall and capture paths.
+    expect(vectorizeFilterState().supported).toBeNull();
+    expect(vectorizeFilterState().degradedQueries).toBe(0);
+
+    const { results: crossings } = await sqlite.db.prepare(
+      `SELECT e.source_id, e.target_id FROM edges e
+         JOIN entries s ON s.id = e.source_id
+         JOIN entries t ON t.id = e.target_id
+        WHERE s.workspace_id != t.workspace_id`,
+    ).all();
+    expect(crossings).toEqual([]);
+  });
+
+  /**
+   * THE UPGRADE PATH. On a brain that predates workspace stamping, the entries
+   * rows have a real workspace (tenancy bootstrap backfills them) and their
+   * vectors have no `workspace_id` metadata at all, because nothing restamps
+   * vectors. Asking the index for "vectors whose workspace_id is in [ws-alice]"
+   * can therefore match nothing at all — and if the pass depends on that answer,
+   * an upgraded brain silently stops inferring ANY edges.
+   *
+   * Run under both readings of `$in` against a missing field, because which one
+   * Vectorize implements is not determinable from this repo: there is no local
+   * Vectorize emulation (wrangler binds it "remote"), the type declarations are
+   * silent, and guessing the favourable one is how this shipped in the first
+   * place. The pass must be correct under either.
+   */
+  it.each([
+    { name: "an absent field does not satisfy $in", absentFieldMatches: false },
+    { name: "an absent field satisfies $in", absentFieldMatches: true },
+  ])("still infers a same-workspace edge when the vectors predate stamping ($name)", async ({ absentFieldMatches }) => {
+    seed("alice-one", aliceWorkspaceId, aliceUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    seed("alice-two", aliceWorkspaceId, aliceUserId,
+      "Renewal terms for the Ardent contract were re-signed this quarter", ["contracts"]);
+    // Neither vector carries workspace_id — the upgraded-brain shape.
+    env.VECTORIZE = indexDouble({
+      absentFieldMatches,
+      vectors: [
+        { id: "alice-one", score: 0.97 },
+        { id: "alice-two", score: 0.96 },
+      ],
+    });
+
+    await parkCursorBefore(aliceWorkspaceId);
+    await nightly();
+
+    const { results } = await sqlite.db.prepare(
+      `SELECT source_id, target_id, workspace_id FROM edges
+        WHERE type = 'relates_to' AND provenance = 'inferred'`,
+    ).all();
+    expect(results).toContainEqual({
+      source_id: "alice-one",
+      target_id: "alice-two",
+      workspace_id: aliceWorkspaceId,
+    });
+  });
+
+  it.each([
+    { name: "an absent field does not satisfy $in", absentFieldMatches: false },
+    { name: "an absent field satisfies $in", absentFieldMatches: true },
+  ])("keeps two members apart when the vectors predate stamping ($name)", async ({ absentFieldMatches }) => {
+    // The other half of the upgrade path: unstamped vectors mean the filter
+    // cannot be doing the containment, so this is the case that shows the
+    // endpoint check alone is carrying it.
+    seed("alice-link", aliceWorkspaceId, aliceUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    seed("bob-link", bobWorkspaceId, bobUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    env.VECTORIZE = indexDouble({
+      absentFieldMatches,
+      vectors: [
+        { id: "alice-link", score: 0.97 },
+        { id: "bob-link", score: 0.96 },
+      ],
+    });
+
+    await parkCursorBefore(aliceWorkspaceId);
+    await nightly();
 
     const { results: crossings } = await sqlite.db.prepare(
       `SELECT e.source_id, e.target_id FROM edges e

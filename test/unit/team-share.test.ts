@@ -317,9 +317,11 @@ describe("a share carries every edge the entry is an endpoint of", () => {
     expect((await edgeRow("bystander"))?.workspace_id).toBe(owner.personalWorkspaceId);
   });
 
-  it("is unchanged on a solo brain, where the share is the only thing that moves", async () => {
-    // One workspace for everything: the widened predicate has to be a no-op
-    // difference, and an un-share has to put both endpoints' edge back.
+  it("returns the edge to the personal layer when the entry is un-shared again", async () => {
+    // The round trip, which is where a half-fixed re-stamp would show up as an
+    // edge stranded in the company layer after the entry came back. Both
+    // endpoints' columns are asserted, so the un-share is shown not to have
+    // rewritten them either.
     const { env, roots, owner, put, edgeRow } = await ownerBrain();
     await put("zzz-solo", "Solo: the decision");
     await put("aaa-solo", "Solo: the reason");
