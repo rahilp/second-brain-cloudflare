@@ -50,23 +50,45 @@ export function auditEventStatement(env: Env, event: AuditEventInput): D1Prepare
   ).bind(crypto.randomUUID(), entryId, actorId, name, JSON.stringify(payload ?? {}), Date.now());
 }
 
+/**
+ * The fire-and-forget contract itself, in ONE place, so the singular and
+ * batched forms below cannot hold different versions of it.
+ *
+ * The try is not redundant with the catch. `.catch` only covers a REJECTED
+ * promise; prepare, bind, run and batch are all called while `write()` is being
+ * evaluated, and a synchronous throw from any of them would escape into the
+ * caller — which for POST /patterns/resolve means failing a resolution that has
+ * already been committed to D1, the exact thing fire-and-forget exists to make
+ * impossible. `write` is a thunk rather than a promise for that reason: taking
+ * a promise would move the throwing part back to the call site, which is
+ * precisely how the two forms drifted apart in the first place.
+ */
+function fireAndForget(
+  ctx: { waitUntil(promise: Promise<unknown>): void },
+  message: string,
+  write: () => Promise<unknown>,
+): void {
+  try {
+    ctx.waitUntil(write().catch((e: unknown) => console.error(message, e)));
+  } catch (e: unknown) {
+    console.error(message, e);
+  }
+}
+
 export function auditEvent(
   env: Env,
   ctx: { waitUntil(promise: Promise<unknown>): void },
   event: AuditEventInput,
 ): void {
-  ctx.waitUntil(
-    auditEventStatement(env, event)
-      .run()
-      .catch((e: unknown) => console.error("entry_events insert failed (non-fatal):", e)),
-  );
+  fireAndForget(ctx, "entry_events insert failed (non-fatal):", () =>
+    auditEventStatement(env, event).run());
 }
 
 /**
  * The batched form. Callers that already build a statement list use this so the
  * whole trail for one request costs one subrequest; it keeps the same
- * fire-and-forget contract, so a failed trail can never fail the operation it
- * describes.
+ * fire-and-forget contract — literally the same, via fireAndForget above — so a
+ * failed trail can never fail the operation it describes.
  */
 export function auditEvents(
   env: Env,
@@ -74,18 +96,6 @@ export function auditEvents(
   events: AuditEventInput[],
 ): void {
   if (!events.length) return;
-  // The try is not redundant with the catch. `.catch` only covers a REJECTED
-  // promise; prepare, bind and batch are called during the argument expression
-  // and a synchronous throw from any of them would escape into the caller —
-  // which for POST /patterns/resolve means failing a resolution that has
-  // already been committed to D1, the exact thing fire-and-forget exists to
-  // make impossible.
-  try {
-    ctx.waitUntil(
-      env.DB.batch(events.map((e) => auditEventStatement(env, e)))
-        .catch((e: unknown) => console.error("entry_events batch insert failed (non-fatal):", e)),
-    );
-  } catch (e: unknown) {
-    console.error("entry_events batch insert failed (non-fatal):", e);
-  }
+  fireAndForget(ctx, "entry_events batch insert failed (non-fatal):", () =>
+    env.DB.batch(events.map((e) => auditEventStatement(env, e))));
 }
