@@ -8,7 +8,7 @@ import { appendToEntry, updateEntryContent } from "../capture/store";
 import { applyStatus, forgetEntry } from "../capture/lifecycle";
 import { moveEntry, restampVectorWorkspace } from "../capture/share";
 import { auditEvent } from "../lib/audit";
-import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
+import { lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../lib/actors";
 import { createEdge, deleteEdge, edgeLabel, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
@@ -133,7 +133,8 @@ const LIST_RECENT_DESCRIPTION =
   "list_recent: List the most recent entries by date from your second brain. Use it to browse recent activity "
   + "or to locate an entry by time. It returns entries by recency, not by semantic relevance — when you want "
   + "memories that match a meaning, use recall. Long entries are shortened: a result ending in a [truncated …] "
-  + "marker is PARTIAL, so call get(id) for its full text.";
+  + "marker is PARTIAL, so call get(id) for its full text. "
+  + "Pass actor to list only what one person wrote — their name as shown in the header, their user id, or \"me\".";
 
 /** Which layer a raw entries row is in, from the caller's point of view. */
 function layerOfRow(
@@ -448,14 +449,28 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
         workspace: z.enum(["personal", "company"]).optional().describe("Restrict the listing to one layer: the user's private workspace or the shared company layer. Omit to list both"),
+        actor: z.string().optional().describe('Only entries written by one person: their display name as it appears in the header, their user id, or "me" for your own'),
       },
     },
-    async ({ n, tag, after, before, workspace }) => {
+    async ({ n, tag, after, before, workspace, actor }) => {
+      // The same author filter GET /list takes, through the same resolver, so a
+      // name means the same thing on both surfaces. An identity-less caller has
+      // no roster to resolve a name against and no actor_id worth trusting, so
+      // `actor` is ignored outright for it — the byte-identical pre-tenancy
+      // behaviour the scoping below keeps too. A name nobody on the team answers
+      // to is a text answer rather than a thrown error: this tool's contract is
+      // a text answer, and "no one matches that" is one.
+      let actorId: string | undefined;
+      if (actor && identity) {
+        const resolved = await resolveActorFilter(env, identity, actor);
+        if (!resolved.ok) return { content: [{ type: "text", text: `${resolved.error}.` }] };
+        actorId = resolved.actorId;
+      }
       // Same inline scoping as GET /list (src/routes/recall.ts): the filter
       // builder has no hook of its own, and its SQL always ends in ORDER BY.
       // workspace_id and actor_id come back so the header can say which layer a
       // row is in and who wrote it — the same two facts recall reports.
-      let { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+      let { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before, actor: actorId });
       if (identity) {
         const scope = scopeWhere(identity, workspace);
         sql = sql.includes("WHERE")

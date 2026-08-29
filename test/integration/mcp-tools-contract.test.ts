@@ -281,6 +281,21 @@ describe("MCP tool descriptions teach generic recall behaviour", () => {
       expect(listRecent).toMatch(/use recall/i);
     });
 
+    it("list_recent offers the author filter, in the vocabulary it prints", async () => {
+      // The schema IS the discovery mechanism: a client only learns it can ask
+      // for one person's memories by reading this. The three spellings have to
+      // be discoverable together, because a name lifted from a printed header
+      // and a user id and "me" all go in the same parameter.
+      const listRecent = (await descriptions()).list_recent;
+      expect(listRecent).toMatch(/actor/i);
+      expect(listRecent).toMatch(/"me"/);
+
+      const actor = (await schemaFor("list_recent")).actor;
+      expect(actor?.description).toMatch(/display name/i);
+      expect(actor?.description).toMatch(/user id/i);
+      expect(actor?.description).toMatch(/"me"/);
+    });
+
     it("update replaces, and is not the incremental-history mechanism", async () => {
       const update = (await descriptions()).update;
       expect(update).toMatch(/no longer the correct representation/i);
