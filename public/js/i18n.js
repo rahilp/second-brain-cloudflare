@@ -520,6 +520,11 @@ const I18N_EN = {
     invalidResponse: 'Invalid response',
     mcpError: 'MCP error',
   },
+  danger: {
+    removeLinkTitle: 'Remove this link?',
+    removeLinkAction: 'Remove link',
+    disconnectTitle: 'Disconnect this integration?',
+  },
 }
 
 const I18N_IT = {
@@ -1040,6 +1045,11 @@ const I18N_IT = {
     sourceClaudeCode: 'claude code',
     invalidResponse: 'Risposta non valida',
     mcpError: 'Errore MCP',
+  },
+  danger: {
+    removeLinkTitle: 'Rimuovere questo collegamento?',
+    removeLinkAction: 'Rimuovi collegamento',
+    disconnectTitle: 'Disconnettere questa integrazione?',
   },
 }
 

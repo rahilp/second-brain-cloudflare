@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import vm from "node:vm";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { installI18n } from "./_i18n-harness";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -47,9 +47,14 @@ function load() {
     AUTH_TOKEN: "t",
     pendingEditId: null,
     setTimeout: (fn: () => void) => fn(),
+    clearTimeout: () => {},
     refreshAll: () => {},
     apiMcp: async () => ({}),
-    alert: () => {},
+    // A save failure now reports through the app's toast; a browser alert
+    // would block the page and could not be translated.
+    alert: () => {
+      throw new Error("alert() must not be used");
+    },
     fetch: async (_url: string, init: any) => {
       sent.push(JSON.parse(init.body));
       return { ok: true, json: async () => ({ ok: true }) };
@@ -63,12 +68,13 @@ function load() {
       addEventListener() {},
       querySelectorAll: () => [],
       querySelector: () => null,
+      body: { style: {}, appendChild(el: any) { if (el.id) els.set(el.id, el); } },
     },
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   installI18n(ctx, "en");
-  for (const f of ["public/utils.js", "public/js/memory-crud.js"]) {
+  for (const f of ["public/utils.js", "public/js/toast.js", "public/js/memory-crud.js"]) {
     vm.runInContext(readFileSync(resolve(ROOT, f), "utf8"), ctx);
   }
   ctx.__els = els;
@@ -169,12 +175,12 @@ describe("saving", () => {
   it("leaves the sheet open and the text intact when the save fails", async () => {
     const ctx = load();
     ctx.fetch = async () => ({ ok: false, status: 500 });
-    const warned = vi.fn();
-    ctx.alert = warned;
     ctx.openEdit("e1", "Content", []);
     ctx.__els.get("edit-textarea").value = "Rewritten content";
     await ctx.saveEdit();
-    expect(warned).toHaveBeenCalled();
+    // Reported in the app's own toast, naming the status the server sent.
+    expect(ctx.__els.get("app-toast").innerHTML).toContain("Edit failed");
+    expect(ctx.__els.get("app-toast").innerHTML).toContain("500");
     expect(ctx.__els.get("edit-sheet").classList.contains("open")).toBe(true);
     expect(ctx.__els.get("edit-textarea").value).toBe("Rewritten content");
   });

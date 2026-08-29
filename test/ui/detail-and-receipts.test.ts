@@ -14,28 +14,95 @@ import { installI18n } from "./_i18n-harness";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
-function load(): any {
+function makeEl() {
+  const classes = new Set<string>();
+  return {
+    id: "",
+    checked: false,
+    disabled: false,
+    title: "",
+    value: "",
+    textContent: "",
+    innerHTML: "",
+    className: "",
+    onclick: null as any,
+    style: {} as Record<string, string>,
+    attrs: {} as Record<string, string>,
+    classList: {
+      add: (c: string) => void classes.add(c),
+      remove: (c: string) => void classes.delete(c),
+      toggle(c: string, on?: boolean) {
+        if (on ?? !classes.has(c)) classes.add(c);
+        else classes.delete(c);
+      },
+      contains: (c: string) => classes.has(c),
+    },
+    setAttribute(name: string, value: string) {
+      this.attrs[name] = value;
+    },
+    getAttribute(name: string) {
+      return this.attrs[name] ?? null;
+    },
+    appendChild() {},
+    remove() {},
+    focus() {},
+    closest: () => null,
+    dataset: {} as any,
+    querySelectorAll: () => [] as any[],
+    querySelector: () => null as any,
+  };
+}
+
+function load(fetchImpl?: (url: string, init?: any) => Promise<any>): any {
   const els = new Map<string, any>();
-  const makeEl = () => ({ style: {} as Record<string, string>, innerHTML: "", className: "", dataset: {} as any, appendChild() {}, querySelectorAll: () => [], querySelector: () => null });
+  const calls: Array<{ url: string; init?: any }> = [];
   const ctx: any = {
     console,
+    calls,
     document: {
       getElementById: (id: string) => {
-        if (!els.has(id)) els.set(id, makeEl());
+        if (!els.has(id)) {
+          const el = makeEl();
+          el.id = id;
+          els.set(id, el);
+        }
         return els.get(id);
       },
       createElement: () => makeEl(),
       addEventListener() {},
+      querySelector: () => null,
       querySelectorAll: () => [],
+      body: { style: {}, appendChild(el: any) { if (el.id) els.set(el.id, el); } },
     },
-    fetch: () => Promise.reject(new Error("no network in this test")),
+    // Nothing in the detail sheet may reach a browser dialog.
+    confirm: () => {
+      throw new Error("confirm() must not be used");
+    },
+    alert: () => {
+      throw new Error("alert() must not be used");
+    },
+    setTimeout: (fn: () => void) => fn(),
+    clearTimeout: () => {},
+    refreshAll: () => {},
+    fetch: (url: string, init?: any) => {
+      calls.push({ url, init });
+      if (fetchImpl) return fetchImpl(url, init);
+      return Promise.reject(new Error("no network in this test"));
+    },
     WORKER_URL: "https://example.test",
     AUTH_TOKEN: "t",
   };
   ctx.globalThis = ctx;
+  ctx.window = ctx;
   vm.createContext(ctx);
   installI18n(ctx, "en");
-  for (const f of ["public/utils.js", "public/js/memory-crud.js", "public/js/remember.js"]) {
+  for (const f of [
+    "public/utils.js",
+    "public/js/toast.js",
+    "public/js/confirm-sheet.js",
+    "public/js/memory-crud.js",
+    "public/js/remember.js",
+  ]) {
     vm.runInContext(readFileSync(resolve(ROOT, f), "utf8"), ctx);
   }
   ctx.__els = els;
@@ -207,5 +274,79 @@ describe("capture receipts", () => {
   it("explains an outcome rather than only labelling it", () => {
     expect(headline({ action: "merged" })).toContain("You had written about this before");
     expect(headline({ kept_canonical: "abc" })).toContain("kept unconfirmed");
+  });
+});
+
+/**
+ * Removing a link between two memories.
+ *
+ * Irreversible enough to be worth asking about, and it used to ask with a
+ * browser confirm() — untranslatable past the browser's own UI language and
+ * visually unrelated to everything around it. It now goes through the one
+ * shared destructive-action sheet.
+ */
+describe("removing a link", () => {
+  /** A stand-in for the #view-related container, with one connection row. */
+  function relatedContainer() {
+    const open = { onclick: null as any };
+    const unlink = { onclick: null as any };
+    const row = {
+      dataset: { id: "c1", type: "relates_to" },
+      querySelector: (sel: string) => (sel === ".related-open" ? open : unlink),
+    };
+    return {
+      style: {} as Record<string, string>,
+      innerHTML: "",
+      querySelectorAll: () => [row],
+      __unlink: unlink,
+    };
+  }
+
+  const CONNECTIONS = {
+    ok: true,
+    connections: [{ id: "c1", type: "relates_to", label: "Relates to", provenance: "explicit", content: "The other memory", linkedAt: 1 }],
+  };
+
+  async function openedSheet() {
+    const ctx = load(async (url: string) => {
+      if (url.includes("/connections")) return { ok: true, json: async () => CONNECTIONS };
+      return { ok: true, json: async () => ({ ok: true }) };
+    });
+    const el = relatedContainer();
+    await ctx.loadRelated("m1", el);
+    return { ctx, el };
+  }
+
+  it("asks in the app's own sheet rather than a browser dialog", async () => {
+    const { ctx, el } = await openedSheet();
+    await el.__unlink.onclick();
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(true);
+    expect(ctx.__els.get("confirm-title").textContent).toBe("Remove this link?");
+    expect(ctx.__els.get("confirm-body").textContent).toContain("only the connection is deleted");
+    expect(ctx.__els.get("confirm-accept-btn").textContent).toBe("Remove link");
+    // No checkbox here — there is nothing to modify about removing a link.
+    expect(ctx.__els.get("confirm-check-row").style.display).toBe("none");
+    // The question has been asked, not answered.
+    expect((ctx.calls as any[]).some((c) => c.url.includes("/unlink"))).toBe(false);
+  });
+
+  it("only unlinks once the sheet is accepted, and then re-reads the list", async () => {
+    const { ctx, el } = await openedSheet();
+    await el.__unlink.onclick();
+    await ctx.runConfirmAction();
+    const unlink = (ctx.calls as any[]).filter((c) => c.url.includes("/unlink"));
+    expect(unlink.length).toBe(1);
+    expect(JSON.parse(unlink[0].init.body)).toEqual({ source_id: "m1", target_id: "c1", type: "relates_to" });
+    expect(ctx.__els.get("confirm-dialog").classList.contains("open")).toBe(false);
+    // The panel is refreshed so the removed row cannot linger.
+    expect((ctx.calls as any[]).filter((c) => c.url.includes("/connections")).length).toBe(2);
+  });
+
+  it("leaves the link alone when the sheet is dismissed", async () => {
+    const { ctx, el } = await openedSheet();
+    await el.__unlink.onclick();
+    ctx.closeConfirm();
+    await ctx.runConfirmAction();
+    expect((ctx.calls as any[]).some((c) => c.url.includes("/unlink"))).toBe(false);
   });
 });

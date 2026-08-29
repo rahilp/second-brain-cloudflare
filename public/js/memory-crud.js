@@ -36,7 +36,7 @@ async function saveAppend() {
   } catch (e) {
     btn.disabled = false
     btn.textContent = t('memories.appendSave')
-    alert(t('memories.appendFailed', { message: e.message }))
+    showToast(t('memories.appendFailed', { message: e.message }))
   }
 }
 
@@ -111,7 +111,7 @@ async function saveEdit() {
   } catch (e) {
     btn.disabled = false
     btn.textContent = t('memories.editSave')
-    alert(t('memories.editFailed', { message: e.message }))
+    showToast(t('memories.editFailed', { message: e.message }))
   }
 }
 
@@ -173,7 +173,7 @@ async function confirmForget() {
     // from under its own exit animation.
     refreshAll({ list: false })
   } catch (e) {
-    alert(t('memories.forgetFailed', { message: e.message }))
+    showToast(t('memories.forgetFailed', { message: e.message }))
   } finally {
     if (btn) {
       btn.disabled = false
@@ -434,16 +434,25 @@ async function loadRelated(id, el) {
         const c = data.connections.find((x) => x.id === row.dataset.id)
         if (c) openView({ id: c.id, content: c.content, tags: c.tags }, null)
       }
-      row.querySelector('.related-unlink').onclick = async () => {
-        if (!confirm(t('memories.removeLinkConfirm'))) return
-        try {
-          await fetch(`${WORKER_URL}/unlink`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-            body: JSON.stringify({ source_id: id, target_id: row.dataset.id, type: row.dataset.type }),
-          })
-        } catch {}
-        loadRelated(id, el)
+      row.querySelector('.related-unlink').onclick = () => {
+        // The app's own sheet, not the browser's: this dialog is the only one
+        // on the page that could not be translated or styled.
+        openDangerConfirm({
+          title: t('danger.removeLinkTitle'),
+          body: t('memories.removeLinkConfirm'),
+          confirmLabel: t('danger.removeLinkAction'),
+          onConfirm: async () => {
+            try {
+              await fetch(`${WORKER_URL}/unlink`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+                body: JSON.stringify({ source_id: id, target_id: row.dataset.id, type: row.dataset.type }),
+              })
+            } catch {}
+            await loadRelated(id, el)
+            closeConfirm()
+          },
+        })
       }
     })
   } catch {}
