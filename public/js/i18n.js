@@ -1083,7 +1083,7 @@ const I18N_IT = {
     insightsOff: 'Disattivati',
     insightsOn: 'Attivi',
     insightsHint:
-      'Quando è attivo, una volta a settimana il brain cerca collegamenti tra i ricordi condivisi e mette ciò che trova nella coda di revisione di tutti.',
+      'Quando è attivo, una volta a settimana il cervello cerca collegamenti tra i ricordi condivisi e mette ciò che trova nella coda di revisione di tutti.',
   },
   invite: {
     copy: 'Copia messaggio d’invito',

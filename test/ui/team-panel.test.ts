@@ -197,6 +197,16 @@ function jsonFetch(routes: Array<{ match: (url: string, init?: any) => boolean; 
   };
 }
 
+/**
+ * Let every pending microtask settle.
+ *
+ * renderTeam() starts its config loaders without awaiting them. A test that
+ * acts before they land is racing them, and an assertion made inside that
+ * window can pass on a value a loader was about to write anyway — which is how
+ * a reload assertion ends up true whether or not the reload happened.
+ */
+const drain = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 describe("team panel", () => {
   it("exposes every inline handler the markup calls", () => {
     const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
@@ -634,6 +644,7 @@ describe("team panel", () => {
   });
 
   it("a failing org-default change reports through the toast (never alert) and reloads the previous value", async () => {
+    let getCalls = 0;
     const { ctx, els, appended } = setup(
       jsonFetch([
         { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
@@ -643,7 +654,10 @@ describe("team panel", () => {
         },
         {
           match: (u) => u.endsWith("/config"),
-          reply: () => ({ ok: true, status: 200, json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "personal" } }) }),
+          reply: () => {
+            getCalls++;
+            return { ok: true, status: 200, json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "personal" } }) };
+          },
         },
       ]),
     );
@@ -651,8 +665,16 @@ describe("team panel", () => {
       throw new Error("alert() must not be used");
     };
     await ctx.loadTeam();
+    await drain(); // renderTeam()'s unawaited loaders land BEFORE the drag below
+    // A browser writes <select>.value before onchange fires; the fake DOM does
+    // not, so the test does it. Without this drag the assertion below would be
+    // asserting the value the load already left there — true whether or not the
+    // reload ran.
+    els.get("team-org-default").value = "company";
     await ctx.setTeamOrgDefault("company");
     expect(els.get("team-org-default").value).toBe("personal"); // reloaded after failure
+    expect(els.get("team-insights").value).toBe("off"); // the sibling row is not touched
+    expect(getCalls).toBe(2); // the render's read, then a fresh one after the refusal
     expect(appended[appended.length - 1].innerHTML).toContain("did not work");
   });
 
@@ -704,6 +726,7 @@ describe("team panel", () => {
   });
 
   it("a failing team-insights change reports through the toast (never alert) and reloads the server's value", async () => {
+    let getCalls = 0;
     const { ctx, els, appended } = setup(
       jsonFetch([
         { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
@@ -713,7 +736,14 @@ describe("team panel", () => {
         },
         {
           match: (u) => u.endsWith("/config"),
-          reply: () => ({ ok: true, status: 200, json: async () => ({ config: { TEAM_INSIGHTS: "on" } }) }),
+          reply: () => {
+            getCalls++;
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ config: { TEAM_INSIGHTS: "off", TEAM_DEFAULT_WORKSPACE: "personal" } }),
+            };
+          },
         },
       ]),
     );
@@ -721,9 +751,101 @@ describe("team panel", () => {
       throw new Error("alert() must not be used");
     };
     await ctx.loadTeam();
-    await ctx.setTeamInsights("off");
-    expect(els.get("team-insights").value).toBe("on"); // reloaded after failure, server's value
+    await drain(); // renderTeam()'s unawaited loaders land BEFORE the drag below
+    // The drag: a browser writes <select>.value before onchange fires, and the
+    // stored value is deliberately the OTHER one, so only a reload that really
+    // read the server can produce the expectation below.
+    els.get("team-insights").value = "on";
+    await ctx.setTeamInsights("on");
+    expect(els.get("team-insights").value).toBe("off"); // the server's value, not the drag
+    expect(els.get("team-org-default").value).toBe("personal"); // reloaded into the right control
+    expect(getCalls).toBe(2); // the render's read, then a fresh one after the refusal
     expect(appended[appended.length - 1].innerHTML).toContain("did not work");
+  });
+
+  it("narrows a team-org-default config value to one of its two options, whatever the server has", async () => {
+    async function orgDefaultValueFor(config: Record<string, unknown>) {
+      const { ctx, els } = setup(
+        jsonFetch([
+          { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+          { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config }) }) },
+        ]),
+      );
+      await ctx.loadTeam();
+      await ctx.loadTeamOrgDefault();
+      return els.get("team-org-default").value;
+    }
+    // Config values are free text in KV, and a <select> holding something that
+    // is not one of its <option>s renders BLANK — which reads as "unset" for a
+    // setting that is set. So every input class has to land on a real option,
+    // not just the two the UI itself writes.
+    const OPTIONS = ["company", "personal"];
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ TEAM_DEFAULT_WORKSPACE: "company" }, "company"],
+      [{ TEAM_DEFAULT_WORKSPACE: "personal" }, "personal"],
+      [{}, "personal"], // key absent
+      [{ TEAM_DEFAULT_WORKSPACE: "COMPANY" }, "personal"], // unexpected string
+      [{ TEAM_DEFAULT_WORKSPACE: "" }, "personal"], // empty string
+      [{ TEAM_DEFAULT_WORKSPACE: null }, "personal"],
+      [{ TEAM_DEFAULT_WORKSPACE: 42 }, "personal"], // KV round-trips whatever was PUT
+    ];
+    for (const [config, expected] of cases) {
+      const value = await orgDefaultValueFor(config);
+      expect(OPTIONS, `${JSON.stringify(config)} must land on a real <option>`).toContain(value);
+      expect(value, JSON.stringify(config)).toBe(expected);
+    }
+  });
+
+  it("renderTeam loads both config selects itself, over one shared GET /config", async () => {
+    let getCalls = 0;
+    const { ctx, els } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => {
+            getCalls++;
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "company", TEAM_INSIGHTS: "on" } }),
+            };
+          },
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await drain();
+    // Nothing here calls a loader by hand: rendering the screen is what has to
+    // fill these in, or a stored setting silently shows as its default.
+    expect(els.get("team-org-default").value).toBe("company");
+    expect(els.get("team-insights").value).toBe("on");
+    // Two rows, two keys, one request — the loaders share the read in flight
+    // rather than each paying for its own round trip on every render.
+    expect(getCalls).toBe(1);
+  });
+
+  it("a refused GET /config leaves both selects on their defaults rather than blank", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          // A 500 whose body still parses as a config: the status is the only
+          // thing saying not to trust it, so a read that ignored the status
+          // would render these values as though they were settings.
+          match: (u) => u.endsWith("/config"),
+          reply: () => ({
+            ok: false,
+            status: 500,
+            json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "company", TEAM_INSIGHTS: "on" } }),
+          }),
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await drain();
+    expect(els.get("team-org-default").value).toBe("personal");
+    expect(els.get("team-insights").value).toBe("off");
   });
 
   it("setTeamOrgDefault still PATCHes exactly its one key after sharing the helper with team-insights", async () => {
@@ -1014,6 +1136,7 @@ describe("team member view", () => {
       "submitNewMember",
       "submitTeamName",
       "setTeamOrgDefault",
+      "setTeamInsights",
     ]) {
       expect(html, `${fn} must not be reachable from the member view`).not.toContain(fn);
     }

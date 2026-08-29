@@ -678,6 +678,32 @@ async function setMyDefaultShare(value) {
 }
 
 /**
+ * The one in-flight GET /config, shared by every select reading from it.
+ *
+ * renderTeam() starts one loader per settings row and each wants the same blob,
+ * so without this the screen issues N identical requests to render N rows. The
+ * handle lives only while the request is in flight and is dropped the moment it
+ * settles, so this coalesces concurrent readers and never serves a cached body:
+ * a later read — the reload after a refused write, say — always goes to the
+ * server. Rejections propagate to every sharer, which is what each one's own
+ * catch arm already handles.
+ */
+let teamConfigRead = null
+
+function readTeamConfig() {
+  if (!teamConfigRead) {
+    teamConfigRead = (async () => {
+      const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+      if (!res.ok) throw new Error(String(res.status))
+      return await res.json()
+    })().finally(() => {
+      teamConfigRead = null
+    })
+  }
+  return teamConfigRead
+}
+
+/**
  * Read one config key into one <select>.
  *
  * `narrow` maps whatever the server has to one of the option values, because
@@ -689,9 +715,7 @@ async function loadTeamConfigSelect(selectId, key, narrow) {
   const sel = document.getElementById(selectId)
   if (!sel) return
   try {
-    const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
-    if (!res.ok) throw new Error(String(res.status))
-    const data = await res.json()
+    const data = await readTeamConfig()
     sel.value = narrow(data?.config?.[key])
   } catch {
     sel.value = narrow(undefined)
