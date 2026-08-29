@@ -82,6 +82,7 @@ export function makeMirrorStore(env: Env, writeCtx: WriteContext = OWNER_WRITE_C
     },
     async updateEntry(id, content) {
       const row = await env.DB.prepare(
+        // scope-exempt: by-id: the mirrored row this connector wrote
         `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
       if (!row) return false;

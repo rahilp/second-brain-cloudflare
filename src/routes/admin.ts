@@ -440,6 +440,7 @@ export async function handleAdminRoutes(
     const sourcesByInsight = new Map<string, ({ id: string; content: string } | { id: string; missing: true })[]>();
     if (pageIds.length) {
       const sourceRows = (await env.DB.prepare(
+        // scope-exempt: by-id: source ids come from the scoped insight page above
         `SELECT e.source_id AS insight_id, e.target_id AS id, m.content AS content
          FROM edges e LEFT JOIN entries m ON m.id = e.target_id
          WHERE e.type = 'drawn_from' AND e.source_id IN (${pageIds.map(() => "?").join(",")})`,
@@ -665,6 +666,7 @@ export async function handleAdminRoutes(
     // brain to drop, and crowding the vector query with candidates that recall
     // discards at hydration anyway.
     const { results: toProcess } = await env.DB.prepare(
+      // scope-exempt: admin repair backlog: deployment-wide by design, returns counts not content
       `SELECT id, content, tags, source, created_at FROM entries
        WHERE vector_ids = '[]' AND created_at < ? AND ${INDEXABLE_SQL}
        ORDER BY created_at DESC LIMIT 25`
@@ -698,6 +700,7 @@ export async function handleAdminRoutes(
     // dashboard presses this until `remaining` is 0, so counting rows the select
     // refuses to process would spin until the batch-made-no-progress guard.
     const remaining = await env.DB.prepare(
+      // scope-exempt: admin repair backlog: must match the SELECT above or the loop never reaches zero
       `SELECT COUNT(*) as count FROM entries WHERE vector_ids = '[]' AND created_at < ? AND ${INDEXABLE_SQL}`
     ).bind(graceCutoff).first() as Record<string, any> | null;
 
@@ -716,6 +719,7 @@ export async function handleAdminRoutes(
     const UNCLASSIFIED_WHERE = `tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%'`;
 
     const { results: toProcess } = await env.DB.prepare(
+      // scope-exempt: admin repair backlog: deployment-wide by design, returns counts not content
       `SELECT id, content, tags FROM entries
        WHERE ${UNCLASSIFIED_WHERE}
        ORDER BY created_at ASC LIMIT 25`
@@ -741,6 +745,7 @@ export async function handleAdminRoutes(
     }
 
     const remaining = await env.DB.prepare(
+      // scope-exempt: admin repair backlog: must match the SELECT above or the loop never reaches zero
       `SELECT COUNT(*) as count FROM entries WHERE ${UNCLASSIFIED_WHERE}`
     ).first() as Record<string, any> | null;
 

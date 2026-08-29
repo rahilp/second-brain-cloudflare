@@ -122,6 +122,7 @@ export async function compressTag(
     // never moves one user's content into another user's row. Where two workspaces carry
     // the same popular tag, the first pass rolls up its own rows and the guard defers the
     // rest to tomorrow's run, whose candidate query no longer sees the rolled-up rows.
+    // scope-exempt: cron: 24h repetition cooldown is deliberately corpus-wide — it gates repetition, not visibility
     const recentSynth = await env.DB.prepare(`
       SELECT id FROM entries
       WHERE tags LIKE '%"synthesized"%'

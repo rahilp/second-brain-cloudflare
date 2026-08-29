@@ -118,6 +118,7 @@ export async function expandGraph(
       // right arm alone (`a OR b AND c` ≡ `a OR (b AND c)`).
       const sql = scope
         ? `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE (source_id IN (${ph}) OR target_id IN (${ph})) AND ${scope.clause} ORDER BY weight DESC`
+        // scope-exempt: identity-less branch: pre-tenancy callers; the scoped arm is the line above
         : `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`;
       const { results } = await env.DB.prepare(sql)
         .bind(...batch, ...batch, ...(scope?.bindings ?? [])).all() as { results: any[] };
@@ -227,6 +228,7 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     const { results } = await env.DB.prepare(
       scope
         ? `SELECT source_id, target_id FROM edges WHERE ${scope.clause} ORDER BY weight DESC LIMIT ${limit * 4}`
+        // scope-exempt: identity-less branch: pre-tenancy callers; the scoped arm is the line above
         : `SELECT source_id, target_id FROM edges ORDER BY weight DESC LIMIT ${limit * 4}`
     ).bind(...(scope?.bindings ?? [])).all() as { results: { source_id: string; target_id: string }[] };
     const ids: string[] = [];
@@ -284,6 +286,7 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     const ph = batch.map(() => "?").join(", ");
     const sql = scope
       ? `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE (source_id IN (${ph}) OR target_id IN (${ph})) AND ${scope.clause} ORDER BY weight DESC`
+      // scope-exempt: identity-less branch: pre-tenancy callers; the scoped arm is the line above
       : `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`;
     const { results } = await env.DB.prepare(sql)
       .bind(...batch, ...batch, ...(scope?.bindings ?? [])).all() as { results: any[] };

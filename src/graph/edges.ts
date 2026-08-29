@@ -84,6 +84,7 @@ export async function deleteEdge(
   type: string | undefined,
   env: Env,
 ): Promise<number> {
+  // scope-exempt: by-id: both endpoints checked readable at the route/MCP edge
   let sql = `DELETE FROM edges WHERE ((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))`;
   const bindings: string[] = [sourceId, targetId, targetId, sourceId];
   if (type) {

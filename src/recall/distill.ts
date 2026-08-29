@@ -125,6 +125,7 @@ export async function distillToRareTerms(
     if (scope) {
       where += `${where ? " AND" : ""} ${scope.clause}`;
     }
+    // scope-exempt: scoped: the caller's clause is appended into where above when an identity is present
     const row = await env.DB.prepare(`SELECT COUNT(*) AS total, ${sums} FROM entries${where ? ` WHERE${where}` : ""}`)
       .bind(...uniq.map(t => `%${t}%`), ...timeBindings, ...(scope?.bindings ?? [])).first() as Record<string, number> | null;
     if (!row || !row.total) return { query: content.join(" "), df: null, total: null };

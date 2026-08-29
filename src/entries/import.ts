@@ -217,6 +217,7 @@ async function loadExistingIds(env: Env, ids: string[]): Promise<Set<string>> {
     const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
+      // scope-exempt: by-id: primary-key existence check for dedupe; a collision is skipped, never read
       `SELECT id FROM entries WHERE id IN (${placeholders})`,
     ).bind(...batch).all() as { results: { id: string }[] };
     for (const row of results) found.add(row.id);
@@ -231,6 +232,7 @@ async function loadExistingEdgeKeys(env: Env, endpoints: string[]): Promise<Set<
     const batch = endpoints.slice(i, i + EDGE_ENDPOINT_QUERY_BATCH);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
+      // scope-exempt: by-id: edge-key existence check for dedupe; endpoints are not read
       `SELECT source_id, target_id, type FROM edges WHERE source_id IN (${placeholders}) OR target_id IN (${placeholders})`,
     ).bind(...batch, ...batch).all() as {
       results: { source_id: string; target_id: string; type: string }[];

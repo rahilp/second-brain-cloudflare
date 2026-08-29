@@ -117,6 +117,7 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // shipped, zero unreviewed insights meant zero comparisons and a guard that
     // could not fire at all. Reviewing promptly was switching it off.
     const { results: recentInsightRows } = await env.DB.prepare(
+      // scope-exempt: cron: system-authored novelty floor; content is compared, never returned
       `SELECT content FROM entries WHERE ${WRITTEN_INSIGHT_SQL}
        ORDER BY created_at DESC LIMIT ?`,
     ).bind(RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };

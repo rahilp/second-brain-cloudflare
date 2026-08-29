@@ -23,6 +23,9 @@ jobs:
           cache: npm
       - run: npm ci --legacy-peer-deps
       - run: npm run typecheck
+      # The "no unscoped corpus query" rule from src/lib/scope.ts, machine-checked.
+      # There is no ESLint in this repo; this is a plain Node script.
+      - run: npm run check:scope
       - run: npm run test:coverage
       # Bundles the Worker without deploying (no auth/network). Catches build
       # or config errors that typecheck and tests miss. A fresh checkout has no

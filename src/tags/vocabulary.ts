@@ -173,6 +173,7 @@ async function readCache(env: Env, key: string = TAG_VOCABULARY_KEY): Promise<Ca
  */
 async function scanTagVocabulary(env: Env): Promise<string[]> {
   const { results } = await env.DB.prepare(
+    // scope-exempt: legacy: identity-less scan retained for pre-tenancy callers; the scoped scan is scanTagVocabularyByWorkspace below
     `SELECT DISTINCT value FROM entries, json_each(entries.tags)`
   ).all();
   return (results as { value: unknown }[])
