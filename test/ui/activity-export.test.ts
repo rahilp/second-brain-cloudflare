@@ -343,14 +343,21 @@ describe("the activity CSV export", () => {
         row(1, { at: AT_MS, actor: "Good row" }),
         row(2, { at: null, actor: "Null clock" }),
         row(3, { at: "not a date at all", actor: "Junk clock" }),
-        row(4, { at: 1755680400000, actor: "Epoch row" }),
+        // ZERO, which is not a curiosity: the route spells the field
+        // `Number(r.created_at) || 0`, so 0 is the literal value the wire
+        // carries for a row with no clock. The view pins it (test/ui/
+        // team-activity.test.ts drives `at: 0` through the when-cell); without
+        // it here, `activityIsoAt` could start re-admitting zero and write
+        // 1970-01-01T00:00:00.000Z into a compliance CSV with the suite green.
+        row(4, { at: 0, actor: "Zero clock" }),
+        row(5, { at: 1755680400000, actor: "Epoch row" }),
       ]),
     );
     await ctx.exportActivityCsv(els.get("activity-export"));
     expect(toasts).toEqual([]);
     expect(createdFrom).toHaveLength(1);
     const lines = (await rawText(createdFrom[0])).slice(1).split("\r\n");
-    expect(lines).toHaveLength(6);
+    expect(lines).toHaveLength(7);
     expect(lines[1].startsWith('"",')).toBe(true);
     expect(lines[1]).toContain('"No clock"');
     expect(lines[2].startsWith('"2026-08-20T09:00:00.000Z",')).toBe(true);
@@ -359,8 +366,14 @@ describe("the activity CSV export", () => {
     expect(lines[3].startsWith('"",')).toBe(true);
     expect(lines[3]).not.toContain("1970");
     expect(lines[4].startsWith('"",')).toBe(true);
+    // The wire's own "no clock": empty, and no 1970 anywhere in the row. Read
+    // as the CELL as well as the row, because an ISO column has no timezone to
+    // hide 1969 in the way the view's local rendering does.
+    expect(lines[5].startsWith('"",')).toBe(true);
+    expect(lines[5]).toContain('"Zero clock"');
+    expect(lines[5]).not.toContain("1970");
     // Epoch milliseconds are what the endpoint actually sends, and they work.
-    expect(lines[5].startsWith('"2025-08-20T09:00:00.000Z",')).toBe(true);
+    expect(lines[6].startsWith('"2025-08-20T09:00:00.000Z",')).toBe(true);
   });
 
   it("says so rather than downloading an empty log when the body is not a feed", async () => {
