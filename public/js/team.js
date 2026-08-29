@@ -11,9 +11,10 @@ let teamMembers = []
 let teamYouId = null
 /** The caller's teams, oldest first — [0] is the one "share with the team" means. */
 let teamWorkspaces = []
-// The plaintext token the server hands back exactly once. Dropped the moment
-// the reveal is dismissed — after that, rotation is the only way back.
-let lastTeamToken = ''
+// The plaintext token the server hands back exactly once, plus who it is for.
+// The token is dropped the moment the reveal is dismissed — after that,
+// rotation is the only way back.
+let lastTeamInvite = { name: '', email: '', token: '' }
 
 /**
  * The team's name, for everyone.
@@ -231,8 +232,8 @@ function showTeamError(message) {
  * the point is to sit there until it has been copied, and a modal invites
  * dismissing it by accident.
  */
-function showTeamToken(token, name) {
-  lastTeamToken = token
+function showTeamToken(token, name, email) {
+  lastTeamInvite = { name, email: email || '', token }
   const wrap = document.getElementById('team-token-reveal')
   if (!wrap) return
   const sub = document.getElementById('team-token-for')
@@ -241,6 +242,9 @@ function showTeamToken(token, name) {
   if (val) val.textContent = token
   const copyBtn = document.getElementById('team-copy-btn')
   if (copyBtn) copyBtn.textContent = t('team.copy')
+  const mailBtn = document.getElementById('team-invite-mail-btn')
+  // Both branches: a member added without an email has no address to mail.
+  if (mailBtn) mailBtn.style.display = lastTeamInvite.email ? '' : 'none'
   wrap.style.display = ''
   if (wrap.scrollIntoView) wrap.scrollIntoView({ block: 'nearest' })
 }
@@ -250,18 +254,56 @@ function closeTeamTokenReveal() {
   if (wrap) wrap.style.display = 'none'
   const val = document.getElementById('team-token-value')
   if (val) val.textContent = ''
-  lastTeamToken = ''
+  lastTeamInvite.token = ''
 }
 
 function copyTeamToken() {
-  if (!lastTeamToken || !navigator.clipboard) return
-  navigator.clipboard.writeText(lastTeamToken)
+  if (!lastTeamInvite.token || !navigator.clipboard) return
+  navigator.clipboard.writeText(lastTeamInvite.token)
   const btn = document.getElementById('team-copy-btn')
   if (!btn) return
   btn.textContent = t('team.copied')
   setTimeout(() => {
     btn.textContent = t('team.copy')
   }, 1500)
+}
+
+/** The covering note an admin would otherwise have to compose by hand, every time. */
+function inviteMessage() {
+  return t('invite.body', { name: lastTeamInvite.name, url: WORKER_URL, token: lastTeamInvite.token })
+}
+
+function copyInviteMessage() {
+  if (!lastTeamInvite.token || !navigator.clipboard) return
+  navigator.clipboard.writeText(inviteMessage())
+  const btn = document.getElementById('team-invite-copy-btn')
+  if (!btn) return
+  btn.textContent = t('invite.copied')
+  setTimeout(() => {
+    btn.textContent = t('invite.copy')
+  }, 1500)
+}
+
+/**
+ * The one-time token rides in this URL's `body` parameter. A plain mailto:
+ * handoff to the OS mail client is not a navigation and leaves no history
+ * entry, but a user with a WEBMAIL protocol handler registered (e.g. Gmail
+ * via registerProtocolHandler) gets this rewritten by the browser into a real
+ * navigation — `https://mail.google.com/…?url=mailto%3A…` — which lands the
+ * token in browser history and in that webmail provider's request logs.
+ *
+ * Kept anyway: the admin has already chosen to send a credential by email,
+ * which is an insecure channel regardless — the token sits in the
+ * recipient's inbox and the sender's Sent folder no matter what this
+ * function does. The webmail-handler path adds history and a provider log
+ * on top of a risk the admin already accepted; stripping the token from the
+ * email would leave an invite nobody can act on, which defeats the feature.
+ * `copyInviteMessage()` (clipboard, no URL, no navigation) is the
+ * lower-exposure option and is the button placed first/primary in the row.
+ */
+function emailInvite() {
+  if (!lastTeamInvite.token) return
+  window.location.href = `mailto:${encodeURIComponent(lastTeamInvite.email)}?subject=${encodeURIComponent(t('invite.subject'))}&body=${encodeURIComponent(inviteMessage())}`
 }
 
 async function submitNewMember() {
@@ -285,7 +327,7 @@ async function submitNewMember() {
     const r = await postTeam('/team/members', { name, ...(email ? { email } : {}), role })
     if (r.status === 409) throw new Error(t('team.duplicateEmail'))
     if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    showTeamToken(r.data.token, r.data.member?.name || name)
+    showTeamToken(r.data.token, r.data.member?.name || name, email)
     if (nameEl) nameEl.value = ''
     if (emailEl) emailEl.value = ''
     if (roleEl) roleEl.value = 'member'
@@ -303,50 +345,91 @@ async function submitNewMember() {
 async function rotateTeamToken(id) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  if (!confirm(t('team.rotateConfirm', { name: teamMemberLabel(m) }))) return
-  try {
-    const r = await postTeam('/team/members/token', { id })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    showTeamToken(r.data.token, teamMemberLabel(m))
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
-  }
+  openDangerConfirm({
+    title: t('team.rotateTitle'),
+    body: t('team.rotateConfirm', { name: teamMemberLabel(m) }),
+    confirmLabel: t('team.rotateToken'),
+    // Progress copy is this action's to own — runConfirmAction disables the
+    // button for the duration, but has no idea what to say while it waits.
+    onConfirm: async () => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.rotating')
+      try {
+        const r = await postTeam('/team/members/token', { id })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        showTeamToken(r.data.token, teamMemberLabel(m), m.email)
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      closeConfirm()
+    },
+  })
 }
 
+/**
+ * Suspending someone else's access is destructive enough to gate on the
+ * sheet; restoring it is not. Restore is instantly reversible by the Suspend
+ * button sitting right beside it, and a confirmation dialog in front of an
+ * undoable act only trains people to dismiss dialogs without reading them.
+ */
 async function setTeamSuspended(id, suspended) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  const question = suspended ? t('team.suspendConfirm', { name: teamMemberLabel(m) }) : t('team.restoreConfirm', { name: teamMemberLabel(m) })
-  if (!confirm(question)) return
-  try {
-    const r = await postTeam('/team/members/suspend', { id, suspended })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    await loadTeam()
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+  if (!suspended) {
+    try {
+      const r = await postTeam('/team/members/suspend', { id, suspended })
+      if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+      await loadTeam()
+      showToast(t('team.restoredToast'))
+    } catch (e) {
+      showToast(e.message || t('team.actionFailed'))
+    }
+    return
   }
+  openDangerConfirm({
+    title: t('team.suspendTitle'),
+    body: t('team.suspendConfirm', { name: teamMemberLabel(m) }),
+    confirmLabel: t('team.suspend'),
+    onConfirm: async () => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.suspending')
+      try {
+        const r = await postTeam('/team/members/suspend', { id, suspended })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        await loadTeam()
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      closeConfirm()
+    },
+  })
 }
 
 /**
  * Hard offboarding. The server refuses self-removal and last-admin removal;
- * the confirm here carries the destructive detail — the member's PRIVATE
+ * the sheet body carries the destructive detail — the member's PRIVATE
  * memories die with the account, shared ones stay.
  */
 async function removeTeamMember(id) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  const question = t('team.removeConfirm', {
-    name: teamMemberLabel(m),
-    n: Number(m.privateEntries) || 0,
+  openDangerConfirm({
+    title: t('team.removeTitle'),
+    body: t('team.removeConfirm', { name: teamMemberLabel(m), n: Number(m.privateEntries) || 0 }),
+    confirmLabel: t('team.remove'),
+    onConfirm: async () => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.removing')
+      try {
+        const r = await postTeam('/team/members/remove', { id })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        await loadTeam()
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      closeConfirm()
+    },
   })
-  if (!confirm(question)) return
-  try {
-    const r = await postTeam('/team/members/remove', { id })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    await loadTeam()
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
-  }
 }
 
 // ── Capture-visibility defaults ───────────────────────────────────────────
@@ -368,7 +451,7 @@ async function setMemberDefaultShare(id, value) {
     m.defaultShare = value === 'inherit' ? '' : value
     renderTeam()
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+    showToast(e.message || t('team.actionFailed'))
     await loadTeam()
   }
 }
@@ -396,7 +479,7 @@ async function setTeamOrgDefault(value) {
     })
     if (!res.ok) throw new Error(t('team.actionFailed'))
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+    showToast(e.message || t('team.actionFailed'))
     await loadTeamOrgDefault()
   }
 }
