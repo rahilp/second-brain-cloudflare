@@ -38,7 +38,8 @@ const SCHEMA_PROBE_RESULTS = [
     "entry_events", "admin_events", "maintenance_cursor"].map(name => ({ kind: "table", name })),
   ...["idx_entries_created_at", "idx_entries_source", "idx_entries_workspace_created",
     "idx_edges_source", "idx_edges_target", "idx_edges_weight", "idx_insight_candidates_queue",
-    "idx_workspaces_kind", "idx_users_token_hash", "idx_entry_events_entry", "idx_admin_events_created"]
+    "idx_workspaces_kind", "idx_users_token_hash", "idx_entry_events_entry",
+    "idx_entry_events_created", "idx_admin_events_created"]
     .map(name => ({ kind: "index", name })),
   ...["id", "content", "tags", "source", "created_at", "vector_ids", "recall_count",
     "importance_score", "contradiction_wins", "contradiction_losses", "updated_at",

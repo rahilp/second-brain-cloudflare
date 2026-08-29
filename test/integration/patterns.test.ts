@@ -289,16 +289,34 @@ describe("POST /patterns/resolve — in bulk", () => {
   it("costs a fixed number of round trips however many patterns are in it", async () => {
     // The reason bulk exists at all: a free-plan invocation gets roughly 50 D1
     // queries, so a per-id loop would put a ceiling on the batch size.
-    sq = await migrated();
-    for (let i = 0; i < 40; i++) seedPattern(sq, `p${i}`, `Pattern ${i}`);
-    sq.issued.length = 0;
+    //
+    // Measured at TWO id counts rather than pinned at one, because flatness is
+    // the property and a single number only pins it by implication. The audit
+    // trail is the case that made the difference matter: writing one
+    // entry_events row per resolution through a per-id auditEvent would have
+    // left this number correct for 5 ids and 40 over budget for 97, so the
+    // route hands the whole trail to ONE batch.
+    async function cost(n: number): Promise<{ total: number; unbatched: number }> {
+      sq?.close();
+      sq = await migrated();
+      for (let i = 0; i < n; i++) seedPattern(sq, `p${i}`, `Pattern ${i}`);
+      sq.issued.length = 0;
+      const pending: Promise<unknown>[] = [];
+      await worker.fetch(
+        req("POST", "/patterns/resolve", { body: { ids: Array.from({ length: n }, (_, i) => `p${i}`), action: "dismiss" } }),
+        envOf(sq),
+        { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as any,
+      );
+      // Settled, because the audit batch is handed to waitUntil and the double
+      // collapses a batch into its single log entry only once it resolves.
+      await Promise.all(pending);
+      return {
+        total: sq.issued.length,
+        unbatched: sq.issued.filter(x => !x.startsWith("BATCH")).length,
+      };
+    }
 
-    await worker.fetch(
-      req("POST", "/patterns/resolve", { body: { ids: Array.from({ length: 40 }, (_, i) => `p${i}`), action: "dismiss" } }),
-      envOf(sq), ctx,
-    );
-
-    // Six round trips, flat in the 40 ids, which is what this measures.
+    // Seven round trips, flat in the id count, which is what this measures.
     //
     // Assert the TOTAL rather than only the unbatched statements. Both numbers
     // are pinned below, but the total is the one that means something: a batch
@@ -307,11 +325,14 @@ describe("POST /patterns/resolve — in bulk", () => {
     // cost changing at all. That is exactly what happened when identity
     // resolution began carrying the throttled users.last_used_at stamp in the
     // same batch as its read — unbatched went 4 -> 3, total stayed 6.
-    expect(sq.issued).toHaveLength(6);
-    // The route's own SELECT, plus v3's fixed identity cost on this first
-    // request against a fresh database: the token→identity batch and the
-    // one-time tenant bootstrap (two lookups + a batch; memoised afterwards).
-    expect(sq.issued.filter(s => !s.startsWith("BATCH"))).toHaveLength(3);
+    //
+    // MOVED 6 -> 7: the entry_events trail for the whole request, one batch.
+    // The route's own SELECT plus v3's fixed identity cost on this first
+    // request against a fresh database (the token→identity batch and the
+    // one-time tenant bootstrap: two lookups + a batch, memoised afterwards)
+    // keep the unbatched count at 3.
+    expect(await cost(40)).toEqual({ total: 7, unbatched: 3 });
+    expect(await cost(5)).toEqual({ total: 7, unbatched: 3 });
   });
 
   it("skips what someone else already ruled on rather than failing the batch", async () => {
@@ -493,5 +514,192 @@ describe("GET /patterns — the layer and the author of each row", () => {
     expect(patterns.patterns[0].actor_name).toBe("Second Brain");
     expect(list.find((r: any) => r.id === "i-co").actor_name).toBe("Second Brain");
     expect(entry.entry.actor_name).toBe("Second Brain");
+  });
+});
+
+/**
+ * The record of a resolution.
+ *
+ * POST /patterns/resolve applies no author lock, and that is deliberate: an
+ * insight has `actor_id = ""` and no author, so it is a shared suggestion and
+ * any member acting on one is the feature working. What was missing is the
+ * other half — nothing recorded that it happened, so on a team brain a member
+ * could dismiss a company-layer insight for everyone and the compliance view
+ * built to watch exactly this was blind to it.
+ *
+ * Two names rather than one plus a payload flag, for the reason
+ * member_suspended and member_unsuspended are two names: an auditor scanning
+ * for one outcome should not have to parse a payload.
+ */
+describe("POST /patterns/resolve — the entry_events record", () => {
+  /** Collects waitUntil promises, so the fire-and-forget writes can be awaited. */
+  function collectingCtx() {
+    const pending: Promise<unknown>[] = [];
+    return {
+      ctx: { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as any,
+      async settle() {
+        while (pending.length) {
+          const batch = pending.splice(0, pending.length);
+          await Promise.all(batch);
+        }
+      },
+    };
+  }
+
+  async function eventsOf(s: SqliteD1): Promise<Record<string, any>[]> {
+    const { results } = await s.db
+      .prepare(`SELECT entry_id, actor_id, event, payload FROM entry_events ORDER BY rowid ASC`)
+      .all();
+    return (results ?? []) as Record<string, any>[];
+  }
+
+  async function ownerId(s: SqliteD1): Promise<string> {
+    const { results } = await s.db.prepare(`SELECT id FROM users WHERE role = 'admin' LIMIT 1`).all();
+    return (results as any)[0].id as string;
+  }
+
+  it("confirm writes one insight_confirmed row naming the actor and the entry", async () => {
+    sq = await migrated();
+    seedPattern(sq, "p1", "You tend to ship on Fridays");
+    const { ctx: c, settle } = collectingCtx();
+
+    const res = await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "p1", action: "confirm" } }), envOf(sq), c,
+    );
+    expect(res.status).toBe(200);
+    await settle();
+
+    const rows = await eventsOf(sq);
+    expect(rows.length).toBe(1);
+    expect(rows[0].event).toBe("insight_confirmed");
+    expect(rows[0].entry_id).toBe("p1");
+    expect(rows[0].actor_id).toBe(await ownerId(sq));
+  });
+
+  it("dismiss writes insight_dismissed, a different name and not a payload flag", async () => {
+    sq = await migrated();
+    seedPattern(sq, "p1", "You tend to dismiss patterns");
+    const { ctx: c, settle } = collectingCtx();
+
+    const res = await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "p1", action: "dismiss" } }),
+      envOf(sq, { VECTORIZE: makeVectorizeMock({ deleteByIds: vi.fn().mockResolvedValue({ mutationId: "m" }) }) }), c,
+    );
+    expect(res.status).toBe(200);
+    await settle();
+
+    const rows = await eventsOf(sq);
+    expect(rows.map(r => r.event)).toEqual(["insight_dismissed"]);
+    expect(rows[0].entry_id).toBe("p1");
+  });
+
+  it("writes one row per RESOLVED id in a bulk call, and none for the ones it skipped", async () => {
+    sq = await migrated();
+    seedPattern(sq, "still-pending", "Pattern A");
+    seedPattern(sq, "already-dismissed", "Pattern B", ["status:deprecated"]);
+    sq.seed({ id: "not-a-pattern", content: "Just a memory", createdAt: 1000, tags: ["work"] });
+    const { ctx: c, settle } = collectingCtx();
+
+    const data = await (await worker.fetch(
+      req("POST", "/patterns/resolve", {
+        body: { ids: ["still-pending", "already-dismissed", "not-a-pattern", "ghost"], action: "dismiss" },
+      }),
+      envOf(sq, { VECTORIZE: makeVectorizeMock({ deleteByIds: vi.fn().mockResolvedValue({ mutationId: "m" }) }) }), c,
+    )).json() as any;
+    expect(data).toMatchObject({ resolved: 1, skipped: 3 });
+    await settle();
+
+    // A skipped row was not ruled on, so recording one would be a false entry
+    // in an INSERT-only trail nothing can correct.
+    expect((await eventsOf(sq)).map(r => [r.entry_id, r.event])).toEqual([["still-pending", "insight_dismissed"]]);
+  });
+
+  it("a rejected resolution writes no row at all", async () => {
+    sq = await migrated();
+    const { ctx: c, settle } = collectingCtx();
+
+    expect((await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "ghost", action: "confirm" } }), envOf(sq), c,
+    )).status).toBe(404);
+    await settle();
+    expect(await eventsOf(sq)).toEqual([]);
+
+    sq.seed({ id: "normal", content: "Just a memory", createdAt: 1000, tags: ["work"] });
+    expect((await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "normal", action: "confirm" } }), envOf(sq), c,
+    )).status).toBe(400);
+    await settle();
+    expect(await eventsOf(sq)).toEqual([]);
+  });
+
+  it("an id outside the caller's scope writes no row", async () => {
+    sq = await migrated();
+    // Another workspace entirely: the route's own SELECT is scoped, so this id
+    // resolves to nothing and there is nothing to record.
+    sq.db.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id)
+       VALUES ('foreign', 'Someone else''s insight', '["auto-insight"]', 'system', 1000, '[]', 'ws-elsewhere', 'usr-someone')`,
+    ).run();
+    const { ctx: c, settle } = collectingCtx();
+
+    expect((await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "foreign", action: "dismiss" } }), envOf(sq), c,
+    )).status).toBe(404);
+    await settle();
+    expect(await eventsOf(sq)).toEqual([]);
+    expect(tagsOf(sq, "foreign")).not.toContain("status:deprecated");
+  });
+
+  it("a failing audit write does not fail the resolution", async () => {
+    sq = await migrated();
+    seedPattern(sq, "p1", "You tend to ship on Fridays");
+    const { ctx: c, settle } = collectingCtx();
+
+    const base = dbOf(sq);
+    const db = {
+      ...base,
+      prepare: (sql: string) =>
+        sql.includes("INSERT INTO entry_events")
+          ? { bind: () => ({ run: () => Promise.reject(new Error("entry_events is on fire")) }) }
+          : base.prepare(sql),
+    };
+
+    const res = await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "p1", action: "confirm" } }),
+      makeTestEnv(db as any, {} as any), c,
+    );
+    // The resolution is the user-visible act; the trail must never be able to
+    // undo it.
+    expect(res.status).toBe(200);
+    expect(tagsOf(sq, "p1")).toContain("status:canonical");
+    await expect(settle()).resolves.toBeUndefined();
+    expect(await eventsOf(sq)).toEqual([]);
+  });
+
+  it("survives an audit write that throws SYNCHRONOUSLY, not just one that rejects", async () => {
+    // The rejection case above is covered by `.catch`. This one is not: prepare
+    // and batch run during the argument expression, so a synchronous throw
+    // escapes into the route and fails a resolution D1 has already committed.
+    sq = await migrated();
+    seedPattern(sq, "p1", "You tend to ship on Fridays");
+    const { ctx: c, settle } = collectingCtx();
+
+    const base = dbOf(sq);
+    const db = {
+      ...base,
+      prepare: (sql: string) => {
+        if (sql.includes("INSERT INTO entry_events")) throw new Error("entry_events is gone");
+        return base.prepare(sql);
+      },
+    };
+
+    const res = await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "p1", action: "confirm" } }),
+      makeTestEnv(db as any, {} as any), c,
+    );
+    expect(res.status).toBe(200);
+    expect(tagsOf(sq, "p1")).toContain("status:canonical");
+    await settle();
+    expect(await eventsOf(sq)).toEqual([]);
   });
 });
