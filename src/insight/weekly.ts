@@ -92,6 +92,7 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // being drawn under the old rule until the pool empties. Free: the JOIN
     // was already selecting these rows, this only widens the column list.
     const { results } = await env.DB.prepare(
+      // scope-exempt: cron: no caller to scope to; both workspaces are projected and compared into inputWorkspaces below, and a pair spanning two is written to '' where no member can read it
       `SELECT c.id, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
               a.tags AS a_tags, b.tags AS b_tags,
               a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id

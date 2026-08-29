@@ -115,6 +115,7 @@ export async function inferEdgesOnWrite(
   // workspace the entry itself lives in — invisible to that owner's scoped walks.
   // One read per write batch; ids are globally unique so no scoping is needed.
   const source = await env.DB.prepare(
+    // scope-exempt: by-id: reads the source row's own workspace to stamp the edge with it
     `SELECT workspace_id FROM entries WHERE id = ?`
   ).bind(newId).first<{ workspace_id: string | null }>();
   const workspaceId = source?.workspace_id ?? "";

@@ -243,6 +243,7 @@ export async function appendToEntry(
   writeCtx: WriteContext = OWNER_WRITE_CONTEXT
 ): Promise<boolean> {
   const row = await env.DB.prepare(
+    // scope-exempt: by-id: routes gate with getReadableEntry + assertCanEditContent
     `SELECT vector_ids, workspace_id FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
 

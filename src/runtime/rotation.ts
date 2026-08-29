@@ -47,6 +47,7 @@ export async function nextWorkspace(env: Env): Promise<string | null> {
     if (next === undefined) {
       // Past the end of the ring (or an empty corpus): wrap to the first workspace.
       const wrap = await env.DB.prepare(
+        // scope-exempt: cron: ring wrap-around; returns one workspace id, never a row
         `SELECT DISTINCT workspace_id FROM entries ORDER BY workspace_id LIMIT 1`,
       ).all();
       next = wrap.results[0]?.workspace_id as string | undefined;

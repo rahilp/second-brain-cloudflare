@@ -100,7 +100,7 @@ export async function checkDuplicateAndContradiction(
 
       const placeholders = parentIds.map(() => "?").join(", ");
       const { results: rows } = await env.DB.prepare(
-        // scope-exempt: by-id: parent ids come from the workspace-filtered Vectorize query above
+        // scope-exempt: by-id: parent ids come from the Vectorize query above, which is workspace-filtered ONLY when a workspaceId was passed and Vectorize accepted the filter (queryVectorizeScoped falls back to unfiltered); the ids are re-checked against the caller's scope by the callers that have one
         `SELECT id, content FROM entries WHERE id IN (${placeholders})`
       ).bind(...parentIds).all() as { results: { id: string; content: string }[] };
 

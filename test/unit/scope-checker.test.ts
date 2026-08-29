@@ -124,6 +124,130 @@ describe("scanSource", () => {
   });
 });
 
+/**
+ * Evasions, in the reviewer's priority order. Every case here is a query that a
+ * reader would call unscoped and that an earlier draft of this checker passed.
+ *
+ * The governing rule is that a FALSE POSITIVE costs someone thirty seconds
+ * writing an annotation, and a FALSE NEGATIVE is a leak with a green tick beside
+ * it. Where the lexer cannot decide, these expect it to fail loudly.
+ */
+describe("scanSource — evasions", () => {
+  it("(a) does not accept workspace_id in the SELECT list as a scope clause", () => {
+    // The confirmed false pass: a projected column is not a predicate. This query
+    // has no WHERE at all.
+    const r = scanSource(
+      "const q = `SELECT id, content, workspace_id FROM entries ORDER BY created_at LIMIT ?`;",
+    );
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("FROM entries");
+  });
+
+  it("(a) still accepts workspace_id when it is actually a predicate", () => {
+    for (const sql of [
+      "`SELECT id FROM entries WHERE workspace_id IN (?, ?)`",
+      "`SELECT id FROM edges WHERE workspace_id = ?`",
+      "`SELECT DISTINCT workspace_id FROM entries WHERE workspace_id > ?`",
+      "`SELECT id FROM entries e WHERE e.workspace_id IN (?, ?)`",
+    ]) {
+      expect([sql, scanSource(`const q = ${sql};`).violations]).toEqual([sql, []]);
+    }
+  });
+
+  it("(b) fails a two-alias join with one alias left unscoped", () => {
+    // Exactly the /insights/dry-run leak with one alias dropped — the single
+    // highest-value regression this checker exists to catch.
+    const r = scanSource(
+      "const q = `SELECT a.content, b.content FROM insight_candidates c" +
+      " JOIN entries a ON a.id = c.a_id JOIN entries b ON b.id = c.b_id" +
+      " WHERE ${aScope.clause}`;",
+    );
+    expect(r.violations.length).toBe(1);
+  });
+
+  it("(b) passes the same join once both aliases are scoped", () => {
+    const r = scanSource(
+      "const q = `SELECT a.content, b.content FROM insight_candidates c" +
+      " JOIN entries a ON a.id = c.a_id JOIN entries b ON b.id = c.b_id" +
+      " WHERE ${aScope.clause} AND ${bScope.clause}`;",
+    );
+    expect(r.violations).toEqual([]);
+  });
+
+  it("(b) does not let two clauses on the SAME alias cover a second one", () => {
+    // Counting predicates is not enough: both of these name `a`, so `b` is still
+    // unscoped even though there are as many clauses as tables.
+    const r = scanSource(
+      "const q = `SELECT a.content FROM entries a JOIN entries b ON b.id = a.parent" +
+      " WHERE a.${scope.clause} AND a.${otherScope.clause}`;",
+    );
+    expect(r.violations.length).toBe(1);
+  });
+
+  it("(b) names the alias that is actually missing a clause", () => {
+    // The GET /patterns shape (finding 1): the edges alias is pinned by id, the
+    // entries alias is what returns content. An alias-prefixed clause is
+    // attributed to its own alias rather than counted against whichever table
+    // reference it reaches first, so the report names `edges e` and not `entries m`.
+    const withScope = scanSource(
+      "const q = `SELECT m.content FROM edges e" +
+      " LEFT JOIN entries m ON m.id = e.target_id AND m.${scope.clause}" +
+      " WHERE e.source_id IN (${ph})`;",
+    );
+    expect(withScope.violations.map(v => v.unscoped)).toEqual([["edges e"]]);
+
+    // And without it, both are reported — this is the query as it shipped.
+    const without = scanSource(
+      "const q = `SELECT m.content FROM edges e" +
+      " LEFT JOIN entries m ON m.id = e.target_id" +
+      " WHERE e.source_id IN (${ph})`;",
+    );
+    expect(without.violations.map(v => v.unscoped)).toEqual([["edges e", "entries m"]]);
+  });
+
+  it("(c) fails a hard-coded foreign workspace literal", () => {
+    const r = scanSource("const q = `SELECT content FROM entries WHERE workspace_id = 'ws-bob'`;");
+    expect(r.violations.length).toBe(1);
+    // A literal is not derived from the caller's identity, so it is never a scope
+    // clause however it is spelled.
+    expect(scanSource("const q = `SELECT content FROM entries WHERE workspace_id IN ('ws-bob', 'ws-eve')`;")
+      .violations.length).toBe(1);
+  });
+
+  it("(d) does not let one annotation cover two adjacent queries", () => {
+    const r = scanSource([
+      "// scope-exempt: by-id, the id came from a scoped read",
+      "const a = `SELECT * FROM entries WHERE id = ?`;",
+      "const b = `SELECT * FROM entries`;",
+    ].join("\n"));
+    expect(r.exceptions.length).toBe(1);
+    expect(r.exceptions[0].line).toBe(2);
+    // The second query inherited nothing.
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].line).toBe(3);
+  });
+
+  it("(d) binds each annotation to its own query when both are annotated", () => {
+    const r = scanSource([
+      "// scope-exempt: first reason",
+      "const a = `SELECT * FROM entries WHERE id = ?`;",
+      "// scope-exempt: second reason",
+      "const b = `SELECT * FROM edges WHERE id = ?`;",
+    ].join("\n"));
+    expect(r.violations).toEqual([]);
+    expect(r.exceptions.map(e => e.reason)).toEqual(["first reason", "second reason"]);
+  });
+
+  it("does not read the word scope out of a SQL comment", () => {
+    const r = scanSource([
+      "const q = `SELECT content FROM entries",
+      "   -- TODO think about scope here",
+      "   ORDER BY created_at`;",
+    ].join("\n"));
+    expect(r.violations.length).toBe(1);
+  });
+});
+
 describe("the checker over the real source tree", () => {
   it("exits 0, so a future unscoped query fails the suite as well as CI", () => {
     const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
