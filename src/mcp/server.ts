@@ -9,7 +9,7 @@ import { applyStatus, forgetEntry } from "../capture/lifecycle";
 import { moveEntry } from "../capture/share";
 import { auditEvent } from "../lib/audit";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
-import { createEdge, deleteEdge, edgeLabel } from "../graph/edges";
+import { createEdge, deleteEdge, edgeLabel, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
 import type { Identity } from "../lib/identity";
@@ -576,8 +576,12 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       if (!source) return { content: [{ type: "text", text: `No entry found with ID: ${source_id}` }] };
       const target = await getReadableEntry(env, identity, target_id);
       if (!target) return { content: [{ type: "text", text: `No entry found with ID: ${target_id}` }] };
+      // Same rule and same sentence as POST /link — see CROSS_WORKSPACE_LINK_MESSAGE.
+      if (source.workspace_id !== target.workspace_id) {
+        return { content: [{ type: "text", text: CROSS_WORKSPACE_LINK_MESSAGE }] };
+      }
 
-      const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0 }, env);
+      const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0, workspaceId: source.workspace_id }, env);
       if (!edge) return { content: [{ type: "text", text: "Cannot link an entry to itself." }] };
       return { content: [{ type: "text", text: `Linked ${edge.source_id} → ${edge.target_id} (${edgeLabel(edge.type)}).` }] };
     }
