@@ -50,6 +50,12 @@ const SCHEMA_PROBE_RESULTS = [
   { kind: "user_column", name: "default_share" },
   { kind: "user_column", name: "removed_at" },
   { kind: "user_column", name: "last_used_at" },
+  // admin_events' subject columns arrive by ALTER on brains created before they
+  // existed and live in the base CREATE on fresh ones — a migrated brain reports
+  // both either way. Omitting them here would make this double claim a brain
+  // whose audit trail cannot record what an action was done TO.
+  { kind: "admin_event_column", name: "target_user_id" },
+  { kind: "admin_event_column", name: "workspace_id" },
 ];
 
 export class D1Mock {

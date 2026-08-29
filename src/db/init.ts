@@ -175,6 +175,30 @@ const USERS_COLUMNS: Record<string, string> = {
 };
 
 /**
+ * Columns added to `admin_events` after the table shipped.
+ *
+ * The trail shipped as (id, actor_id, event, payload, created_at) and gained its two
+ * subject columns a release later, so a brain that wrote a single administration event
+ * before that release has the narrow table and never gets the wide one from the
+ * `CREATE TABLE IF NOT EXISTS` above. Nothing surfaces that on its own: adminAuditEvent
+ * (src/lib/admin-audit.ts) binds all seven columns under ctx.waitUntil and ends in
+ * .catch(console.error) by contract — an audit write must never fail the administration
+ * action it records — so on such a brain every INSERT fails silently and the trail simply
+ * stops. The two parity tests cannot see it either; they compare db/schema.sql with this
+ * file, and those agree. test/unit/schema-upgrade-completeness.test.ts is the guard that
+ * can: it asks what an EXISTING database ends up with, per table.
+ *
+ * '' rather than NULL matches the writer, which sends '' for an event with no target
+ * user (team_renamed) or no workspace (member_created), and matches what the ALTER
+ * itself writes into the rows already in the trail — so an old row and a new one with
+ * no subject read identically. No backfill: '' is already the right value everywhere.
+ */
+const ADMIN_EVENTS_COLUMNS: Record<string, string> = {
+  target_user_id: `ALTER TABLE admin_events ADD COLUMN target_user_id TEXT NOT NULL DEFAULT ''`,
+  workspace_id: `ALTER TABLE admin_events ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`,
+};
+
+/**
  * Objects that can only be built once the ALTERs above have run — an index over a
  * column that arrives via ALTER. These must NOT live in SCHEMA_OBJECTS: that loop
  * runs before the ALTERs on every pass, so on an upgraded brain (table exists,
@@ -214,7 +238,8 @@ const PROBE_SQL =
   `SELECT type AS kind, name FROM sqlite_master WHERE type IN ('table','index') ` +
   `UNION ALL SELECT 'column' AS kind, name FROM pragma_table_info('entries')` +
   `UNION ALL SELECT 'edge_column' AS kind, name FROM pragma_table_info('edges')` +
-  `UNION ALL SELECT 'user_column' AS kind, name FROM pragma_table_info('users')`;
+  `UNION ALL SELECT 'user_column' AS kind, name FROM pragma_table_info('users')` +
+  `UNION ALL SELECT 'admin_event_column' AS kind, name FROM pragma_table_info('admin_events')`;
 
 type ObjectKind = "table" | "index";
 /**
@@ -223,7 +248,7 @@ type ObjectKind = "table" | "index";
  * the name alone would let a user table called `idx_entries_source` stand in for the index,
  * which resolves init successfully and silently never creates it.
  */
-type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string>; edgeColumns: Set<string>; userColumns: Set<string> };
+type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string>; edgeColumns: Set<string>; userColumns: Set<string>; adminEventColumns: Set<string> };
 
 /** Which kind of object a CREATE statement makes, so the probe can be asked about it. */
 const kindOf = (ddl: string): ObjectKind => (ddl.startsWith("CREATE TABLE") ? "table" : "index");
@@ -260,14 +285,16 @@ async function probeSchema(env: Env): Promise<ExistingSchema | null> {
   const columns = new Set<string>();
   const edgeColumns = new Set<string>();
   const userColumns = new Set<string>();
+  const adminEventColumns = new Set<string>();
   for (const row of rows as { kind?: unknown; name?: unknown }[]) {
     if (typeof row?.name !== "string") continue;
     if (row.kind === "column") columns.add(row.name);
     else if (row.kind === "edge_column") edgeColumns.add(row.name);
     else if (row.kind === "user_column") userColumns.add(row.name);
+    else if (row.kind === "admin_event_column") adminEventColumns.add(row.name);
     else if (row.kind === "table" || row.kind === "index") objects.set(row.name, row.kind);
   }
-  return { objects, columns, edgeColumns, userColumns };
+  return { objects, columns, edgeColumns, userColumns, adminEventColumns };
 }
 
 /**
@@ -318,6 +345,14 @@ async function applySchema(env: Env): Promise<void> {
   }
   for (const [column, ddl] of Object.entries(USERS_COLUMNS)) {
     if (existing?.userColumns.has(column)) continue;
+    try {
+      await env.DB.exec(ddl);
+    } catch (e) {
+      if (!isDuplicateColumn(e)) throw e;
+    }
+  }
+  for (const [column, ddl] of Object.entries(ADMIN_EVENTS_COLUMNS)) {
+    if (existing?.adminEventColumns.has(column)) continue;
     try {
       await env.DB.exec(ddl);
     } catch (e) {
