@@ -46,12 +46,20 @@ export async function hashToken(token: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Bearer header first, then the ?token= query form the personal brain has always accepted. */
+/**
+ * `Authorization: Bearer <token>` and nothing else.
+ *
+ * The `?token=` query form the personal brain used to accept was removed in v3.
+ * A URL is written down by infrastructure the deployment does not control:
+ * browser history, proxy and CDN access logs, and the Referer header sent to
+ * every third-party origin a page loads. A bearer token here grants full
+ * read/write access to someone's memory, so it must not travel anywhere that
+ * copies it by default. A header is not logged by any of those.
+ */
 export function extractToken(request: Request): string | null {
   const header = request.headers.get("Authorization");
   if (header?.startsWith("Bearer ")) return header.slice("Bearer ".length).trim() || null;
-  const query = new URL(request.url).searchParams.get("token");
-  return query && query.length > 0 ? query : null;
+  return null;
 }
 
 /**

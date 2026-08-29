@@ -14,9 +14,18 @@ export function json(data: unknown, status = 200): Response {
   });
 }
 
+/**
+ * The legacy AUTH_TOKEN check: `Authorization: Bearer <token>` and nothing else.
+ *
+ * The `?token=` query form was removed in v3 for the reason extractToken
+ * (src/lib/identity.ts) gives — a URL is copied into browser history, proxy and
+ * CDN access logs and outbound Referer headers, none of which a credential
+ * should reach. It mattered most here: the two surfaces behind this guard are
+ * the migration runner and OAuth revocation, so the token it compares is the
+ * deployment-wide AUTH_TOKEN rather than one member's.
+ */
 export function isAuthorized(request: Request, env: Env): boolean {
-  if (request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`) return true;
-  return new URL(request.url).searchParams.get("token") === env.AUTH_TOKEN;
+  return request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`;
 }
 
 // Returns a 401 Response if the request lacks a valid token, otherwise null —
