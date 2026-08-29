@@ -376,11 +376,11 @@ describe("syncVectorizeBanner", () => {
 
 describe("workspaceFilterChip", () => {
   it("returns null when supported is true (filtering healthy)", () => {
-    expect(workspaceFilterChip({ vectorize: { workspaceFilter: { supported: true, degradedQueries: 0, latchedAt: null } } })).toBeNull();
+    expect(workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: true, degradedQueries: 0, latchedAt: null } } })).toBeNull();
   });
 
   it("returns null when supported is null (fresh isolate, never queried)", () => {
-    expect(workspaceFilterChip({ vectorize: { workspaceFilter: { supported: null, degradedQueries: 0, latchedAt: null } } })).toBeNull();
+    expect(workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: null, degradedQueries: 0, latchedAt: null } } })).toBeNull();
   });
 
   it("returns null when health, vectorize, or workspaceFilter is absent (no false alarm)", () => {
@@ -390,20 +390,28 @@ describe("workspaceFilterChip", () => {
     expect(workspaceFilterChip({ vectorize: {} })).toBeNull();
   });
 
-  it("returns a chip with a title when supported is false (degraded)", () => {
-    const chip = workspaceFilterChip({ vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } });
+  it("returns a chip with a title when supported is false (degraded) on a TEAM brain", () => {
+    const chip = workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } });
     expect(chip).not.toBeNull();
     expect(chip.title).toBeTruthy();
     // Never implies data leakage — every hydration stays scoped at the SQL
     // layer regardless of filter support.
     expect(chip.title.toLowerCase()).not.toContain("leak");
   });
+
+  it("returns null when supported is false but the brain is SOLO (team: false) — no layer UI exists to explain", () => {
+    expect(workspaceFilterChip({ team: false, vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } })).toBeNull();
+  });
+
+  it("returns null when supported is false and `team` is absent entirely (same as false)", () => {
+    expect(workspaceFilterChip({ vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } })).toBeNull();
+  });
 });
 
 describe("syncWorkspaceFilterChip", () => {
   it("mounts the chip when given one, and does nothing (no element) when null", () => {
     const doc = makeFakeDoc();
-    const chip = workspaceFilterChip({ vectorize: { workspaceFilter: { supported: false, degradedQueries: 1, latchedAt: null } } });
+    const chip = workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: false, degradedQueries: 1, latchedAt: null } } });
     const el = syncWorkspaceFilterChip(doc, chip, 0);
     expect(el).not.toBeNull();
     expect(doc.getElementById("vectorize-filter-chip")).toBe(el);

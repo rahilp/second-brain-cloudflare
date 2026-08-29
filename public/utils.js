@@ -370,7 +370,9 @@ function syncVectorizeBanner(doc, banner) {
  * unfiltered Vectorize queries (src/vectorize/scope.ts's per-isolate latch).
  * Returns null when filtering is supported or unknown (health absent, the
  * field absent, or `supported` is `true`/`null`), so a fresh isolate or a
- * transient fetch failure never raises a false alarm.
+ * transient fetch failure never raises a false alarm — and also returns null
+ * when `health.team` is false, since the message names "layers", a concept a
+ * solo (non-team) brain has no UI for at all.
  *
  * This is a RESULT-QUALITY signal, not a correctness one: every hydration is
  * already scoped at the SQL layer regardless of whether the Vectorize filter
@@ -381,6 +383,12 @@ function syncVectorizeBanner(doc, banner) {
 function workspaceFilterChip(health) {
   if (!health || !health.vectorize || !health.vectorize.workspaceFilter) return null;
   if (health.vectorize.workspaceFilter.supported !== false) return null;
+  // Team vocabulary ("results are ranked across all layers") on a brain with
+  // no layer UI at all would be a lie the solo owner cannot act on — every
+  // other layer affordance in checkVectorize (nav.js) is gated on `team`, and
+  // this one must be too, or a solo brain whose index rejects the filter gets
+  // a permanent banner about a concept (layers) it does not have.
+  if (!health.team) return null;
   return { title: t('nav.vectorizeFilterDegraded') };
 }
 

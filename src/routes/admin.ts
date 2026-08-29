@@ -317,7 +317,12 @@ export async function handleAdminRoutes(
     // trusting the in-memory latch alone, so the signal survives isolate
     // churn between deploys.
     const { supported, degradedQueries } = vectorizeFilterState();
-    const latchedAtRaw = await env.OAUTH_KV.get(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY);
+    // A KV blip must not turn this route's other, independently-available
+    // signals (vectorize.ok, team) into a 500 — /health previously depended
+    // on describe() and one D1 count only. `.catch(() => null)` degrades
+    // latchedAt to "unknown" instead, exactly like a marker that was never
+    // written.
+    const latchedAtRaw = await env.OAUTH_KV.get(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY).catch(() => null);
     const latchedAt = latchedAtRaw ? Number(latchedAtRaw) : null;
     return json({
       ok: vectorize.ok,

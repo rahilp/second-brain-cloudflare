@@ -171,4 +171,29 @@ describe("share semantics", () => {
     expect(event?.entry_id).toBe(id!);
     expect(event?.actor_id).toBe(roots.ownerUserId);
   });
+
+  it("moves the D1 row even when vector_ids is malformed, and returns an empty vectorIds rather than throwing", async () => {
+    const { env } = await makeEnv();
+    const roots = await ensureTenantBootstrap(env);
+    const owner = {
+      userId: roots.ownerUserId,
+      role: "admin" as const,
+      personalWorkspaceId: roots.ownerPersonalWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
+      defaultShare: "" as const,
+    };
+    // Unreachable via captureEntry (vector_ids is NOT NULL DEFAULT '[]' and
+    // always written as a JSON array) — this simulates a corrupted row
+    // directly, the case the try/catch around the parse exists for.
+    await env.DB.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id) VALUES (?, ?, '[]', 'api', ?, 'not-json', ?, ?)`
+    ).bind("bad-vec-entry", "entry with a corrupted vector_ids column", Date.now(), owner.personalWorkspaceId, owner.userId).run();
+
+    const result = await moveEntry("bad-vec-entry", "company", env, owner);
+    expect(result.status).toBe("shared");
+    if (result.status === "shared") expect(result.vectorIds).toEqual([]);
+
+    const row = await env.DB.prepare(`SELECT workspace_id FROM entries WHERE id = ?`).bind("bad-vec-entry").first<{ workspace_id: string }>();
+    expect(row?.workspace_id).toBe(roots.companyWorkspaceId);
+  });
 });

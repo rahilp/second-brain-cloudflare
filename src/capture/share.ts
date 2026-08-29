@@ -61,6 +61,15 @@ export async function moveEntry(
     if (!isActor && identity.role !== "admin") return { status: "forbidden" };
   }
 
+  // Parsed before the D1 move, not after: storeEntry's schema guarantees
+  // vector_ids is NOT NULL DEFAULT '[]', so this cannot fail today, but
+  // parsing after the batch would mean a malformed value moves the row in D1
+  // and then throws — losing the audit event and returning a 500 for a state
+  // change that already happened. Same defensive shape as the identical
+  // parse in src/lib/team-admin.ts.
+  let vectorIds: string[] = [];
+  try { vectorIds = JSON.parse(row.vector_ids ?? "[]") as string[]; } catch { vectorIds = []; }
+
   await env.DB.batch([
     env.DB.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(targetWorkspaceId, id),
     // Edges are denormalized from their source entry's workspace at insert time;
@@ -72,7 +81,7 @@ export async function moveEntry(
   return {
     status: target === "company" ? "shared" : "unshared",
     workspaceId: targetWorkspaceId,
-    vectorIds: JSON.parse(row.vector_ids ?? "[]") as string[],
+    vectorIds,
   };
 }
 

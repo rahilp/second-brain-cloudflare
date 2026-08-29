@@ -6,7 +6,7 @@ import {
   singleWorkspaceFilter,
   vectorizeFilterState,
 } from "../../src/vectorize/scope";
-import { makeTestEnv, makeTestDb, makeVectorizeMock, makeMemoryKV } from "../helpers/make-env";
+import { makeTestEnv, makeTestDb, makeVectorizeMock, makeMemoryKV, makeKVMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 
 // The latch (`workspaceFiltersSupported`) and `degradedQueryCount` in
@@ -111,5 +111,26 @@ describe("GET /health — workspaceFilter", () => {
     const res = await worker.fetch(req("GET", "/health"), env, ctx);
     const data = await res.json() as any;
     expect(data.vectorize.workspaceFilter.latchedAt).toBe(1700000000000);
+  });
+
+  it("still answers 200 with the rest of its body intact when OAUTH_KV.get rejects", async () => {
+    const db = makeTestDb();
+    const kv = makeKVMock();
+    (kv.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("KV is down"));
+    const env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({ describe: vi.fn().mockResolvedValue({ dimensions: 384 }) }),
+      OAUTH_KV: kv,
+    });
+    const ctx = { waitUntil: (p: Promise<unknown>) => p } as unknown as ExecutionContext;
+
+    const res = await worker.fetch(req("GET", "/health"), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.vectorize.ok).toBe(true);
+    expect(data.vectorize.workspaceFilter.supported).toBe(null);
+    // Degrades to "unknown" rather than surfacing the KV outage as a marker.
+    expect(data.vectorize.workspaceFilter.latchedAt).toBe(null);
+    expect(typeof data.team).toBe("boolean");
   });
 });
