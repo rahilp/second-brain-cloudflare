@@ -492,6 +492,25 @@ describe("csvCell", () => {
     expect(csvCell("a=b")).toBe('"a=b"');
     expect(csvCell("Anne-Marie")).toBe('"Anne-Marie"');
   });
+
+  it("defuses a formula that hides behind leading whitespace", () => {
+    // OWASP's set is about the FIRST character, and a spreadsheet that trims
+    // before it parses sees " =1+1" as the formula. Belt and braces on the one
+    // file the person with the most access opens.
+    expect(csvCell(" =1+1")).toBe("\"' =1+1\"");
+    expect(csvCell("  +1")).toBe("\"'  +1\"");
+    expect(csvCell("\n=1+1")).toBe("\"'\n=1+1\"");
+    expect(csvCell("\t @SUM(A1)")).toBe("\"'\t @SUM(A1)\"");
+    expect(csvCell(" -1")).toBe("\"' -1\"");
+  });
+
+  it("still leaves leading whitespace that leads nowhere alone", () => {
+    // Only whitespace-then-formula is guarded. An indented name is a name.
+    expect(csvCell(" Anne-Marie")).toBe('" Anne-Marie"');
+    expect(csvCell("  hello")).toBe('"  hello"');
+    expect(csvCell("   ")).toBe('"   "');
+    expect(csvCell("\n")).toBe('"\n"');
+  });
 });
 
 describe("csvDocument", () => {

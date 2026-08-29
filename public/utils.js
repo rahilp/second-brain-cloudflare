@@ -818,10 +818,17 @@ function captureDefaultKey(profile) {
  * file is an audit log full of names and memory titles that people type. A
  * memory called "=cmd|…" is a real attack on whoever opens the export, and
  * the export is opened by the one person on the team with the most access.
+ *
+ * The guard runs on the RAW string, before any quoting: a guard applied after
+ * the wrap would test `"` and never fire. It also looks past leading
+ * whitespace, because a spreadsheet that trims before it parses reads " =1+1"
+ * as the formula OWASP's first-character set was written to catch. Only
+ * whitespace that LEADS TO a formula character counts — an indented name is
+ * still just a name, and "a=b" is still just a value.
  */
 function csvCell(value) {
   let s = value == null ? '' : String(value)
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  if (/^[\t\r]|^\s*[=+\-@]/.test(s)) s = `'${s}`
   return `"${s.replace(/"/g, '""')}"`
 }
 
