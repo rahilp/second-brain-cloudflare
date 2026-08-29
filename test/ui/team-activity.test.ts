@@ -553,10 +553,10 @@ describe("the Team tab's activity reveal", () => {
  * parsed live out of src/, and a name the route can admit but the map cannot
  * label fails HERE rather than as an unlabelled row in someone's browser.
  *
- * The entry arm does filter, to exactly four names, and that filter lives in
- * the route handler — which is not on this base. It is declared once below,
- * as ENTRY_EVENTS_IN_FEED, read directly out of the route's own clause, so
- * both arms of the feed are anchored to source rather than to a copy.
+ * The entry arm does filter, and that filter lives in the route handler. It is
+ * read directly out of the route's own `event IN (…)` clause below, as
+ * ENTRY_EVENTS_IN_FEED, so both arms of the feed are anchored to source rather
+ * than to a copy of it.
  */
 describe("the activity feed's event vocabulary", () => {
   /** Members of a TypeScript string-literal union, read out of src/. */
@@ -601,9 +601,9 @@ describe("the activity feed's event vocabulary", () => {
   const ENTRY_EVENTS_IN_FEED = routeEntryEvents();
 
   /**
-   * Names the endpoint emits that src/ does not declare on THIS base — they
-   * arrive with the sibling worktree that builds the route. Once declared,
-   * they are picked up by the live parse and this list is merely redundant.
+   * Every name the endpoint can put in front of this UI: the admin arm's whole
+   * union, plus the entry arm's filtered set. Both halves are parsed out of
+   * src/ on every run, so there is no hand-maintained list here to go stale.
    */
   const admitted = () => [
     ...new Set([
