@@ -206,6 +206,57 @@ describe("GET /team/activity — content", () => {
   });
 });
 
+describe("GET /team/activity — pattern resolutions reach the feed", () => {
+  /** An insight: no author, `actor_id = ""`, living in the shared layer. */
+  async function insight(id: string, content: string): Promise<void> {
+    await sqlite.db
+      .prepare(
+        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id)
+         VALUES (?, ?, '["auto-insight"]', 'system', ?, '[]', ?, '')`,
+      )
+      .bind(id, content, clock, roots.companyWorkspaceId)
+      .run();
+  }
+
+  it("shows an admin WHICH MEMBER dismissed a company-layer insight", async () => {
+    // The sentence this exists to make true. There is deliberately no author
+    // lock on /patterns/resolve — an insight has no author and any member
+    // ruling on one is the feature working — so the record is the only thing
+    // standing between "a shared suggestion was deleted for everyone" and
+    // nobody being able to find out who did it.
+    await insight("i-1", "The team ships on Fridays");
+    tick();
+
+    const res = await call("POST", "/patterns/resolve", bob.token, { id: "i-1", action: "dismiss" });
+    expect(res.status).toBe(200);
+    await settle();
+
+    const body = await activity();
+    expect(body.events.length).toBe(1);
+    expect(body.events[0]).toMatchObject({
+      kind: "entry",
+      event: "insight_dismissed",
+      actor: "Bob",
+      subject: null,
+      entryId: "i-1",
+      title: "The team ships on Fridays",
+    });
+  });
+
+  it("shows a confirmation under its own name, not the same one as a dismissal", async () => {
+    await insight("i-2", "The team writes tests first");
+    tick();
+    expect((await call("POST", "/patterns/resolve", bob.token, {
+      id: "i-2", action: "confirm",
+    })).status).toBe(200);
+    await settle();
+
+    const body = await activity();
+    expect(body.events.map((e: any) => e.event)).toEqual(["insight_confirmed"]);
+    expect(body.events[0].actor).toBe("Bob");
+  });
+});
+
 describe("GET /team/activity — ordering and paging", () => {
   /**
    * The reason the route is ONE compound statement. Four rows in each trail,

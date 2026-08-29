@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS entry_events (
   id         TEXT PRIMARY KEY,
   entry_id   TEXT NOT NULL,
   actor_id   TEXT NOT NULL DEFAULT '',
-  event      TEXT NOT NULL,                      -- created | updated | appended | deleted | status_changed | shared | unshared
+  event      TEXT NOT NULL,                      -- created | updated | appended | deleted | status_changed | shared | unshared | insight_confirmed | insight_dismissed
   payload    TEXT NOT NULL DEFAULT '{}',         -- JSON escape hatch for per-event detail
   created_at INTEGER NOT NULL
 );

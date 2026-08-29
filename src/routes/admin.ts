@@ -21,6 +21,7 @@ import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
 import { adminAuditEvent } from "../lib/admin-audit";
+import { auditEvents, type AuditEventInput } from "../lib/audit";
 import { createMember, listMembers, listRoster, listTeamWorkspaces, lookupAuditNames, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
@@ -435,7 +436,7 @@ export async function handleAdminRoutes(
               substr(m.content, 1, 160), ev.payload, ev.created_at
          FROM entry_events ev
          LEFT JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}
-        WHERE ev.event IN ('shared', 'unshared')
+        WHERE ev.event IN ('shared', 'unshared', 'insight_confirmed', 'insight_dismissed')
        ORDER BY created_at DESC
        LIMIT ? OFFSET ?`,
     ).bind(...scope.bindings, limit, offset).all();
@@ -839,6 +840,16 @@ export async function handleAdminRoutes(
     const statements: D1PreparedStatement[] = [];
     const vectorsToDrop: string[] = [];
     const resolved: string[] = [];
+    // The record of who ruled on what. There is deliberately NO author lock on
+    // this route — an insight has actor_id "" and no author, so it is a shared
+    // suggestion and any member acting on one is the feature working. That is
+    // precisely why the record matters: without it, a member dismissing a
+    // company-layer insight for everyone leaves no trace, and GET /team/activity
+    // is blind to the one action on this surface that is invisible by design.
+    //
+    // Two names rather than one plus a payload flag, for the reason
+    // member_suspended and member_unsuspended are two names.
+    const auditRows: AuditEventInput[] = [];
 
     for (const row of found) {
       const tags: string[] = JSON.parse(row.tags ?? "[]");
@@ -868,11 +879,22 @@ export async function handleAdminRoutes(
         vectorsToDrop.push(...(JSON.parse(row.vector_ids ?? "[]") as string[]));
       }
       resolved.push(row.id as string);
+      auditRows.push({
+        entryId: row.id as string,
+        actorId: auth.userId,
+        event: action === "confirm" ? "insight_confirmed" : "insight_dismissed",
+      });
     }
 
     // One subrequest however many statements it holds, which is the whole reason
     // the loop above builds them instead of running them.
     if (statements.length) await env.DB.batch(statements);
+    // After the state change and off the critical path: one batch however many
+    // ids the request carried, so the route's cost stays flat in the id count,
+    // and fire-and-forget so a lost row can never cost a resolution. Only rows
+    // actually ruled on are recorded — a skipped or out-of-scope id was not
+    // resolved, and a false entry in an INSERT-only trail cannot be corrected.
+    auditEvents(env, ctx, auditRows);
 
     if (vectorsToDrop.length) {
       try {
