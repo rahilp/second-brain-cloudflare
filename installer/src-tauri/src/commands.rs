@@ -1079,6 +1079,59 @@ pub async fn worker_update_available(
     Ok(compute_worker_update(session.dry_run).await)
 }
 
+/// Whether the Worker-update prompt is this user's to see.
+///
+/// Pure, so the rule is testable without a keychain or a network — the two
+/// facts it needs are gathered by [`worker_update_is_offerable`] below.
+///
+/// The prompt leads to `start_worker_update`, which resolves the hosting
+/// account by matching the brain's workers.dev subdomain against the signed-in
+/// Cloudflare session and answers `ErrorWrongCfAccount` to anyone else. So the
+/// question is not "may this person administer the brain" — a team admin may,
+/// and still cannot do this — it is "does this person hold the Cloudflare
+/// account the Worker is deployed into". Only `owner` answers that.
+///
+/// A one-person brain is exempt and asks nothing: its owner is whoever holds
+/// the token, there is nobody else on it to mislead, and a Worker old enough to
+/// be behind may well predate `/team/me` entirely.
+///
+/// A LEGACY Worker — one that answered but predates the `owner` key — is the
+/// third case, and it is offered the prompt. On its own, `probe.owner` is a
+/// deadlock: this app self-updates from GitHub Releases and the Worker can only
+/// be updated FROM this app, so a brain deployed before the key would never be
+/// offered the update that adds the key. The prompt still dead-ends at
+/// `ErrorWrongCfAccount` for anyone who does not hold the hosting account, so
+/// the allowance costs a member one dismissible dialog until the owner updates
+/// once — and after that one update this arm is unreachable forever.
+fn update_prompt_is_offerable(team_brain: bool, probe: &ConnectionRoleProbe) -> bool {
+    if !team_brain {
+        return true;
+    }
+    // Not `role == "admin"`, and not "could not tell" either. Least privilege:
+    // being wrong this way costs an owner one click in the tray window; being
+    // wrong the other way nags every member on every launch, forever, for an
+    // action that cannot succeed.
+    //
+    // `legacy_worker` is the one documented exception, and it is NOT "could not
+    // tell": it is a brain that answered and whose answer is missing the key.
+    // A probe that failed leaves both of these false.
+    probe.owner || probe.legacy_worker
+}
+
+/// The two facts [`update_prompt_is_offerable`] needs, gathered.
+///
+/// A solo install makes no request at all, so its launch is what it always was.
+async fn worker_update_is_offerable() -> bool {
+    if !secure_store::is_team_mode() {
+        return true;
+    }
+    let Some(info) = secure_store::load_setup() else {
+        return false;
+    };
+    let probe = fetch_connection_role(&info.worker_url, &info.auth_token).await;
+    update_prompt_is_offerable(true, &probe)
+}
+
 /// Launch-time check on the brain this computer is connected to.
 ///
 /// Two outcomes are worth interrupting for: the Worker is behind the bundled
@@ -1097,6 +1150,16 @@ pub fn check_brain_at_launch(app: &AppHandle) {
             }
             LaunchCheck::Update(update) => update,
         };
+        // After the stale-password arm, deliberately: a password changed on
+        // another computer is a real problem and it is the member's own to
+        // fix, so that screen reaches everyone. This one does not.
+        if !worker_update_is_offerable().await {
+            log::info!(
+                "the deployed Worker is behind, but this computer's token does not own the \
+                 deployment — no update prompt"
+            );
+            return;
+        }
         let message = i18n::t_fmt(
             locale,
             Key::WorkerUpdateMessage,
@@ -2365,6 +2428,119 @@ fn settings_target(app: &AppHandle) -> Result<(String, String, Locale), String> 
     Ok((url, token, locale))
 }
 
+/// What `GET /team/me` says about the token this machine is set up with.
+///
+/// Two fields and no verdict: the rules that turn this into a role live in
+/// `installer/src/connection-role.ts`, in one place, so the setup flow and the
+/// Connection details window cannot drift apart about the same person.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ConnectionRoleProbe {
+    /// `profile.role` — "admin" or "member", or absent if it could not be read.
+    pub role: Option<String>,
+    /// `profile.owner` — true only for the identity holding this deployment's
+    /// AUTH_TOKEN. `role` cannot say this: src/lib/tenancy.ts hashes AUTH_TOKEN
+    /// into a users row with role 'admin', so the owner and a promoted
+    /// colleague are the same value there.
+    pub owner: bool,
+    /// Whether `/team/me` answered with a profile that carried NO `owner` key —
+    /// a Worker deployed before the key existed, positively identified as such.
+    ///
+    /// Not the same fact as `owner: false`, and not the same fact as a probe
+    /// that failed. It licenses exactly one thing, the Worker update, because
+    /// that update is the only way OUT of this state; see
+    /// [`update_prompt_is_offerable`].
+    #[serde(rename = "legacyWorker")]
+    pub legacy_worker: bool,
+}
+
+/// How long to wait before answering without the brain.
+///
+/// Shorter than `migration::TIMEOUT` on purpose: this one runs while a window
+/// is drawing itself, and the answer it is waiting for only decides which of
+/// two paragraphs to show.
+const ROLE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Asks the brain who is holding this token. **Never fails.**
+///
+/// Every way of not getting an answer — a Worker too old to serve the route, a
+/// 401 from a revoked token, an unreachable brain, a body that will not parse —
+/// returns the default, which `roleFromProbe` reads as "member". Returning a
+/// `Result` here would push that decision onto every caller, and the one thing
+/// this must not do is claim more than it knows: over-claiming is the sentence
+/// the whole change exists to delete.
+///
+/// Split out from the command so a test can drive it — the command takes an
+/// `AppHandle` and nothing in this crate can build one.
+pub async fn fetch_connection_role(worker_url: &str, auth_token: &str) -> ConnectionRoleProbe {
+    let none = ConnectionRoleProbe::default();
+    let url = format!("{}/team/me", worker_url.trim_end_matches('/'));
+    let resp = match reqwest::Client::new()
+        .get(url)
+        .bearer_auth(auth_token)
+        .timeout(ROLE_PROBE_TIMEOUT)
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            log::warn!("/team/me answered {} — claiming nothing about this token", r.status());
+            return none;
+        }
+        Err(e) => {
+            log::warn!("could not ask who holds this token: {e}");
+            return none;
+        }
+    };
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("/team/me was not the expected shape: {e}");
+            return none;
+        }
+    };
+    role_probe_from_body(&body)
+}
+
+/// The parse, split from the request so a test can hand it a body no brain this
+/// app talks to would send.
+///
+/// A 200 is not a promise about shape. `as_bool() == Some(true)` rather than
+/// truthiness: a body carrying `owner: "yes"` or `owner: 1` is unexpected, and
+/// an unexpected body must not promote anyone. Same for `role`, which is only
+/// taken when it is genuinely a string.
+/// The absent `owner` key is read separately from an unreadable one. A body
+/// carrying `owner: "yes"` has the key and cannot be trusted, so it claims
+/// nothing at all; a body with no `owner` key AND a role it did manage to state
+/// is a Worker from before the key existed, which is a different fact and the
+/// one that opens the update.
+fn role_probe_from_body(body: &serde_json::Value) -> ConnectionRoleProbe {
+    let profile = body.get("profile").filter(|p| p.is_object());
+    let role = profile
+        .and_then(|p| p.get("role"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    ConnectionRoleProbe {
+        legacy_worker: role.is_some()
+            && profile.is_some_and(|p| p.get("owner").is_none()),
+        owner: body["profile"]["owner"].as_bool() == Some(true),
+        role,
+    }
+}
+
+/// The Connection details window asking who it is rendering for.
+///
+/// The webview never handles the token — it stays in this process — so this is
+/// the only way that window can know, and until it existed the window said
+/// "You're signed in as this brain's owner-admin" to every member who opened it.
+///
+/// Only ever called on a brain this machine recorded as a team brain; a solo
+/// install makes no request at all.
+#[tauri::command]
+pub async fn connection_role(app: AppHandle) -> Result<ConnectionRoleProbe, String> {
+    let (url, token, _locale) = settings_target(&app)?;
+    Ok(fetch_connection_role(&url, &token).await)
+}
+
 #[tauri::command]
 pub async fn get_brain_settings(app: AppHandle) -> Result<crate::settings::SettingsView, String> {
     let (url, token, locale) = settings_target(&app)?;
@@ -2402,7 +2578,9 @@ mod tests {
     use super::{
         app_mode, bindings_are_a_brains, blocked_by_migration, brain_index_names,
         clear_pending_rotation, cloudflare_client_for_brain, confirm_target_is_a_brain,
-        dashboard_credentials, for_log, normalize_worker_url, password_opens_brain,
+        dashboard_credentials, fetch_connection_role, for_log, normalize_worker_url,
+        role_probe_from_body, update_prompt_is_offerable,
+        password_opens_brain, ConnectionRoleProbe,
         previous_index_for, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
         rotation_address, rotation_block, rotation_failure, rotation_target, RotateError,
         SetupSession, LOG_DETAIL_MAX,
@@ -2878,6 +3056,294 @@ mod tests {
                  a state users stay in deliberately, and rotation does not care."
             );
         }
+    }
+
+    /// Who is holding the token this machine is set up with — asked of the
+    /// brain, because nothing local can answer it.
+    ///
+    /// The Connection details window used to hardcode "owner". Every team member
+    /// who opened it read "You're signed in as this brain's owner-admin" and was
+    /// offered a password change that walks them through a Cloudflare sign-in
+    /// and a new password before failing with ErrorWrongCfAccount. The webview
+    /// never handles the token — it stays here — so the window could not ask
+    /// until this command existed.
+    ///
+    /// `owner`, not `role`: src/lib/tenancy.ts hashes AUTH_TOKEN into a users
+    /// row with role 'admin', so the person who created the brain and a
+    /// colleague they promoted are indistinguishable by role alone.
+    #[tokio::test]
+    async fn connection_role_reads_what_the_brain_says_about_this_token() {
+        let brain = crate::demo_brain::scoped_brain();
+        const PASSWORD: &str = "the-password-this-role-probe-test-sets";
+        crate::demo_brain::rotate_to(PASSWORD);
+
+        let probe = fetch_connection_role(brain.base_url(), PASSWORD).await;
+        assert_eq!(probe.role.as_deref(), Some("admin"), "the profile role is read");
+        assert!(probe.owner, "the AUTH_TOKEN holder owns the deployment");
+        assert!(
+            !probe.legacy_worker,
+            "a brain serving the current /team/me is not a legacy Worker"
+        );
+    }
+
+    /// Least privilege, on every way of not getting an answer. Each of these
+    /// must reach `{ role: None, owner: false }`, which `roleFromProbe` in
+    /// installer/src/connection-role.ts turns into "member" — because the
+    /// failure this whole change exists to fix is the app claiming MORE than it
+    /// knows, and a probe that cannot be completed knows nothing.
+    #[tokio::test]
+    async fn a_probe_that_cannot_be_answered_claims_nothing() {
+        let brain = crate::demo_brain::scoped_brain();
+        const PASSWORD: &str = "the-password-this-least-privilege-test-sets";
+        crate::demo_brain::rotate_to(PASSWORD);
+
+        // A 401: the wrong token, which is what a member holding a token this
+        // brain has revoked would get.
+        let refused = fetch_connection_role(brain.base_url(), "not-the-password").await;
+        assert_eq!(refused, ConnectionRoleProbe::default(), "a 401 must not claim ownership");
+
+        // Nothing listening at all. Port 1 is reserved and never bound.
+        let unreachable = fetch_connection_role("http://127.0.0.1:1", PASSWORD).await;
+        assert_eq!(unreachable, ConnectionRoleProbe::default());
+
+        // A route that is not there — a Worker too old to serve /team/me, which
+        // is the ordinary state for anyone who updated the app first.
+        let old = fetch_connection_role(&format!("{}/nope", brain.base_url()), PASSWORD).await;
+        assert_eq!(old, ConnectionRoleProbe::default());
+    }
+
+    /// Who the launch-time Worker-update prompt is for.
+    ///
+    /// `check_for_updates` self-updates the DESKTOP app from GitHub Releases
+    /// with no Cloudflare involvement — correct, and it must keep working for
+    /// everyone. The consequence is that a team member's BUNDLED Worker version
+    /// races ahead of the team's DEPLOYED one purely by their keeping the app
+    /// current, `is_behind` goes true on every launch, and they were shown an
+    /// OK/Cancel dialog offering an update that resolves the hosting account by
+    /// matching the brain's workers.dev subdomain — and so dead-ends at
+    /// ErrorWrongCfAccount for anyone but the owner. Indefinitely, and
+    /// *because* they kept their app up to date.
+    ///
+    /// Owner, not admin: a promoted team admin has no more access to that
+    /// Cloudflare account than a member does.
+    #[test]
+    fn the_worker_update_prompt_is_the_owners_alone() {
+        let member =
+            ConnectionRoleProbe { role: Some("member".into()), owner: false, legacy_worker: false };
+        let promoted =
+            ConnectionRoleProbe { role: Some("admin".into()), owner: false, legacy_worker: false };
+        let owner =
+            ConnectionRoleProbe { role: Some("admin".into()), owner: true, legacy_worker: false };
+
+        assert!(update_prompt_is_offerable(true, &owner), "the owner still gets asked");
+        assert!(!update_prompt_is_offerable(true, &member), "a member must not be nagged");
+        assert!(
+            !update_prompt_is_offerable(true, &promoted),
+            "a promoted admin has no Cloudflare account here either"
+        );
+
+        // Least privilege: a brain that could not be asked is not a brain that
+        // said yes. The cost of being wrong this way is an owner who clicks
+        // Update in the tray window instead; the cost of the other way is the
+        // bug above.
+        assert!(
+            !update_prompt_is_offerable(true, &ConnectionRoleProbe::default()),
+            "an unanswerable probe must suppress the prompt, not raise it"
+        );
+
+        // And a one-person brain is unchanged in every case — including the
+        // unanswerable one. There is nobody on it to mislead, its owner is
+        // whoever holds the token by construction, and a Worker too old to
+        // answer /team/me is exactly the Worker most likely to be behind.
+        for probe in [ConnectionRoleProbe::default(), member.clone(), owner.clone()] {
+            assert!(update_prompt_is_offerable(false, &probe), "a solo install must not change");
+        }
+    }
+
+    /// The deadlock the gate above creates on its own, and the one exception.
+    ///
+    /// This app self-updates from GitHub Releases with no Cloudflare
+    /// involvement, and the deployed Worker can only be updated FROM this app.
+    /// So the app is always AHEAD of the deployment, never behind it — and on a
+    /// brain whose Worker predates the `owner` key that closes a circle:
+    /// `/team/me` answers without `owner`, so nothing establishes the role, so
+    /// least privilege suppresses the update prompt, so the Worker that would
+    /// add `owner` is never deployed. The way out was gated on a capability
+    /// only the version you are trying to reach reports.
+    ///
+    /// A Worker that ANSWERED and simply predates the key therefore opens this
+    /// one prompt. A probe that could not be answered does not, and that is the
+    /// whole distinction: `legacy_worker` is a positive identification, not a
+    /// shrug. Accepting it costs a member one dismissible dialog until the
+    /// owner updates once — `start_worker_update` still refuses anyone who does
+    /// not hold the hosting account — and the arm is unreachable after that.
+    #[test]
+    fn a_worker_too_old_to_say_who_is_asking_can_still_be_updated() {
+        let legacy = ConnectionRoleProbe {
+            role: Some("admin".into()),
+            owner: false,
+            legacy_worker: true,
+        };
+        assert!(
+            update_prompt_is_offerable(true, &legacy),
+            "a brain deployed before the owner key could never be offered the update that adds it"
+        );
+
+        // And the exception is exactly one state wide. A probe that failed
+        // leaves `legacy_worker` false and is still suppressed — an absent
+        // answer is not an old answer.
+        assert!(!update_prompt_is_offerable(true, &ConnectionRoleProbe::default()));
+        assert!(!update_prompt_is_offerable(
+            true,
+            &ConnectionRoleProbe { role: Some("member".into()), owner: false, legacy_worker: false }
+        ));
+    }
+
+    /// The flag has to survive the hop into the webview under the name the
+    /// webview reads.
+    ///
+    /// This struct is `snake_case` and the TypeScript that narrows it is
+    /// `camelCase`, so the rename is the only thing joining them — and dropping
+    /// it fails silently and in exactly the worst way: `legacyWorker` would be
+    /// `undefined` in the details window, every legacy brain would look like a
+    /// probe that failed, and the tray window's Update button — the surface an
+    /// owner actually opens — would be deadlocked again with every test still
+    /// green.
+    #[test]
+    fn the_details_window_reads_the_flag_this_struct_writes() {
+        let json = serde_json::to_value(ConnectionRoleProbe {
+            role: Some("admin".into()),
+            owner: false,
+            legacy_worker: true,
+        })
+        .expect("the probe serialises");
+        assert_eq!(
+            json.get("legacyWorker"),
+            Some(&serde_json::json!(true)),
+            "the details window reads `legacyWorker`; this is what it gets: {json}"
+        );
+
+        let ts = include_str!("../../src/connection-role.ts");
+        assert!(
+            ts.contains("?.legacyWorker === true"),
+            "installer/src/connection-role.ts must narrow the same key, strictly"
+        );
+    }
+
+    /// Which bodies are a legacy Worker, and which are merely unreadable.
+    ///
+    /// The line is the KEY's presence, not the value's truth. `owner: "yes"`
+    /// has the key and cannot be trusted, so it claims nothing; a body with no
+    /// `owner` at all, alongside a role it did state, is a Worker from before
+    /// the key existed. Collapsing those two would hand the update prompt to
+    /// anyone who can put a surprising body in front of this app.
+    #[test]
+    fn only_an_absent_owner_key_counts_as_a_legacy_worker() {
+        use serde_json::json;
+
+        // The shape src/routes/admin.ts sent before `owner` existed.
+        for body in [
+            json!({ "ok": true, "profile": { "userId": "usr-1", "role": "admin" } }),
+            json!({ "ok": true, "profile": { "userId": "usr-2", "role": "member" } }),
+        ] {
+            let probe = role_probe_from_body(&body);
+            assert!(probe.legacy_worker, "{body} is a Worker from before the owner key");
+            assert!(!probe.owner, "and it still claims no ownership");
+            assert!(update_prompt_is_offerable(true, &probe));
+        }
+
+        // Everything else. None of these is a legacy Worker: either the key is
+        // present (and unusable), or nothing was established at all.
+        for body in [
+            json!({}),
+            json!(null),
+            json!("not an object"),
+            json!({ "ok": true, "profile": {} }),
+            json!({ "ok": true, "profile": "admin" }),
+            json!({ "ok": true, "profile": { "role": 42 } }),
+            json!({ "ok": true, "profile": { "owner": {} } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": "yes" } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": 1 } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": null } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": false } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": true } }),
+            json!({ "ok": false, "error": "Unauthorized" }),
+        ] {
+            assert!(
+                !role_probe_from_body(&body).legacy_worker,
+                "{body} was read as a Worker predating the owner key"
+            );
+        }
+    }
+
+    /// The prompt is gated; the stale-password screen is not.
+    ///
+    /// A member's password going stale is genuinely theirs to fix, and routing
+    /// them to it needs no Cloudflare account. Gating both behind one check is
+    /// the easy mistake here, so it is asserted on the source: the scan runs
+    /// over the function body only, so this test's own text cannot satisfy it.
+    #[test]
+    fn a_dead_password_still_reaches_everyone() {
+        let src = include_str!("commands.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("the test module is the boundary of the scannable source")];
+        let start = code.find("pub fn check_brain_at_launch").expect("check_brain_at_launch");
+        let body = &code[start..];
+        let body = &body[..body.find("\n}\n").expect("end of fn")];
+
+        let stale = body.find("StalePassword").expect("the stale-password arm");
+        let gate = body.find("worker_update_is_offerable").expect("the update gate");
+        assert!(
+            stale < gate,
+            "the stale-password arm must return before the ownership gate — a member \
+             whose password was changed elsewhere has a real problem that is theirs to fix"
+        );
+        let stale_arm = &body[stale..gate];
+        assert!(
+            !stale_arm.contains("worker_update_is_offerable"),
+            "the stale-password screen must not be gated on owning the deployment"
+        );
+    }
+
+    /// A 200 is not a promise about shape.
+    ///
+    /// Every one of these is a body some Worker could send — an older one, a
+    /// proxy's error page rendered as JSON, a field that changed type — and none
+    /// of them is a reason to tell the person in front of the app that they own
+    /// this deployment. `owner: "yes"` is the one that matters: it is truthy,
+    /// and the natural way to write this check would take it.
+    #[test]
+    fn an_unexpected_body_promotes_nobody() {
+        use serde_json::json;
+        for body in [
+            json!({}),
+            json!(null),
+            json!({ "ok": true, "profile": {} }),
+            json!({ "ok": true, "profile": { "role": "member" } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": "yes" } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": 1 } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": "true" } }),
+            json!({ "ok": true, "profile": { "owner": {} } }),
+            json!({ "ok": false, "error": "Unauthorized" }),
+        ] {
+            assert!(
+                !role_probe_from_body(&body).owner,
+                "{body} was read as ownership"
+            );
+        }
+
+        // A role that is not a string is no role at all, rather than a stringified one.
+        assert_eq!(role_probe_from_body(&json!({ "profile": { "role": 42 } })).role, None);
+
+        // And the shape src/routes/admin.ts actually sends still reads.
+        let real = role_probe_from_body(&json!({
+            "ok": true,
+            "profile": { "userId": "usr-1", "role": "admin", "owner": true }
+        }));
+        assert_eq!(real.role.as_deref(), Some("admin"));
+        assert!(real.owner);
+        assert!(!real.legacy_worker, "a body carrying the key is not a legacy Worker");
     }
 
     /// A rebuild that could not be asked about is not a rebuild in progress.

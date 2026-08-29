@@ -336,11 +336,17 @@ export const en: Messages = {
   },
   connectExisting: {
     title: "Connect your Second Brain",
+    // The lede on `manualEntryScreen`, which is where "none found", "Enter the
+    // address myself" and a pasted address all land — so it is the screen a
+    // team member reaches, their brain being in the owner's Cloudflare account
+    // rather than their own. It sits directly above a field that accepts either
+    // credential and must name both.
     lede:
-      "Setting up a new computer? Enter the address and password of the " +
-      "Second Brain you already have — nothing will be changed or reset.",
+      "Setting up a new computer? Enter the address of the Second Brain you " +
+      "already have, then your password — or, if someone invited you to their " +
+      "team, the token they sent you. Nothing will be changed or reset.",
     addressPlaceholder: "Your Second Brain address (…workers.dev)",
-    passwordPlaceholder: "Your password",
+    passwordPlaceholder: "Your password, or your team invite token",
     connect: "Connect",
     footnote:
       "The address is in Connection details on your other computer, " +
@@ -371,7 +377,8 @@ export const en: Messages = {
       "else — another space, or your own web address — enter the address below.",
     unlockTitle: "Enter your password",
     unlockLede:
-      "This is the password you chose when you first set up your Second Brain. " +
+      "This is the password you chose when you first set up your Second Brain — " +
+      "or, if someone invited you to their team, the token they sent you. " +
       "Nothing will be changed or reset.",
     lostPassword: "I don't have my password",
   },
@@ -710,6 +717,25 @@ export const en: Messages = {
     updateLabel: "A newer Second Brain is available ({version})",
     updateDesc:
       "Update to get the latest improvements. Your memories, password, and connected tools are kept.",
+    // Read by anyone who cannot perform the update: the redeploy happens inside
+    // the Cloudflare account the brain lives in, and only the person who
+    // created it has one. Says who can, rather than going quiet — a member
+    // whose brain is behind is missing features and deserves the reason.
+    updateDescOther:
+      "Whoever set this brain up needs to update it — the update runs in their " +
+      "own Cloudflare account, so it isn't something this computer can do. " +
+      "Nothing you've saved is affected in the meantime.",
+    // The third case, and the honest version of it: this brain is running a
+    // version that predates the check, so the app genuinely does not know
+    // whether the person reading this created it. The button is offered anyway
+    // because updating is the only thing that fixes the check — but the copy
+    // must not pretend the app has confirmed anything.
+    updateDescLegacy:
+      "This brain is running an older version that can't yet tell this app who " +
+      "you are, so the update is offered to everyone who opens this window. It " +
+      "only runs in the Cloudflare account the brain was created in — if that " +
+      "isn't yours, it will stop and say so. Updating once teaches this brain " +
+      "to answer, and this note goes away.",
     updateButton: "Update my Second Brain",
     allSetTitle: "You're all set",
     allSetLede: "Two links to keep. You can always find them again in this app under Connection details.",
@@ -718,6 +744,12 @@ export const en: Messages = {
     teamCardLabel: "Your team's Second Brain",
     teamCardBody:
       "You're signed in as this brain's owner-admin. Open your dashboard and use the Team panel to invite people — every member gets their own token. Each member's private memories stay private, and anything they share lands in the company layer, visible to everyone.",
+    teamCardBodyAdmin:
+      "You're signed in as a team admin. Open your dashboard and use the Team panel to invite people — every member gets their own token. Changing this brain's password is done by whoever set it up, in their Cloudflare account.",
+    teamCardBodyMember:
+      "You're signed in as a team member. Your own memories stay private; " +
+      "anything you share lands in the company layer, where everyone can find " +
+      "it. Ask a team admin for a new sign-in token if this one stops working.",
     openDashboard: "Open my Second Brain",
   },
   integrations: {

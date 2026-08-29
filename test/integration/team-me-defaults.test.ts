@@ -168,9 +168,12 @@ describe("GET /team/me reports where the next capture lands", () => {
   it("still returns the four original fields and nothing renamed", async () => {
     const { profile } = await jsonOf(await call("GET", "/team/me", bob.token));
     // loadProfileName() in public/js/settings.js reads profile.name and must
-    // keep working untouched; the three new keys are additive.
+    // keep working untouched; the four keys added since are additive. The exact
+    // set is pinned rather than a subset check, because the desktop app now
+    // reads `owner` from here and a rename would be silent on the app's side —
+    // it would simply stop finding it and answer "member" forever.
     expect(Object.keys(profile).sort()).toEqual(
-      ["defaultShare", "effectiveDefault", "email", "name", "orgDefault", "role", "userId"],
+      ["defaultShare", "effectiveDefault", "email", "name", "orgDefault", "owner", "role", "userId"],
     );
   });
 
@@ -191,5 +194,61 @@ describe("GET /team/me reports where the next capture lands", () => {
       code: "removed",
     });
     expect(body.profile).toBeUndefined();
+  });
+});
+
+/**
+ * `owner` — the one thing `role` cannot say.
+ *
+ * `src/lib/tenancy.ts` hashes the deployment's `AUTH_TOKEN` into a `users` row
+ * with `role = 'admin'`, and `rowToIdentity` narrows role to `"admin" |
+ * "member"` — there is no `"owner"` value anywhere in the schema. So a live
+ * probe of this route answers `"admin"` for both the person who created the
+ * brain in their own Cloudflare account and a colleague they promoted, and the
+ * desktop app cannot tell them apart from `role` alone.
+ *
+ * That distinction is not cosmetic. It decides whether the app offers a
+ * password change and a Worker update — both of which need a Cloudflare session
+ * for the account the Worker lives in, which only the owner has. Offering them
+ * to a promoted admin dead-ends at `ErrorWrongCfAccount` after a full sign-in;
+ * withholding them from the owner removes their only in-app route to either.
+ *
+ * The consumer is the desktop app: `installer/src-tauri/src/commands.rs`'s
+ * `connection_role` command reads this key and hands it to
+ * `installer/src/connection-role.ts`.
+ */
+describe("GET /team/me says who owns the deployment", () => {
+  it("is true for the token the deployment itself is guarded with", async () => {
+    const { profile } = await jsonOf(await call("GET", "/team/me", env.AUTH_TOKEN));
+    expect(profile.userId).toBe(roots.ownerUserId);
+    expect(profile.owner).toBe(true);
+  });
+
+  it("is false for a member", async () => {
+    const { profile } = await jsonOf(await call("GET", "/team/me", bob.token));
+    expect(profile.role).toBe("member");
+    expect(profile.owner).toBe(false);
+  });
+
+  it("is false for a promoted admin, whom `role` alone calls exactly what it calls the owner", async () => {
+    // The whole reason the flag exists. Both rows say "admin"; only one of them
+    // holds the Cloudflare account the Worker is deployed into.
+    const promoted = await createMember(env, { name: "Ada", role: "admin" });
+    const mine = await jsonOf(await call("GET", "/team/me", promoted.token));
+    const theirs = await jsonOf(await call("GET", "/team/me", env.AUTH_TOKEN));
+    expect(mine.profile.role).toBe("admin");
+    expect(theirs.profile.role).toBe("admin");
+    expect(mine.profile.owner).toBe(false);
+    expect(theirs.profile.owner).toBe(true);
+  });
+
+  it("is a boolean, never absent — an app that reads `undefined` as false must not have to guess", async () => {
+    for (const token of [env.AUTH_TOKEN, bob.token]) {
+      const { profile } = await jsonOf(await call("GET", "/team/me", token));
+      expect(typeof profile.owner).toBe("boolean");
+    }
+    // And the four fields that were here before it are untouched.
+    const { profile } = await jsonOf(await call("GET", "/team/me", bob.token));
+    expectProfileIdentity(profile);
   });
 });
