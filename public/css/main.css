@@ -2539,6 +2539,22 @@
         color: var(--text-tertiary);
       }
 
+      /* Browsers do not inherit font-family into form controls: a <button>,
+         <select>, <input> or <textarea> falls back to a system font unless you
+         say otherwise. Half the controls in this app — 207 of 416 — were
+         rendering in Arial next to Geist copy, which is most of why the
+         interface read as unfinished.
+
+         font-family only, not the `font` shorthand: size, weight and
+         line-height are set deliberately per control and inheriting them would
+         flatten that. */
+      button,
+      select,
+      input,
+      textarea {
+        font-family: inherit;
+      }
+
       .digest-btn {
         font-size: 12px;
         font-weight: 500;
@@ -3619,7 +3635,7 @@
         margin-top: 10px;
         padding: 12px 14px;
         border: 1px solid var(--border);
-        border-radius: 10px;
+        border-radius: 8px;
         background: var(--surface-2);
       }
 
@@ -3638,6 +3654,9 @@
       }
 
       .coach-mark-dismiss {
+        /* 31px wide before this: a hair under the 32px minimum, and the one
+           control on the card a thumb is most likely to reach for. */
+        min-width: 32px;
         margin-top: 8px;
         min-height: 32px;
         padding: 0;
@@ -4380,6 +4399,53 @@
         min-width: 32px;
         display: inline-flex;
         align-items: center;
+      }
+
+      /* The native control is drawn by the OS, so it looked like a different
+         product on every platform and ignored the palette entirely. Same shape
+         language as the rest: the app's card radius, the app's border, and
+         --accent as a FILL when on, never as ink. */
+      .card-select input[type='checkbox'] {
+        appearance: none;
+        -webkit-appearance: none;
+        /* The control draws no text, but an unset size leaves the browser's
+           13.3333px default in the computed styles and in any audit of the
+           page's type scale. */
+        font-size: inherit;
+        width: 18px;
+        height: 18px;
+        margin: 0;
+        border: 1.5px solid var(--border-input);
+        border-radius: 5px;
+        background: var(--bg-card);
+        cursor: pointer;
+        display: grid;
+        place-content: center;
+        transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
+      }
+
+      .card-select input[type='checkbox']::after {
+        content: '';
+        width: 10px;
+        height: 10px;
+        transform: scale(0);
+        transition: transform 0.12s var(--ease);
+        background: var(--switch-knob);
+        clip-path: polygon(14% 44%, 0 60%, 39% 100%, 100% 18%, 84% 4%, 39% 68%);
+      }
+
+      .card-select input[type='checkbox']:checked {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+
+      .card-select input[type='checkbox']:checked::after {
+        transform: scale(1);
+      }
+
+      .card-select input[type='checkbox']:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
       }
 
       /* In select mode the tick takes over the gutter the row number sits in.
