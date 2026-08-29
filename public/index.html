@@ -141,6 +141,10 @@
                 <!-- What Auto resolves to, or which layer is pinned for this capture.
                      Hidden on solo brains and until /team/me answers. -->
                 <div class="home-layer-hint" id="home-layer-hint" style="display: none"></div>
+                <!-- First-run coach marks for the composer, written by
+                     renderComposerCoach() in js/home.js. Empty and hidden on a
+                     solo brain, and once both marks have been dismissed. -->
+                <div class="coach-mark" id="coach-home" hidden></div>
                 <!-- The one thing worth keeping from the deleted Remember tab:
                      it was the only place hashtags were ever taught. -->
                 <div class="home-hint" data-i18n="home.hintHtml" data-i18n-html>Add <span class="hashtag">#tags</span> anywhere to file it</div>
@@ -226,6 +230,13 @@
                     <option value="company" data-i18n="memories.sharedLayer">Shared</option>
                   </select><i class="ti ti-chevron-down"></i></span>
                 </span>
+                <!-- Only on the shared layer: on the personal layer every row is
+                     yours, so "who shared this" would be a list of one. -->
+                <span id="actor-filter-wrap" style="display: none">
+                  <span class="team-select-wrap"><select class="team-select" id="actor-filter-recent" onchange="onActorFilterChange(this.value)" title="Show only what one person shared" data-i18n="memories.authorFilterTitle" data-i18n-attr="title">
+                    <option value="" data-i18n="memories.allAuthors">All authors</option>
+                  </select><i class="ti ti-chevron-down"></i></span>
+                </span>
               </div>
               <!-- This used to read "Knowledge / Events / Unsorted", which stopped
                    being true when the canvas moved to per-cluster colours from a
@@ -242,6 +253,11 @@
                 </button>
               </div>
             </div>
+
+            <!-- The author lock, written by renderMemoriesCoach() in
+                 js/recent.js once a shared memory is in the loaded list.
+                 Empty and hidden otherwise, and on a solo brain. -->
+            <div class="coach-mark" id="coach-memories" hidden></div>
 
             <div id="recent-list">
               <div class="empty-state"><i class="ti ti-clock"></i><span data-i18n="memories.loading">Loading memories...</span></div>
@@ -574,6 +590,7 @@
     <script src="credits.js"></script>
     <script src="js/state.js"></script>
     <script src="js/toast.js"></script>
+    <script src="js/coach.js"></script>
     <script src="js/confirm-sheet.js"></script>
     <script src="js/api.js"></script>
     <script src="js/theme.js"></script>

@@ -209,6 +209,9 @@ const I18N_EN = {
     evUnshared: 'Made personal again',
     authorLockedTitle: 'Only the author can change a shared memory',
     authorLocked: 'Shared by {name} — only they can edit or delete it',
+    allAuthors: 'All authors',
+    authorFilterTitle: 'Show only what one person shared',
+    authorYou: 'You',
   },
   graph: {
     empty: 'No connections yet — link memories, or let them auto-connect as you add more.',
@@ -576,6 +579,19 @@ const I18N_EN = {
     removeLinkAction: 'Remove link',
     disconnectTitle: 'Disconnect this integration?',
   },
+  coach: {
+    dismiss: 'Got it',
+    dismissAria: 'Dismiss this tip',
+    sharedTitle: 'Shared means the whole team',
+    sharedBody:
+      'A shared memory can be found by everyone on this team. Anything you capture stays personal until you share it.',
+    autoTitle: 'What “Default” does',
+    autoBody:
+      'Default follows your team’s capture policy. The line above says where it lands today — pick Personal or Shared to decide for one memory.',
+    lockTitle: 'Only the author can change a shared memory',
+    lockBody:
+      'Once a memory is shared, only the person who shared it — or an admin — can edit or delete it. Everyone else can read it and link to it.',
+  },
 }
 
 const I18N_IT = {
@@ -785,6 +801,9 @@ const I18N_IT = {
     evUnshared: 'Reso di nuovo personale',
     authorLockedTitle: 'Solo l’autore può modificare un ricordo condiviso',
     authorLocked: 'Condiviso da {name} — solo questa persona può modificarlo o eliminarlo',
+    allAuthors: 'Tutti gli autori',
+    authorFilterTitle: 'Mostra solo ciò che ha condiviso una persona',
+    authorYou: 'Tu',
   },
   graph: {
     empty:
@@ -1149,6 +1168,19 @@ const I18N_IT = {
     removeLinkTitle: 'Rimuovere questo collegamento?',
     removeLinkAction: 'Rimuovi collegamento',
     disconnectTitle: 'Disconnettere questa integrazione?',
+  },
+  coach: {
+    dismiss: 'Ho capito',
+    dismissAria: 'Chiudi questo suggerimento',
+    sharedTitle: 'Condiviso vuol dire tutto il team',
+    sharedBody:
+      'Un ricordo condiviso è consultabile da tutte le persone del team. Ciò che salvi resta personale finché non lo condividi.',
+    autoTitle: 'Che cosa fa “Predefinito”',
+    autoBody:
+      '“Predefinito” segue la politica di acquisizione del team. La riga qui sopra dice dove finisce oggi: scegli Personale o Condiviso per decidere per un singolo ricordo.',
+    lockTitle: 'Solo chi l’ha condiviso può modificarlo',
+    lockBody:
+      'Quando un ricordo è condiviso, solo chi l’ha condiviso — o un amministratore — può modificarlo o eliminarlo. Le altre persone possono leggerlo e collegarlo.',
   },
 }
 

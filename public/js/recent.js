@@ -5,6 +5,12 @@
 
 /** Layer filter for the memories screen: null = all layers. */
 let memoryLayerFilter = null
+/** Author filter, meaningful only on the shared layer: null = everyone. */
+let memoryActorFilter = null
+/** { members, you } from GET /team/roster; null = not fetched yet. */
+let memoryAuthors = null
+/** The in-flight roster request, shared by concurrent callers. */
+let memoryAuthorsPending = null
 
 function maybeRevealMemoryLayerFilter(health) {
   // The outer span is what carries display:none — the select's immediate
@@ -12,6 +18,82 @@ function maybeRevealMemoryLayerFilter(health) {
   // visibility always tracks TEAM_MODE rather than just being revealed once.
   const wrap = document.getElementById('layer-filter-wrap')
   if (wrap) wrap.style.display = TEAM_MODE ? '' : 'none'
+  // Last, so a brain that stops being a team drops both controls together
+  // rather than leaving an author filter behind over a layer filter that has
+  // just gone away.
+  maybeRevealActorFilter()
+}
+
+/**
+ * The people whose shared memories this caller can filter by.
+ *
+ * Fetched here rather than read out of team.js's `teamRoster`, which is only
+ * populated by a visit to the Team screen — a memories filter that works or
+ * not depending on which screen you opened first is worse than one extra
+ * request. A failure is recorded as an empty roster rather than left null, so
+ * an unreachable or older Worker costs one request and not one per change of
+ * filter.
+ */
+function loadMemoryAuthors() {
+  if (!TEAM_MODE || memoryAuthors !== null) return Promise.resolve()
+  // Memoised on the REQUEST, not on its result. Now that loadRecent no longer
+  // waits for this, two loads can be in flight at once, and a result-only
+  // memo would let both of them see `null` and both send the request.
+  if (memoryAuthorsPending) return memoryAuthorsPending
+  memoryAuthorsPending = (async () => {
+    try {
+      const res = await fetch(`${WORKER_URL}/team/roster`, {
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      const data = await res.json()
+      memoryAuthors = { members: Array.isArray(data.members) ? data.members : [], you: data.you ?? null }
+    } catch {
+      memoryAuthors = { members: [], you: null }
+    } finally {
+      memoryAuthorsPending = null
+    }
+  })()
+  return memoryAuthorsPending
+}
+
+function renderAuthorOptions() {
+  const select = document.getElementById('actor-filter-recent')
+  if (!select || !memoryAuthors) return
+  select.innerHTML =
+    `<option value="">${escHtml(t('memories.allAuthors'))}</option>` +
+    memoryAuthors.members
+      .map(
+        (m) =>
+          `<option value="${escAttr(m.userId)}">${escHtml(m.userId === memoryAuthors.you ? t('memories.authorYou') : m.name)}</option>`,
+      )
+      .join('')
+  // Restored rather than reset: rebuilding the list must not silently widen a
+  // filter the user still has applied.
+  select.value = memoryActorFilter || ''
+}
+
+/**
+ * Show the author filter on the shared layer only, both branches, every call.
+ *
+ * On the personal layer every row is the caller's own, so the control would
+ * offer one real choice; on a solo brain there is nobody else to filter by and
+ * no roster is ever requested.
+ */
+async function maybeRevealActorFilter() {
+  const wrap = document.getElementById('actor-filter-wrap')
+  if (!wrap) return
+  const show = TEAM_MODE && memoryLayerFilter === 'company'
+  wrap.style.display = show ? '' : 'none'
+  if (!show) {
+    // The layer-change path clears this too (see onLayerFilterChange); this
+    // one covers the other way the control can vanish — TEAM_MODE going false
+    // under a filter that is already applied.
+    memoryActorFilter = null
+    return
+  }
+  await loadMemoryAuthors()
+  renderAuthorOptions()
 }
 
 async function loadRecent() {
@@ -21,8 +103,17 @@ async function loadRecent() {
   if (!allEntries.length) {
     list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>${escHtml(t('memories.loadingShort'))}</span></div>`
   }
+  // Started here, deliberately NOT awaited. Its synchronous half — showing or
+  // hiding the wrap, and clearing a filter that is going out of view — has
+  // already run by the time this returns, which is all the request below
+  // needs. Its asynchronous half is a roster fetch with no timeout and no
+  // abort, and waiting for it would let one slow endpoint leave the memories
+  // screen showing stale rows with no spinner and no error, indefinitely. The
+  // author filter is a refinement of a list nobody can act on until it exists,
+  // so it is allowed to populate a moment late.
+  maybeRevealActorFilter()
   try {
-    allEntries = await apiList(50, memoryLayerFilter)
+    allEntries = await apiList(50, memoryLayerFilter, memoryActorFilter)
     // Through the filters, not straight to render: reloading used to reset the
     // list to everything while the filter controls still read "work" and
     // "past 7 days", which now happens after every capture rather than only
@@ -34,10 +125,44 @@ async function loadRecent() {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-wifi-off"></i><span>${escHtml(t('memories.loadFailed'))}</span></div>`
     }
   }
+  // Outside the try, so a failed load still gets a correct answer: whatever
+  // survived in allEntries is what is on screen, and that is what the mark is
+  // about.
+  renderMemoriesCoach()
+}
+
+/**
+ * "Only the author can change a shared memory", once there is a shared memory
+ * to say it about.
+ *
+ * The trigger is a property of the LIST rather than an event on the share,
+ * because the fact being taught is about memories that exist and not about an
+ * action the reader took. That covers a member's own first share — their row
+ * is in the very next list — and it also covers the far commoner case of
+ * someone joining a team that already has shared memories, whom a share-event
+ * trigger would never reach at all.
+ *
+ * Above the list rather than on a card: the lock is a rule about the layer,
+ * not about one row. The per-row expression of it is the greyed-out Edit that
+ * applyCardAuthorLock already puts on the card.
+ */
+function renderMemoriesCoach() {
+  const shared = Array.isArray(allEntries) && allEntries.some((e) => e && e.workspace === 'company')
+  // A null copy is the primitive's own hide branch, so "no shared memories
+  // yet" needs no second code path here.
+  renderCoachMark('coach-memories', 'author-lock', shared ? { title: t('coach.lockTitle'), body: t('coach.lockBody') } : null)
 }
 
 function onLayerFilterChange(value) {
   memoryLayerFilter = value || null
+  // An author filter that survives a move off the shared layer keeps
+  // narrowing a list from a control the user can no longer see.
+  if (memoryLayerFilter !== 'company') memoryActorFilter = null
+  loadRecent()
+}
+
+function onActorFilterChange(value) {
+  memoryActorFilter = value || null
   loadRecent()
 }
 

@@ -66,18 +66,62 @@ async function loadCaptureDefault() {
  */
 function renderCaptureHint() {
   const el = document.getElementById('home-layer-hint')
-  if (!el) return
-  if (!TEAM_MODE || captureDefault === null) {
-    el.style.display = 'none'
-    el.textContent = ''
+  // A branch rather than an early return, because the coach mark below has to
+  // run on BOTH paths — including the solo one, where its job is to hide.
+  if (el) {
+    if (!TEAM_MODE || captureDefault === null) {
+      el.style.display = 'none'
+      el.textContent = ''
+    } else {
+      let key
+      if (homeLayer === 'personal') key = 'home.pinnedPersonal'
+      else if (homeLayer === 'company') key = 'home.pinnedShared'
+      else key = captureDefaultKey(captureDefault)
+      el.style.display = ''
+      el.textContent = t(key)
+    }
+  }
+  renderComposerCoach()
+}
+
+/**
+ * At most one coach mark at a time, in a fixed order: what "shared" means, and
+ * then — only once that has been dismissed — what "Default" resolves to.
+ *
+ * Two callouts stacked under a one-line composer is a wall, and the second one
+ * is only legible to someone who has already accepted the first: "Default
+ * follows your team's policy" presupposes that there is a team layer at all.
+ *
+ * When both have been dismissed the second call's own coachDismissed check
+ * hides the container — that third state is the primitive's, not this
+ * function's, which is also why the !TEAM_MODE case needs no branch here.
+ */
+function renderComposerCoach() {
+  // The primitive gates on TEAM_MODE too, but it is restated here because
+  // choosing WHICH of the two marks is due means consulting the dismissal
+  // record — and coach.js's guarantee is that a solo brain does not so much as
+  // read that key. Leaning on the primitive alone would read it on every
+  // renderCaptureHint() and quietly falsify the claim. A null copy is the
+  // primitive's own hide branch, so this still states both branches.
+  if (!TEAM_MODE) {
+    renderCoachMark('coach-home', 'shared', null)
     return
   }
-  let key
-  if (homeLayer === 'personal') key = 'home.pinnedPersonal'
-  else if (homeLayer === 'company') key = 'home.pinnedShared'
-  else key = captureDefaultKey(captureDefault)
-  el.style.display = ''
-  el.textContent = t(key)
+  if (!coachDismissed('shared')) {
+    renderCoachMark('coach-home', 'shared', { title: t('coach.sharedTitle'), body: t('coach.sharedBody') })
+    return
+  }
+  // The second mark points at the hint line directly — "the line above says
+  // where it lands today" — so it waits for that line to exist. When /team/me
+  // has not answered, renderCaptureHint has just emptied it, and a callout
+  // referring to a sentence that is not on screen is worse than no callout.
+  // Handing the primitive a null copy is its own hide branch, so this needs no
+  // second code path.
+  renderCoachMark(
+    'coach-home',
+    'auto',
+    captureDefault === null ? null : { title: t('coach.autoTitle'), body: t('coach.autoBody') },
+  )
 }
 
 /** /health reports whether more than one member exists; solo brains never see layer UI. */

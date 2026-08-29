@@ -32,9 +32,12 @@ async function apiCapture(content, tags, source, workspace) {
   return res.json()
 }
 
-async function apiList(n = 50, workspace) {
+async function apiList(n = 50, workspace, actor) {
   const params = new URLSearchParams({ n: String(n) })
   if (workspace) params.set('workspace', workspace)
+  // Only ever set from the shared layer's author filter (js/recent.js), so a
+  // solo brain's URL stays byte-identical to what it has always sent.
+  if (actor) params.set('actor', actor)
   const res = await fetch(`${WORKER_URL}/list?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
   return res.json()
 }
