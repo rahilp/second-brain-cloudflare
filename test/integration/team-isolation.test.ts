@@ -15,7 +15,7 @@
  * Every read surface is asked the same question — can Bob reach Alice's row? —
  * and every write surface is asked whether Bob can change it.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import worker from "../../src/index";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
@@ -47,6 +47,39 @@ const jsonOf = async (res: Response) => res.json() as Promise<any>;
 let sqlite: SqliteD1;
 let env: Env;
 let ids: { alicePrivate: string; bobPrivate: string; shared: string };
+let aliceUserId = "";
+let aliceWorkspaceId = "";
+let bobUserId = "";
+let bobWorkspaceId = "";
+
+/**
+ * A pending pair for the insight queues. Inserted directly for the same reason
+ * the entries are: the subject is who may read the pair, not how the accrual
+ * pass found it.
+ */
+function seedCandidate(id: string, aId: string, bId: string, score: number) {
+  sqlite.db
+    .prepare(
+      `INSERT INTO insight_candidates (id, a_id, b_id, similarity, gap_ms, score, signal, status, created_at)
+       VALUES (?, ?, ?, ?, 0, ?, 'vector', 'pending', ?)`,
+    )
+    .bind(id, aId, bId, score, score, SEEDED_AT)
+    .run();
+}
+
+/** An AI double that always reasons the pair into one given insight. */
+function insightAI(text: string): Ai {
+  const payload = JSON.stringify({ insight: true, shape: "throughline", text });
+  return {
+    run: vi.fn().mockResolvedValue(new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(payload)}}\n\n`));
+        c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+        c.close();
+      },
+    })),
+  } as unknown as Ai;
+}
 
 /**
  * Insert directly: the unit under test is who can read the row, not how it got
@@ -81,6 +114,11 @@ beforeEach(async () => {
   const roots = await ensureTenantBootstrap(env);
   const bob = await createMember(env, { name: "Bob" });
   bobToken = bob.token;
+
+  aliceUserId = roots.ownerUserId;
+  aliceWorkspaceId = roots.ownerPersonalWorkspaceId;
+  bobUserId = bob.member.userId;
+  bobWorkspaceId = bob.member.personalWorkspaceId;
 
   ids = {
     alicePrivate: "e-alice",
@@ -236,6 +274,95 @@ describe("cross-user isolation — read surfaces", () => {
     const graph = await jsonOf(await call("GET", "/graph", bobToken));
     const nodeIds = (graph.nodes ?? []).map((n: any) => n.id);
     expect(nodeIds).not.toContain(ids.alicePrivate);
+  });
+
+  it("GET /insights/dry-run never previews a pair of a colleague's private memories", async () => {
+    // The dry run reaches `entries` only through JOIN, which is how it escaped
+    // the scope rule: two of Bob's personal memories paired by the accrual pass
+    // put their full content through the model and their ids into the admin's
+    // response. requireAdmin authorises the SURFACE — it is not a licence to
+    // read a personal workspace, and the same token gets a 404 from /entry for
+    // exactly these rows.
+    seed("bob-pair-a", bobWorkspaceId, bobUserId,
+      "Bob private: the custody hearing was moved to the eleventh", ["family"]);
+    seed("bob-pair-b", bobWorkspaceId, bobUserId,
+      "Bob private: retained a different solicitor for the custody matter", ["family"]);
+    seedCandidate("cand-bob", "bob-pair-a", "bob-pair-b", 0.9);
+
+    const res = await call("GET", "/insights/dry-run", ALICE);
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.candidates).toEqual([]);
+    const dump = JSON.stringify(body);
+    expect(dump).not.toContain("custody");
+    expect(dump).not.toContain("bob-pair-a");
+    expect(dump).not.toContain("bob-pair-b");
+  });
+
+  it("GET /insights/dry-run still previews the admin's own pending pair", async () => {
+    // The guard must narrow the preview, not empty it: the endpoint exists to
+    // let its caller judge the ranking on their own data.
+    seed("alice-pair-a", aliceWorkspaceId, aliceUserId,
+      "Alice: quoted the retainer at nine hundred a month, flat", ["pricing"]);
+    seed("alice-pair-b", aliceWorkspaceId, aliceUserId,
+      "Alice: switched the retainer to hourly billing instead", ["pricing"]);
+    seedCandidate("cand-alice", "alice-pair-a", "alice-pair-b", 0.8);
+
+    const body = await jsonOf(await call("GET", "/insights/dry-run", ALICE));
+    expect(body.candidates.map((c: any) => [c.a_id, c.b_id]))
+      .toEqual([["alice-pair-a", "alice-pair-b"]]);
+  });
+
+  it("GET /insights/dry-run's novelty check never reads a colleague's pending insight", async () => {
+    // The second, quieter half of the same leak: the comparison list the dry run
+    // measures novelty against was every pending insight in the deployment. Bob's
+    // private proposal is never printed, but it silently suppresses Alice's — an
+    // admin is told her own candidate "restates a recently written insight" that
+    // she cannot see and did not write. Suppression by an invisible row is still
+    // a cross-workspace read.
+    //
+    // The two seeds share their whole distinctive vocabulary, which makes
+    // reasonOverPair's asymmetric floor a no-op (see sharesVocabulary) so this
+    // test turns on the novelty check alone.
+    const twin = "Alice: quarterly kitesurfing bookkeeping deadlines collide";
+    seed("alice-twin-a", aliceWorkspaceId, aliceUserId, twin, ["scheduling"]);
+    seed("alice-twin-b", aliceWorkspaceId, aliceUserId, twin, ["scheduling"]);
+    seedCandidate("cand-twin", "alice-twin-a", "alice-twin-b", 0.7);
+
+    // Answers with text whose distinctive words are exactly those of the seeded
+    // `bob-insight` row, so restatesRecent fires if — and only if — that row is
+    // in the comparison list.
+    env.AI = insightAI(
+      "Considering leaving, that private company insight keeps returning to you.",
+    );
+
+    const body = await jsonOf(await call("GET", "/insights/dry-run", ALICE));
+    expect(body.candidates.length).toBe(1);
+    expect(body.candidates[0].outcome).toBe("insight");
+    expect(body.candidates[0].reason).toBe(null);
+    expect(body.candidates[0].would_write).toBe(true);
+  });
+
+  it("GET /stats digest_candidates never names a colleague's private tag", async () => {
+    // digest_candidates sits beside top_tags in the same response and top_tags is
+    // already scoped, which is the tell: this one scanned every workspace, so an
+    // admin's dashboard named a member's private topic — and its follow-up
+    // "already digested?" existence check read the whole corpus too.
+    //
+    // Eleven rows because the candidate query keeps only tags with count > 10.
+    for (let i = 0; i < 11; i++) {
+      seed(`bob-topic-${i}`, bobWorkspaceId, bobUserId,
+        `Bob private: divorce paperwork note ${i}`, ["divorce-paperwork"]);
+    }
+
+    const stats = await jsonOf(await call("GET", "/stats", ALICE));
+    expect(stats.digest_candidates.map((c: any) => c.tag)).not.toContain("divorce-paperwork");
+
+    // And the deployment-wide repair counter is deliberately NOT narrowed by this
+    // change: /vectorize-pending acts on every workspace, so a scoped backlog
+    // would leave Bob's rows unrepairable with nothing on screen to say so.
+    // Five seeded rows plus the eleven above, none of them indexed.
+    expect(stats.unvectorized).toBe(16);
   });
 });
 

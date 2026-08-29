@@ -320,6 +320,12 @@ export async function handleAdminRoutes(
            AND ${scope.clause}
          GROUP BY value ORDER BY n DESC LIMIT 5`,
       ).bind(...scope.bindings).all(),
+      // Scoped like top_tags directly above, and for the same reason: this list
+      // is tag NAMES, and it is rendered on the admin's dashboard. Unscoped it
+      // named colleagues' private topics — "divorce-paperwork" beside a count —
+      // from workspaces the same token gets a 404 from /entry for. The nightly
+      // compression pass picks its own tags per workspace (src/compression), so
+      // narrowing this display list costs no repair coverage.
       env.DB.prepare(`
         SELECT value as tag, COUNT(*) as count
         FROM entries, json_each(entries.tags)
@@ -329,19 +335,24 @@ export async function handleAdminRoutes(
           AND entries.tags NOT LIKE '%"auto-pattern"%'
           AND entries.tags NOT LIKE '%"auto-insight"%'
           AND ${compressionEligibilitySql("entries.", cfg)}
+          AND entries.${scope.clause}
         GROUP BY value
         HAVING count > 10
         ORDER BY count DESC
         LIMIT 10
-      `).bind(Date.now() - cfg.COMPRESSION_MIN_AGE_MS).all(),
+      `).bind(Date.now() - cfg.COMPRESSION_MIN_AGE_MS, ...scope.bindings).all(),
     ]);
 
     const cutoff = Date.now() - 86400000;
     const digestCandidates: { tag: string; count: number }[] = [];
     for (const row of candidateRows.results as any[]) {
+      // Scoped to match the query that produced `row`: "has this tag already
+      // been digested?" has to be asked of the same rows the tag was counted
+      // over, or a colleague's digest in an unreadable workspace silently
+      // removes a real candidate from the admin's own list.
       const existing = await env.DB.prepare(
-        `SELECT id FROM entries WHERE tags LIKE '%"synthesized"%' AND tags LIKE ? ${TAG_LIKE_ESCAPE} AND created_at > ? LIMIT 1`
-      ).bind(tagLikePattern(row.tag as string), cutoff).first();
+        `SELECT id FROM entries WHERE tags LIKE '%"synthesized"%' AND tags LIKE ? ${TAG_LIKE_ESCAPE} AND created_at > ? AND ${scope.clause} LIMIT 1`
+      ).bind(tagLikePattern(row.tag as string), cutoff, ...scope.bindings).first();
       if (!existing) digestCandidates.push({ tag: row.tag as string, count: row.count as number });
     }
 
@@ -801,6 +812,15 @@ export async function handleAdminRoutes(
     // pass applies (src/insight/weekly.ts) — without them, this endpoint
     // could not tell an assistant-authored pair from any other and would
     // report exactly what production refuses as if it would be written.
+    //
+    // requireAdmin authorises this surface; it does not widen the readable row
+    // set (src/lib/scope.ts). Both sides of the pair are scoped independently:
+    // a candidate is previewable only when the caller could have read BOTH of
+    // the memories it draws on, which is the same rule GET /entry applies one
+    // row at a time. This one reaches `entries` through JOIN rather than FROM,
+    // which is how it stayed unscoped while every sibling query was fixed.
+    const aScope = scopeWhere(auth, undefined, "a.workspace_id");
+    const bScope = scopeWhere(auth, undefined, "b.workspace_id");
     const { results } = await env.DB.prepare(
       `SELECT c.id, c.a_id, c.b_id, c.score, a.content AS a_content, b.content AS b_content,
               a.tags AS a_tags, b.tags AS b_tags
@@ -810,9 +830,10 @@ export async function handleAdminRoutes(
        WHERE c.status = 'pending'
          AND a.tags NOT LIKE '%"status:deprecated"%'
          AND b.tags NOT LIKE '%"status:deprecated"%'
+         AND ${aScope.clause} AND ${bScope.clause}
        ORDER BY c.score DESC
        LIMIT ?`,
-    ).bind(limit).all() as { results: Record<string, any>[] };
+    ).bind(...aScope.bindings, ...bScope.bindings, limit).all() as { results: Record<string, any>[] };
 
     // D2's comparison list, built exactly as src/insight/weekly.ts builds it:
     // insights still unreviewed from earlier runs, seeded before the loop and
@@ -820,10 +841,17 @@ export async function handleAdminRoutes(
     // could not reproduce the spec's own motivating case — a candidate
     // restating an insight a PRIOR run already wrote is invisible to a
     // same-run-only check.
+    //
+    // Scoped for the same reason the candidate query is, and the leak here is
+    // quieter: the comparison text is never printed, but an unscoped list lets a
+    // colleague's private proposal suppress the caller's own candidate with the
+    // reason "restates a recently written insight" — an admin told her preview
+    // duplicates something she cannot see and did not write.
+    const scope = scopeWhere(auth);
     const { results: recentInsightRows } = await env.DB.prepare(
-      `SELECT content FROM entries WHERE ${PENDING_INSIGHT_SQL}
+      `SELECT content FROM entries WHERE ${PENDING_INSIGHT_SQL} AND ${scope.clause}
        ORDER BY created_at DESC LIMIT ?`,
-    ).bind(RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };
+    ).bind(...scope.bindings, RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };
     const writtenThisRun: string[] = recentInsightRows.map(r => rawInsightText(r.content));
 
     const candidates = [];
