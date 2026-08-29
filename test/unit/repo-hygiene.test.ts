@@ -64,3 +64,41 @@ describe("the committed tree", () => {
     expect(dir.status).toBe(0);
   });
 });
+
+/**
+ * Nothing that holds a person's memories can be committed.
+ *
+ * `wrangler d1 export` writes every entry in the brain, in plaintext, to
+ * wherever `--output` points. docs/local-testing.md sends it to /tmp, but the
+ * repository root is one mistyped flag away, and a dump is exactly the kind of
+ * large untracked file that rides along in a `git add -A` and is never noticed.
+ * A local D1 is the same content as SQLite.
+ *
+ * `--no-index` so these are decided by the ignore rules alone, not by whether
+ * the file happens to exist in the working tree right now.
+ */
+describe("memory-bearing files", () => {
+  const ignored = (path: string) =>
+    git("check-ignore", "--no-index", "-q", "--", path).status === 0;
+
+  for (const path of [
+    "brain.sql",                       // a d1 export in the repo root
+    "test/__nope__/export.sql",        // …or anywhere else
+    "dump.sqlite",
+    "local.sqlite3",
+    "state.db",
+    "state.db-wal",                    // SQLite's sidecars carry content too
+    "state.db-shm",
+  ]) {
+    it(`ignores ${path}`, () => {
+      expect(ignored(path), `${path} could be committed`).toBe(true);
+    });
+  }
+
+  it("still tracks db/schema.sql, which is the shipped schema and not a dump", () => {
+    // The *.sql rule needs its negation; without it the schema silently leaves
+    // the tree and a fresh deployment has no tables.
+    expect(ignored("db/schema.sql")).toBe(false);
+    expect(git("ls-files", "--error-unmatch", "db/schema.sql").status).toBe(0);
+  });
+});

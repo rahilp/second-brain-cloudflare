@@ -29,3 +29,19 @@ deploy-personal.sh
 # Local end-to-end harness (wraps the real Worker with stub AI/Vectorize for
 # `wrangler dev`). Local tooling, like wrangler.*.jsonc above.
 devharness/
+
+# ── Anything that could hold somebody's memories ──────────────────────────────
+# `wrangler d1 export` writes every entry, in plaintext, to wherever --output
+# points; docs/local-testing.md sends it to /tmp, but the repo root is one
+# mistyped flag away. A local D1 is the same content in SQLite form. Neither is
+# ever something to commit, and both are large enough to be committed by
+# accident via `git add -A` and never noticed.
+#
+# db/schema.sql is the shipped schema, not a dump, and stays tracked.
+*.sql
+!db/schema.sql
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
