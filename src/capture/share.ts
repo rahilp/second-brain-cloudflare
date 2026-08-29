@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import type { Identity } from "../lib/identity";
 import { isCompanyWorkspace, scopeWhere, scopeWrite } from "../lib/scope";
+import { VECTORIZE_GET_BY_IDS_BATCH } from "../constants";
 
 /**
  * Share semantics: MOVE, not copy (spec decision, 2026-08-24). A shared entry
@@ -16,17 +17,22 @@ import { isCompanyWorkspace, scopeWhere, scopeWrite } from "../lib/scope";
  *   - company → personal: only the entry's original actor or an admin. A member
  *     cannot un-share someone else's shared memory.
  *
- * Vector note: entries and their edges move here. The vectors themselves stay
- * put until P3 introduces per-workspace Vectorize namespaces — with one shared
- * index there is nothing to move yet, and hydration is already scoped at the
- * SQL layer, so no cross-workspace read can occur in the meantime.
+ * Vector note: entries and their edges move here, and so do their vectors'
+ * `workspace_id` metadata — restampVectorWorkspace below, called by the
+ * REST/MCP callers after this returns. Per-workspace Vectorize namespaces
+ * (P3/stage 3) are NOT built, so there is nothing to physically relocate; this
+ * is a metadata-only re-stamp so the dense arm of recall (which filters on
+ * that field, src/vectorize/scope.ts) stops excluding a just-shared entry from
+ * every colleague's results. It is deliberately best-effort: hydration is
+ * already scoped at the SQL layer, so a stale vector tag is a ranking
+ * imperfection, never a correctness or leakage issue.
  */
 
 export type ShareTarget = "personal" | "company";
 
 export type ShareResult =
-  | { status: "shared"; workspaceId: string }
-  | { status: "unshared"; workspaceId: string }
+  | { status: "shared"; workspaceId: string; vectorIds: string[] }
+  | { status: "unshared"; workspaceId: string; vectorIds: string[] }
   | { status: "no_change" }
   | { status: "not_found" }
   | { status: "forbidden" };
@@ -39,8 +45,8 @@ export async function moveEntry(
 ): Promise<ShareResult> {
   const scope = scopeWhere(identity);
   const row = await env.DB.prepare(
-    `SELECT id, workspace_id, actor_id FROM entries WHERE id = ? AND ${scope.clause}`
-  ).bind(id, ...scope.bindings).first<{ id: string; workspace_id: string; actor_id: string }>();
+    `SELECT id, workspace_id, actor_id, vector_ids FROM entries WHERE id = ? AND ${scope.clause}`
+  ).bind(id, ...scope.bindings).first<{ id: string; workspace_id: string; actor_id: string; vector_ids: string }>();
   if (!row) return { status: "not_found" };
 
   // An un-shared entry returns to the MOVER's personal workspace when they are
@@ -66,5 +72,37 @@ export async function moveEntry(
   return {
     status: target === "company" ? "shared" : "unshared",
     workspaceId: targetWorkspaceId,
+    vectorIds: JSON.parse(row.vector_ids ?? "[]") as string[],
   };
+}
+
+/**
+ * Re-stamps every one of an entry's vectors with its new workspace after a
+ * share/unshare. Vectorize has no metadata-only update — the only route is
+ * getByIds -> mutate metadata -> upsert — but getByIds returns `values` too,
+ * so this re-uses them: no re-embedding, no AI subrequest, just two Vectorize
+ * calls per batch of VECTORIZE_GET_BY_IDS_BATCH ids.
+ *
+ * Non-fatal by contract: the SQL layer is the correctness boundary (every
+ * hydration is scoped there regardless of vector metadata), and a share must
+ * not fail — or leave the entry's already-committed D1 move unreachable —
+ * because the vector index happens to be down. Callers fire this via
+ * ctx.waitUntil AFTER the D1 move and its audit event, so a Vectorize outage
+ * can never cost the state change or the audit trail, only this cosmetic
+ * ranking follow-up.
+ */
+export async function restampVectorWorkspace(env: Env, vectorIds: string[], workspaceId: string): Promise<void> {
+  try {
+    for (let i = 0; i < vectorIds.length; i += VECTORIZE_GET_BY_IDS_BATCH) {
+      const batch = vectorIds.slice(i, i + VECTORIZE_GET_BY_IDS_BATCH);
+      if (!batch.length) continue;
+      const vectors = await env.VECTORIZE.getByIds(batch);
+      if (!vectors.length) continue;
+      await env.VECTORIZE.upsert(
+        vectors.map(v => ({ ...v, metadata: { ...v.metadata, workspace_id: workspaceId } })),
+      );
+    }
+  } catch (e) {
+    console.error("Vectorize workspace re-stamp failed (non-fatal):", e);
+  }
 }
