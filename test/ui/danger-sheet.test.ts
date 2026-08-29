@@ -265,6 +265,35 @@ describe("whose sheet is this", () => {
     expect(secondClosed).toBe(0);
   });
 
+  it("hands an action a progress handle that cannot write on the question that replaced it", async () => {
+    // The sibling of the rule above. An action gets a `done()` it can only
+    // close its own question with; it gets a `progress()` it can only write
+    // its own accept button with, for the same reason — #confirm-accept-btn
+    // is ONE element, and a long batch resolving after its sheet was replaced
+    // would otherwise label someone else's question with its own progress.
+    const ctx = load();
+    const slow = deferred();
+    ctx.openDangerConfirm({
+      title: "Moving",
+      body: "B",
+      confirmLabel: "Move",
+      onConfirm: async (_c: boolean, _done: () => void, progress: (s: string) => void) => {
+        progress("Moving 1 of 3…");
+        await slow.promise;
+        progress("Moving 3 of 3…");
+      },
+    });
+    const running = ctx.runConfirmAction();
+    expect(ctx.__els.get("confirm-accept-btn").textContent, "its own question is writable").toBe("Moving 1 of 3…");
+
+    ctx.closeConfirm();
+    ctx.openDangerConfirm({ title: "Forget this memory?", body: "B2", confirmLabel: "Forget", onConfirm: () => {} });
+    slow.resolve();
+    await running;
+
+    expect(ctx.__els.get("confirm-accept-btn").textContent, "the replacement keeps its own label").toBe("Forget");
+  });
+
   it("still lets a caller close the sheet it actually opened", async () => {
     const ctx = load();
     let closed = 0;

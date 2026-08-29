@@ -47,6 +47,15 @@
  *      scope.clause;` and then `${scopeSql}` — and it passes, for the reason
  *      limitation 2 gives. The rule catches the spelling, not the idea.
  *
+ * A fifth thing is not accepted, and it is the newest: a clause in the ON
+ * CLAUSE OF AN OUTER JOIN. `LEFT JOIN entries m ON m.id = ev.entry_id AND
+ * m.${scope.clause}` decides which row supplies a COLUMN, not which rows
+ * appear — every row of the other side survives, with that column NULL and the
+ * rest intact. GET /team/activity shipped exactly that and this script passed
+ * it before the one-word fix and after it, with no number moving either time.
+ * An INNER join's ON is a row filter and still counts; see THE OUTER-JOIN RULE
+ * beside joinStructure().
+ *
  * Per-alias attribution is load-bearing too: `JOIN entries a … JOIN entries b …
  * WHERE a.${scope.clause}` is the /insights/dry-run leak with one alias dropped,
  * and counting clauses rather than attributing them let it pass.
@@ -63,7 +72,15 @@
  * filing these as permanent licences made the exemption count overstate how much
  * of src/ deliberately reads the corpus.
  *
- * Either marker sits on the line above, or within five lines above, and is spent
+ * `// scope-outer-join: <reason>` — the clause is here and applied, but by an
+ * outer join's ON, so it nulls a column instead of dropping a row; here is why
+ * that is enough. A third word in the same grammar rather than a third grammar,
+ * and separate from `scope-exempt:` for the same reason `scope-checked:` is:
+ * the one statement in src/ with this shape ALREADY carried an exemption
+ * written about a different alias, so accepting that word here would have made
+ * the rule a no-op at the only site that had the defect. Counted separately.
+ *
+ * Any marker sits on the line above, or within five lines above, and is spent
  * by the FIRST query below it, so one reason cannot quietly cover the next query
  * too. The reason is the point: it makes someone write down why, where the next
  * reader will see it. `npm run check:scope` prints every reason next to the
@@ -152,7 +169,26 @@
  *     3. It replaced a blocklist that eleven shapes walked through, and the
  *     asymmetry is deliberate: the blocklist's failures were silent, this rule's
  *     failures arrive as a build error.
- * 12. It reads `src/**\/*.ts` and nothing else. `db/schema.sql`, `installer/`,
+ * 12. The outer-join rule reads join STRUCTURE with the same regex lexer as
+ *     everything else, and gives up loudly rather than guessing. What it can
+ *     read: LEFT / RIGHT / FULL, with or without OUTER, in any whitespace,
+ *     across newlines, with SQL comments and single-quoted literals blanked
+ *     first so neither can invent a join or end an ON clause. What it refuses:
+ *     an interpolated join keyword, a join onto a subquery, and a subquery
+ *     inside an ON clause — each REPORTED as undecidable, never read as inner.
+ *     What it does not attempt: which SIDE of the join a table sits on. It does
+ *     not need to, because both sides are unsafe (one preserves the other
+ *     table's rows, the other preserves its own), and a rule that guessed sides
+ *     would be a rule that could guess wrong.
+ *
+ *     The one shape it cannot see is the one this file already admits in
+ *     limitation 5: a scoped table inside a DERIVED TABLE on the optional side
+ *     — `LEFT JOIN (SELECT ... FROM entries WHERE ${scope.clause}) m ON ...` —
+ *     leaks the preserved side's rows exactly as the ON-clause spelling does,
+ *     and its scope predicate is in a real WHERE. That spelling is caught today
+ *     only because `JOIN (` is refused outright as undecidable, which is a
+ *     coarser reason than the true one.
+ * 13. It reads `src/**\/*.ts` and nothing else. `db/schema.sql`, `installer/`,
  *     `integrations/`, `test/` and every migration outside src/ are never
  *     looked at. That is survivable today because the SQL out there is DDL, but
  *     it is not a claim about them — it is an absence of one.
@@ -167,7 +203,8 @@
  *
  *   For every reference to `entries` or `edges` that this script matches INSIDE
  *   A TEMPLATE LITERAL, one of three things happens. It finds a narrowing
- *   clause for each alias. Or it reports the statement. Or a human wrote a
+ *   clause for each alias — one that governs the ROW SET, which is why an outer
+ *   join's ON clause does not qualify. Or it reports the statement. Or a human wrote a
  *   non-empty sentence in a real comment above it. A reference it cannot parse
  *   is reported; one hidden inside a nested template is reported; and a
  *   shortfall between what the file sweep saw and what the statement parser
@@ -184,10 +221,11 @@
  *   not a reference this script can attribute to a table, so it is not resolved
  *   — it is refused, and counted, and a human writes down why it is safe.
  *
- *   It does NOT claim to have matched them all. Limitation 12 is a hole by
+ *   It does NOT claim to have matched them all. Limitation 13 is a hole by
  *   construction, limitation 1 names what remains of a hole that used to be much
- *   wider, and 2 through 11 are places where a match is judged on a name, a
- *   token or a position rather than on meaning.
+ *   wider, 12 names what the join lexer gives up on, and 2 through 11 are places
+ *   where a match is judged on a name, a token or a position rather than on
+ *   meaning.
  *
  * Read a green run as "nothing this script can see is unscoped". Never as
  * "nothing is unscoped". The thing that tests the actual behaviour is
@@ -316,7 +354,35 @@ const ANNOTATION_LOOKBACK = 5;
 const MARKERS = [
   { marker: "scope-exempt:", kind: "exempt" },
   { marker: "scope-checked:", kind: "checked" },
+  { marker: "scope-outer-join:", kind: "outer-join" },
 ];
+
+/**
+ * Which markers may answer which finding. Kind-matched, not interchangeable.
+ *
+ * A third WORD in the existing grammar, not a third grammar: same `// marker:
+ * reason` shape, same five-line lookback, same spent-by-the-first-query rule,
+ * same refusal of an empty reason. The vocabulary is what had to grow, because
+ * the three markers answer three different questions:
+ *
+ *   scope-exempt:     this query is NOT scoped, and that is correct.
+ *   scope-checked:    it IS scoped; the clause is assembled in JavaScript.
+ *   scope-outer-join: the clause is here and applied, but to COLUMNS rather
+ *                     than rows — and here is why nulling a column is enough.
+ *
+ * Reusing `scope-exempt:` was the obvious cheap move and it is exactly wrong.
+ * There are 48 of them in this tree and one of them already sits on the only
+ * statement in src/ with this shape (src/routes/admin.ts's /patterns source
+ * hydration), so the new rule would have been a no-op at the one site that
+ * needed it and no one would ever have been asked the outer-join question.
+ * That is the same argument that split scope-checked off scope-exempt in the
+ * first place: a licence granted for one reason must not silently discharge
+ * another.
+ */
+const MARKERS_FOR = {
+  "outer-join": new Set(["outer-join"]),
+  other: new Set(["exempt", "checked"]),
+};
 
 /**
  * Characters after which a `/` opens a regular expression rather than dividing.
@@ -464,7 +530,11 @@ function maskInterpolations(sql) {
       }
       const inner = sql.slice(start + 2, i - 1);
       const before = masked.match(/([A-Za-z_][A-Za-z0-9_$]*)\s*\.\s*$/);
-      interps.push({ inner, start, alias: before ? before[1] : null });
+      // `end` as well as `start`: the outer-join rule has to read the tokens on
+      // BOTH sides of an interpolation to see `${joinKind} JOIN` and
+      // `LEFT ${maybeOuter} JOIN`, and in the masked text an interpolation is
+      // indistinguishable from a run of ordinary spaces.
+      interps.push({ inner, start, end: i, alias: before ? before[1] : null });
       masked += " ".repeat(i - start);
       continue;
     }
@@ -484,6 +554,30 @@ function sqlCommentRanges(masked) {
   }
   return ranges;
 }
+
+/**
+ * Blank out single-quoted SQL string literals without moving anything.
+ *
+ * Used by the outer-join rule and by nothing else. That rule reads the SQL's
+ * JOIN/ON structure, and a quoted literal is DATA sitting in the middle of it:
+ * it can neither create a join nor end an ON clause. Both directions were
+ * attacked and both are real:
+ *
+ *   - `SELECT 'LEFT JOIN' AS note ... JOIN entries m ON ... AND m.${scope}` is
+ *     an INNER join and correctly scoped. Reading the literal as structure
+ *     flags a correct query.
+ *   - `LEFT JOIN entries m ON m.id = ev.entry_id AND ev.note != 'WHERE' AND
+ *     m.${scope}` is the leak. NOT blanking the literal lets the `WHERE` inside
+ *     it end the ON clause early, which puts the scope predicate outside the
+ *     region and reads the leak as safe — a false NEGATIVE, and the direction
+ *     that matters.
+ *
+ * Limitation 10 says SQL string literals are never lexed, and that stays true
+ * of the scope-clause search: this blanking is local to the join lexer, where
+ * the alternative is a false negative rather than a contrived false positive.
+ */
+const blankSqlStrings = (sql) =>
+  sql.replace(/'(?:''|[^'\n])*'/g, (m) => " ".repeat(m.length));
 
 /** Blank out SQL comments without moving anything: prose, not clauses. */
 const blankSqlComments = (sql) =>
@@ -642,6 +736,113 @@ function inPredicatePosition(before) {
 }
 
 /**
+ * THE OUTER-JOIN RULE.
+ *
+ * A scope predicate in the ON clause of an OUTER join is not a scope predicate.
+ *
+ * GET /team/activity shipped this, and `check:scope` passed it before the fix
+ * and after it — the tool had no opinion either way, because its whole question
+ * was "is there a narrowing clause attributed to alias m":
+ *
+ *   FROM entry_events ev
+ *   LEFT JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}
+ *
+ * `entry_events` carries no workspace column. With an outer join the ON clause
+ * decides WHICH ROW SUPPLIES A COLUMN, not which rows appear: every `ev` row
+ * survives, and an unmatched one arrives with `title` NULL and `entry_id` and
+ * `payload.workspaceId` fully populated. An admin of company X read company Y's
+ * rows that way. A row hidden in one column and disclosed in another is not
+ * scoped. The fix was one word — LEFT JOIN to JOIN — and no number this script
+ * printed moved, because it had no opinion about the join type at all.
+ *
+ * The rule is about the join type and nothing else. For an INNER join, ON is a
+ * row filter and is exactly equivalent to WHERE, so its predicates still count:
+ * a rule that banned ON clauses would be a ban on the correct spelling of the
+ * fix. And it is per ON CLAUSE, not per statement — an inner join's ON in a
+ * statement that also outer-joins is untouched.
+ *
+ * Which side the table sits on is deliberately NOT considered, because both
+ * sides are unsafe and for different reasons:
+ *
+ *   - on the null-producing side (`x LEFT JOIN entries m ON m.${scope}`) the
+ *     predicate filters `m` but preserves every `x` row, so the statement emits
+ *     rows the caller's scope never authorised;
+ *   - on the preserved side (`FROM entries e LEFT JOIN x ON e.${scope}`) the
+ *     predicate does not filter at all — every `entries` row survives, merely
+ *     unmatched.
+ *
+ * The safe shape stays green and is the reason the rule discounts a PREDICATE
+ * rather than banning a JOIN: `LEFT JOIN entries m ON ... WHERE m.${scope}`
+ * carries the same clause in the WHERE, which discards the unmatched rows
+ * (`NULL IN (...)` is never true), so the scope governs the row set after all.
+ *
+ * WHAT IT READS, AND WHAT IT REFUSES TO GUESS
+ *
+ * An ON clause runs from its `ON` to the next clause keyword. It belongs to an
+ * outer join if LEFT, RIGHT or FULL appears between the previous ON and this
+ * one — a window rather than a nearest-JOIN walk, so a stray `JOIN` cannot
+ * claim someone else's ON and downgrade it to inner. Comments and string
+ * literals are blanked first: neither can create a join or end an ON clause.
+ *
+ * Where the structure cannot be read the statement is REFUSED, not assumed
+ * inner — commit 81e5fc6's precedent, and the exact failure mode that produced
+ * the leak above was a guard reading an unparseable construct as fine. Three
+ * shapes are refused: a join keyword that is an interpolation (`${joinKind}
+ * JOIN`, `LEFT ${maybeOuter} JOIN`), a join onto a subquery (`JOIN (SELECT
+ * ...)`), and a subquery inside an ON clause, which also moves the clause
+ * boundary out from under this lexer.
+ */
+const ON_TOKEN = /(?<![.\w$])ON(?![\w$])/gi;
+const ON_CLAUSE_END =
+  /\b(?:WHERE|GROUP|ORDER|HAVING|LIMIT|OFFSET|WINDOW|UNION|EXCEPT|INTERSECT|RETURNING|VALUES|JOIN|LEFT|RIGHT|FULL|INNER|CROSS|NATURAL)\b/gi;
+/** The three join words that preserve unmatched rows. INNER and CROSS do not. */
+const OUTER_JOIN_WORD = /\b(?:LEFT|RIGHT|FULL)\b/i;
+/** A join keyword run ending right where an interpolation begins. */
+const JOIN_RUN_BEFORE = /\b(?:LEFT|RIGHT|FULL|INNER|CROSS|NATURAL|OUTER)\s*$/i;
+/** A join keyword run beginning right where an interpolation ends. */
+const JOIN_RUN_AFTER = /^\s*(?:(?:LEFT|RIGHT|FULL|INNER|CROSS|NATURAL|OUTER)\s+)*JOIN\b/i;
+
+function joinStructure(masked, interps) {
+  const text = blankSqlStrings(blankSqlComments(masked));
+  const regions = [];
+  const undecidable = [];
+
+  ON_TOKEN.lastIndex = 0;
+  let m;
+  let previousOnEnd = 0;
+  while ((m = ON_TOKEN.exec(text)) !== null) {
+    const window = text.slice(previousOnEnd, m.index);
+    ON_CLAUSE_END.lastIndex = m.index + m[0].length;
+    const stop = ON_CLAUSE_END.exec(text);
+    const end = stop ? stop.index : text.length;
+    regions.push({ start: m.index, end, outer: OUTER_JOIN_WORD.test(window) });
+    if (/\bSELECT\b/i.test(text.slice(m.index, end))) {
+      undecidable.push("a subquery inside an ON clause moves the clause boundary");
+    }
+    previousOnEnd = m.index + m[0].length;
+  }
+
+  if (/\bJOIN\s*\(/i.test(text)) {
+    undecidable.push("this joins a subquery (`JOIN (SELECT ...)`), whose rows this cannot attribute");
+  }
+  for (const it of interps) {
+    const before = text.slice(0, it.start);
+    // An interpolation that is FOLLOWED by a join keyword run is only ambiguous
+    // if it could BE the join type. `g.${scope.clause} LEFT JOIN users u` is a
+    // scope clause that happens to be the last thing before a join, and reading
+    // it as an interpolated join keyword refused a correct statement — found by
+    // attacking this rule with the mixed inner/outer case. The existing
+    // predicate-position test is exactly the question being asked: a clause sits
+    // after WHERE/AND/OR/ON/HAVING, a join keyword never does.
+    const couldBeJoinType = JOIN_RUN_AFTER.test(text.slice(it.end)) && !inPredicatePosition(before);
+    if (JOIN_RUN_BEFORE.test(before) || couldBeJoinType) {
+      undecidable.push("the join keyword is an interpolation, so whether this join is outer is not in the source");
+    }
+  }
+  return { regions, undecidable: [...new Set(undecidable)] };
+}
+
+/**
  * The scope predicates in a statement, each attributed to an alias where the
  * source says which one — plus any corpus table hidden inside an interpolation,
  * which is reported rather than parsed.
@@ -650,6 +851,12 @@ function scopePredicates(sql) {
   const { masked, interps } = maskInterpolations(sql);
   const commentRanges = sqlCommentRanges(masked);
   const blanked = blankSqlComments(masked);
+  const { regions, undecidable } = joinStructure(masked, interps);
+  // A predicate inside the ON clause of an outer join governs which rows supply
+  // a column, not which rows appear. It is recorded rather than dropped, so the
+  // report can say WHY the alias came out unscoped.
+  const inOuterOn = (offset) =>
+    regions.some((r) => r.outer && offset > r.start && offset < r.end);
   const predicates = [];
   const hidden = [];
 
@@ -672,9 +879,13 @@ function scopePredicates(sql) {
     // has always had. `SELECT ${scope.clause} AS x FROM entries` renders the
     // clause into the projection and constrains nothing.
     if (!inPredicatePosition(blanked.slice(0, it.start))) continue;
-    predicates.push({ alias: it.alias ? it.alias.toLowerCase() : null });
+    predicates.push({
+      alias: it.alias ? it.alias.toLowerCase() : null,
+      outerOn: inOuterOn(it.start),
+    });
   }
   predicates.hidden = hidden;
+  predicates.undecidable = undecidable;
 
   const clean = blankSqlComments(masked);
   WORKSPACE_PREDICATE.lastIndex = 0;
@@ -687,7 +898,10 @@ function scopePredicates(sql) {
     // The masked text blanks interpolations, so a `${...}` right-hand side shows
     // as whitespace here; read the RHS from the original to tell it from nothing.
     if (!BOUND_RHS.test(sql.slice(m.index + m[0].length))) continue;
-    predicates.push({ alias: m[1] ? m[1].toLowerCase() : null });
+    predicates.push({
+      alias: m[1] ? m[1].toLowerCase() : null,
+      outerOn: inOuterOn(m.index),
+    });
   }
   return predicates;
 }
@@ -713,7 +927,12 @@ function unscopedRefs(sql) {
   FILE_TABLE_PATTERN.lastIndex = 0;
   const swept = (outer.match(FILE_TABLE_PATTERN) ?? []).length;
   const found = scopePredicates(sql);
-  const pool = found.map((p) => ({ ...p, used: false }));
+  // Only predicates that govern the ROW SET enter the pool. One in the ON clause
+  // of an outer join is kept aside so the finding can name it: an alias that
+  // came out unscoped BECAUSE of the join type is a different problem from one
+  // that never had a clause, and it is answered with a different marker.
+  const discounted = found.filter((p) => p.outerOn);
+  const pool = found.filter((p) => !p.outerOn).map((p) => ({ ...p, used: false }));
   const pending = [];
 
   for (const ref of refs) {
@@ -728,12 +947,19 @@ function unscopedRefs(sql) {
     else unscoped.push(ref);
   }
   const dropped = swept - (refs.length + refs.unreadable.length);
+  // Only blame the join for an alias whose own clause was the discounted one —
+  // or for any of them, where the discounted clause carried no alias at all
+  // (limitation 4: an unattributed clause joins a shared pool).
+  const blamed = unscoped.filter((r) =>
+    discounted.some((p) => p.alias === r.name || p.alias === null));
   return {
     unscoped,
     unreadable: dropped > 0
       ? [...refs.unreadable, `${dropped} reference(s) the sweep found and the parser did not`]
       : refs.unreadable,
     hidden: found.hidden,
+    undecidableJoin: found.undecidable,
+    outerJoin: blamed.map(describeRef),
     total: refs.length,
   };
 }
@@ -871,8 +1097,8 @@ export function scanSource(text) {
     // A construct whose table name is not resolvable at all: the problem is
     // already decided, and running it through the parser would only produce a
     // second, less useful description of the same thing.
-    const { unscoped, unreadable, hidden, total } = query.problem
-      ? { unscoped: [], unreadable: [], hidden: [], total: 1 }
+    const { unscoped, unreadable, hidden, undecidableJoin, outerJoin, total } = query.problem
+      ? { unscoped: [], unreadable: [], hidden: [], undecidableJoin: [], outerJoin: [], total: 1 }
       : unscopedRefs(query.text);
     const names = unscoped.map(describeRef);
 
@@ -882,23 +1108,43 @@ export function scanSource(text) {
     // over a missing clause, because a scope clause elsewhere in the statement
     // says nothing about a branch that carries its own FROM.
     let problem = query.problem ?? null;
+    // Which marker may answer this finding. Only the outer-join family needs
+    // its own word; everything else is answered as it always was.
+    let kind = "other";
     if (problem) {
       // decided above
     } else if (hidden.length) {
       problem = `a corpus table is reached from inside a nested template, where the clause for it cannot be read: \${${hidden[0]}}`;
     } else if (unreadable.length || total === 0) {
       problem = `could not parse the table reference: ${unreadable.join(", ") || query.text.replace(/\s+/g, " ").trim().slice(0, 60)}`;
+    } else if (undecidableJoin.length) {
+      // 81e5fc6's precedent: what the lexer cannot follow fails loudly. Ahead of
+      // the outer-join verdict below because "this might be an outer join" is
+      // not the same finding as "this is one", and ahead of a missing clause
+      // because a clause says nothing when the structure it sits in is unread.
+      kind = "outer-join";
+      problem = `the join type cannot be read, so whether a scope clause governs rows or only columns is undecidable: ${undecidableJoin.join("; ")}`;
+    } else if (outerJoin.length) {
+      kind = "outer-join";
+      problem =
+        `the only scope clause for ${outerJoin.join(", ")} sits in the ON clause of an outer join, ` +
+        `where it decides which rows supply a column and not which rows appear: ` +
+        query.text.replace(/\s+/g, " ").trim().slice(0, 100);
     } else if (unscoped.length) {
       problem = query.text.replace(/\s+/g, " ").trim().slice(0, 100);
     }
     if (!problem) continue;
 
     const from = Math.max(0, query.line - 1 - ANNOTATION_LOOKBACK);
+    const wanted = MARKERS_FOR[kind];
     let found = null;
     for (let i = query.line - 1; i >= from && !found; i--) {
       if (claimed.has(i)) continue;
       const hit = annotationOn(lines[i], inSpan(lineStarts[i] ?? 0));
-      if (hit) found = { index: i, ...hit };
+      // A marker of the wrong kind is not consumed and not counted against this
+      // finding: it is an answer to a different question, and it stays available
+      // to the query it was written for.
+      if (hit && wanted.has(hit.kind)) found = { index: i, ...hit };
     }
     if (found) {
       claimed.add(found.index);
@@ -946,9 +1192,14 @@ function main() {
   if (failures.length === 0) {
     const exempt = documented.filter((e) => e.kind === "exempt");
     const checked = documented.filter((e) => e.kind === "checked");
+    const outerJoin = documented.filter((e) => e.kind === "outer-join");
+    // The fourth count is APPENDED, never interleaved: CI and
+    // test/unit/scope-checker.test.ts both read the first three off this line by
+    // position, and a count that moves the others is a count that breaks them.
     console.log(
       `✔ scope check: ${queries} queries, ${exempt.length} documented exceptions, ` +
-      `${checked.length} scope-checked (clause assembled in JS)`,
+      `${checked.length} scope-checked (clause assembled in JS), ` +
+      `${outerJoin.length} scope-outer-join (clause governs a column, not the row set)`,
     );
     // The inventory, with the machine's own alias list beside each human
     // sentence. Behind --inventory rather than on by default: its value is as a
@@ -957,10 +1208,10 @@ function main() {
     // that obvious — but a hundred lines on every local run is noise, and noise
     // is how a green tick stops being read.
     if (!process.argv.includes("--inventory")) process.exit(0);
-    for (const label of ["exempt", "checked"]) {
+    for (const label of ["exempt", "checked", "outer-join"]) {
       const rows = documented.filter((e) => e.kind === label);
       if (!rows.length) continue;
-      console.log(`\n  ${label === "exempt" ? "scope-exempt" : "scope-checked"} (${rows.length}):`);
+      console.log(`\n  ${MARKERS.find((mk) => mk.kind === label).marker.slice(0, -1)} (${rows.length}):`);
       for (const e of rows) {
         console.log(`    ${e.file}:${e.line}  [${e.unscoped.join(", ") || "-"}]\n      ${e.reason}`);
       }
@@ -983,6 +1234,12 @@ ${list}
   Add a scope clause, or document the exception with \`// scope-exempt: <reason>\`
   on the line above. If the clause IS there but assembled in JavaScript where
   this script cannot see it, use \`// scope-checked: <reason>\` instead.
+
+  If the clause is in the ON clause of an OUTER join, it decides which rows
+  supply a column and not which rows appear — an unmatched row still ships, with
+  that column NULL and every other column intact. Make the join INNER, or repeat
+  the clause in the WHERE, or write \`// scope-outer-join: <reason>\` saying why
+  nulling a column is enough here.
 `);
   process.exit(1);
 }

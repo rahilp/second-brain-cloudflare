@@ -127,8 +127,10 @@ document.addEventListener('keydown', onConfirmKeydown)
  * @param {string} opts.title          headline, already translated
  * @param {string} opts.body           the consequence, in plain words
  * @param {string} opts.confirmLabel   what the accept button says
- * @param {(checked: boolean, done: () => void) => any} opts.onConfirm  run on
- *   accept. `done()` closes this question and only this one.
+ * @param {(checked: boolean, done: () => void, progress: (text: string) => void) => any} opts.onConfirm
+ *   run on accept. `done()` closes this question and only this one, and
+ *   `progress(text)` writes the accept button of this question and only this
+ *   one.
  * @param {() => void} [opts.onClose]  run on dismiss, for the caller's state
  * @param {string} [opts.checkboxLabel] shows a modifier tick when non-empty
  * @returns {number} this question's generation — for tests and logging; the
@@ -204,17 +206,21 @@ function closeConfirm() {
 /**
  * Run the open sheet's action.
  *
- * The action receives whether the modifier was ticked, and a `done()` bound by
- * lexical scope to the question it is answering — calling it after that
- * question has been superseded does nothing, with no bookkeeping to get wrong
- * and nothing for the caller to remember to pass back.
+ * The action receives whether the modifier was ticked, a `done()` bound by
+ * lexical scope to the question it is answering, and a `progress()` bound the
+ * same way — calling either after that question has been superseded does
+ * nothing, with no bookkeeping to get wrong and nothing for the caller to
+ * remember to pass back.
  *
  * The sheet owns the button's DISABLED state — a second tap while the first
  * request is in flight must not issue a second POST — and each caller owns its
  * own progress WORDING, which is what `confirmForget` does with
- * `t('memories.forgetting')`. Failures belong to the action: the button comes
- * back so the user can retry, and the error propagates rather than being
- * swallowed into silence.
+ * `t('memories.forgetting')`. But `#confirm-accept-btn` is ONE element, so the
+ * words go through `progress()`: an action long enough to report progress is
+ * long enough to outlive its own question, and the bulk layer move used to
+ * label a "Forget this memory?" sheet with "Moving 3 of 3…". Failures belong
+ * to the action: the button comes back so the user can retry, and the error
+ * propagates rather than being swallowed into silence.
  */
 async function runConfirmAction() {
   const generation = confirmGeneration
@@ -227,11 +233,18 @@ async function runConfirmAction() {
   const done = () => {
     if (generation === confirmGeneration) dismissConfirmSheet()
   }
+  // The same lexical identity, for the other thing an action touches. Nothing
+  // ambient decides which question this writes to; the generation it closed
+  // over does, exactly as `done()` does.
+  const progress = (text) => {
+    if (generation !== confirmGeneration) return
+    if (accept) accept.textContent = text
+  }
 
   runningConfirmActions.add(generation)
   if (accept) accept.disabled = true
   try {
-    await action(checked, done)
+    await action(checked, done, progress)
   } catch (e) {
     if (accept && confirmGeneration === generation) accept.disabled = false
     throw e

@@ -75,6 +75,14 @@ export const DEFAULTS = {
   // override says. Org-level policy, set by an admin via PATCH /config;
   // per-member overrides live on users.default_share and win over this.
   TEAM_DEFAULT_WORKSPACE: "personal",
+
+  // Whether the weekly reasoning pass also runs over the company workspaces,
+  // on its own schedule and its own budget. "off" by default: this pass reads
+  // the whole team's shared memory and writes into every member's review
+  // queue, so it is opted into rather than out of — and a default-on flag
+  // would start spending model calls on every existing team brain the day
+  // this deploys.
+  TEAM_INSIGHTS: "off",
 } as const;
 
 // DEFAULTS is `as const` so the shipped values are pinned and a typo shows up
@@ -136,6 +144,7 @@ export const RULES: Record<ConfigKey, Rule> = {
   EMBEDDING_MODEL: { kind: "string" },
   INSIGHT_LLM_MODEL: { kind: "string" },
   TEAM_DEFAULT_WORKSPACE: { kind: "string" },
+  TEAM_INSIGHTS: { kind: "string" },
 };
 
 /**

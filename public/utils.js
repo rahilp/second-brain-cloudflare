@@ -806,6 +806,84 @@ function captureDefaultKey(profile) {
   return own ? 'home.autoPersonalYours' : 'home.autoPersonalOrg'
 }
 
+/**
+ * One CSV cell, RFC 4180 and spreadsheet-safe.
+ *
+ * Always quoted, never conditionally: a conditional quote is a rule about
+ * the value that has to be right for every value, and "always" is right for
+ * all of them. Internal quotes double.
+ *
+ * The leading apostrophe is the part that is not about CSV at all. A cell
+ * beginning =, +, - or @ is a FORMULA to Excel, Numbers and Sheets, and this
+ * file is an audit log full of names and memory titles that people type. A
+ * memory called "=cmd|…" is a real attack on whoever opens the export, and
+ * the export is opened by the one person on the team with the most access.
+ *
+ * The guard runs on the RAW string, before any quoting: a guard applied after
+ * the wrap would test `"` and never fire. It also looks past leading
+ * whitespace, because a spreadsheet that trims before it parses reads " =1+1"
+ * as the formula OWASP's first-character set was written to catch. Only
+ * whitespace that LEADS TO a formula character counts — an indented name is
+ * still just a name, and "a=b" is still just a value.
+ */
+function csvCell(value) {
+  let s = value == null ? '' : String(value)
+  if (/^[\t\r]|^\s*[=+\-@]/.test(s)) s = `'${s}`
+  return `"${s.replace(/"/g, '""')}"`
+}
+
+/** One CSV document. rows is an array of arrays; header is the first line. */
+function csvDocument(header, rows) {
+  return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')
+}
+
+/**
+ * Hand a string to the browser as a download. Extracted so the memories
+ * export and the activity export are one mechanism rather than two: a second
+ * copy of this five-line sequence is how one of them ends up without the
+ * revokeObjectURL and leaks a blob per click.
+ *
+ * The BOM is not decoration. Excel reads a BOM-less UTF-8 CSV as the system
+ * codepage, and this file carries member names and Italian memory titles.
+ */
+function downloadTextFile(doc, content, filename, mime) {
+  const blob = new Blob([mime.startsWith('text/csv') ? '\ufeff' + content : content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = doc.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * The "shared" badge, for any row that reports a workspace and an author.
+ *
+ * ONE implementation, two callers — makeRecentCard (js/recent.js) and
+ * patternRow (js/patterns.js). The card built this expression inline and the
+ * review queue built nothing, so a member ruling on a pattern could not tell
+ * their own half-formed thought from something the whole team can read, and
+ * those are different acts. Two chips that merely looked alike would drift the
+ * first time either was touched; this cannot.
+ *
+ * teamMode is a parameter and not the global, for the reason
+ * workspaceFilterChip takes `health`: this file loads before api.js declares
+ * TEAM_MODE, and a pure helper that reads a binding from three modules
+ * downstream is only pure by accident. It is also the difference between a
+ * function a unit test can call and one that needs a whole sandbox.
+ *
+ * Personal rows and system rows get nothing. That is the same silence the
+ * card has always kept — a badge on every row is not a badge.
+ */
+function layerChipHtml(entry, teamMode) {
+  if (!teamMode || !entry || entry.workspace !== 'company') return ''
+  const who = entry.actor_name ? `${t('memories.sharedChip')} · ${entry.actor_name}` : t('memories.sharedChip')
+  return `<span class="tag-chip tag-chip--shared" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(who)}</span>`
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles, captureDefaultKey };
+  // downloadTextFile is deliberately absent: it needs a live URL and Blob, and
+  // it is exercised through its two callers (exportMemories in js/settings.js
+  // and exportActivityCsv in js/activity.js) rather than in isolation.
+  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles, captureDefaultKey, csvCell, csvDocument, layerChipHtml };
 }

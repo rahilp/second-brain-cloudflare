@@ -238,6 +238,11 @@
                   </select><i class="ti ti-chevron-down"></i></span>
                 </span>
               </div>
+              <!-- Selection is a mode, entered deliberately: a checkbox on every
+                   card would permanently reframe the screen people READ as an
+                   editing surface. Team brains only — renderBulkBar() in
+                   js/recent.js sets this display in both branches. -->
+              <button class="digest-btn" id="mem-select-btn" type="button" style="display: none" onclick="toggleSelectMode()" data-i18n="bulk.select">Select</button>
               <!-- This used to read "Knowledge / Events / Unsorted", which stopped
                    being true when the canvas moved to per-cluster colours from a
                    palette (graph-canvas.js). The canvas draws its own legend with
@@ -252,6 +257,17 @@
                   <i class="ti ti-affiliate"></i><span data-i18n="memories.viewGraph">Graph</span>
                 </button>
               </div>
+            </div>
+
+            <!-- Only in selection mode, and only in team mode. Both branches are set on
+                 every render by renderBulkBar() in js/recent.js. -->
+            <div class="mem-bulk-bar" id="mem-bulk-bar" style="display: none">
+              <span class="mem-bulk-count" id="mem-bulk-count"></span>
+              <button class="digest-btn" type="button" onclick="selectAllVisible()" data-i18n="bulk.selectAll">Select all</button>
+              <button class="digest-btn" type="button" onclick="clearSelection()" data-i18n="bulk.clear">Clear</button>
+              <button class="digest-btn" id="mem-bulk-share" type="button" onclick="confirmBulkLayerMove('company')" data-i18n="bulk.shareAction">Share with team</button>
+              <button class="digest-btn" id="mem-bulk-private" type="button" onclick="confirmBulkLayerMove('personal')" data-i18n="bulk.privateAction">Make private</button>
+              <button class="digest-btn" type="button" onclick="toggleSelectMode()" data-i18n="bulk.exit">Done</button>
             </div>
 
             <!-- The author lock, written by renderMemoriesCoach() in
@@ -351,6 +367,25 @@
                       <option value="company" data-i18n="team.shareCompany">Company (shared)</option>
                     </select><i class="ti ti-chevron-down"></i></span>
                   </div>
+                  <!-- Team brains only. Being inside #team-body is NOT a gate:
+                       this deployment's AUTH_TOKEN hashes into a users row with
+                       role 'admin', so a solo owner's GET /team/members answers
+                       200 and the panel opens for them exactly as it does for a
+                       team admin. Ships hidden; maybeRevealTeamInsights() in
+                       js/team.js sets this display in both branches on every
+                       render. The hint is inside the wrapper too — it is the
+                       half that says "everyone's review queue" out loud. -->
+                  <div id="team-insights-row" style="display: none">
+                    <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
+                      <i class="ti ti-bulb" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                      <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.insightsLabel">Weekly team insights</span>
+                      <span class="team-select-wrap"><select class="team-select" id="team-insights" onchange="setTeamInsights(this.value)">
+                        <option value="off" data-i18n="team.insightsOff">Off</option>
+                        <option value="on" data-i18n="team.insightsOn">On</option>
+                      </select><i class="ti ti-chevron-down"></i></span>
+                    </div>
+                    <p class="digest-note" data-i18n="team.insightsHint">When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone's review queue.</p>
+                  </div>
                   <div id="team-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
                 </div>
 
@@ -368,6 +403,26 @@
                     </div>
                     <p class="integration-error" id="team-add-error" style="display: none; margin-top: 8px;"></p>
                   </form>
+                </div>
+
+                <!-- Recent activity. Admin-only by construction: this whole panel is
+                     #team-body, which only renders when GET /team/members answered 200.
+                     That answers "not a member"; it does not answer "not solo" —
+                     a solo owner holds AUTH_TOKEN, which is an admin row, so the
+                     panel opens for them too. Hence its own display:none:
+                     switchTab('team') shows the panel synchronously and only
+                     calls maybeRevealActivity (js/activity.js, both branches)
+                     once the roster probe answers, so without this the section
+                     and its Export CSV button are on screen for that whole round
+                     trip — and for good if the probe never settles. -->
+                <div id="team-activity" style="display: none">
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="activity.title">Recent activity</div>
+                  <p class="digest-note" data-i18n="activity.intro">Who changed what, newest first. Kept as a record — nothing here can be edited.</p>
+                  <div id="activity-list"></div>
+                  <div class="filter-inner" style="margin-top: 10px;">
+                    <button class="digest-btn" id="activity-export" type="button" onclick="exportActivityCsv(this)" data-i18n="activity.exportCsv">Export CSV</button>
+                    <button class="digest-btn" id="activity-more" type="button" hidden onclick="loadMoreActivity(this)" data-i18n="activity.more">Show more</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -604,6 +659,7 @@
     <script src="js/stale.js"></script>
     <script src="js/integrations.js"></script>
     <script src="js/team.js"></script>
+    <script src="js/activity.js"></script>
     <script src="js/graph-canvas.js"></script>
     <script src="js/brief.js"></script>
     <script src="js/home.js"></script>

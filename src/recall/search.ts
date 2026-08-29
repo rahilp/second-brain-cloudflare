@@ -10,7 +10,7 @@ import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
 import type { Identity } from "../lib/identity";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
-import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhere } from "../lib/scope";
 import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -429,10 +429,6 @@ export async function recallEntries(
   // ids: personal and company map to themselves, anything else ('' legacy rows,
   // system insights) reads as "system". Clients use this to offer share/unshare
   // and to badge results.
-  const layerOf = (wid: unknown): "personal" | "company" | "system" =>
-    wid === identity?.personalWorkspaceId ? "personal"
-    : identity && isCompanyWorkspace(identity, wid) ? "company"
-    : "system";
   const candidateSignalById = new Map(rcRows.map(row => [row.id, row]));
   markStage("finalHydration");
 
@@ -451,7 +447,7 @@ export async function recallEntries(
       source: row.source as string,
       isUpdate: !!meta?.isUpdate,
       hop: 0,
-      workspace: layerOf(row.workspace_id),
+      workspace: layerOf(identity, row.workspace_id),
       staleAsOf: hasStaleAsOf(JSON.parse(row.tags ?? "[]")),
     }];
   }).sort((a, b) => b.score - a.score);
@@ -511,7 +507,7 @@ export async function recallEntries(
         source: row.source as string,
         isUpdate: false,
         hop: e.hop,
-        workspace: layerOf(row.workspace_id),
+        workspace: layerOf(identity, row.workspace_id),
         staleAsOf: hasStaleAsOf(JSON.parse(row.tags ?? "[]")),
         viaProvenance: e.viaProvenance,
         viaType: e.viaType,
@@ -583,7 +579,7 @@ export async function recallEntries(
         source: row.source as string,
         isUpdate: false,
         hop: 0,
-        workspace: layerOf((row as Record<string, unknown>).workspace_id),
+        workspace: layerOf(identity, (row as Record<string, unknown>).workspace_id),
         staleAsOf: hasStaleAsOf(rowTags),
       };
       matchById.set(match.id, match);

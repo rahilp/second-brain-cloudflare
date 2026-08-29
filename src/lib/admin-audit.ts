@@ -18,7 +18,9 @@ export type AdminEventName =
   | "member_token_rotated"
   | "member_default_share_set"
   | "member_profile_updated"
-  | "team_renamed";
+  | "team_renamed"
+  | "integration_connected"
+  | "integration_disconnected";
 
 export function adminAuditEvent(
   env: Env,

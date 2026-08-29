@@ -191,13 +191,26 @@ describe("scanSource — evasions", () => {
     // The GET /patterns shape (finding 1): the edges alias is pinned by id, the
     // entries alias is what returns content. An alias-prefixed clause is
     // attributed to its own alias rather than counted against whichever table
-    // reference it reaches first, so the report names `edges e` and not `entries m`.
+    // reference it reaches first, so the report names `edges e` and not
+    // `entries m` — with the join INNER, where the ON clause is a row filter.
     const withScope = scanSource(
+      "const q = `SELECT m.content FROM edges e" +
+      " JOIN entries m ON m.id = e.target_id AND m.${scope.clause}" +
+      " WHERE e.source_id IN (${ph})`;",
+    );
+    expect(withScope.violations.map(v => v.unscoped)).toEqual([["edges e"]]);
+
+    // UPDATED by the outer-join rule, and the update is the point: the real
+    // /patterns statement writes LEFT JOIN, and in that shape the ON clause
+    // nulls a column instead of dropping a row, so `entries m` is no longer
+    // satisfied by it. Same clause, same place, different join — see
+    // "a scoped table reached by an OUTER join" below.
+    const outer = scanSource(
       "const q = `SELECT m.content FROM edges e" +
       " LEFT JOIN entries m ON m.id = e.target_id AND m.${scope.clause}" +
       " WHERE e.source_id IN (${ph})`;",
     );
-    expect(withScope.violations.map(v => v.unscoped)).toEqual([["edges e"]]);
+    expect(outer.violations.map(v => v.unscoped)).toEqual([["edges e", "entries m"]]);
 
     // And without it, both are reported — this is the query as it shipped.
     const without = scanSource(
@@ -698,12 +711,19 @@ describe("scanSource — scope-checked, for clauses the lexer cannot see", () =>
   it("reports the aliases the machine found unscoped alongside the human reason", () => {
     // So the sentence and the machine's own alias list sit side by side and any
     // drift between them is visible without re-deriving it.
+    //
+    // UPDATED by the outer-join rule. This is src/routes/admin.ts's /patterns
+    // source hydration, and it is a LEFT JOIN: the marker is now
+    // `scope-outer-join:` (scope-exempt no longer answers this finding) and the
+    // derived list names BOTH aliases, because the ON clause stopped counting
+    // for `m`. The property under test is unchanged — the machine's list, next
+    // to the human's sentence.
     const r = scanSource([
-      "// scope-exempt: e is pinned by id; m carries its own clause",
+      "// scope-outer-join: e is pinned by id; m contributes only a column, which nulls",
       "const q = `SELECT m.content FROM edges e LEFT JOIN entries m ON m.id = e.target_id AND m.${scope.clause}`;",
     ].join("\n"));
     expect(r.exceptions.length).toBe(1);
-    expect(r.exceptions[0].unscoped).toEqual(["edges e"]);
+    expect(r.exceptions[0].unscoped).toEqual(["edges e", "entries m"]);
   });
 });
 
@@ -766,6 +786,248 @@ describe("scanSource — table names the lexer cannot follow", () => {
   });
 });
 
+describe("scanSource — a scoped table reached by an OUTER join", () => {
+  // THE PROVEN HOLE, and the reason this whole describe exists.
+  //
+  // Phase 4 shipped GET /team/activity with the statement below, and
+  // `check:scope` passed it BEFORE the fix and AFTER it — the tool had no
+  // opinion either way, because its entire question was "is there a scope
+  // clause attributed to alias m", and there was one.
+  //
+  // `entry_events` carries no workspace column. With a LEFT JOIN, the ON clause
+  // decides which row supplies a TITLE, not which rows appear: every event row
+  // survives, and an unmatched one arrives with `title` NULL and `entryId` and
+  // `detail.workspaceId` fully populated. An admin of company X read company
+  // Y's rows that way. A row hidden in one column and disclosed in another is
+  // not scoped, so a scope predicate that can only null a column is not a scope
+  // predicate.
+  const LEAK =
+    "const q = `SELECT 'entry', ev.id, ev.event, ev.actor_id, ev.entry_id," +
+    " substr(m.content, 1, 160), ev.payload, ev.created_at" +
+    " FROM entry_events ev" +
+    " LEFT JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}" +
+    " WHERE ev.event IN ('shared', 'unshared')" +
+    " ORDER BY created_at DESC LIMIT ? OFFSET ?`;";
+
+  it("flags the /team/activity leak the clause-presence test called satisfied", () => {
+    const r = scanSource(LEAK);
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("outer join");
+    expect(r.violations[0].unscoped).toEqual(["entries m"]);
+    // Still one query, so the summary line moves for the right reason: this is
+    // a verdict changing, not a reference appearing.
+    expect(r.queries).toBe(1);
+  });
+
+  it("flags the fix's own shape only when the join is outer", () => {
+    // The one-word fix that closed the leak. The ON clause of an INNER join IS
+    // a row filter — it is the same predicate in the same place, and the join
+    // type is the whole difference — so this must stay green or the rule is a
+    // ban on ON clauses rather than a rule about outer joins.
+    const r = scanSource(LEAK.replace("LEFT JOIN", "JOIN"));
+    expect(r.violations).toEqual([]);
+    expect(r.queries).toBe(1);
+  });
+
+  it("reads every spelling of an outer join, whitespace and all", () => {
+    // Each of these renders the same plan. A rule that matched the literal
+    // string "LEFT JOIN" would pass four of the five.
+    const spellings = [
+      "LEFT JOIN",
+      "left  join",
+      "LEFT OUTER JOIN",
+      "left\n     outer\n     join",
+      "LEFT\nJOIN",
+      "RIGHT JOIN",
+      "RIGHT OUTER JOIN",
+      "FULL OUTER JOIN",
+      "full join",
+    ];
+    for (const spelling of spellings) {
+      const r = scanSource(LEAK.replace("LEFT JOIN", spelling));
+      expect(r.violations.length, `not flagged: ${JSON.stringify(spelling)}`).toBe(1);
+      expect(r.violations[0].snippet, spelling).toContain("outer join");
+    }
+  });
+
+  it("does not read the words in a SQL comment as a join", () => {
+    // The mirror of the clause-in-a-comment evasion the checker already closes,
+    // pointed the other way: prose cannot MANUFACTURE an outer join any more
+    // than it can manufacture a scope clause.
+    const r = scanSource(
+      "const q = `SELECT m.content FROM entry_events ev" +
+      " -- was a LEFT JOIN until Phase 4; see the note above the route\n" +
+      " JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}`;",
+    );
+    expect(r.violations).toEqual([]);
+  });
+
+  it("does not read the words in a SQL string literal as a join", () => {
+    // `LEFT JOIN` inside a quoted literal is data. Reading it as structure
+    // would flag a correct query; NOT blanking literals would also let a
+    // literal containing `WHERE` truncate the ON clause and hide a real outer
+    // join, which is the dangerous direction — so literals are blanked for this
+    // rule and both cases are pinned here.
+    // The literal sits BEFORE the join, inside the window the rule reads for
+    // LEFT/RIGHT/FULL — putting it after the ON would prove nothing.
+    const inner = scanSource(
+      "const q = `SELECT 'LEFT JOIN' AS note, m.content FROM entry_events ev" +
+      " JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}`;",
+    );
+    expect(inner.violations).toEqual([]);
+
+    const outer = scanSource(
+      "const q = `SELECT m.content FROM entry_events ev" +
+      " LEFT JOIN entries m ON m.id = ev.entry_id AND ev.note != 'WHERE'" +
+      " AND m.${scope.clause}`;",
+    );
+    expect(outer.violations.length).toBe(1);
+    expect(outer.violations[0].snippet).toContain("outer join");
+  });
+
+  it("does not fire on an alias that merely shares a corpus table's name", () => {
+    // `entries` here is an ALIAS for `users`, on the outer join, carrying a
+    // workspace_id predicate in its ON clause. The corpus table in the
+    // statement is scoped in the WHERE and is not reached by the outer join at
+    // all, so there is nothing to flag.
+    const r = scanSource(
+      "const q = `SELECT e.id FROM entries e" +
+      " LEFT JOIN users entries ON entries.id = e.actor_id AND entries.workspace_id = ?" +
+      " WHERE e.${scope.clause}`;",
+    );
+    expect(r.violations).toEqual([]);
+  });
+
+  it("does not flag a LEFT JOIN whose scope predicate is ALSO in the WHERE", () => {
+    // The genuinely safe shape, and the one a rule that banned outer joins
+    // outright would get wrong. A predicate on the null-producing side in the
+    // WHERE discards the unmatched rows (`NULL IN (...)` is never true), so the
+    // scope clause governs the row set after all.
+    const both = scanSource(
+      "const q = `SELECT m.content FROM entry_events ev" +
+      " LEFT JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}" +
+      " WHERE m.${scope.clause}`;",
+    );
+    expect(both.violations).toEqual([]);
+
+    // And with the clause ONLY in the WHERE, which is the same guarantee
+    // spelled once.
+    const whereOnly = scanSource(
+      "const q = `SELECT m.content FROM entry_events ev" +
+      " LEFT JOIN entries m ON m.id = ev.entry_id" +
+      " WHERE m.workspace_id IN (?, ?)`;",
+    );
+    expect(whereOnly.violations).toEqual([]);
+  });
+
+  it("flags the half-scoped case: one alias in the WHERE, one only in the ON", () => {
+    const r = scanSource(
+      "const q = `SELECT a.content, b.content FROM entries a" +
+      " LEFT JOIN entries b ON b.id = a.parent_id AND b.${scope.clause}" +
+      " WHERE a.${scope.clause}`;",
+    );
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].unscoped).toEqual(["entries b"]);
+  });
+
+  it("keeps the ON clause of an inner join in a statement that also outer-joins", () => {
+    // Two joins, one of each. Only the outer one's ON is discounted, and only
+    // for the table it reaches — the rule is per ON clause, not per statement.
+    const r = scanSource(
+      "const q = `SELECT e.id FROM entries e" +
+      " JOIN edges g ON g.source_id = e.id AND g.${scope.clause}" +
+      " LEFT JOIN users u ON u.id = e.actor_id" +
+      " WHERE e.${scope.clause}`;",
+    );
+    expect(r.violations).toEqual([]);
+  });
+
+  it("treats an interpolated join keyword as undecidable rather than as inner", () => {
+    // Commit 81e5fc6's precedent: what the lexer cannot follow FAILS, it does
+    // not default to safe. `${joinKind}` may render LEFT, and a guard that
+    // silently reads an unparseable construct as fine is the failure mode that
+    // produced the leak this rule closes.
+    const before = scanSource(
+      "const q = `SELECT m.content FROM entry_events ev ${joinKind}" +
+      " JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}`;",
+    );
+    expect(before.violations.length).toBe(1);
+    expect(before.violations[0].snippet).toContain("cannot be read");
+
+    const inside = scanSource(
+      "const q = `SELECT m.content FROM entry_events ev LEFT ${maybeOuter}" +
+      " JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}`;",
+    );
+    expect(inside.violations.length).toBe(1);
+  });
+
+  it("treats a join onto a subquery as undecidable", () => {
+    const r = scanSource(
+      "const q = `SELECT m.content FROM entry_events ev" +
+      " JOIN (SELECT id, content FROM entries WHERE ${scope.clause}) m" +
+      " ON m.id = ev.entry_id`;",
+    );
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("cannot be read");
+  });
+
+  it("treats a subquery inside an ON clause as undecidable", () => {
+    const r = scanSource(
+      "const q = `SELECT m.content FROM entry_events ev" +
+      " JOIN entries m ON m.id = (SELECT entry_id FROM entry_events WHERE id = ev.id)" +
+      " AND m.${scope.clause}`;",
+    );
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("cannot be read");
+  });
+
+  it("is not licensed by `scope-exempt:`, which answers a different question", () => {
+    // scope-exempt says "this query is not scoped and that is correct".
+    // scope-checked says "it is scoped where you cannot see". Neither answers
+    // the outer-join question, which is "why is nulling a column enough here?"
+    // — and 49 scope-exempt annotations already exist in this tree, so letting
+    // that word cover this finding would have made the rule a no-op at the one
+    // real site that has the shape.
+    for (const marker of ["scope-exempt", "scope-checked"]) {
+      const r = scanSource([`// ${marker}: the id came from a scoped read`, LEAK].join("\n"));
+      expect(r.violations.length, marker).toBe(1);
+      expect(r.violations[0].snippet, marker).toContain("outer join");
+    }
+  });
+
+  it("is licensed by `scope-outer-join:` with a reason, and counted apart", () => {
+    const r = scanSource([
+      "// scope-outer-join: the preserved side is pinned by id to the scoped page above, so an unreadable memory nulls the content column and reads exactly like a deleted one",
+      LEAK,
+    ].join("\n"));
+    expect(r.violations).toEqual([]);
+    expect(r.exceptions.map(e => e.kind)).toEqual(["outer-join"]);
+    expect(r.exceptions[0].unscoped).toEqual(["entries m"]);
+  });
+
+  it("refuses `scope-outer-join:` with no reason, exactly as the other markers do", () => {
+    const r = scanSource(["// scope-outer-join:", LEAK].join("\n"));
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("has no reason after it");
+    expect(r.exceptions).toEqual([]);
+  });
+
+  it("still reports a sweep-versus-parser shortfall, ahead of this verdict", () => {
+    // The structural backstop, re-asserted here because this rule adds a second
+    // reason a predicate can leave the pool and the two must never be confused:
+    // a DISCOUNTED PREDICATE must not turn into a DISCOUNTED REFERENCE. The
+    // table token here is unparseable, so the sweep sees a reference the parser
+    // does not, and that shortfall outranks the outer join — a reference nobody
+    // can attribute is the worse of the two findings.
+    const r = scanSource(
+      "const q = `SELECT x.id FROM entry_events ev" +
+      " LEFT JOIN 'entries' x ON x.id = ev.entry_id AND x.${scope.clause}`;",
+    );
+    expect(r.violations.length).toBe(1);
+    expect(r.violations[0].snippet).toContain("the sweep found and the parser did not");
+  });
+});
+
 describe("the checker over the real source tree", () => {
   it("exits 0, so a future unscoped query fails the suite as well as CI", () => {
     const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
@@ -789,22 +1051,82 @@ describe("the checker over the real source tree", () => {
   // change WILL fail this: when it does, read the new numbers, satisfy yourself
   // that each one moved for a reason you can name, and update them here in the
   // same commit as the change that moved them.
-  it("reports exactly 88 queries, 49 documented exceptions and 7 scope-checked", () => {
+  // MOVED 88 -> 89 by Phase 4 Task 2. GET /team/activity is the one statement
+  // in that phase that references `entries`: its second UNION arm joins the
+  // table so a share event is emitted only for a memory the caller may read,
+  // `JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}` — the caller's
+  // own scope, carried in the ON clause. The checker read the whole compound as
+  // ONE query, so this is +1 and not +2 — recorded as the tool printed it, with
+  // the SQL left in the shape the paging correctness needs rather than reshaped
+  // for the lexer. Exceptions stay 49 and scope-checked stays 7: nothing was
+  // exempted.
+  //
+  // The later change from LEFT JOIN to JOIN — which is what made that predicate
+  // govern the ROW SET rather than only the title — moved NONE of the three
+  // numbers, since the checker's unit is the query and its verdict was already
+  // "satisfied". Re-run and confirmed at 89/49/7. That silence is what the
+  // outer-join rule was written to end, and adding it moved two of the numbers:
+  //
+  //   queries        89 -> 89, UNCHANGED. The rule changes a VERDICT, not what
+  //                  counts as a query: no statement is newly seen or newly
+  //                  dropped, and holding this number still while the others
+  //                  move is itself the evidence that nothing vanished.
+  //   exempt         49 -> 48. src/routes/admin.ts's /patterns source hydration
+  //                  is the ONE statement in src/ with the shape — `FROM edges e
+  //                  LEFT JOIN entries m ON ... AND m.${mScope.clause}` — and it
+  //                  carried a scope-exempt licence written for its OTHER alias.
+  //                  scope-exempt no longer answers an outer-join finding, so
+  //                  that annotation became a scope-outer-join one whose reason
+  //                  now has to say why nulling m.content is enough. -1 here,
+  //                  +1 below: a licence moved between kinds, none was added.
+  //   scope-checked  7 -> 7, UNCHANGED. Nothing about a clause assembled in
+  //                  JavaScript changed.
+  //   outer-join     0 -> 1, the new fourth count. One statement in src/, named
+  //                  above. GET /team/activity is NOT among them: its join is
+  //                  INNER, so its ON clause is a row filter and it passes on
+  //                  the merits — which is the whole point of pinning it.
+  //
+  // MOVED 48 -> 47 by the per-company novelty floor in src/insight/weekly.ts.
+  // That query's workspace predicate used to be an interpolated `${floorSliceClause}`
+  // — invisible to the lexer, so it needed a `scope-exempt:` licence. Narrowing
+  // the floor to the drawn candidates' own workspaces put a LITERAL
+  // `workspace_id IN (?, …)` in the source, which the checker is satisfied by on
+  // the merits, and the licence became one nothing used. It was removed rather
+  // than left in place: a dead licence is a sentence a future reader would trust.
+  //
+  //   queries        89 -> 89, UNCHANGED. One prepare() was replaced by one
+  //                  prepare(); nothing was newly seen or newly dropped, and
+  //                  holding this still while exempt moves is the evidence of it.
+  //   exempt         48 -> 47, the licence named above, removed and not moved.
+  //   scope-checked  7 -> 7, UNCHANGED. Nothing about a clause assembled in
+  //                  JavaScript changed — the clause stopped being assembled in
+  //                  JavaScript, which is why it landed in neither bucket.
+  //   outer-join     1 -> 1, UNCHANGED. The floor's read is a bare FROM.
+  //
+  // The SQL was NOT reshaped to please the lexer: the predicate is literal
+  // because the workspace list is now bounded by WEEKLY_CANDIDATE_LIMIT rather
+  // than by the slice, which is the fix, and the lexer's opinion of it followed.
+  //
+  // As the tool printed it:
+  //   ✔ scope check: 89 queries, 47 documented exceptions, 7 scope-checked
+  //     (clause assembled in JS), 1 scope-outer-join (clause governs a column,
+  //     not the row set)
+  it("reports exactly 89 queries, 47 exceptions, 7 scope-checked and 1 outer-join", () => {
     const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
       cwd: ROOT,
       encoding: "utf8",
     });
     expect(run.status).toBe(0);
     const m = run.stdout.match(
-      /scope check: (\d+) queries, (\d+) documented exceptions, (\d+) scope-checked/,
+      /scope check: (\d+) queries, (\d+) documented exceptions, (\d+) scope-checked[^,]*, (\d+) scope-outer-join/,
     );
     expect(m, `summary line not found in:\n${run.stdout}`).not.toBeNull();
-    const [queries, exempt, checked] = (m as RegExpMatchArray).slice(1).map(Number);
+    const [queries, exempt, checked, outerJoin] = (m as RegExpMatchArray).slice(1).map(Number);
     expect(
-      { queries, exempt, checked },
+      { queries, exempt, checked, outerJoin },
       "check:scope counts moved. If that was deliberate, say so out loud and " +
         "update this expectation in the same commit.",
-    ).toEqual({ queries: 88, exempt: 49, checked: 7 });
+    ).toEqual({ queries: 89, exempt: 47, checked: 7, outerJoin: 1 });
   });
 
   it("is wired into package.json and CI, or nothing runs it", () => {

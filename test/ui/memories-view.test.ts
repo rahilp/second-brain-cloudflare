@@ -18,6 +18,7 @@ function load() {
   const els = new Map<string, any>();
   const store = new Map<string, string>();
   const calls: string[] = [];
+  const exits: string[] = [];
   const makeEl = () => ({
     hidden: false,
     innerHTML: "",
@@ -46,6 +47,10 @@ function load() {
     loadGraph: () => calls.push("graph"),
     loadRecent: () => calls.push("list"),
     renderRecent: () => {},
+    // Lives in recent.js, which this harness does not load: the memories
+    // list's selection mode, which cannot outlive the list it is over. Counted
+    // separately from `calls`, which is the FETCH log and is asserted whole.
+    exitSelectMode: () => exits.push(ctx.memoryView),
     refreshIfStale: () => calls.push("refresh"),
     localStorage: {
       getItem: (k: string) => store.get(k) ?? null,
@@ -65,10 +70,24 @@ function load() {
   vm.runInContext(readFileSync(resolve(ROOT, "public/js/nav.js"), "utf8"), ctx);
   ctx.__els = els;
   ctx.__store = store;
+  ctx.__exits = exits;
   return ctx;
 }
 
 describe("switching projection", () => {
+  it("drops the list's selection mode on the way to the graph", () => {
+    // The bulk bar and its Select button are siblings of #mem-filters, not
+    // children of it, so nothing hidden above takes them down — and a
+    // selection that outlived the list would be a bulk action over rows that
+    // are no longer on screen.
+    const ctx = load();
+    ctx.setMemoryView("graph");
+    expect(ctx.__exits).toEqual(["graph"]);
+    // And not on the way back: the list re-renders the bar itself.
+    ctx.setMemoryView("list");
+    expect(ctx.__exits).toEqual(["graph"]);
+  });
+
   it("shows one view at a time", () => {
     const ctx = load();
 

@@ -93,7 +93,13 @@ function patternRow(p) {
              onchange="togglePatternSelection('${escAttr(p.id)}', this.checked)" />
       <span class="pattern-body">
         <span class="pattern-text">${escHtml(text)}</span>
-        ${meta ? `<span class="pattern-when">${escHtml(meta)}</span>` : ''}
+        ${meta ? `<span class="pattern-when">${escHtml(meta)}</span>` : ''}` +
+      // Whether the sentence was drawn from your own memories or from the
+      // team's, on the metadata line where the date and the shape already are.
+      // The same helper the memories card uses (layerChipHtml, utils.js), so
+      // there is one implementation of "this row is shared", not two.
+      `${layerChipHtml(p, TEAM_MODE)}` +
+      `
         ${sources ? `<ul class="pattern-sources">${sources}</ul>` : ''}
       </span>
     </label>`

@@ -80,7 +80,24 @@ function switchTab(tab) {
   if (tab === 'home') refreshIfStale()
   // Suspensions and rotations can happen while the window sits open, so the
   // roster refetches on every visit rather than trusting the last one.
-  if (tab === 'team' && typeof loadTeam === 'function') loadTeam()
+  //
+  // The activity feed reveals itself here rather than from renderTeam(), so the
+  // decision that the Team screen is being looked at stays in the one place
+  // that already makes it. Both branches live in maybeRevealActivity: a solo
+  // brain gets the section hidden and no request.
+  //
+  // It waits for loadTeam because loadTeam IS the admin probe. Fired alongside
+  // it, the feed's own request goes out before anyone knows whether this member
+  // is allowed to make it, and a member pays for a 403 on every Team-tab visit.
+  if (tab === 'team') {
+    const probe = typeof loadTeam === 'function' ? loadTeam() : null
+    if (typeof maybeRevealActivity === 'function') {
+      Promise.resolve(probe).then(
+        () => maybeRevealActivity(),
+        () => maybeRevealActivity(),
+      )
+    }
+  }
 }
 
 /**
@@ -103,6 +120,13 @@ function setMemoryView(mode) {
   // would silently ignore them, so they step aside for the legend.
   document.getElementById('mem-filters').hidden = graphing
   document.getElementById('mem-legend').hidden = !graphing
+  // Selection is over what is ON SCREEN, and the graph has no cards on it. The
+  // mode and its set leave with the list rather than staying live over rows
+  // nobody can see: #mem-select-btn is a sibling of #mem-filters and
+  // #mem-bulk-bar a sibling of the whole .mem-bar, so neither of the lines
+  // above touches them, and a bulk Share over a graph used to post ids off a
+  // list that had been hidden two taps ago.
+  if (graphing) exitSelectMode()
 
   const listBtn = document.getElementById('mem-view-list')
   const graphBtn = document.getElementById('mem-view-graph')

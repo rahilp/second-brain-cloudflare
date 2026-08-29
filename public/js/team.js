@@ -9,6 +9,15 @@
 
 let teamMembers = []
 let teamYouId = null
+/**
+ * The probe's answer to "is whoever holds this bearer token an admin?" — true,
+ * false, or null while it has not been asked. Nothing on this screen branches
+ * on it (the screen's three states come from which fetch succeeded); it exists
+ * so js/activity.js can decline to request an admin-only feed on a member's
+ * behalf. Null is deliberately not false: an unanswered probe must not be able
+ * to hide an admin's own activity log.
+ */
+let teamIsAdmin = null
 /** GET /team/roster's members — names and roles only. The member view's list. */
 let teamRoster = []
 /** GET /team/roster's teams, same shape as teamWorkspaces but for a member. */
@@ -116,6 +125,8 @@ async function loadTeam() {
     if (!data.ok || !Array.isArray(data.members)) throw new Error(t('common.invalidResponse'))
     teamMembers = data.members
     teamYouId = data.you ?? null
+    // 200 from an endpoint behind requireAdmin IS the answer.
+    teamIsAdmin = true
     setTeamNavVisible(true)
     renderTeam()
   } catch {
@@ -145,6 +156,9 @@ async function loadTeamMemberView() {
     if (!res.ok) throw new Error(String(res.status))
     const data = await res.json()
     if (!data.ok || !Array.isArray(data.members)) throw new Error(t('common.invalidResponse'))
+    // The caller's OWN role, from an identity-scoped endpoint, so it is the
+    // answer either way — including on the path that stands this view down.
+    teamIsAdmin = !!data.admin
     if (data.admin) throw new Error('admin')
     teamRoster = data.members
     teamRosterTeams = Array.isArray(data.teams) ? data.teams : []
@@ -355,6 +369,42 @@ function renderTeam() {
       </div>`
   }
   loadTeamOrgDefault()
+  maybeRevealTeamInsights()
+}
+
+/**
+ * The weekly-team-insights row, both branches, on every render of the panel.
+ *
+ * This panel is NOT a team-only surface and that is the whole reason this
+ * function exists. src/lib/tenancy.ts hashes the deployment's AUTH_TOKEN into a
+ * users row with role 'admin', so on a solo brain GET /team/members answers 200
+ * for the owner and renderTeam() reveals #team-body just as it does for a team
+ * admin — which is how a solo owner invites their first colleague. Membership of
+ * that panel therefore gates nothing, and a setting whose own copy says "puts
+ * what it finds in everyone's review queue" needs TEAM_MODE, the one flag that
+ * does.
+ *
+ * Both branches, never a one-way reveal, for the reason renderTeamName states:
+ * a brain that stops being a team has to lose this row rather than merely never
+ * gain it.
+ *
+ * A solo brain does not read the value either. Hidden is not the same claim as
+ * free, and a control nobody can see that still fetches is still a request the
+ * v2 dashboard never made. The panel's one GET /config is loadTeamOrgDefault's,
+ * exactly as it was before this row existed.
+ *
+ * ORDERING: TEAM_MODE is assigned in maybeRevealHomeLayer (js/home.js) off GET
+ * /health, and js/auth.js fires loadTeam() alongside that request rather than
+ * after it, so renderTeam CAN read a false flag on a team brain. It cannot stick
+ * that way: the panel is unreachable without a switchTab('team'), which re-runs
+ * loadTeam → renderTeam → here. Reading early fails CLOSED, which is the
+ * direction that costs a team admin one tab visit and a solo owner nothing.
+ */
+function maybeRevealTeamInsights() {
+  const row = document.getElementById('team-insights-row')
+  if (row) row.style.display = TEAM_MODE ? '' : 'none'
+  if (!TEAM_MODE) return Promise.resolve()
+  return loadTeamInsights()
 }
 
 async function postTeam(path, body) {
@@ -676,30 +726,79 @@ async function setMyDefaultShare(value) {
   }
 }
 
-async function loadTeamOrgDefault() {
-  const sel = document.getElementById('team-org-default')
+/**
+ * The one in-flight GET /config, shared by every select reading from it.
+ *
+ * renderTeam() starts one loader per settings row and each wants the same blob,
+ * so without this the screen issues N identical requests to render N rows. The
+ * handle lives only while the request is in flight and is dropped the moment it
+ * settles, so this coalesces concurrent readers and never serves a cached body:
+ * a later read — the reload after a refused write, say — always goes to the
+ * server. Rejections propagate to every sharer, which is what each one's own
+ * catch arm already handles.
+ */
+let teamConfigRead = null
+
+function readTeamConfig() {
+  if (!teamConfigRead) {
+    teamConfigRead = (async () => {
+      const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+      if (!res.ok) throw new Error(String(res.status))
+      return await res.json()
+    })().finally(() => {
+      teamConfigRead = null
+    })
+  }
+  return teamConfigRead
+}
+
+/**
+ * Read one config key into one <select>.
+ *
+ * `narrow` maps whatever the server has to one of the option values, because
+ * config values are free text in KV and a <select> whose value is not one of
+ * its options renders blank — which reads as "unset" for a setting that is
+ * very much set.
+ */
+async function loadTeamConfigSelect(selectId, key, narrow) {
+  const sel = document.getElementById(selectId)
   if (!sel) return
   try {
-    const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
-    if (!res.ok) throw new Error(String(res.status))
-    const data = await res.json()
-    sel.value = data?.config?.TEAM_DEFAULT_WORKSPACE === 'company' ? 'company' : 'personal'
+    const data = await readTeamConfig()
+    sel.value = narrow(data?.config?.[key])
   } catch {
-    sel.value = 'personal'
+    sel.value = narrow(undefined)
   }
 }
 
-async function setTeamOrgDefault(value) {
+/** Write one config key, and put the control back if the server refused. */
+async function setTeamConfigValue(selectId, key, value, narrow) {
   try {
     // PATCH /config is a sparse key→value patch for the whole settings blob.
     const res = await fetch(`${WORKER_URL}/config`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ TEAM_DEFAULT_WORKSPACE: value }),
+      body: JSON.stringify({ [key]: value }),
     })
     if (!res.ok) throw new Error(t('team.actionFailed'))
   } catch (e) {
     showToast(e.message || t('team.actionFailed'))
-    await loadTeamOrgDefault()
+    await loadTeamConfigSelect(selectId, key, narrow)
   }
+}
+
+async function loadTeamOrgDefault() {
+  await loadTeamConfigSelect('team-org-default', 'TEAM_DEFAULT_WORKSPACE', (v) => (v === 'company' ? 'company' : 'personal'))
+}
+
+async function setTeamOrgDefault(value) {
+  await setTeamConfigValue('team-org-default', 'TEAM_DEFAULT_WORKSPACE', value, (v) => (v === 'company' ? 'company' : 'personal'))
+}
+
+async function loadTeamInsights() {
+  await loadTeamConfigSelect('team-insights', 'TEAM_INSIGHTS', (v) => (v === 'on' ? 'on' : 'off'))
+}
+
+async function setTeamInsights(value) {
+  await setTeamConfigValue('team-insights', 'TEAM_INSIGHTS', value, (v) => (v === 'on' ? 'on' : 'off'))
 }

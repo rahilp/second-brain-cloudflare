@@ -1,5 +1,5 @@
 /**
- * The two insight schedules, in one place.
+ * The three insight schedules, in one place.
  *
  * They are separate from the maintenance cron because they are separate
  * budgets, the same argument wrangler.jsonc already makes for the integration
@@ -26,3 +26,16 @@ export const INSIGHT_ACCRUAL_CRON = "45 1 * * *";
  * to 0.
  */
 export const INSIGHT_WEEKLY_CRON = "15 2 * * SUN";
+
+/**
+ * The team pass, thirty minutes after the personal one.
+ *
+ * Its own trigger because it cannot share an invocation: the weekly pass
+ * measures 38 of an invocation's 50 subrequests at a full candidate slate
+ * (test/integration/insight-cron-budget.test.ts), so two passes in one
+ * invocation is 76 and the second one dies half-written. Two budgets, two
+ * triggers — the same answer #290 gave the integration sync.
+ *
+ * "SUN", not "0", for the reason INSIGHT_WEEKLY_CRON gives.
+ */
+export const INSIGHT_TEAM_WEEKLY_CRON = "45 2 * * SUN";
