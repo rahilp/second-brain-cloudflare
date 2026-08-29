@@ -49,6 +49,7 @@ const SCHEMA_PROBE_RESULTS = [
   { kind: "edge_column", name: "workspace_id" },
   { kind: "user_column", name: "default_share" },
   { kind: "user_column", name: "removed_at" },
+  { kind: "user_column", name: "last_used_at" },
 ];
 
 export class D1Mock {
@@ -98,8 +99,25 @@ export class D1Mock {
     const makeStmt = (allArgs: any[]) => {
       // Drop the bindings that belonged to the stripped scope clauses, positionally.
       const args = scopeDrop.size ? allArgs.filter((_, i) => !scopeDrop.has(i)) : allArgs;
-      return {
+      const stmt: any = {
       async run() {
+        // D1 returns each batched statement's rows as well as its meta, and a
+        // batch carries reads as well as writes: identity resolution pairs its
+        // SELECT with the throttled last_used_at write so the pair costs one
+        // subrequest. batch() below runs statements through run(), so a SELECT
+        // has to answer with its rows here. Additive — writes are untouched.
+        //
+        // all() then first(): the branches in this double are split across the
+        // two by what each query's only caller happened to use, so a
+        // single-row SELECT like IDENTITY_SQL is modelled in first() and
+        // answers all() with nothing. Asking both is what makes a batched read
+        // see the same row the unbatched one does.
+        if (/^\s*(SELECT|WITH)\b/i.test(s)) {
+          const many = await stmt.all();
+          if (many.results.length) return { ...many, meta: { changes: 0 } };
+          const one = await stmt.first();
+          return { results: one ? [one] : [], meta: { changes: 0 } };
+        }
         if (s.startsWith("INSERT INTO workspaces")) {
           db.workspaces.push({ id: args[0], kind: args[1], name: args[2], created_at: args[3] });
           return { meta: { changes: 1 } };
@@ -885,6 +903,7 @@ export class D1Mock {
         return { results: [] };
       }
       };
+      return stmt;
     };
 
     return {

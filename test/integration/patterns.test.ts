@@ -25,13 +25,19 @@ function dbOf(s: SqliteD1) {
   return {
     prepare: (sql: string) => s.db.prepare(sql),
     exec: (sql: string) => s.db.exec(sql),
-    async batch(stmts: { run(): Promise<unknown> }[]) {
-      for (const st of stmts) await st.run();
+    async batch(stmts: { run(): Promise<any> }[]) {
+      const out: any[] = [];
+      for (const st of stmts) out.push(await st.run());
       // Collapsed to one entry in the issued log, because that is what D1 does:
       // a batch is a single subrequest however many statements it carries. The
       // per-statement rows would make a correctly batched write look like N.
       s.issued.splice(s.issued.length - stmts.length, stmts.length, `BATCH(${stmts.length})`);
-      return stmts.map(() => ({ meta: { changes: 1 } }));
+      // Each statement's rows are kept, not discarded: a batch carries reads as
+      // well as writes now — identity resolution pairs its SELECT with the
+      // throttled last_used_at stamp so the pair costs one subrequest — and D1
+      // returns a result per statement. `changes: 1` is preserved for the write
+      // paths that read it.
+      return out.map((r: any) => ({ ...r, meta: { changes: 1, ...r?.meta } }));
     },
   };
 }
@@ -290,11 +296,20 @@ describe("POST /patterns/resolve — in bulk", () => {
       envOf(sq), ctx,
     );
 
-    // One SELECT and one batched write, regardless of the 40 — plus v3's fixed
-    // identity cost on this first request against a fresh database: the token
-    // join and the one-time tenant bootstrap (two lookups + a batch; memoised
-    // per database afterwards). 1 + 3 = 4.
-    expect(sq.issued.filter(s => !s.startsWith("BATCH"))).toHaveLength(4);
+    // Six round trips, flat in the 40 ids, which is what this measures.
+    //
+    // Assert the TOTAL rather than only the unbatched statements. Both numbers
+    // are pinned below, but the total is the one that means something: a batch
+    // is a single subrequest however many statements it carries, so the split
+    // between the two moves whenever a read is paired with a write, without the
+    // cost changing at all. That is exactly what happened when identity
+    // resolution began carrying the throttled users.last_used_at stamp in the
+    // same batch as its read — unbatched went 4 -> 3, total stayed 6.
+    expect(sq.issued).toHaveLength(6);
+    // The route's own SELECT, plus v3's fixed identity cost on this first
+    // request against a fresh database: the token→identity batch and the
+    // one-time tenant bootstrap (two lookups + a batch; memoised afterwards).
+    expect(sq.issued.filter(s => !s.startsWith("BATCH"))).toHaveLength(3);
   });
 
   it("skips what someone else already ruled on rather than failing the batch", async () => {

@@ -108,6 +108,9 @@ function harness(
       return inner.prepare(sql);
     },
     exec: (sql: string) => inner.exec(sql),
+    // Identity resolution batches its read with the throttled last_used_at
+    // stamp, so this facade needs batch() to get as far as the route under test.
+    batch: (stmts: any[]) => inner.batch(stmts),
   } as unknown as D1Database;
 
   const kv = opts.kv ?? makeMemoryKV();

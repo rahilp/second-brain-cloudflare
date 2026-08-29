@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS users (
   suspended     INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL,
   default_share TEXT NOT NULL DEFAULT '',          -- capture-visibility override ('' = inherit org TEAM_DEFAULT_WORKSPACE)
-  removed_at    INTEGER                             -- soft offboarding, NULL/0 = active member
+  removed_at    INTEGER,                            -- soft offboarding, NULL/0 = active member
+  last_used_at  INTEGER                             -- last successful identity resolution (throttled; NULL = never seen since the column shipped)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash);

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { makeSqliteD1 } from "../helpers/sqlite-d1";
 import type { Env } from "../../src/env";
 import { hashToken, resolveIdentity } from "../../src/lib/identity";
+import worker from "../../src/index";
+import { makeTestEnv } from "../helpers/make-env";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 
 /** The sqlite facade exercises the real schema + real SQL; identity only needs DB + AUTH_TOKEN. */
@@ -88,11 +90,24 @@ describe("identity resolution", () => {
     expect(identity!.companyWorkspaceIds[0]).toBe(roots.companyWorkspaceId);
   });
 
-  it("accepts the ?token= query form", async () => {
+  it("rejects the ?token= query form", async () => {
+    // Removed in v3. A query-string credential ends up in browser history, proxy
+    // and CDN access logs, and the Referer header of every outbound link — none
+    // of which a bearer token survives being written to. The Authorization
+    // header is the only way in now, and this token is the owner's real one, so
+    // the rejection is about where it was presented, not what it is.
     const env = makeEnv();
     await ensureTenantBootstrap(env);
     const request = new Request("https://brain.example/count?token=owner-secret-token");
-    expect(await resolveIdentity(request, env)).not.toBeNull();
+    expect(await resolveIdentity(request, env)).toBeNull();
+
+    const res = await worker.fetch(
+      new Request("https://brain.example/count?token=owner-secret-token"),
+      { ...env, VECTORIZE: makeTestEnv().VECTORIZE, AI: makeTestEnv().AI, OAUTH_KV: makeTestEnv().OAUTH_KV } as Env,
+      { waitUntil: (_: Promise<unknown>) => {} } as ExecutionContext,
+    );
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { code: string }).code).toBe("invalid_token");
   });
 
   it("rejects unknown tokens and missing tokens", async () => {

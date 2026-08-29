@@ -19,6 +19,12 @@ export interface TeamMember {
   role: "admin" | "member";
   suspended: boolean;
   createdAt: number;
+  /**
+   * Last successful identity resolution for this member's token, or null for a
+   * member who has not authenticated since the column shipped. Up to an hour
+   * stale by design — see LAST_USED_THROTTLE_MS in src/lib/identity.ts.
+   */
+  lastUsedAt: number | null;
   personalWorkspaceId: string;
   /** Entries living in the member's personal workspace. */
   privateEntries: number;
@@ -40,7 +46,7 @@ export async function generateToken(): Promise<{ token: string; tokenHash: strin
 export async function listMembers(env: Env): Promise<TeamMember[]> {
   const { results } = await env.DB.prepare(
     `SELECT u.id AS userId, u.name, u.email, u.role, u.suspended, u.created_at AS createdAt,
-            u.default_share AS defaultShare,
+            u.default_share AS defaultShare, u.last_used_at AS lastUsedAt,
             w.id AS personalWorkspaceId,
             (SELECT COUNT(*) FROM entries e WHERE e.workspace_id = w.id) AS privateEntries
      FROM users u
@@ -52,6 +58,9 @@ export async function listMembers(env: Env): Promise<TeamMember[]> {
   return (results ?? []).map((r) => ({
     ...r,
     suspended: !!r.suspended,
+    // SQLite hands NULL back as null already; the coalesce is for D1's own
+    // undefined-for-absent-column behaviour on a brain mid-migration.
+    lastUsedAt: r.lastUsedAt ?? null,
     defaultShare: r.defaultShare === "company" ? "company" : r.defaultShare === "personal" ? "personal" : "",
   }));
 }
@@ -96,6 +105,7 @@ export async function createMember(
   return {
     member: {
       userId, name, email, role, suspended: false, createdAt: now,
+      lastUsedAt: null,
       personalWorkspaceId: workspaceId, privateEntries: 0, defaultShare: "",
     },
     token,

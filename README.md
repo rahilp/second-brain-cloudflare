@@ -188,6 +188,10 @@ Use either:
 
 Save this token somewhere secure. You will need it when authorizing clients and testing your deployment.
 
+> **Removed in v3:** `?token=` query-parameter authentication. Use the
+> `Authorization: Bearer <token>` header. Query-string credentials leak into
+> browser history, proxy logs and `Referer` headers.
+
 ### 2. Deploy to Cloudflare
 
 Click **[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare)** and follow the prompts.

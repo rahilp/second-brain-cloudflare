@@ -53,8 +53,23 @@ class SqliteStatement {
     return row ?? null;
   }
 
-  async run(): Promise<{ success: true; meta: { rows_written: number } }> {
-    const result = this.db.prepare(this.sql).run(...(this.args as never[]));
+  /**
+   * D1 returns each batched statement's ROWS as well as its meta, and a batch
+   * carries reads as well as writes — identity resolution pairs its SELECT with
+   * the throttled last_used_at write so the pair costs one subrequest. batch()
+   * below executes statements through run(), and several tests wrap batch() with
+   * their own `st.run()` loop, so a SELECT has to answer with its rows here or
+   * the identity read comes back empty through every one of them.
+   *
+   * Additive for writes: `meta.rows_written` is unchanged, and `results` is
+   * simply absent where there are no rows to report.
+   */
+  async run(): Promise<{ results?: unknown[]; success: true; meta: { rows_written: number } }> {
+    const statement = this.db.prepare(this.sql);
+    if (/^\s*(SELECT|WITH)\b/i.test(this.sql)) {
+      return { results: statement.all(...(this.args as never[])), success: true, meta: { rows_written: 0 } };
+    }
+    const result = statement.run(...(this.args as never[]));
     return { success: true, meta: { rows_written: Number(result.changes) } };
   }
 }
@@ -64,7 +79,7 @@ export interface SqliteD1 {
   db: {
     prepare(sql: string): SqliteStatement;
     exec(sql: string): Promise<void>;
-    batch(statements: SqliteStatement[]): Promise<{ success: true; meta: { rows_written: number } }[]>;
+    batch(statements: SqliteStatement[]): Promise<{ results?: unknown[]; success: true; meta: { rows_written: number } }[]>;
   };
   /**
    * One entry per D1 call made through `db` — which is one entry per subrequest,
@@ -181,7 +196,7 @@ export function makeSqliteD1({ schema: applySchema = true }: { schema?: boolean 
       // they are replaced by the single entry the platform actually charges for.
       batch: async (statements: SqliteStatement[]) => {
         issued.splice(Math.max(0, issued.length - statements.length), statements.length, "BATCH");
-        const out: { success: true; meta: { rows_written: number } }[] = [];
+        const out: { results?: unknown[]; success: true; meta: { rows_written: number } }[] = [];
         for (const statement of statements) out.push(await statement.run());
         return out;
       },

@@ -173,6 +173,48 @@ describe("team panel", () => {
     expect(html).not.toContain("rotateTeamToken('u1')");
   });
 
+  describe("last used", () => {
+    /** Renders the roster with these members and hands back the markup. */
+    async function roster(members: unknown[]) {
+      const { ctx, els } = setup(
+        jsonFetch([{
+          match: (u) => u.endsWith("/team/members"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ ok: true, you: "u1", members }) }),
+        }]),
+      );
+      await ctx.loadTeam();
+      return els.get("team-list").innerHTML as string;
+    }
+
+    const member = (over: Record<string, unknown> = {}) => ({
+      userId: "u2", name: "Bob", email: "bob@example.com", role: "member",
+      suspended: false, privateEntries: 1, ...over,
+    });
+
+    it("reports how long ago a member's token last resolved", async () => {
+      const html = await roster([member({ lastUsedAt: Date.now() - 3 * 3600_000 })]);
+      expect(html).toContain("Last used 3h ago");
+    });
+
+    it("says Never used for a member who has not authenticated since the column shipped", async () => {
+      expect(await roster([member({ lastUsedAt: null })])).toContain("Never used");
+    });
+
+    it("says Never used rather than a bogus date for a zero or absent timestamp", async () => {
+      // 0 is what an accidental COALESCE would produce, and undefined is what an
+      // older Worker sends. Neither may render as 1 January 1970.
+      expect(await roster([member({ lastUsedAt: 0 })])).toContain("Never used");
+      const absent = await roster([member()]);
+      expect(absent).toContain("Never used");
+      expect(absent).not.toMatch(/1970/);
+    });
+
+    it("keeps it beside the private-entry count rather than replacing it", async () => {
+      const html = await roster([member({ lastUsedAt: Date.now() - 90_000 })]);
+      expect(html).toContain("1 private entry · Last used 2m ago");
+    });
+  });
+
   it("hides the nav and shows the quiet notice on 403", async () => {
     const { ctx, els } = setup(async () => ({ ok: false, status: 403, json: async () => ({ ok: false, error: "Forbidden" }) }));
     await ctx.loadTeam();

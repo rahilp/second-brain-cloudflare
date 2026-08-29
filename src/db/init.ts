@@ -164,6 +164,14 @@ const USERS_COLUMNS: Record<string, string> = {
   // Soft offboarding timestamp. Identity and actor-label lookups ignore rows
   // where this is set; company entries keep actor_id as history.
   removed_at: `ALTER TABLE users ADD COLUMN removed_at INTEGER`,
+  // When this member's token last resolved an identity, throttled to at most one
+  // write per user per hour (see LAST_USED_THROTTLE_MS in src/lib/identity.ts).
+  // Nullable and deliberately NOT backfilled, for the same reason as updated_at
+  // above: there is no value to backfill it TO. "Never seen since the column
+  // shipped" and "seen at some unknown time before it shipped" are the same fact
+  // to every reader, and inventing a timestamp would cost one row written per
+  // user to make the roster say something untrue. NULL renders as "Never used".
+  last_used_at: `ALTER TABLE users ADD COLUMN last_used_at INTEGER`,
 };
 
 /**

@@ -20,6 +20,7 @@ const TENANCY_EDGE_ALTERS: [column: string, alter: string][] = [
 const USERS_ALTERS: [column: string, alter: string][] = [
   ["default_share", `ALTER TABLE users ADD COLUMN default_share TEXT NOT NULL DEFAULT ''`],
   ["removed_at", `ALTER TABLE users ADD COLUMN removed_at INTEGER`],
+  ["last_used_at", `ALTER TABLE users ADD COLUMN last_used_at INTEGER`],
 ];
 const ALL_COLUMNS = MIGRATION.map(([column]) => column);
 const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue",
@@ -77,10 +78,7 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
         objects.add(created[1]);
         if (created[1] === "entries") BASE_COLUMNS.forEach(c => columns.add(c));
         if (created[1] === "edges") TENANCY_EDGE_ALTERS.forEach(([c]) => edgeColumns.add(c));
-        if (created[1] === "users") {
-          userColumns.add("default_share");
-          userColumns.add("removed_at");
-        }
+        if (created[1] === "users") USERS_ALTERS.forEach(([c]) => userColumns.add(c));
       }
     },
     prepare(sql: string) {
@@ -169,7 +167,7 @@ describe("initializeDatabase updated_at migration", () => {
       resetDatabaseInit();
       await initializeDatabase(env);
 
-      expect(migrated).toBe(31); // one-off cost of creating a brain: 19 objects + 11 ALTERs + 1 post-column index
+      expect(migrated).toBe(32); // one-off cost of creating a brain: 19 objects + 12 ALTERs + 1 post-column index
       expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
       expect(prepared).toHaveLength(3); // one probe each, and nothing else
       expect(touchesEntries(execd)).toEqual([]);
@@ -409,7 +407,7 @@ describe("initializeDatabase against real SQLite", () => {
     resetDatabaseInit(); // a second cold isolate against the brain the first one migrated
     await initializeDatabase(envFor(d1));
 
-    expect(cold).toBe(32); // one probe, then the 31 statements a new brain needs (19 objects + 11 ALTERs + 1 post-column index)
+    expect(cold).toBe(33); // one probe, then the 32 statements a new brain needs (19 objects + 12 ALTERs + 1 post-column index)
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });
@@ -427,8 +425,9 @@ describe("initializeDatabase against real SQLite", () => {
       `ALTER TABLE entries ADD COLUMN updated_at INTEGER`,
       `ALTER TABLE entries ADD COLUMN staleness_checked_at INTEGER`,
     ]);
-    // schema.sql ships the whole v3 tenancy set — users (with default_share and
-    // removed_at), workspaces, memberships, entry_events, maintenance_cursor — so
+    // schema.sql ships the whole v3 tenancy set — users (with default_share,
+    // removed_at and last_used_at), workspaces, memberships, entry_events,
+    // maintenance_cursor — so
     // init has no table left to create against a brain installed from it. This
     // list read differently while a ";" inside a schema.sql comment was splitting
     // the `users` DDL in half: the table never applied, init's narrower base
@@ -470,6 +469,38 @@ describe("initializeDatabase against real SQLite", () => {
     expect(await objectNames(d1)).toContain("edges");
     expect(d1.issued.filter(s => s.startsWith("CREATE TABLE IF NOT EXISTS entries"))).toEqual([]);
     expect(sameColumns(d1.columns())).toBe(true);
+  });
+
+  it("adds last_used_at to a users table that predates it, keeping every member row", async () => {
+    // The upgrade path this column actually takes: a team brain provisioned
+    // before it existed, with members already in it. The ALTER must be the whole
+    // migration — no backfill, no rewrite of the rows that are already there.
+    d1 = makeSqliteD1({ schema: false });
+    await d1.db.exec(
+      `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT, role TEXT NOT NULL DEFAULT 'member', token_hash TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, default_share TEXT NOT NULL DEFAULT '', removed_at INTEGER)`,
+    );
+    await d1.db
+      .prepare(`INSERT INTO users (id, name, email, role, token_hash, suspended, created_at, default_share, removed_at) VALUES ('u1', 'Ada', 'ada@example.com', 'admin', 'hash-1', 0, 1000, 'company', NULL)`)
+      .run();
+    d1.issued.length = 0;
+
+    await initializeDatabase(envFor(d1));
+
+    const userColumns = (await d1.db.prepare(`SELECT name FROM pragma_table_info('users')`).all())
+      .results as { name: string }[];
+    expect(userColumns.map(c => c.name)).toContain("last_used_at");
+    // Exactly one users ALTER — the two columns already there are not re-added.
+    expect(d1.issued.filter(s => /^ALTER TABLE users/.test(s))).toEqual([
+      `ALTER TABLE users ADD COLUMN last_used_at INTEGER`,
+    ]);
+    // Nothing wrote to the row: every field survives and the new one reads NULL.
+    const row = await d1.db.prepare(`SELECT * FROM users WHERE id = 'u1'`).first() as Record<string, unknown>;
+    expect(row).toMatchObject({
+      id: "u1", name: "Ada", email: "ada@example.com", role: "admin",
+      token_hash: "hash-1", suspended: 0, created_at: 1000, default_share: "company", removed_at: null,
+    });
+    expect(row.last_used_at).toBeNull();
+    expect(d1.issued.some(s => /^(INSERT|UPDATE|DELETE)\b/i.test(s))).toBe(false);
   });
 
   it("leaves existing rows untouched when it adds a column", async () => {
