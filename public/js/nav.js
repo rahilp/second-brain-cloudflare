@@ -103,6 +103,13 @@ function setMemoryView(mode) {
   // would silently ignore them, so they step aside for the legend.
   document.getElementById('mem-filters').hidden = graphing
   document.getElementById('mem-legend').hidden = !graphing
+  // Selection is over what is ON SCREEN, and the graph has no cards on it. The
+  // mode and its set leave with the list rather than staying live over rows
+  // nobody can see: #mem-select-btn is a sibling of #mem-filters and
+  // #mem-bulk-bar a sibling of the whole .mem-bar, so neither of the lines
+  // above touches them, and a bulk Share over a graph used to post ids off a
+  // list that had been hidden two taps ago.
+  if (graphing) exitSelectMode()
 
   const listBtn = document.getElementById('mem-view-list')
   const graphBtn = document.getElementById('mem-view-graph')

@@ -211,6 +211,10 @@ function setup(opts: Opts = {}) {
       body: { style: {}, appendChild() {} },
     },
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    // The graph projection's loader, which lives in a module this harness does
+    // not load. setMemoryView calls it, and the selection has to survive — or
+    // rather, not survive — that call.
+    loadGraph: () => {},
     navigator: { language: "en-US" },
     fetch: async (url: string, init?: any) => {
       if (String(url).includes("/team/roster")) {
@@ -389,6 +393,42 @@ describe("memories multi-select — the selection", () => {
     expect(vm.runInContext("allEntries.length", ctx)).toBe(5);
   });
 
+  it("counts only what the current filter leaves ON SCREEN", async () => {
+    // The bar and the action have to agree about what is selected, or the
+    // action is a dead control: before this, filtering the ticked rows away
+    // left the bar reading "2 selected" with both buttons enabled, and
+    // pressing one opened no sheet, posted nothing and said nothing.
+    const five = [
+      row({ id: "a", tags: '[\"work\"]' }),
+      row({ id: "b", tags: '[\"home\"]' }),
+      row({ id: "c", tags: '[\"work\"]' }),
+    ];
+    const h = setup({ entries: five });
+    await h.ctx.loadRecent();
+    h.ctx.toggleSelectMode();
+    vm.runInContext(`selectedTag = 'work'`, h.ctx);
+    h.ctx.applyRecentFilters();
+    h.ctx.selectAllVisible();
+    expect(h.el("mem-bulk-count").textContent).toBe("2 selected");
+
+    vm.runInContext(`selectedTag = 'home'`, h.ctx);
+    h.ctx.applyRecentFilters();
+    expect(h.el("mem-bulk-count").textContent, "nothing on screen is ticked").toBe("0 selected");
+    expect(h.el("mem-bulk-share").disabled, "so neither action pretends it can run").toBe(true);
+    expect(h.el("mem-bulk-private").disabled).toBe(true);
+    const before = h.generation();
+    h.ctx.confirmBulkLayerMove("company");
+    expect(h.generation(), "and pressing one opens nothing at all").toBe(before);
+    expect(h.shareCalls.length).toBe(0);
+
+    // Hidden by the filter, not destroyed by it: the ticks come back with the
+    // rows, so a filter is not a way to silently lose a selection.
+    vm.runInContext(`selectedTag = 'work'`, h.ctx);
+    h.ctx.applyRecentFilters();
+    expect(h.el("mem-bulk-count").textContent).toBe("2 selected");
+    expect(h.el("mem-bulk-share").disabled).toBe(false);
+  });
+
   it("drops the selection on the way out of the mode", async () => {
     const { ctx, el } = setup({ entries: THREE });
     await ctx.loadRecent();
@@ -433,6 +473,57 @@ describe("memories multi-select — the solo brain", () => {
     });
     expect(card.className).toBe(SOLO_CARD_CLASS);
     expect(card.innerHTML).toBe(SOLO_CARD_HTML);
+  });
+});
+
+describe("memories multi-select — leaving the list", () => {
+  // Selection is over what is ON SCREEN. The graph projection draws no cards,
+  // so a selection that outlived the list would be a live bulk action over
+  // rows nobody can see — and #mem-select-btn is a SIBLING of #mem-filters,
+  // #mem-bulk-bar a sibling of the whole .mem-bar, so neither is hidden by
+  // anything setMemoryView already does.
+  it("takes the mode, the bar and the selection down when the graph replaces the list", async () => {
+    const h = await selected({ entries: THREE }, ["a", "b"]);
+    expect(h.el("mem-bulk-count").textContent).toBe("2 selected");
+
+    h.ctx.setMemoryView("graph");
+
+    expect(h.el("recent-list").hidden).toBe(true);
+    expect(h.el("mem-select-btn").style.display, "the Select button must not outlive the list").toBe("none");
+    expect(h.el("mem-bulk-bar").style.display, "nor the bulk bar").toBe("none");
+    expect(h.selection(), "nor the selection itself").toEqual([]);
+
+    const before = h.generation();
+    h.ctx.confirmBulkLayerMove("company");
+    expect(h.generation(), "no question over a graph with no cards on it").toBe(before);
+    expect(h.sheetOpen()).toBe(false);
+    expect(h.shareCalls.length, "and no POST for a row the user cannot see").toBe(0);
+  });
+
+  it("gives the Select button back on the way to the list, with the mode off", async () => {
+    const h = await selected({ entries: THREE }, ["a", "b"]);
+    h.ctx.setMemoryView("graph");
+    h.ctx.setMemoryView("list");
+    expect(h.el("mem-select-btn").style.display).toBe("");
+    expect(h.el("mem-select-btn").textContent, "back to Select, not Done").toBe("Select");
+    expect(h.el("mem-bulk-bar").style.display).toBe("none");
+    expect(h.selection()).toEqual([]);
+  });
+
+  it("keeps both controls down if anything renders the bar over the graph", async () => {
+    // renderBulkBar reads the projection itself, the same way it reads
+    // TEAM_MODE: a caller that knows nothing about the graph — the layer
+    // filter's reveal, say — must not put the button back over one.
+    const h = await selected({ entries: THREE }, ["a"]);
+    h.ctx.setMemoryView("graph");
+    h.ctx.maybeRevealMemoryLayerFilter({ team: true });
+    expect(h.el("mem-select-btn").style.display).toBe("none");
+    expect(h.el("mem-bulk-bar").style.display).toBe("none");
+
+    vm.runInContext(`selectMode = true`, h.ctx);
+    h.ctx.renderBulkBar();
+    expect(h.el("mem-select-btn").style.display).toBe("none");
+    expect(h.el("mem-bulk-bar").style.display).toBe("none");
   });
 });
 
@@ -572,6 +663,19 @@ describe("bulk layer move — content, ordering and cost", () => {
     expect(h.acceptWrites.slice(before)).toEqual(["Moving 1 of 3…", "Moving 2 of 3…", "Moving 3 of 3…"]);
   });
 
+  it("skips a hole in the rendered list rather than throwing on it", async () => {
+    // selectAllVisible guards with `if (e && e.id)`; the action read
+    // `renderedEntries.map((e) => e.id)` bare. Two readers of one array that
+    // disagree about what is in it is how one of them starts throwing.
+    const h = await selected({ entries: THREE }, ["a", "c"]);
+    vm.runInContext(`renderedEntries = [null].concat(renderedEntries)`, h.ctx);
+    expect(() => h.ctx.renderBulkBar()).not.toThrow();
+    h.ctx.confirmBulkLayerMove("company");
+    await h.ctx.runConfirmAction();
+    await h.settle();
+    expect(h.shareCalls.map((c) => c.id)).toEqual(["a", "c"]);
+  });
+
   it("issues no second batch when the accept is tapped twice", async () => {
     let release: (v: unknown) => void = () => {};
     const held = new Promise((r) => (release = r));
@@ -588,6 +692,92 @@ describe("bulk layer move — content, ordering and cost", () => {
     await first;
     await h.settle();
     expect(h.shareCalls.length, "3 posts, not 6").toBe(3);
+  });
+});
+
+describe("bulk layer move — a question the user walked away from", () => {
+  /** A batch with row `a` held open, so the sheet can be dismissed mid-flight. */
+  async function midFlight(target: string) {
+    let release: (v: unknown) => void = () => {};
+    const held = new Promise((r) => (release = r));
+    const h = await selected({ entries: THREE, share: (id) => (id === "a" ? { hold: held } : {}) }, [
+      "a",
+      "b",
+      "c",
+    ]);
+    h.ctx.confirmBulkLayerMove(target);
+    const running = h.ctx.runConfirmAction();
+    return { h, running, release };
+  }
+
+  it("writes no progress copy onto a question it no longer owns", async () => {
+    // Escape does not stop the batch by itself, and the accept button is one
+    // shared element: the loop used to go on writing "Moving 3 of 3…" onto
+    // whatever question was on screen by then. The user was asked "Forget this
+    // memory?" under a button labelled "Moving 3 of 3…".
+    const { h, running, release } = await midFlight("company");
+    h.ctx.closeConfirm();
+    h.ctx.openDangerConfirm({
+      title: "Forget this memory?",
+      body: "This cannot be undone.",
+      confirmLabel: "Forget",
+      onConfirm: (_c: boolean, done: () => void) => done(),
+    });
+    release(null);
+    await running;
+    await h.settle();
+
+    expect(h.el("confirm-accept-btn").textContent, "label of the NEW question").toBe("Forget");
+    expect(h.sheetOpen(), "which is still up, because done() was inert too").toBe(true);
+  });
+
+  it("stops the loop when the question is dismissed", async () => {
+    // Dismissing the sheet is the user withdrawing the request. Rows the loop
+    // has not reached yet are not "already asked for" — they were asked for by
+    // a question that is no longer on screen.
+    const { h, running, release } = await midFlight("company");
+    h.ctx.closeConfirm();
+    release(null);
+    await running;
+    await h.settle();
+
+    expect(h.shareCalls.map((c) => c.id), "row 1 was already in flight; rows 2 and 3 never go").toEqual(["a"]);
+    // What did happen is still reported, rather than left for the user to guess.
+    expect(h.toast()).toContain("1 moved");
+    expect(h.selection(), "and the untouched rows are still ticked").toEqual(["b", "c"]);
+  });
+
+  it("issues no second batch, and no opposite move, after a dismissal mid-flight", async () => {
+    // THE RACE. Same-target duplicates are idempotent, so the damage hides
+    // there — but "Share with team", Escape, then "Make private" over the same
+    // ids used to interleave two loops posting OPPOSITE workspace values
+    // against the same rows, and each row's final layer was decided by
+    // whichever response happened to land last. Six POSTs for three rows.
+    const { h, running, release } = await midFlight("company");
+    h.ctx.closeConfirm();
+
+    // The batch is still in flight, so the actions say so rather than starting
+    // a second loop behind the first.
+    expect(h.el("mem-bulk-share").disabled, "held down while a batch is in flight").toBe(true);
+    expect(h.el("mem-bulk-private").disabled).toBe(true);
+    const before = h.generation();
+    h.ctx.confirmBulkLayerMove("personal");
+    expect(h.generation(), "no second question").toBe(before);
+    // Not awaited before the release: a second loop would park on the same
+    // held response as the first, which is the interleaving itself.
+    const second = h.ctx.runConfirmAction();
+
+    release(null);
+    await running;
+    await second;
+    await h.settle();
+
+    expect(h.shareCalls.length, "one POST, not six").toBe(1);
+    expect(
+      h.shareCalls.map((c) => c.workspace),
+      "and never two workspaces racing over one id",
+    ).toEqual(["company"]);
+    expect(h.el("mem-bulk-share").disabled, "and the actions come back once it has settled").toBe(false);
   });
 });
 
@@ -622,6 +812,30 @@ describe("bulk layer move — partial success", () => {
     await h.settle();
     expect(h.toast()).toContain("Nothing moved");
     expect(h.selection()).toEqual(["a", "b", "c"]);
+  });
+
+  it("mixes a success, a server refusal and a network error in one batch", async () => {
+    // The three outcomes are covered one at a time above. This is the
+    // combination the toast arithmetic could get wrong: `moved` counts one,
+    // `refused` has to collect both of the other two, and the selection has to
+    // end up holding exactly those two ids.
+    const h = await selected(
+      {
+        entries: THREE,
+        share: (id) => (id === "b" ? { body: REFUSED } : id === "c" ? { reject: true } : {}),
+      },
+      ["a", "b", "c"],
+    );
+    h.ctx.confirmBulkLayerMove("personal");
+    await h.ctx.runConfirmAction();
+    await h.settle();
+
+    expect(h.shareCalls.map((c) => c.id), "all three are attempted").toEqual(["a", "b", "c"]);
+    expect(h.toast()).toContain("1 moved · 2 refused — still selected");
+    expect(h.selection(), "the refusal and the network failure, and not the success").toEqual(["b", "c"]);
+    expect(
+      h.cards().filter((c: any) => c.className.includes("memory-card--selected")).map((c: any) => c.dataset.id),
+    ).toEqual(["b", "c"]);
   });
 
   it("counts a row already in the target layer as moved", async () => {
@@ -680,6 +894,19 @@ describe("bulk layer move — Italian", () => {
     await h.settle();
     expect(h.toast()).toContain("2 spostati · 1 rifiutato — resta selezionato");
   });
+
+  it("reports a batch that moved nothing with a verb, like the rest of the block", async () => {
+    const h = await selected({ entries: THREE, share: () => ({ body: { ok: false, error: "no" } }) }, [
+      "a",
+      "b",
+      "c",
+    ]);
+    h.ctx.initI18n("it");
+    h.ctx.confirmBulkLayerMove("personal");
+    await h.ctx.runConfirmAction();
+    await h.settle();
+    expect(h.toast()).toContain("Niente spostato");
+  });
 });
 
 /**
@@ -713,6 +940,24 @@ describe("the shared badge reaches both surfaces from one function", () => {
     expect(fromRow, "the review queue must carry the chip").not.toBeNull();
     expect(fromRow![0]).toBe(fromCard![0]);
     expect(fromCard![0]).toContain("shared · Second Brain");
+  });
+
+  it("reads every workspace the row projection can carry, and badges only one", () => {
+    // The server emits `workspace` on EVERY row in one unconditional
+    // projection: "personal", "company", and "system" for the rows nobody
+    // authored — including legacy rows whose column is still ''. Only the
+    // shared layer is a badge; the other three are the silence the card has
+    // always kept.
+    const { ctx } = setup({ team: true });
+    const card = (over: Row) => ctx.makeRecentCard({ ...fixture, ...over }).innerHTML;
+    // Derived from the row, not from a name this file knows: a different
+    // author reads back as a different chip.
+    expect(card({ workspace: "company", actor_name: "Ada L" })).toContain("shared · Ada L");
+    expect(card({ workspace: "personal" })).not.toContain("tag-chip--shared");
+    expect(card({ workspace: "system" }), "the brain's own rows are not a team member's").not.toContain(
+      "tag-chip--shared",
+    );
+    expect(card({ workspace: "" }), "and neither is a legacy row").not.toContain("tag-chip--shared");
   });
 
   it("renders it on neither surface on a solo brain", () => {

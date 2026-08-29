@@ -1257,7 +1257,7 @@ const I18N_IT = {
       one: '{n} rifiutato — resta selezionato',
       other: '{n} rifiutati — restano selezionati',
     },
-    resultNone: 'Nessuno spostamento',
+    resultNone: 'Niente spostato',
   },
 }
 

@@ -26,6 +26,17 @@ const selectedMemoryIds = new Set()
  * the user cannot see. Every bulk action reads this instead.
  */
 let renderedEntries = []
+/**
+ * True while a bulk move is posting.
+ *
+ * The loop's only piece of module state, and it exists because the SHEET's
+ * double-submit guard is per question rather than per caller: dismissing the
+ * question does not stop the loop, and re-asking opens a new question the
+ * guard cannot see. One flag, checked before a second batch can be asked for
+ * and read by renderBulkBar so the two actions are visibly held down rather
+ * than silently dead.
+ */
+let bulkMoveInFlight = false
 /** { members, you } from GET /team/roster; null = not fetched yet. */
 let memoryAuthors = null
 /** The in-flight roster request, shared by concurrent callers. */
@@ -59,6 +70,44 @@ function toggleSelectMode() {
   selectMode = !selectMode
   if (!selectMode) selectedMemoryIds.clear()
   applyRecentFilters()
+}
+
+/**
+ * Leave the mode because the LIST left the screen, not because Done was pressed.
+ *
+ * CLEARS rather than suspends. Selection is over what is ON SCREEN, and the
+ * graph projection draws no cards at all, so a suspended selection would be a
+ * second piece of state meaning "these rows, from a list you are no longer
+ * looking at" — which is the thing toggleSelectMode already refuses to keep
+ * across an exit, for the same reason: the list may have been re-filtered by
+ * the time anyone comes back to it. Coming back to the list gives the mode
+ * back, not the ticks.
+ *
+ * Renders the bar rather than the list: the list is hidden by now, and
+ * re-filtering it would be work nobody can see.
+ */
+function exitSelectMode() {
+  selectMode = false
+  selectedMemoryIds.clear()
+  renderBulkBar()
+}
+
+/**
+ * The ticked rows that are ON SCREEN, in the order they are rendered.
+ *
+ * ONE reader for the bar and for the action, so the count, the two buttons and
+ * the POSTs cannot disagree about what is selected. They did: nothing prunes
+ * the set when the filter changes, so ticking two rows and then filtering them
+ * away left the bar reading "2 selected" with both actions enabled over a list
+ * containing neither — and pressing one opened no sheet, posted nothing and
+ * said nothing. Derived rather than pruned, because a filter should hide a
+ * selection and not destroy it: the ticks come back with the rows.
+ *
+ * Guards each element the way selectAllVisible does. Two readers of one array
+ * that disagree about what can be in it is how one of them starts throwing.
+ */
+function selectedVisibleIds() {
+  return renderedEntries.filter((e) => e && e.id && selectedMemoryIds.has(e.id)).map((e) => e.id)
 }
 
 /** "All" means what is on screen under the current filters. See renderedEntries. */
@@ -97,24 +146,36 @@ function toggleMemorySelection(id, on) {
  * has to lose these controls, not merely never gain them.
  */
 function renderBulkBar() {
+  // The graph draws no cards, so there is nothing on it to select. Read here
+  // as well as cleared in setMemoryView, and for the reason TEAM_MODE is read
+  // here rather than pushed in: #mem-select-btn is a SIBLING of #mem-filters
+  // and #mem-bulk-bar a sibling of the whole .mem-bar, so nothing the graph
+  // path already hides takes either of them down, and a caller that knows
+  // nothing about the projection — the layer filter's reveal, say — must not
+  // put them back over one.
+  const listing = memoryView !== 'graph'
   const bar = document.getElementById('mem-bulk-bar')
   // '' and not 'flex': the stylesheet owns the layout (.mem-bulk-bar), and an
   // inline display here would be one more place to change it.
-  if (bar) bar.style.display = TEAM_MODE && selectMode ? '' : 'none'
+  if (bar) bar.style.display = TEAM_MODE && selectMode && listing ? '' : 'none'
   const toggle = document.getElementById('mem-select-btn')
   if (toggle) {
-    toggle.style.display = TEAM_MODE ? '' : 'none'
+    toggle.style.display = TEAM_MODE && listing ? '' : 'none'
     // A template whose one ${} is a ternary over quoted literals, which is the
     // form the catalog→call-site scraper resolves. A bare ternary between two
     // whole keys, passed as the argument instead, is an unresolvable call site
     // and would orphan both of them.
     toggle.textContent = t(`bulk.${selectMode ? 'exit' : 'select'}`)
   }
+  // What is ticked AND on screen — the same list the action posts, so the
+  // count cannot promise rows the action would not send.
+  const visible = selectedVisibleIds()
   const count = document.getElementById('mem-bulk-count')
-  if (count) count.textContent = tPlural('bulk.count', selectedMemoryIds.size, { n: selectedMemoryIds.size })
+  if (count) count.textContent = tPlural('bulk.count', visible.length, { n: visible.length })
   // Nothing selected is not a refusal to explain — it is a button that cannot
-  // do anything yet, and the count beside it says why.
-  const none = selectedMemoryIds.size === 0
+  // do anything yet, and the count beside it says why. A batch still in flight
+  // holds them down for the other reason: its rows are already spoken for.
+  const none = visible.length === 0 || bulkMoveInFlight
   const share = document.getElementById('mem-bulk-share')
   if (share) share.disabled = none
   const makePrivate = document.getElementById('mem-bulk-private')
@@ -153,40 +214,77 @@ function renderBulkBar() {
  */
 function confirmBulkLayerMove(target) {
   // Through renderedEntries rather than over the set, so the order the rows
-  // are posted in is the order they are on screen.
-  const ids = renderedEntries.map((e) => e.id).filter((id) => selectedMemoryIds.has(id))
+  // are posted in is the order they are on screen — and so a row the current
+  // filter has hidden cannot be posted at all.
+  const ids = selectedVisibleIds()
   if (!ids.length) return
+  // A batch already running owns these ids. closeConfirm — Escape, Cancel, the
+  // backdrop — takes the question down without stopping the loop, and the
+  // sheet's own double-submit guard is per QUESTION, so re-asking opened a
+  // second question it could not see and ran a second loop over the same rows:
+  // six POSTs for three, and, when the second target was the opposite of the
+  // first, two /share calls racing over one id with each row's final layer
+  // decided by whichever response landed last. The flag outlives the sheet
+  // because the request does.
+  if (bulkMoveInFlight) return
   const sharing = target === 'company'
+  // Dismissing the question withdraws the request: rows the loop has not
+  // reached yet were asked for by a question that is no longer on screen.
+  // onClose is fired by Escape, Cancel, the backdrop AND by another sheet
+  // replacing this one, which is every way this batch stops being the thing
+  // the user is looking at.
+  let cancelled = false
   openDangerConfirm({
     title: tPlural(`bulk.${sharing ? 'confirmShareTitle' : 'confirmPrivateTitle'}`, ids.length, { n: ids.length }),
     body: t(`bulk.${sharing ? 'confirmShareBody' : 'confirmPrivateBody'}`),
     confirmLabel: t(`bulk.${sharing ? 'shareAction' : 'privateAction'}`),
-    onConfirm: async (_checked, done) => {
-      const accept = document.getElementById('confirm-accept-btn')
+    onConfirm: async (_checked, done, progress) => {
+      bulkMoveInFlight = true
+      // So the two actions behind the sheet are visibly held down for as long
+      // as this batch owns their rows, rather than being dead if it is
+      // dismissed and pressed again.
+      renderBulkBar()
       let moved = 0
       const refused = []
-      for (let i = 0; i < ids.length; i++) {
-        if (accept) accept.textContent = t('bulk.working', { done: i + 1, total: ids.length })
-        try {
-          const r = await apiShare(ids[i], target)
-          // r.ok is the whole classification, deliberately. A row already in
-          // the target layer answers { ok: true, status: "no_change" } and
-          // counts as moved — the user asked for a state and the row is in it.
-          // A colleague's shared memory answers 403 and a row deleted since
-          // the list was fetched answers 404; both are "this did not move",
-          // which is the same sentence and is true of each.
-          if (r && r.ok) {
-            moved++
-            selectedMemoryIds.delete(ids[i])
-          } else {
+      try {
+        for (let i = 0; i < ids.length; i++) {
+          // Checked at the top of each turn, which is the only place the loop
+          // can be stopped: the request already in flight has been sent and
+          // will land whatever happens, and the rows after it have not.
+          if (cancelled) break
+          // Written through the handle this action was given, never onto
+          // #confirm-accept-btn directly, and for the same reason as done():
+          // that is ONE element, and a batch outliving its own question used
+          // to label the question that replaced it — "Forget this memory?"
+          // under a button reading "Moving 3 of 3…".
+          progress(t('bulk.working', { done: i + 1, total: ids.length }))
+          try {
+            const r = await apiShare(ids[i], target)
+            // r.ok is the whole classification, deliberately. A row already in
+            // the target layer answers { ok: true, status: "no_change" } and
+            // counts as moved — the user asked for a state and the row is in it.
+            // A colleague's shared memory answers 403 and a row deleted since
+            // the list was fetched answers 404; both are "this did not move",
+            // which is the same sentence and is true of each.
+            if (r && r.ok) {
+              moved++
+              selectedMemoryIds.delete(ids[i])
+            } else {
+              refused.push(ids[i])
+            }
+          } catch {
+            // A network failure is a refusal for this row and nothing more:
+            // aborting here would leave the user with a half-moved selection
+            // and no way to tell which half.
             refused.push(ids[i])
           }
-        } catch {
-          // A network failure is a refusal for this row and nothing more:
-          // aborting here would leave the user with a half-moved selection
-          // and no way to tell which half.
-          refused.push(ids[i])
         }
+      } finally {
+        // In a finally, and only here: the last request has settled by the
+        // time this runs, so nothing this batch sent can still be in the air
+        // when the next one is allowed to start.
+        bulkMoveInFlight = false
+        renderBulkBar()
       }
       // Closed with the handle this action was given, never with
       // closeConfirm(): a batch can resolve long after its own question was
@@ -200,6 +298,9 @@ function confirmBulkLayerMove(target) {
             : `${tPlural('bulk.resultMoved', moved, { n: moved })} · ${tPlural('bulk.resultRefused', refused.length, { n: refused.length })}`,
       )
       loadRecent()
+    },
+    onClose: () => {
+      cancelled = true
     },
   })
 }

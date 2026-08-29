@@ -480,12 +480,16 @@ describe("layerChipHtml", () => {
     expect(html).not.toContain("·");
   });
 
-  it("stays silent on a personal row, a system row, no row at all, and a solo brain", () => {
-    // Four branches, four assertions. The last is the one that matters most:
+  it("stays silent on a personal row, a system row, a legacy row, no row at all, and a solo brain", () => {
+    // Five branches, five assertions. The last is the one that matters most:
     // a helper relying only on the DATA guard would badge a solo brain the day
-    // someone gave one of its rows a company workspace.
+    // someone gave one of its rows a company workspace. The row projection
+    // emits `workspace` on every row, so all of these arrive in practice —
+    // "system" is what the rows nobody authored surface as, and a legacy row
+    // whose column was never backfilled arrives with the empty string.
     expect(layerChipHtml({ workspace: "personal", actor_name: "Second Brain" }, true)).toBe("");
     expect(layerChipHtml({ workspace: "system", actor_name: "Second Brain" }, true)).toBe("");
+    expect(layerChipHtml({ workspace: "", actor_name: "Second Brain" }, true)).toBe("");
     expect(layerChipHtml(null, true)).toBe("");
     expect(layerChipHtml({ workspace: "company", actor_name: "Second Brain" }, false)).toBe("");
   });
