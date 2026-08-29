@@ -30,16 +30,25 @@ function makeEl() {
     id: "",
     style: {} as Record<string, string>,
     // Tracks add/remove calls so a test can tell whether the sheet was ever
-    // opened, rather than only inspecting its final state.
+    // opened, rather than only inspecting its final state — and the live set
+    // too, because the sheet reads `contains('open')` to decide whether it is
+    // taking focus from the page or from a question it is replacing.
     classList: {
       calls: [] as Array<[string, string]>,
+      names: new Set<string>(),
       add(c: string) {
         el.classList.calls.push(["add", c]);
+        el.classList.names.add(c);
       },
       remove(c: string) {
         el.classList.calls.push(["remove", c]);
+        el.classList.names.delete(c);
       },
-      toggle() {},
+      toggle(c: string, on?: boolean) {
+        if (on ?? !el.classList.names.has(c)) el.classList.add(c);
+        else el.classList.remove(c);
+      },
+      contains: (c: string) => el.classList.names.has(c),
     },
     addEventListener() {},
     value: "",

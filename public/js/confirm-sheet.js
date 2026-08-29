@@ -40,14 +40,85 @@ let confirmGeneration = 0
 /** Generations with an action in flight — one sheet cannot submit twice. */
 const runningConfirmActions = new Set()
 
+/**
+ * What had the keyboard before the sheet took it, so closing can give it back.
+ *
+ * Captured only when the sheet was not already open: an opener that replaces a
+ * live question would otherwise record the sheet's own Cancel button, and
+ * closing would hand focus to a control that is no longer on screen.
+ */
+let confirmReturnFocus = null
+
 /** Take the sheet down and hand the outgoing caller its state back. */
 function dismissConfirmSheet() {
   document.getElementById('confirm-dialog').classList.remove('open')
   const onClose = pendingConfirmClose
   pendingConfirmAction = null
   pendingConfirmClose = null
+  // Before the caller's onClose, not after: onClose can open another sheet,
+  // and that opener has to be free to capture its own return target.
+  const returnTo = confirmReturnFocus
+  confirmReturnFocus = null
+  if (returnTo && typeof returnTo.focus === 'function') returnTo.focus()
   if (onClose) onClose()
 }
+
+/**
+ * The controls a Tab may reach while the sheet is up, in visual order.
+ *
+ * Named rather than discovered: the sheet's markup is fixed and owned by this
+ * module, and a selector sweep would also have to reason about the checkbox
+ * row being hidden and the accept button being held down mid-action, which are
+ * exactly the two cases this gets right by construction.
+ */
+function confirmFocusables() {
+  const out = []
+  const row = document.getElementById('confirm-check-row')
+  const box = document.getElementById('confirm-checkbox')
+  if (box && row && row.style.display !== 'none') out.push(box)
+  const cancel = document.getElementById('confirm-cancel-btn')
+  if (cancel) out.push(cancel)
+  const accept = document.getElementById('confirm-accept-btn')
+  // Held down while an action is in flight, and a trap that parks focus on a
+  // disabled button is worse than no trap.
+  if (accept && !accept.disabled) out.push(accept)
+  return out
+}
+
+/**
+ * Escape and Tab, which `confirm()` used to give us.
+ *
+ * Escape goes through `closeConfirm` — the ambient path, the same one Cancel
+ * and the backdrop take, because a user pressing Escape means exactly "close
+ * what is on screen". Tab cycles inside the sheet: a modal whose focus walks
+ * out into the page behind it is asking a question the user cannot see.
+ *
+ * Registered here rather than in `app.js` so the sheet arrives complete — the
+ * markup carries `role="dialog"` and `aria-modal`, and this is the behaviour
+ * those two attributes promise.
+ */
+function onConfirmKeydown(e) {
+  const dialog = document.getElementById('confirm-dialog')
+  if (!dialog || !dialog.classList.contains('open')) return
+  if (e.key === 'Escape') {
+    if (typeof e.preventDefault === 'function') e.preventDefault()
+    closeConfirm()
+    return
+  }
+  if (e.key !== 'Tab') return
+  const focusable = confirmFocusables()
+  if (focusable.length === 0) return
+  const at = focusable.indexOf(document.activeElement)
+  // From the sheet itself (at === -1) Tab enters at the top and Shift+Tab at
+  // the bottom, which is what a wrap around an empty position means.
+  const next = e.shiftKey
+    ? focusable[(at <= 0 ? focusable.length : at) - 1]
+    : focusable[at === focusable.length - 1 ? 0 : at + 1]
+  if (typeof e.preventDefault === 'function') e.preventDefault()
+  if (next && typeof next.focus === 'function') next.focus()
+}
+
+document.addEventListener('keydown', onConfirmKeydown)
 
 /**
  * Ask before something irreversible.
@@ -101,7 +172,14 @@ function openDangerConfirm(opts) {
     if (box) box.checked = false
   }
 
-  document.getElementById('confirm-dialog').classList.add('open')
+  const dialog = document.getElementById('confirm-dialog')
+  // Only on the way in from the page: replacing a live question must not
+  // overwrite the target the first opener recorded.
+  if (!dialog.classList.contains('open')) confirmReturnFocus = document.activeElement ?? null
+  dialog.classList.add('open')
+  // The sheet, not its first button: it is what carries the label and the
+  // description, so focusing it is what gets the question read out.
+  if (typeof dialog.focus === 'function') dialog.focus()
   return generation
 }
 

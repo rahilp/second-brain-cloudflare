@@ -366,7 +366,12 @@
       </div>
     </div>
 
-    <div id="confirm-dialog">
+    <!-- The one destructive-action sheet, for six callers. It replaced native
+         confirm(), which was Escape-dismissable and announced as a dialog for
+         free; those two properties are restored here and in confirm-sheet.js
+         rather than lost in the swap. tabindex="-1" so opening can move focus
+         onto it, which is what makes the title and body get read out. -->
+    <div id="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body" tabindex="-1">
       <div class="confirm-sheet">
         <h3 id="confirm-title" data-i18n="memories.confirmTitle">Forget this memory?</h3>
         <p id="confirm-body" data-i18n="memories.confirmBody">This can't be undone. The memory will be removed from your brain.</p>

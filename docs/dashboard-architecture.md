@@ -138,6 +138,16 @@ propagate — the sheet does not swallow them.
 `openDangerConfirm` returns the question's generation number. It is there for
 tests and logging; it is not how you close, and nothing is load-bearing on it.
 
+**Keyboard and screen reader.** The sheet replaced `confirm()`, which was
+Escape-dismissable and announced as a dialog for free, so it restores both
+rather than losing them in the swap. `#confirm-dialog` carries `role="dialog"`,
+`aria-modal="true"`, `aria-labelledby="confirm-title"`,
+`aria-describedby="confirm-body"` and `tabindex="-1"`; opening moves focus onto
+it and closing returns focus to whatever invoked it; Escape closes through
+`closeConfirm` (the ambient path, same as Cancel) and Tab cycles inside the
+sheet. Callers get all of this by using the sheet — there is nothing to opt
+into. Covered by `test/ui/confirm-sheet-a11y.test.ts`.
+
 ## Tests
 
 Vitest covers `utils.js` (`test/ui/utils.test.ts`, `test/ui/graph-clusters.test.ts`) and dashboard module load order / inline-handler contract (`test/ui/dashboard-modules.test.ts`). Feature modules use classic globals; test pure helpers via `utils.js` dual CJS export.
