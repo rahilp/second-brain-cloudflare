@@ -106,6 +106,32 @@ async function loadRecent() {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-wifi-off"></i><span>${escHtml(t('memories.loadFailed'))}</span></div>`
     }
   }
+  // Outside the try, so a failed load still gets a correct answer: whatever
+  // survived in allEntries is what is on screen, and that is what the mark is
+  // about.
+  renderMemoriesCoach()
+}
+
+/**
+ * "Only the author can change a shared memory", once there is a shared memory
+ * to say it about.
+ *
+ * The trigger is a property of the LIST rather than an event on the share,
+ * because the fact being taught is about memories that exist and not about an
+ * action the reader took. That covers a member's own first share — their row
+ * is in the very next list — and it also covers the far commoner case of
+ * someone joining a team that already has shared memories, whom a share-event
+ * trigger would never reach at all.
+ *
+ * Above the list rather than on a card: the lock is a rule about the layer,
+ * not about one row. The per-row expression of it is the greyed-out Edit that
+ * applyCardAuthorLock already puts on the card.
+ */
+function renderMemoriesCoach() {
+  const shared = Array.isArray(allEntries) && allEntries.some((e) => e && e.workspace === 'company')
+  // A null copy is the primitive's own hide branch, so "no shared memories
+  // yet" needs no second code path here.
+  renderCoachMark('coach-memories', 'author-lock', shared ? { title: t('coach.lockTitle'), body: t('coach.lockBody') } : null)
 }
 
 function onLayerFilterChange(value) {

@@ -1,5 +1,6 @@
 /**
- * The memories list's author filter — "show only what one person shared".
+ * The memories list's author filter — "show only what one person shared" — and
+ * the author-lock coach mark that appears once a shared memory is in view.
  *
  * It exists only on the shared layer, because "who wrote this" is a question
  * about memory other people can see; on the personal layer every row is yours
@@ -21,6 +22,7 @@ const SRC = [
   "public/js/i18n.js",
   "public/js/state.js",
   "public/js/api.js",
+  "public/js/coach.js",
   "public/js/recent.js",
 ]
   .map((rel) => readFileSync(resolve(ROOT, rel), "utf8"))
@@ -61,11 +63,29 @@ const ROSTER = {
   ],
 };
 
-type Opts = { rosterRejects?: boolean; entries?: Array<Record<string, unknown>> };
+type Opts = {
+  rosterRejects?: boolean;
+  listRejects?: boolean;
+  /** A /list body that is not an array at all — an error object, say. */
+  listBody?: unknown;
+  entries?: Array<Record<string, unknown>>;
+};
 
 function setup(opts: Opts = {}) {
   const byId = new Map<string, any>();
   const urls: string[] = [];
+  // A real store: the coach mark below is dismissed through it, and the
+  // solo-brain case asserts nothing was ever written to it.
+  const store = new Map<string, string>();
+  const writes: string[] = [];
+  const localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem(k: string, v: string) {
+      writes.push(k);
+      store.set(k, v);
+    },
+    removeItem: (k: string) => void store.delete(k),
+  };
 
   const fetchImpl = async (url: string) => {
     urls.push(url);
@@ -73,7 +93,8 @@ function setup(opts: Opts = {}) {
       if (opts.rosterRejects) throw new Error("offline");
       return { ok: true, status: 200, json: async () => ROSTER };
     }
-    return { ok: true, status: 200, json: async () => opts.entries ?? [] };
+    if (opts.listRejects) throw new Error("offline");
+    return { ok: true, status: 200, json: async () => opts.listBody ?? opts.entries ?? [] };
   };
 
   const ctx: any = {
@@ -94,7 +115,7 @@ function setup(opts: Opts = {}) {
       addEventListener() {},
       body: { style: {}, appendChild() {} },
     },
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    localStorage,
     navigator: { language: "en-US" },
     fetch: fetchImpl,
     // A vm context is not a Node realm: apiList builds its query string with
@@ -120,7 +141,7 @@ function setup(opts: Opts = {}) {
   const settle = async () => {
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
   };
-  return { ctx, el, urls, lists, rosters, settle };
+  return { ctx, el, urls, lists, rosters, settle, writes };
 }
 
 /** The query string of the most recent GET /list. */
@@ -237,5 +258,85 @@ describe("memories author filter", () => {
     const html = el("actor-filter-recent").innerHTML;
     expect(html).toContain("Tutti gli autori");
     expect(html).toContain("Tu");
+  });
+});
+
+const row = (over: Record<string, unknown> = {}) => ({
+  id: "m1",
+  content: "Renewal date is 3 March",
+  tags: "[]",
+  source: "web-ui",
+  created_at: Date.now(),
+  vector_ids: "[]",
+  workspace: "personal",
+  ...over,
+});
+
+/**
+ * The author-lock coach mark.
+ *
+ * Its trigger is the presence of a shared memory in the loaded list rather
+ * than an event on the share itself: that covers a member's own first share
+ * (their row is in the very next list) and, far more commonly, someone joining
+ * a team that already has shared memories — whom a share-event trigger would
+ * never reach at all.
+ */
+describe("memories author-lock coach mark", () => {
+  it("appears once a shared memory is in the list", async () => {
+    const { ctx, el } = setup({ entries: [row(), row({ id: "m2", workspace: "company" })] });
+    await ctx.loadRecent();
+    expect(el("coach-memories").hidden).toBe(false);
+    expect(el("coach-memories").innerHTML).toContain("Only the author can change a shared memory");
+  });
+
+  it("stays away while every memory is personal", async () => {
+    const { ctx, el } = setup({ entries: [row(), row({ id: "m2" })] });
+    await ctx.loadRecent();
+    expect(el("coach-memories").hidden).toBe(true);
+    expect(el("coach-memories").innerHTML).toBe("");
+  });
+
+  it("does not come back after it has been dismissed", async () => {
+    const { ctx, el } = setup({ entries: [row({ workspace: "company" })] });
+    await ctx.loadRecent();
+    ctx.dismissCoachMark("author-lock", "coach-memories");
+    await ctx.loadRecent();
+    expect(el("coach-memories").hidden).toBe(true);
+    expect(el("coach-memories").innerHTML).toBe("");
+  });
+
+  it("renders nothing and writes nothing on a solo brain, shared row or not", async () => {
+    // Both gates are asserted, not just the data one: a solo brain's rows are
+    // never workspace 'company' in practice, so a fixture that is proves the
+    // primitive's TEAM_MODE gate is what does the work here.
+    const { ctx, el, writes } = setup({ entries: [row({ workspace: "company" })] });
+    vm.runInContext(`TEAM_MODE = false`, ctx);
+    await ctx.loadRecent();
+    expect(el("coach-memories").hidden).toBe(true);
+    expect(el("coach-memories").innerHTML).toBe("");
+    expect(writes, "a solo brain must never write sb_coach_dismissed").not.toContain("sb_coach_dismissed");
+  });
+
+  it("leaves the mark hidden and does not throw when /list fails", async () => {
+    const { ctx, el } = setup({ listRejects: true });
+    await expect(ctx.loadRecent()).resolves.toBeUndefined();
+    expect(el("coach-memories").hidden).toBe(true);
+    expect(el("coach-memories").innerHTML).toBe("");
+  });
+
+  it("survives a /list body that is not a list at all", async () => {
+    // The mark is rendered after loadRecent's try/catch, so an error object
+    // where an array was expected must not throw out of the load.
+    const { ctx, el } = setup({ listBody: { ok: false, error: "nope" } });
+    await expect(ctx.loadRecent()).resolves.toBeUndefined();
+    expect(el("coach-memories").hidden).toBe(true);
+  });
+
+  it("translates the mark into Italian", async () => {
+    const { ctx, el } = setup({ entries: [row({ workspace: "company" })] });
+    ctx.initI18n("it");
+    await ctx.loadRecent();
+    expect(el("coach-memories").innerHTML).toContain("Solo chi l’ha condiviso può modificarlo");
+    expect(el("coach-memories").innerHTML).toContain("Ho capito");
   });
 });
