@@ -460,9 +460,14 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       // behaviour the scoping below keeps too. A name nobody on the team answers
       // to is a text answer rather than a thrown error: this tool's contract is
       // a text answer, and "no one matches that" is one.
+      // Trimmed here so the two surfaces agree on blank input: GET /list reads
+      // `?actor=` through the same `trim()` and treats what is left of a
+      // whitespace-only value as no filter at all. Without this, the same blank
+      // meant "everything" over HTTP and "no one matches that" over MCP.
+      const actorQuery = actor?.trim();
       let actorId: string | undefined;
-      if (actor && identity) {
-        const resolved = await resolveActorFilter(env, identity, actor);
+      if (actorQuery && identity) {
+        const resolved = await resolveActorFilter(env, identity, actorQuery);
         if (!resolved.ok) return { content: [{ type: "text", text: `${resolved.error}.` }] };
         actorId = resolved.actorId;
       }

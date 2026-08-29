@@ -4,6 +4,9 @@ import { listRoster } from "./team-admin";
 
 const SYSTEM_SOURCES = new Set(["system"]);
 
+/** The one refusal an actor filter can give, so both surfaces say it identically. */
+const NOT_A_TEAM_MEMBER = "actor must be a member of your team";
+
 /**
  * Batch-resolve user ids to display names. Soft-deleted members (removed_at set)
  * are omitted so callers fall through to "Former member" in resolveActorLabel.
@@ -71,6 +74,13 @@ export async function resolveActorFilter(
   raw: string,
 ): Promise<ActorFilter> {
   const value = raw.trim();
+  // A blank value is not a person, and it must not fall through to the name
+  // comparison below: `"" === ""` would match any roster member carrying an
+  // empty name, so a blank filter would silently resolve to an arbitrary
+  // colleague. Both name-write paths coerce "" to "Member" today; this does not
+  // rely on that. Deciding that a blank filter means NO filter is the calling
+  // surface's job, and both surfaces make that decision before calling here.
+  if (!value) return { ok: false, error: NOT_A_TEAM_MEMBER };
   if (value.toLowerCase() === "me") return { ok: true, actorId: identity.userId };
 
   const roster = await listRoster(env, identity.companyWorkspaceIds);
@@ -80,5 +90,5 @@ export async function resolveActorFilter(
   const byName = roster.find((r) => r.name.toLowerCase() === lower);
   if (byName) return { ok: true, actorId: byName.userId };
 
-  return { ok: false, error: "actor must be a member of your team" };
+  return { ok: false, error: NOT_A_TEAM_MEMBER };
 }

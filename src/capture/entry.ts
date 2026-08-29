@@ -36,7 +36,11 @@ export function buildEntryFilterQuery(params: {
   if (params.tag) { conds.push(`tags LIKE ? ${TAG_LIKE_ESCAPE}`); bindings.push(tagLikePattern(params.tag)); }
   // An equality on one id, ANDed with everything else including the caller's
   // scope clause — so it can only ever narrow what the scope already allowed.
-  if (params.actor) { conds.push(`actor_id = ?`); bindings.push(params.actor); }
+  // Tested against undefined rather than truthiness for the reason the tag
+  // comment above gives: `actor: ""` is the legacy authorless rows, a real and
+  // narrow answer, and a filter that silently stops filtering and returns the
+  // whole listing instead is the worst of the three outcomes.
+  if (params.actor !== undefined) { conds.push(`actor_id = ?`); bindings.push(params.actor); }
   if (params.after !== undefined) { conds.push(`created_at >= ?`); bindings.push(params.after); }
   if (params.before !== undefined) { conds.push(`created_at <= ?`); bindings.push(params.before); }
 

@@ -24,6 +24,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import worker from "../../src/index";
+import { buildEntryFilterQuery } from "../../src/capture/entry";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
 import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
@@ -209,5 +210,37 @@ describe("GET /list?actor= — narrowing the shared layer by author", () => {
     const traced = await statementsDuring(() => listIds(aliceToken, `?n=50`));
     expect(traced).toHaveLength(4);
     expect(traced.filter((s) => s.includes("FROM entries"))).toHaveLength(1);
+  });
+});
+
+/**
+ * The builder's own half of the same rule, one level below the route.
+ *
+ * `if (params.actor)` was a truthiness test, so an empty actor DROPPED the
+ * predicate and returned the whole listing — the "filter that silently stops
+ * filtering" the tag comment three lines above warns about. An empty actor
+ * matches the legacy `''` actor_id rows and nothing else; that is a real answer,
+ * and it is not "everything". Deciding that a blank filter means no filter is
+ * the SURFACE's job, and both surfaces make that decision before they get here.
+ */
+describe("buildEntryFilterQuery — the actor predicate", () => {
+  it("keeps filtering when the actor is the empty string", () => {
+    const { sql, bindings } = buildEntryFilterQuery({ n: 10, actor: "" });
+    expect(sql).toContain("actor_id = ?");
+    expect(bindings).toEqual(["", 10]);
+  });
+
+  it("omits the predicate only when no actor was asked for", () => {
+    const { sql, bindings } = buildEntryFilterQuery({ n: 10 });
+    expect(sql).not.toContain("actor_id = ?");
+    expect(bindings).toEqual([10]);
+  });
+
+  it("binds exactly one parameter for the actor, whatever else is filtered", () => {
+    // The Phase 2 rule, pinned where it is easiest to break: one predicate, one
+    // binding, never one per author.
+    const { sql, bindings } = buildEntryFilterQuery({ n: 10, tag: "work", after: 1, before: 2, actor: "usr-bob" });
+    expect(sql.match(/actor_id = \?/g)).toHaveLength(1);
+    expect(bindings.filter((b) => b === "usr-bob")).toHaveLength(1);
   });
 });

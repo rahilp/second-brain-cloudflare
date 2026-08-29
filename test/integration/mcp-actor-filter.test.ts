@@ -30,6 +30,7 @@ import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember } from "../../src/lib/team-admin";
 import { resolveIdentityFromToken, type Identity } from "../../src/lib/identity";
+import worker from "../../src/index";
 import type { Env } from "../../src/env";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as ExecutionContext;
@@ -48,6 +49,7 @@ const day = (ts: number) =>
 let sqlite: SqliteD1;
 let env: Env;
 let alice: Identity;
+let aliceToken = "";
 let bobUserId = "";
 let companyWorkspaceId = "";
 
@@ -93,6 +95,7 @@ beforeEach(async () => {
 
   const madeAlice = await createMember(env, { name: "Alice" });
   const madeBob = await createMember(env, { name: "Bob" });
+  aliceToken = madeAlice.token;
   alice = (await resolveIdentityFromToken(madeAlice.token, env))!;
   bobUserId = madeBob.member.userId;
 
@@ -153,5 +156,58 @@ describe("MCP list_recent — the actor filter", () => {
       `Alice private: sabbatical plan`,
     ].join("\n");
     expect(await listRecent(alice, {})).toBe(expected);
+  });
+});
+
+/**
+ * The two surfaces, asked the same thing, answering the same way.
+ *
+ * `actor` exists on `GET /list` and on `list_recent` so that one filter can be
+ * spelled once and used from either; two surfaces that disagree about what a
+ * value MEANS is the failure this parameter was added to avoid. They diverged
+ * on blank input: HTTP dropped a whitespace-only value after `trim()` and
+ * listed everything, while MCP passed the raw " " through to the resolver and
+ * refused it. Same input, opposite answers.
+ */
+describe("the actor filter answers the same way on both surfaces", () => {
+  /** The entry ids `GET /list` returns, newest first. */
+  async function httpIds(query: string): Promise<string[]> {
+    const res = await worker.fetch(
+      new Request(`http://localhost/list?n=10${query}`, {
+        headers: { Authorization: `Bearer ${aliceToken}` },
+      }),
+      env,
+      ctx,
+    );
+    expect(res.status, await res.clone().text()).toBe(200);
+    return ((await res.json()) as any[]).map((r) => r.id as string);
+  }
+
+  /** The entry ids `list_recent` printed, in the order it printed them. */
+  const idsInText = (text: string) =>
+    text.split("\n").filter((l) => l.startsWith("ID: ")).map((l) => l.slice(4));
+
+  it("treats a whitespace-only actor as no filter on both", async () => {
+    const mcp = idsInText(await listRecent(alice, { n: 10, actor: "   " }));
+    expect(mcp).toEqual(await httpIds("&actor=%20%20%20"));
+    // And "no filter" means the caller's whole readable page, not an empty one.
+    expect(mcp).toEqual(["bob-shared", "alice-shared", "alice-private"]);
+  });
+
+  it("narrows to the same rows for the same name on both", async () => {
+    const mcp = idsInText(await listRecent(alice, { n: 10, actor: "Bob" }));
+    expect(mcp).toEqual(await httpIds("&actor=Bob"));
+    expect(mcp).toEqual(["bob-shared"]);
+  });
+
+  it("refuses a stranger with the same message on both", async () => {
+    const res = await worker.fetch(
+      new Request(`http://localhost/list?actor=Nobody`, { headers: { Authorization: `Bearer ${aliceToken}` } }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    // The MCP surface ends its sentence, being prose; the JSON body does not.
+    expect(`${((await res.json()) as any).error}.`).toBe(await listRecent(alice, { actor: "Nobody" }));
   });
 });
