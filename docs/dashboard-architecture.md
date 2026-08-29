@@ -100,12 +100,23 @@ and nothing in the sheet can make it so: an action can be suspended at an
 `await` while another action runs, so there is no "currently running action"
 for a module-level variable to hold.
 
-In tree it has three callers, all ambient. Two are the user dismissing what
-they can see: the Cancel button in `index.html` and the backdrop listener in
-`app.js`. The third is `confirmForget`'s `done || closeConfirm` fallback
-(`memory-crud.js`), which only takes effect when something invokes
-`confirmForget()` directly rather than through the sheet — a test, or Phase 1
-code — so it is not an action-internal call either.
+In tree the sheet has six callers — memory forget and link removal
+(`memory-crud.js`), integration disconnect (`integrations.js`), and token
+rotation, suspension and removal (`team.js`) — and every one of them closes
+with its `done()`. `closeConfirm` itself has three callers, all ambient. Two
+are the user dismissing what they can see: the Cancel button in `index.html`
+and the backdrop listener in `app.js`. The third is `confirmForget`'s
+`done || closeConfirm` fallback (`memory-crud.js`), which only takes effect
+when something invokes `confirmForget()` directly rather than through the
+sheet — a test, or Phase 1 code — so it is not an action-internal call either.
+
+The three `team.js` callers were written against an earlier draft of this API
+that passed a generation token, and closed ambiently for a release; the bug
+that produced was a rotation resolving after its sheet had been replaced,
+closing the forget question that replaced it and nulling `pendingForgetId`.
+`test/ui/sheet-caller-isolation.test.ts` loads `team.js` and `memory-crud.js`
+over one sheet specifically to keep that from coming back: a per-module suite
+asserting its own outcomes cannot see damage done to another module's question.
 
 **3. Snapshot your state BEFORE you close.** Closing fires your `onClose`, and
 `onClose` is where your state reset lives, so anything you read *after* your own

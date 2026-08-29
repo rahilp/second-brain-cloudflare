@@ -495,7 +495,7 @@ async function rotateTeamToken(id) {
     confirmLabel: t('team.rotateToken'),
     // Progress copy is this action's to own — runConfirmAction disables the
     // button for the duration, but has no idea what to say while it waits.
-    onConfirm: async () => {
+    onConfirm: async (_checked, done) => {
       const btn = document.getElementById('confirm-accept-btn')
       if (btn) btn.textContent = t('team.rotating')
       try {
@@ -505,7 +505,11 @@ async function rotateTeamToken(id) {
       } catch (e) {
         showToast(e.message || t('team.actionFailed'))
       }
-      closeConfirm()
+      // `done`, not `closeConfirm()`: this POST can resolve long after the
+      // user dismissed this sheet and asked something else, and by then "what
+      // is on screen" belongs to another caller. `done` closes this question
+      // and is inert once this question has been superseded.
+      done()
     },
   })
 }
@@ -534,7 +538,7 @@ async function setTeamSuspended(id, suspended) {
     title: t('team.suspendTitle'),
     body: t('team.suspendConfirm', { name: teamMemberLabel(m) }),
     confirmLabel: t('team.suspend'),
-    onConfirm: async () => {
+    onConfirm: async (_checked, done) => {
       const btn = document.getElementById('confirm-accept-btn')
       if (btn) btn.textContent = t('team.suspending')
       try {
@@ -544,7 +548,7 @@ async function setTeamSuspended(id, suspended) {
       } catch (e) {
         showToast(e.message || t('team.actionFailed'))
       }
-      closeConfirm()
+      done()
     },
   })
 }
@@ -561,7 +565,7 @@ async function removeTeamMember(id) {
     title: t('team.removeTitle'),
     body: t('team.removeConfirm', { name: teamMemberLabel(m), n: Number(m.privateEntries) || 0 }),
     confirmLabel: t('team.remove'),
-    onConfirm: async () => {
+    onConfirm: async (_checked, done) => {
       const btn = document.getElementById('confirm-accept-btn')
       if (btn) btn.textContent = t('team.removing')
       try {
@@ -571,7 +575,7 @@ async function removeTeamMember(id) {
       } catch (e) {
         showToast(e.message || t('team.actionFailed'))
       }
-      closeConfirm()
+      done()
     },
   })
 }
