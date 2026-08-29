@@ -4,6 +4,32 @@ import { listRoster } from "./team-admin";
 
 const SYSTEM_SOURCES = new Set(["system"]);
 
+/**
+ * What the product calls itself when it is the author.
+ *
+ * "System" named a category; this names the writer. A member reading
+ * "Shared · System" on a company-layer insight has been told which
+ * subsystem wrote it, which is not a fact they can use — spec 4.5 asks for
+ * the attribution a reader can, and it is the product's name.
+ *
+ * One constant in one function, so the memories card, the detail sheet,
+ * recall results and the graph cannot disagree about it. It is a server
+ * string like "Owner" and "Former member" beside it, and like them it is
+ * not translated — see the note below.
+ *
+ * NOT INSIGHT-SPECIFIC, deliberately. This branch labels digests and
+ * rolled-up entries too, and a source-specific special case would leave a
+ * digest reading "System" and an insight reading "Second Brain" on the same
+ * list — two names for one author.
+ *
+ * STATED RATHER THAN FIXED: "Owner", "Former member", "You" and now
+ * "Second Brain" are server-produced display strings the dashboard renders
+ * untranslated. That hole predates this phase and this constant does not
+ * widen it — it renames one of the four. Closing it means moving all four to
+ * i18n keys, which is a different change.
+ */
+export const SYSTEM_ACTOR_LABEL = "Second Brain";
+
 /** The one refusal an actor filter can give, so both surfaces say it identically. */
 const NOT_A_TEAM_MEMBER = "actor must be a member of your team";
 
@@ -30,7 +56,7 @@ export function resolveActorLabel(
   labelMap: Map<string, string>,
   opts?: { viewerId?: string; source?: string },
 ): string {
-  if (opts?.source && SYSTEM_SOURCES.has(opts.source.toLowerCase())) return "System";
+  if (opts?.source && SYSTEM_SOURCES.has(opts.source.toLowerCase())) return SYSTEM_ACTOR_LABEL;
   if (opts?.viewerId && actorId === opts.viewerId) return "You";
   if (!actorId) return "Owner";
   return labelMap.get(actorId) ?? "Former member";

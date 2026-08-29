@@ -5,7 +5,8 @@ import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from
 import { intParam, json } from "../lib/http";
 import { D1_MAX_BOUND_PARAMS, VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY } from "../constants";
 import { requireAdmin, requireIdentity, type Identity } from "../lib/identity";
-import { effectiveWriteTarget, primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
+import { effectiveWriteTarget, isCompanyWorkspace, primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
+import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
 import { storeEntry } from "../capture/store";
@@ -550,7 +551,11 @@ export async function handleAdminRoutes(
     const scope = scopeWhere(auth);
     const [rows, countRow] = await Promise.all([
       env.DB.prepare(
-        `SELECT id, content, created_at FROM entries
+        // workspace_id, actor_id and source ride along on the query that
+        // already runs: the queue's rows have to say which layer they belong
+        // to and who wrote them, and three more columns on an existing
+        // projection is no new statement and no check:scope movement.
+        `SELECT id, content, created_at, workspace_id, actor_id, source FROM entries
          WHERE ${PENDING_INSIGHT_SQL} AND ${scope.clause}
          ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       ).bind(...scope.bindings, limit, offset).all(),
@@ -561,7 +566,8 @@ export async function handleAdminRoutes(
       ).bind(...scope.bindings).first() as Promise<Record<string, any> | null>,
     ]);
 
-    const pageIds = (rows.results as Record<string, any>[]).map(r => r.id as string);
+    const pageRows = rows.results as Record<string, any>[];
+    const pageIds = pageRows.map(r => r.id as string);
     // One query for the whole page rather than one per insight. LEFT JOIN so a
     // source deleted after the edge was written still surfaces as a row — the
     // edges table has no foreign keys, so an edge can outlive its target, and
@@ -606,13 +612,40 @@ export async function handleAdminRoutes(
       }
     }
 
+    // Exactly GET /list's layer rule. Written here rather than shared because
+    // this route has no other layer computation to share with, and the client
+    // cannot infer it: it holds no workspace ids, and the one thing it could
+    // read a layer off (`sources`) describes the INPUTS, not the insight.
+    const layerOf = (wid: unknown): "personal" | "company" | "system" =>
+      wid === auth.personalWorkspaceId ? "personal"
+      : isCompanyWorkspace(auth, wid) ? "company"
+      : "system";
+    // Issues NO statement for an empty list — and in practice it always is
+    // empty, because every row in this queue carries `auto-insight` and every
+    // auto-insight row is written with actorId "". The call is made anyway
+    // rather than skipped on that basis: "every row here is system-authored"
+    // is an invariant of a different file, and the cost of not relying on it
+    // is zero.
+    const labelMap = await lookupActorLabels(
+      env,
+      pageRows.filter(r => layerOf(r.workspace_id) === "company").map(r => String(r.actor_id ?? "")),
+    );
+
     return json({
       ok: true,
-      patterns: (rows.results as Record<string, any>[]).map(r => ({
+      patterns: pageRows.map(r => ({
         id: r.id as string,
         content: r.content as string,
         created_at: r.created_at as number,
         sources: sourcesByInsight.get(r.id as string) ?? [],
+        workspace: layerOf(r.workspace_id),
+        // The same resolver /list, /entry and /graph call, given the same
+        // inputs — so an insight cannot be attributed one way in the review
+        // queue and another way on the card the reader opens next.
+        actor_name: resolveActorLabel(String(r.actor_id ?? ""), labelMap, {
+          viewerId: auth.userId,
+          source: String(r.source ?? ""),
+        }),
       })),
       total: (countRow?.n as number) ?? 0,
       limit,

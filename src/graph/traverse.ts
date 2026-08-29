@@ -383,8 +383,8 @@ export async function buildGraph(opts: { seed?: string; limit?: number; only?: "
       created_at: r.created_at as number,
       workspace,
       // Named by the same resolver /list and /entry use, given the same inputs —
-      // including `source`, so a row the pipeline wrote reads "System" on the
-      // canvas exactly as it does in the list. Only company-layer nodes have an
+      // including `source`, so a row the pipeline wrote reads SYSTEM_ACTOR_LABEL
+      // on the canvas exactly as it does in the list. Only company-layer nodes have an
       // author to name; `viewerId` is what turns the caller's own into "You".
       actor_name: workspace === "company"
         ? resolveActorLabel(String(r.actor_id ?? ""), actorNames, {

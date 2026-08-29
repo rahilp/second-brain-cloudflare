@@ -14,6 +14,8 @@ import { makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 import { setDbReady } from "../../src/runtime/state";
+import { ensureTenantBootstrap } from "../../src/lib/tenancy";
+import { createMember } from "../../src/lib/team-admin";
 import type { Env } from "../../src/env";
 
 const ctx = { waitUntil: (_: Promise<unknown>) => {} } as any;
@@ -368,5 +370,128 @@ describe("POST /patterns/resolve — in bulk", () => {
       req("POST", "/patterns/resolve", { body: { ids: ["p1", "p1", "p1"], action: "dismiss" } }), envOf(sq), ctx,
     )).json() as any;
     expect(data).toMatchObject({ resolved: 1, skipped: 0 });
+  });
+});
+
+/**
+ * The queue's rows, and who the product says wrote them.
+ *
+ * Two keys join `sources` here: `workspace`, because the client holds no
+ * workspace ids and the one thing it could infer a layer from (`sources`) is
+ * about the INPUTS, not the insight; and `actor_name`, which comes from the
+ * same `resolveActorLabel` every other read surface calls. The label is the
+ * reach case below: one constant in one function, four surfaces following.
+ */
+describe("GET /patterns — the layer and the author of each row", () => {
+  async function teamFixture() {
+    const s = await migrated();
+    const env = envOf(s);
+    const roots = await ensureTenantBootstrap(env);
+    const alice = await createMember(env, { name: "Alice" });
+    return {
+      s, env,
+      companyWorkspaceId: roots.companyWorkspaceId,
+      personalWorkspaceId: alice.member.personalWorkspaceId,
+      token: alice.token,
+    };
+  }
+
+  /** An insight exactly as runWeeklyInsights writes one: source system, actor_id "". */
+  async function seedInsightIn(s: SqliteD1, id: string, workspaceId: string, content: string) {
+    seedPattern(s, id, content);
+    await s.db.prepare(`UPDATE entries SET workspace_id = ?, actor_id = '' WHERE id = ?`)
+      .bind(workspaceId, id).run();
+  }
+
+  const get = (env: Env, path: string, token: string) =>
+    worker.fetch(req("GET", path, { token }), env, ctx);
+
+  it("reports a company-workspace insight as the company layer, authored by Second Brain", async () => {
+    const fx = await teamFixture();
+    sq = fx.s;
+    await seedInsightIn(sq, "i-co", fx.companyWorkspaceId, "The team ships behind flags on Fridays");
+
+    const data = await (await get(fx.env, "/patterns", fx.token)).json() as any;
+
+    expect(data.patterns).toHaveLength(1);
+    expect(data.patterns[0]).toMatchObject({ workspace: "company", actor_name: "Second Brain" });
+  });
+
+  it("reports a personal-workspace insight as the personal layer, with the same author", async () => {
+    const fx = await teamFixture();
+    sq = fx.s;
+    await seedInsightIn(sq, "i-me", fx.personalWorkspaceId, "You tend to ship on Fridays");
+
+    const data = await (await get(fx.env, "/patterns", fx.token)).json() as any;
+
+    expect(data.patterns[0]).toMatchObject({ workspace: "personal", actor_name: "Second Brain" });
+  });
+
+  it("adds the two keys and renames or drops nothing", async () => {
+    // Exhaustive rather than a subset check, so test/ui/pattern-queue.test.ts
+    // cannot be surprised by a key appearing or a name changing under it.
+    const fx = await teamFixture();
+    sq = fx.s;
+    await seedInsightIn(sq, "i-co", fx.companyWorkspaceId, "The team ships behind flags on Fridays");
+    seedEdge(sq, "i-co", "gone", "drawn_from");
+
+    const data = await (await get(fx.env, "/patterns", fx.token)).json() as any;
+
+    const row = data.patterns[0];
+    expect(Object.keys(row).sort())
+      .toEqual(["actor_name", "content", "created_at", "id", "sources", "workspace"]);
+    expect(row.id).toBe("i-co");
+    expect(row.content).toBe("The team ships behind flags on Fridays");
+    expect(row.created_at).toBe(1000);
+    expect(row.sources).toEqual([{ id: "gone", missing: true }]);
+  });
+
+  it("issues the same number of statements whether or not the page has a company row", async () => {
+    // The layer is computed from a column already in the projection, and
+    // lookupActorLabels issues NO statement for an empty id list — which this
+    // queue's always is, because every auto-insight row is written with
+    // actor_id "". The call is made anyway rather than skipped: "every row
+    // here is system-authored" is an invariant of a different file, and the
+    // cost of not relying on it is zero. This is what proves that.
+    const personalOnly = await teamFixture();
+    sq = personalOnly.s;
+    await seedInsightIn(sq, "i-me", personalOnly.personalWorkspaceId, "You tend to ship on Fridays");
+    const beforeP = sq.issued.length;
+    await get(personalOnly.env, "/patterns?limit=50", personalOnly.token);
+    const personalCost = sq.issued.length - beforeP;
+    sq.close();
+
+    const withCompany = await teamFixture();
+    sq = withCompany.s;
+    await seedInsightIn(sq, "i-me", withCompany.personalWorkspaceId, "You tend to ship on Fridays");
+    await seedInsightIn(sq, "i-co", withCompany.companyWorkspaceId, "The team ships behind flags on Fridays");
+    const beforeC = sq.issued.length;
+    await get(withCompany.env, "/patterns?limit=50", withCompany.token);
+    const companyCost = sq.issued.length - beforeC;
+
+    expect(companyCost).toBe(personalCost);
+    // Pinned: identity, the page, the count and the source hydration. Unchanged
+    // by this task — the projection widened, no statement was added.
+    expect(companyCost).toBe(4);
+  });
+
+  it("names the same author on /patterns, /list and /entry from one fixture", async () => {
+    // THE REACH CASE. `resolveActorLabel` is one function with four callers, so
+    // renaming its system branch had to move every surface at once. Three of
+    // them are asserted here off a single row; the fourth (/graph node labels)
+    // is asserted in test/integration/graph-team-aware.test.ts. If any of these
+    // could disagree, the label was special-cased somewhere it should not have
+    // been.
+    const fx = await teamFixture();
+    sq = fx.s;
+    await seedInsightIn(sq, "i-co", fx.companyWorkspaceId, "The team ships behind flags on Fridays");
+
+    const patterns = await (await get(fx.env, "/patterns", fx.token)).json() as any;
+    const list = await (await get(fx.env, "/list?n=50", fx.token)).json() as any;
+    const entry = await (await get(fx.env, "/entry?id=i-co", fx.token)).json() as any;
+
+    expect(patterns.patterns[0].actor_name).toBe("Second Brain");
+    expect(list.find((r: any) => r.id === "i-co").actor_name).toBe("Second Brain");
+    expect(entry.entry.actor_name).toBe("Second Brain");
   });
 });

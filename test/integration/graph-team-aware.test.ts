@@ -179,18 +179,22 @@ describe("GET /graph — layer and author on every node", () => {
     expect(nodeById(data, "a-shared")).toMatchObject({ workspace: "company", actor_name: "You" });
   });
 
-  it("calls a pipeline-written shared node 'System', exactly as /list does", async () => {
+  it("calls a pipeline-written shared node 'Second Brain', exactly as /list does", async () => {
     // resolveActorLabel decides this from `source`, and /list and /entry both
     // pass it. A canvas that named the member whose row the pipeline rewrote
     // would be the second vocabulary this whole task exists to prevent.
+    //
+    // The label is the product's own name (SYSTEM_ACTOR_LABEL): "System" named
+    // a category, this names the writer. One constant in one function, which
+    // is why both surfaces below move together and neither needed a change.
     seedTwoLayerBrain();
     sqlite.db.prepare(`UPDATE entries SET source = 'system' WHERE id = 'b-shared'`).run();
 
     const graph = await jsonOf(await call("/graph", aliceToken));
     const list = await jsonOf(await call("/list?n=50", aliceToken));
 
-    expect(nodeById(graph, "b-shared").actor_name).toBe("System");
-    expect(list.find((r: any) => r.id === "b-shared").actor_name).toBe("System");
+    expect(nodeById(graph, "b-shared").actor_name).toBe("Second Brain");
+    expect(list.find((r: any) => r.id === "b-shared").actor_name).toBe("Second Brain");
   });
 
   it("still hides a colleague's private nodes", async () => {

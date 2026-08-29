@@ -4,7 +4,7 @@ import { makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
 import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
-import { lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../../src/lib/actors";
+import { SYSTEM_ACTOR_LABEL, lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../../src/lib/actors";
 import type { Env } from "../../src/env";
 
 async function makeEnv() {
@@ -35,9 +35,17 @@ describe("resolveActorLabel", () => {
     expect(resolveActorLabel("usr-gone", labels)).toBe("Former member");
   });
 
-  it("returns System for system sources when source is provided", () => {
-    expect(resolveActorLabel("", labels, { source: "system" })).toBe("System");
-    expect(resolveActorLabel("usr-ada", labels, { source: "system", viewerId: "usr-ada" })).toBe("System");
+  // The product's name, not a subsystem's. "System" told a reader which part
+  // of the pipeline wrote the row, which is not a fact they can use; SYSTEM_
+  // ACTOR_LABEL is the attribution spec 4.5 asks for. Asserted against the
+  // exported constant AND against the literal, so neither can be changed
+  // without the other being looked at.
+  it("returns the product's own name for system sources when source is provided", () => {
+    expect(SYSTEM_ACTOR_LABEL).toBe("Second Brain");
+    expect(resolveActorLabel("", labels, { source: "system" })).toBe("Second Brain");
+    // Ahead of "You": a row the pipeline wrote is not authored by whoever
+    // happens to be reading it, even when their id is on it.
+    expect(resolveActorLabel("usr-ada", labels, { source: "system", viewerId: "usr-ada" })).toBe("Second Brain");
   });
 });
 
