@@ -9,6 +9,12 @@
 
 let teamMembers = []
 let teamYouId = null
+/** GET /team/roster's members — names and roles only. The member view's list. */
+let teamRoster = []
+/** GET /team/roster's teams, same shape as teamWorkspaces but for a member. */
+let teamRosterTeams = []
+/** { defaultShare, orgDefault, effectiveDefault } from GET /team/me, or null. */
+let teamMyDefault = null
 /** The caller's teams, oldest first — [0] is the one "share with the team" means. */
 let teamWorkspaces = []
 // The plaintext token the server hands back exactly once, plus who it is for.
@@ -89,9 +95,15 @@ function setTeamNavVisible(visible) {
 }
 
 /**
- * Fetch the roster and decide, from how that goes, whether this user ever
- * sees the Team tab. Runs at connect time and again on every visit to the
+ * Fetch the roster and decide, from how that goes, which of the screen's three
+ * states this user gets. Runs at connect time and again on every visit to the
  * screen, because suspensions and rotations can happen while the window sits.
+ *
+ * The admin probe stays first and stays exactly as it was: an admin makes ONE
+ * request and /team/members is both their answer and their data. Only a caller
+ * it refuses pays for a second call, and /team/roster is the endpoint that can
+ * tell the three refusals apart — 403-because-not-an-admin has a screen now,
+ * 401 and unreachable still do not.
  */
 async function loadTeam() {
   if (!WORKER_URL || !AUTH_TOKEN) return
@@ -107,18 +119,143 @@ async function loadTeam() {
     setTeamNavVisible(true)
     renderTeam()
   } catch {
-    // 401 (signed out), 403 (not an admin) and unreachable servers all land
-    // here, and all mean the same thing: quietly stand down.
+    await loadTeamMemberView()
+  }
+}
+
+/**
+ * The member's half of the screen.
+ *
+ * /team/roster is identity-scoped (requireIdentity, not requireAdmin), so a
+ * signed-in member gets 200 here after the admin probe gave them 403. Anything
+ * else — 401 from a token that no longer resolves, 404 from a Worker older than
+ * this endpoint, a network failure — leaves the screen where it was: hidden nav,
+ * quiet notice, nothing claimed.
+ *
+ * `admin` in the response is the caller's OWN role, so it needs no third probe
+ * to be trusted. Reaching here having been told yes means /team/members failed
+ * for some reason other than permission, and a member view is the wrong answer
+ * for an admin — so that stands down too.
+ */
+async function loadTeamMemberView() {
+  try {
+    const res = await fetch(`${WORKER_URL}/team/roster`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    if (!data.ok || !Array.isArray(data.members)) throw new Error(t('common.invalidResponse'))
+    if (data.admin) throw new Error('admin')
+    teamRoster = data.members
+    teamRosterTeams = Array.isArray(data.teams) ? data.teams : []
+    teamYouId = data.you ?? null
+    await loadMyCaptureDefault()
+    setTeamNavVisible(true)
+    renderTeamMember()
+  } catch {
     setTeamNavVisible(false)
     renderTeamAdminsOnly()
   }
 }
 
+/**
+ * Where this member's next capture lands, straight from the server.
+ *
+ * The same GET /team/me the composer hint reads (js/home.js), fetched again
+ * rather than shared: the composer's copy is loaded on a /health reveal that
+ * this screen does not wait for, and a Team screen showing a policy from
+ * whenever the window was opened is worse than one round trip.
+ *
+ * A failure leaves it null and the readout is omitted entirely — a guessed
+ * default is the one thing this section must never show.
+ */
+async function loadMyCaptureDefault() {
+  try {
+    const res = await fetch(`${WORKER_URL}/team/me`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    const p = (await res.json()).profile || {}
+    teamMyDefault = { defaultShare: p.defaultShare, orgDefault: p.orgDefault, effectiveDefault: p.effectiveDefault }
+  } catch {
+    teamMyDefault = null
+  }
+}
+
+/** One row of the member-facing roster: a name, a role, and — for the caller's
+ *  own row — the same "you" chip the admin panel uses. Deliberately NOT built
+ *  on teamMemberRow/teamMemberLabel: those fall back to an email and carry
+ *  counts, timestamps and actions, none of which /team/roster returns and none
+ *  of which a member may see. */
+function teamRosterRow(m) {
+  const isSelf = teamYouId != null && m.userId === teamYouId
+  const chips = [
+    `<span class="tag-chip">${escHtml(teamRoleLabel(m.role))}</span>`,
+    isSelf ? `<span class="tag-chip">${escHtml(t('team.you'))}</span>` : '',
+  ].join('')
+  return `
+    <div class="team-row">
+      <div style="min-width: 0">
+        <div class="team-name">${escHtml(m.name || m.userId)} ${chips}</div>
+      </div>
+    </div>`
+}
+
+/**
+ * All three states are set every time, never just the one being revealed: the
+ * screen is re-rendered on every visit, and an admin demoted to member (or the
+ * reverse) while the window sits would otherwise be left looking at the panel
+ * their new role no longer entitles them to.
+ */
+function renderTeamMember() {
+  const notice = document.getElementById('team-admins-only')
+  const body = document.getElementById('team-body')
+  const view = document.getElementById('team-member-view')
+  if (notice) notice.style.display = 'none'
+  if (body) body.style.display = 'none'
+  if (!view) return
+  view.style.display = ''
+  const teamName = (teamRosterTeams[0]?.name || '').trim()
+  // Verbatim from effectiveDefault — see captureDefaultKey in utils.js, which
+  // the composer hint reads too so the two can never say different things.
+  const defaultKey = captureDefaultKey(teamMyDefault)
+  view.innerHTML = `
+    <div style="display: flex; flex-direction: column; gap: 24px;">
+      ${teamName ? `<div>
+        <div class="digest-section-label">${escHtml(t('team.nameLabel'))}</div>
+        <div class="team-table"><div class="team-row">
+          <div class="team-name">${escHtml(teamName)}</div>
+        </div></div>
+      </div>` : ''}
+      ${defaultKey ? `<div>
+        <div class="digest-section-label">${escHtml(t('team.yourCaptureTitle'))}</div>
+        <div class="team-table"><div class="team-row">
+          <div style="min-width: 0">
+            <div class="team-name">${escHtml(t(defaultKey))}</div>
+            <div class="team-sub">${escHtml(t('team.yourCaptureHint'))}</div>
+          </div>
+        </div></div>
+      </div>` : ''}
+      <div>
+        <div class="digest-section-label">${escHtml(t('team.membersLabel'))}</div>
+        <div class="team-table">${teamRoster.map(teamRosterRow).join('')}</div>
+        <p class="digest-note" style="margin: 8px 2px 0;">${escHtml(t('team.rosterHint'))}</p>
+      </div>
+    </div>`
+}
+
 function renderTeamAdminsOnly() {
   const notice = document.getElementById('team-admins-only')
   const body = document.getElementById('team-body')
+  const view = document.getElementById('team-member-view')
   if (notice) notice.style.display = ''
   if (body) body.style.display = 'none'
+  // Both branches, every render: a member whose token stops resolving while the
+  // window sits must not keep their colleagues' names on screen.
+  if (view) {
+    view.style.display = 'none'
+    view.innerHTML = ''
+  }
 }
 
 function teamRoleLabel(role) {
@@ -189,7 +326,14 @@ function teamMemberRow(m) {
 function renderTeam() {
   const notice = document.getElementById('team-admins-only')
   const body = document.getElementById('team-body')
+  const view = document.getElementById('team-member-view')
   if (notice) notice.style.display = 'none'
+  // Both branches: the member view and the admin panel are alternatives, and a
+  // member promoted to admin mid-session renders this one next.
+  if (view) {
+    view.style.display = 'none'
+    view.innerHTML = ''
+  }
   if (!body) return
   body.style.display = ''
   const list = document.getElementById('team-list')

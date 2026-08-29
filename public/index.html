@@ -277,10 +277,23 @@
               <h3 style="margin: 0; font-family: var(--font-serif); font-size: 15px; font-weight: 500;" data-i18n="team.title">Team</h3>
             </div>
 
+            <!-- Last resort, not the member's screen. Reached only when NEITHER
+                 /team/members nor /team/roster will answer: signed out, offline,
+                 or a Worker older than /team/roster — in which case the copy is
+                 still literally true. The nav entries stay hidden in that state,
+                 so this is a terminal state rather than a destination. -->
             <div class="empty-state" id="team-admins-only" style="display: none">
               <i class="ti ti-shield-lock"></i>
               <span data-i18n="team.adminsOnly">Only workspace admins can manage team members.</span>
             </div>
+
+            <!-- The member's Team screen: the team's name, who else is on it,
+                 and where their own captures land. Filled by renderTeamMember()
+                 in js/team.js from GET /team/roster, which returns userId, name
+                 and role and nothing else. Read-only on purpose — every write on
+                 this screen is behind requireAdmin on the Worker, so a control
+                 here would be a control the server refuses. -->
+            <div id="team-member-view" style="display: none; flex: 1; overflow-y: auto; padding: 24px 28px;"></div>
 
             <div id="team-body" style="display: none; flex: 1; overflow-y: auto; padding: 24px 28px;">
               <div style="display: flex; flex-direction: column; gap: 24px;">

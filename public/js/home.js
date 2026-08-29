@@ -59,6 +59,10 @@ async function loadCaptureDefault() {
  *   null      | company          | ''           | autoSharedOrg
  *   'personal'| —                | —            | pinnedPersonal
  *   'company' | —                | —            | pinnedShared
+ *
+ * The four Auto rows are chosen by captureDefaultKey() in utils.js rather than
+ * inline, because the Team screen's own readout (js/team.js) has to reach the
+ * same answer from the same profile and there must be exactly one table.
  */
 function renderCaptureHint() {
   const el = document.getElementById('home-layer-hint')
@@ -71,8 +75,7 @@ function renderCaptureHint() {
   let key
   if (homeLayer === 'personal') key = 'home.pinnedPersonal'
   else if (homeLayer === 'company') key = 'home.pinnedShared'
-  else if (captureDefault.effectiveDefault === 'company') key = captureDefault.defaultShare ? 'home.autoSharedYours' : 'home.autoSharedOrg'
-  else key = captureDefault.defaultShare ? 'home.autoPersonalYours' : 'home.autoPersonalOrg'
+  else key = captureDefaultKey(captureDefault)
   el.style.display = ''
   el.textContent = t(key)
 }

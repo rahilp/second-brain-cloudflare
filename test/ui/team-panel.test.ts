@@ -68,6 +68,7 @@ const TEAM_ELEMENT_IDS = [
   "tab-team",
   "team-admins-only",
   "team-body",
+  "team-member-view",
   "team-list",
   "team-token-reveal",
   "team-token-for",
@@ -102,6 +103,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     "tab-team",
     "team-admins-only",
     "team-body",
+    "team-member-view",
     "team-token-reveal",
     "team-add-error",
     "sb-team-name",
@@ -760,5 +762,261 @@ describe("team name", () => {
     els.get("team-name-input").value = "   ";
     await ctx.submitTeamName();
     expect(called).toBe(false);
+  });
+});
+
+
+/**
+ * The member half of the Team screen.
+ *
+ * A member is not an admin, but they ARE on a team, and until now the screen
+ * told them only that they were not allowed to look at it. These drive
+ * loadTeam() with the fetch shape a member actually gets: 403 from
+ * /team/members, 200 from the identity-scoped /team/roster.
+ *
+ * The negative assertions are the point of this group. /team/roster returns
+ * exactly userId, name and role — test/integration/team-roster.test.ts pins
+ * `Object.keys(row).sort()` so the endpoint cannot widen by accident — and this
+ * is the other half of that guarantee: the UI must not render an equivalent of
+ * anything the endpoint withholds, even if the endpoint one day starts sending
+ * it.
+ */
+describe("team member view", () => {
+  const ROSTER_OK = {
+    ok: true,
+    admin: false,
+    you: "u2",
+    teams: [{ id: "ws-co", name: "Acme Engineering", memberCount: 3 }],
+    members: [
+      { userId: "u1", name: "Ada", role: "admin" },
+      { userId: "u2", name: "Bob", role: "member" },
+      { userId: "u3", name: "Cara", role: "member" },
+    ],
+  };
+
+  /**
+   * What a WIDENED /team/roster would send. Every extra field carries a
+   * sentinel value found nowhere else in the markup, so if the view ever
+   * starts echoing whatever the endpoint happens to return, these fail.
+   */
+  const ROSTER_WIDENED = {
+    ...ROSTER_OK,
+    members: ROSTER_OK.members.map((m) => ({
+      ...m,
+      email: `leak-${m.userId}@example.invalid`,
+      privateEntries: 4242,
+      lastUsedAt: Date.now() - 3 * 3600_000,
+      suspended: true,
+      createdAt: 1234567890123,
+      personalWorkspaceId: `ws-leak-${m.userId}`,
+      defaultShare: "company",
+    })),
+  };
+
+  /** GET /team/me as Task 9 extended it. `email` is the caller's own and the
+   *  server hands it over freely — the Team screen still has no reason to print
+   *  it, and the negative test uses it as one more sentinel. */
+  const ME = (over: Record<string, unknown> = {}) => ({
+    ok: true,
+    profile: {
+      userId: "u2",
+      name: "Bob",
+      email: "bob@example.com",
+      role: "member",
+      defaultShare: "personal",
+      orgDefault: "company",
+      effectiveDefault: "personal",
+      ...over,
+    },
+  });
+
+  /** A signed-in member: the admin probe refuses, the roster answers. */
+  function memberSetup(opts: { roster?: unknown; me?: unknown; rosterStatus?: number } = {}) {
+    const seen: string[] = [];
+    const status = opts.rosterStatus ?? 200;
+    const harness = setup(async (url: string) => {
+      seen.push(url);
+      if (url.endsWith("/team/members")) {
+        return { ok: false, status: 403, json: async () => ({ ok: false, error: "Forbidden" }) };
+      }
+      if (url.endsWith("/team/roster")) {
+        return { ok: status < 400, status, json: async () => opts.roster ?? ROSTER_OK };
+      }
+      if (url.endsWith("/team/me")) return { ok: true, status: 200, json: async () => opts.me ?? ME() };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    return { ...harness, seen };
+  }
+
+  /** An admin (or a solo brain's owner, who is the bootstrap admin). */
+  function adminSetup() {
+    const seen: string[] = [];
+    const harness = setup(async (url: string) => {
+      seen.push(url);
+      if (url.endsWith("/team/members")) return { ok: true, status: 200, json: async () => ADMIN_OK };
+      if (url.endsWith("/config")) return { ok: true, status: 200, json: async () => ({ config: {} }) };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    return { ...harness, seen };
+  }
+
+  it("renders the team name and everyone on it, with the caller's own row marked", async () => {
+    const { ctx, els } = memberSetup();
+    await ctx.loadTeam();
+    expect(els.get("team-member-view").style.display).toBe("");
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain("Acme Engineering");
+    for (const name of ["Ada", "Bob", "Cara"]) expect(html, `${name} should be listed`).toContain(name);
+    expect(html).toContain("Admin");
+    expect(html).toContain("Member");
+    // "you" marks exactly one row, and it is the caller's (you === "u2" === Bob).
+    const rows = html.split('class="team-row"');
+    expect(rows.filter((r) => r.includes(">you<"))).toHaveLength(1);
+    expect(rows.find((r) => r.includes("Bob"))).toContain(">you<");
+    expect(rows.find((r) => r.includes("Ada"))).not.toContain(">you<");
+    // t() returns the KEY PATH for a key that is missing from the catalog, so a
+    // typo would ship as literal "team.somethingWrong" rather than failing.
+    expect(html).not.toMatch(/(team|home|common)\.[a-zA-Z]/);
+  });
+
+  it("shows a member nothing /team/roster withholds, even if /team/roster starts sending it", async () => {
+    const { ctx, els } = memberSetup({ roster: ROSTER_WIDENED });
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    // Positive anchor first. Without it every negative below would also hold
+    // on a blank screen, which is exactly the state this task started from.
+    expect(html).toContain("Acme Engineering");
+    for (const name of ["Ada", "Bob", "Cara"]) expect(html).toContain(name);
+    // Every field the endpoint deliberately omits, asserted by sentinel.
+    expect(html).not.toContain("@example.invalid"); // email
+    expect(html).not.toContain("bob@example.com"); // the caller's own, from /team/me
+    expect(html).not.toContain("4242"); // privateEntries
+    expect(html).not.toContain("private entr"); // …and its rendered form
+    expect(html).not.toContain("Last used"); // lastUsedAt
+    expect(html).not.toContain("Never used");
+    expect(html).not.toMatch(/1970/);
+    expect(html).not.toContain("suspended"); // suspension state
+    expect(html).not.toContain("1234567890123"); // createdAt
+    expect(html).not.toContain("ws-leak"); // personalWorkspaceId
+    // No control the server would refuse: adding, removing, suspending,
+    // rotating a token, renaming the team and changing anyone's capture
+    // default are all behind requireAdmin.
+    for (const fn of [
+      "rotateTeamToken",
+      "setTeamSuspended",
+      "removeTeamMember",
+      "setMemberDefaultShare",
+      "submitNewMember",
+      "submitTeamName",
+      "setTeamOrgDefault",
+    ]) {
+      expect(html, `${fn} must not be reachable from the member view`).not.toContain(fn);
+    }
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<select");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("onclick");
+    expect(html).not.toContain("onchange");
+    // And the admin panel itself stays shut.
+    expect(els.get("team-body").style.display).toBe("none");
+  });
+
+  it("reads the capture default from effectiveDefault, not from the org default", async () => {
+    // The member's own override DISAGREES with the org default — precisely the
+    // case a client-side reimplementation of the precedence rule gets wrong.
+    const { ctx, els } = memberSetup({
+      me: ME({ defaultShare: "personal", orgDefault: "company", effectiveDefault: "personal" }),
+    });
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain("Auto → Personal (your setting)");
+    expect(html).not.toContain("Shared");
+    // Literally the composer's own string (public/js/home.js), so the two
+    // surfaces cannot describe one profile two ways.
+    expect(html).toContain(ctx.t("home.autoPersonalYours"));
+  });
+
+  it("says Shared when the member overrides a personal org default the other way", async () => {
+    const { ctx, els } = memberSetup({
+      me: ME({ defaultShare: "company", orgDefault: "personal", effectiveDefault: "company" }),
+    });
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain(ctx.t("home.autoSharedYours"));
+    expect(html).not.toContain("Personal");
+  });
+
+  it("attributes the default to the org when the member has no override of their own", async () => {
+    const { ctx, els } = memberSetup({
+      me: ME({ defaultShare: "", orgDefault: "company", effectiveDefault: "company" }),
+    });
+    await ctx.loadTeam();
+    expect(els.get("team-member-view").innerHTML).toContain(ctx.t("home.autoSharedOrg"));
+  });
+
+  it("gives a member the Team nav entry, which used to be admins-only", async () => {
+    const { ctx, els } = memberSetup();
+    await ctx.loadTeam();
+    expect(els.get("sb-tab-team").style.display).toBe("");
+    expect(els.get("tab-team").style.display).toBe("");
+    expect(els.get("team-admins-only").style.display).toBe("none");
+  });
+
+  it("an admin still gets the full panel and never fetches the member roster", async () => {
+    const { ctx, els, seen } = adminSetup();
+    await ctx.loadTeam();
+    expect(seen.some((u) => u.includes("/team/roster"))).toBe(false);
+    expect(seen.some((u) => u.endsWith("/team/me"))).toBe(false);
+    expect(els.get("team-body").style.display).toBe("");
+    expect(els.get("team-member-view").style.display).toBe("none");
+  });
+
+  it("keeps the quiet notice for a caller neither endpoint will answer", async () => {
+    // 401 (signed out) and 404 (a Worker older than /team/roster) both land
+    // here. The nav stays hidden, so this is a terminal state rather than a
+    // destination — nobody navigates to it.
+    for (const rosterStatus of [401, 404]) {
+      const { ctx, els } = memberSetup({ rosterStatus });
+      await ctx.loadTeam();
+      expect(els.get("team-member-view").style.display, `roster ${rosterStatus}`).toBe("none");
+      expect(els.get("team-member-view").innerHTML).toBe("");
+      expect(els.get("team-admins-only").style.display).toBe("");
+      expect(els.get("tab-team").style.display).toBe("none");
+    }
+  });
+
+  it("changes nothing on a solo brain, in either branch", async () => {
+    // A solo install's owner IS the bootstrap admin, so /team/members answers
+    // 200 and the admin branch runs exactly as it always did: no roster fetch,
+    // no member view, nav revealed as before.
+    const admin = adminSetup();
+    vm.runInContext("TEAM_MODE = false", admin.ctx);
+    await admin.ctx.loadTeam();
+    expect(admin.seen.some((u) => u.includes("/team/roster"))).toBe(false);
+    expect(admin.els.get("team-body").style.display).toBe("");
+    expect(admin.els.get("team-member-view").style.display).toBe("none");
+    expect(admin.els.get("tab-team").style.display).toBe("");
+
+    // The other branch: a brain that is not a team and refuses both probes
+    // keeps the notice, with no roster and no nav entry.
+    const denied = memberSetup({ rosterStatus: 403 });
+    vm.runInContext("TEAM_MODE = false", denied.ctx);
+    await denied.ctx.loadTeam();
+    expect(denied.els.get("team-member-view").innerHTML).toBe("");
+    expect(denied.els.get("team-member-view").style.display).toBe("none");
+    expect(denied.els.get("team-admins-only").style.display).toBe("");
+    expect(denied.els.get("tab-team").style.display).toBe("none");
+  });
+
+  it("translates the member view into Italian", async () => {
+    const { ctx, els } = memberSetup();
+    ctx.initI18n("it");
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain("Amministratore");
+    expect(html).toContain(ctx.t("home.autoPersonalYours"));
+    // Both catalogs, not just English: a key present in en and missing from it
+    // renders as its own key path here rather than failing loudly.
+    expect(html).not.toMatch(/(team|home|common)\.[a-zA-Z]/);
   });
 });

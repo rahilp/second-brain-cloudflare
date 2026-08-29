@@ -772,6 +772,30 @@ function packGraphCircles(radii, gap) {
   return { centers, R };
 }
 
+/**
+ * Which of the four "Auto → …" strings describes where a member's next
+ * capture lands, and whose choice that is.
+ *
+ * The PRECEDENCE is not decided here and must never be. Explicit request →
+ * member override → org default → personal lives in src/lib/scope.ts, and GET
+ * /team/me returns the answer it produced as `effectiveDefault`. This reads
+ * that verbatim. The only question it asks of `defaultShare` is one of
+ * ATTRIBUTION — did the member's own override produce that answer, or the
+ * org's fallback — which changes the sentence, never the outcome.
+ *
+ * Shared so the composer hint (js/home.js) and the Team screen's readout
+ * (js/team.js) cannot end up describing one profile two different ways.
+ *
+ * @param profile {{ effectiveDefault?: string, defaultShare?: string }|null}
+ * @returns an i18n key path, or null when nothing is known yet.
+ */
+function captureDefaultKey(profile) {
+  if (!profile) return null
+  const own = !!profile.defaultShare
+  if (profile.effectiveDefault === 'company') return own ? 'home.autoSharedYours' : 'home.autoSharedOrg'
+  return own ? 'home.autoPersonalYours' : 'home.autoPersonalOrg'
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles };
+  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles, captureDefaultKey };
 }
