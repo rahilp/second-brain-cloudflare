@@ -124,27 +124,28 @@ describe("toast surface and ink stay readable in both themes", () => {
     }
   );
 
-  it("light theme: --accent (the toast action) clears WCAG AA (4.5:1) on --surface-elevated", () => {
-    const accent = variable("light", "--accent");
-    const surface = variable("light", "--surface-elevated");
-    expect(contrast(accent, surface)).toBeGreaterThanOrEqual(4.5);
-  });
-
   /**
-   * Dark theme is a known, pre-existing gap that this fix does not close:
-   * --accent (#fd6f12) on --surface-elevated (#38332a) measures 4.4529:1,
-   * just under the 4.5:1 AA floor. Closing it means either changing --accent
-   * — used throughout the app, out of scope for a toast-only fix — or giving
-   * the toast action its own ink, which is a design decision, not a contrast
-   * bug fix. Pinned precisely, the same way this file's sibling
-   * (card-stale-contrast.test.ts) once pinned a failing baseline: if a future
-   * token change ever buys headroom here, this assertion breaks and the gap
-   * can be revisited.
+   * --accent itself cannot be reused for the toast action: it is tuned per
+   * theme against that theme's own page surfaces, but --surface-elevated is
+   * dark in BOTH themes, so an accent tuned for a light page (light theme's
+   * --accent) or for --bg-card-like surfaces (dark theme's --accent, which
+   * measures only 4.4529:1 here — just under AA) cannot simply be reused.
+   * --accent-on-elevated is measured separately for this surface in each
+   * theme: light restates --accent (still clears AA here), dark substitutes
+   * --accent-ink (the theme's existing "orange for a dark surface" answer).
    */
-  it("dark theme: --accent on --surface-elevated is a known near-miss, not silently fixed", () => {
-    const accent = variable("dark", "--accent");
-    const surface = variable("dark", "--surface-elevated");
-    expect(contrast(accent, surface)).toBeCloseTo(4.4529, 3);
+  it.each(["light", "dark"] as const)(
+    "%s theme: --accent-on-elevated on --surface-elevated clears WCAG AA (4.5:1)",
+    (theme) => {
+      const accent = variable(theme, "--accent-on-elevated");
+      const surface = variable(theme, "--surface-elevated");
+      expect(contrast(accent, surface)).toBeGreaterThanOrEqual(4.5);
+    }
+  );
+
+  it("the toast action uses --accent-on-elevated, not the page-tuned --accent", () => {
+    const body = ruleBody(".app-toast-action");
+    expect(declaration(body, "color")).toBe("var(--accent-on-elevated)");
   });
 
   it("the toast message uses the fixed elevated ink, not the theme-flipping primary ink", () => {

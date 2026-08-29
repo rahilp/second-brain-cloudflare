@@ -27,12 +27,23 @@
         /* This surface is deliberately dark in BOTH themes — it is an overlay
            chip (the toast), not a page surface, and its ink is therefore
            fixed rather than theme-flipping. --text-on-elevated on
-           --surface-elevated measures 14.55:1 here; --accent on it measures
-           5.12:1. Do not point .app-toast-msg at --text-primary: that token
-           flips to near-black in light mode, which on this near-black
-           surface is how this shipped unreadable in the first place. */
+           --surface-elevated measures 14.55:1 here. Do not point
+           .app-toast-msg at --text-primary: that token flips to near-black
+           in light mode, which on this near-black surface is how this
+           shipped unreadable in the first place.
+           --accent-on-elevated exists because --accent itself cannot be
+           reused for the toast action: --accent is tuned per theme against
+           each theme's own page surface (light page / dark page), but
+           --surface-elevated is dark in BOTH themes, so light mode's
+           --accent needs re-checking against a surface it was never tuned
+           for. Here it happens to still measure 5.12:1 and clears AA, so
+           this token is the current --accent value restated rather than a
+           new colour. Do not consolidate the two back together: the day
+           --accent moves for page-surface reasons, this one must not move
+           with it. */
         --surface-elevated: #1e1e1e;
         --text-on-elevated: #f2efec;
+        --accent-on-elevated: #fd540a;
 
         /* ink */
         /* Ink ramp, all three steps at WCAG AA (4.5:1) against every surface
@@ -106,15 +117,19 @@
            from --bg and reads as barely distinct. --text-on-elevated on
            --surface-elevated measures 10.94:1. Ink stays fixed here for the
            same reason as light: do not swap it back to --text-primary.
-           Known gap, not addressed by this change: --accent on this surface
-           measures 4.4529:1, just under the 4.5:1 AA floor, for the toast's
-           "undo"/action link in dark mode only (light mode clears it at
-           5.12:1). Fixing it means either changing --accent — a token used
-           throughout the app, out of scope here — or giving the toast action
-           its own ink, which needs a design call. Flagged rather than
-           silently patched. */
+           --accent itself (#fd6f12) measures only 4.4529:1 here, just under
+           the 4.5:1 AA floor — dark theme's --accent was tuned against
+           --bg-card and friends, not against this dark-in-both-themes
+           overlay, so it cannot simply be reused. --accent-on-elevated uses
+           --accent-ink instead (#ffab6e, already the theme's answer to
+           "orange that needs to sit on something dark"), which measures
+           6.75:1 here and clears AA with real headroom. Do not consolidate
+           this back into --accent: that token is deliberate, measured work
+           for the page surfaces, and rescuing one control by moving it would
+           ripple through every other accent use in the product. */
         --surface-elevated: #38332a;
         --text-on-elevated: #f2efec;
+        --accent-on-elevated: #ffab6e;
 
         --text-primary: #f2efec;
         --text-secondary: #c9c5c1;
@@ -3944,7 +3959,7 @@
       .app-toast-action {
         background: none;
         border: none;
-        color: var(--accent);
+        color: var(--accent-on-elevated);
         font-size: 13px;
         font-weight: 600;
         cursor: pointer;
