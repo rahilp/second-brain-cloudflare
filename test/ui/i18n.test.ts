@@ -141,6 +141,98 @@ describe("dashboard i18n", () => {
     expect(itKeys.filter((k) => !enSet.has(k)), "keys missing from I18N_EN").toEqual([]);
   });
 
+  // The parity check above compares key SETS, which is blind to what the keys are
+  // WORTH. A key added to I18N_IT as `''` to make parity pass, or pasted across
+  // from English untranslated, satisfies it exactly. Both ship as a visibly broken
+  // Italian UI: the first renders nothing at all, the second renders English.
+  //
+  // Flattening is repeated here rather than hoisted: these read the catalogs the
+  // same way and share nothing else, and a shared helper would be one more thing
+  // to keep honest between two tests that must not drift together.
+  function flattenCatalog(obj: any, prefix = "", out: Record<string, unknown> = {}): Record<string, unknown> {
+    for (const key of Object.keys(obj)) {
+      const value = obj[key];
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) flattenCatalog(value, path, out);
+      else out[path] = value;
+    }
+    return out;
+  }
+
+  it("has no blank string in either catalog", () => {
+    const { ctx } = loadI18n("en");
+    const catalogs = {
+      I18N_EN: flattenCatalog(vm.runInContext("I18N_EN", ctx)),
+      I18N_IT: flattenCatalog(vm.runInContext("I18N_IT", ctx)),
+    };
+    const blank: string[] = [];
+    for (const [name, flat] of Object.entries(catalogs)) {
+      for (const [key, value] of Object.entries(flat)) {
+        // Whitespace-only counts: a single space is invisible on screen and
+        // passes any check that only asks whether the string is truthy.
+        if (typeof value !== "string" || value.trim() === "") blank.push(`${name}.${key}`);
+      }
+    }
+    expect(blank, "keys with no words in them").toEqual([]);
+  });
+
+  // Strings that are legitimately byte-identical in English and Italian, with the
+  // reason each one is. Three reasons qualify, and nothing else does:
+  //
+  //   PROPER NOUN — a name that is not translated in either language.
+  //   MACHINE TOKEN — a value the product prints verbatim from data, not prose.
+  //   FORMAT ONLY — punctuation and placeholders, with no words to translate.
+  //
+  // Adding a key here is a claim that one of those three applies. If you are
+  // reaching for it because a translation has not been written yet, the answer is
+  // to write the translation.
+  const IDENTICAL_BY_DESIGN = [
+    // PROPER NOUN
+    "auth.brand",
+    "nav.team",
+    "team.title",
+    "integrations.categoryEmail",
+    // MACHINE TOKEN — `source` values, printed as the capture recorded them.
+    "common.sourceCli",
+    "common.sourceEmail",
+    "common.sourceChat",
+    "common.sourceBrowser",
+    "common.sourceDashboard",
+    "common.sourceImport",
+    "common.sourceClaudeCode",
+    "integrations.nounEmail.one",
+    // FORMAT ONLY — URLs the user pastes, and punctuation around a placeholder.
+    "integrations.urlPlaceholder",
+    "integrations.connect.calendar-google.placeholder",
+    "integrations.connect.calendar-outlook.placeholder",
+    "integrations.connect.calendar-icloud.placeholder",
+    "brief.shapeSuffix",
+    "download.withTag",
+  ].sort();
+
+  it("has no Italian string left as a copy of its English twin", () => {
+    const { ctx } = loadI18n("en");
+    const en = flattenCatalog(vm.runInContext("I18N_EN", ctx));
+    const it = flattenCatalog(vm.runInContext("I18N_IT", ctx));
+
+    const identical = Object.keys(en)
+      .filter((k) => typeof en[k] === "string" && en[k] === it[k])
+      .sort();
+    const allowed = new Set(IDENTICAL_BY_DESIGN);
+
+    expect(
+      identical.filter((k) => !allowed.has(k)),
+      "Italian strings identical to English — translate them, or justify them in IDENTICAL_BY_DESIGN",
+    ).toEqual([]);
+    // The list is pruned as well as extended: an entry whose two catalogs have
+    // since diverged is a stale exemption, and leaving it would quietly excuse
+    // whatever key later takes that name.
+    expect(
+      IDENTICAL_BY_DESIGN.filter((k) => !identical.includes(k)),
+      "stale entries in IDENTICAL_BY_DESIGN",
+    ).toEqual([]);
+  });
+
   it("every translated string a call site asks for exists in both catalogs", () => {
     // The previous test compares catalog to catalog: I18N_EN's key set against I18N_IT's.
     // That structurally cannot see a call site whose key was deleted from BOTH catalogs at
