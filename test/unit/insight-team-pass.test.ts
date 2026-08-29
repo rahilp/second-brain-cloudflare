@@ -45,6 +45,11 @@ const PER_TIER: Record<string, string> = {
   "1": "This tier's predictable monthly amount got swapped for pricing tied to actual usage instead.",
   "2": "That flat monthly price got left behind once usage-based charges took over instead.",
   "3": "The predictable dollars per seat gave way to usage-based pricing on the shared plan.",
+  // Tiers 4 and 5 reason to the SAME sentence on purpose, so a run can hold two
+  // candidates in two different companies whose answers collide. Nothing else
+  // in this file seeds them together with tiers 0-3.
+  "4": "Nine dollars a month was predictable, then you chose to move it to usage-based charging instead.",
+  "5": "Nine dollars a month was predictable, then you chose to move it to usage-based charging instead.",
 };
 
 function makeAI() {
@@ -308,9 +313,113 @@ describe("runWeeklyInsights — the workspace slice", () => {
     expect(await statusOf(sqlite, "cand-0")).toBe("used");
   });
 
+  it("does not let one company's insight suppress another company's candidate", async () => {
+    // THE FLOOR IS PER-COMPANY, NOT PER-SLICE. companyWorkspaceIds() returns
+    // every company on the deployment and src/index.ts hands the whole list to
+    // ONE runWeeklyInsights call, so "the reader" under a slice is not a
+    // company — it is all of them at once. Company A's written insights then
+    // sit in company B's novelty floor, and suppression here does not defer a
+    // candidate, it settles it `used`: B's insight is destroyed by content B's
+    // members have never been able to read, and cannot come back next week.
+    //
+    // This is NOT the write-slot competition documented and deferred at
+    // src/index.ts — losing a write slot leaves a candidate `pending`.
+    seedWrittenInsight("prior", WS_CO, PER_TIER["0"]);
+    seedPair(sqlite, 0, WS_CO2, WS_CO2, 10);
+    // A second candidate keeps company A in the drawn slate, so the floor read
+    // really does return A's rows and the per-candidate keying is what has to
+    // keep them away from B. Without it the floor would be narrow only because
+    // the query happened not to ask about A.
+    seedPair(sqlite, 1, WS_CO, WS_CO, 9);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO, WS_CO2] });
+
+    const written = (await insights(sqlite)).filter(r => r.id !== "prior");
+    expect(written.map(r => r.workspace_id).sort()).toEqual([WS_CO, WS_CO2]);
+  });
+
+  it("does not let an insight this run writes for one company suppress another's", async () => {
+    // The within-run half of the same rule. Two companies, two candidates, one
+    // sentence: whichever is reasoned first must not take the other's slot,
+    // because an insight written into company A this minute is no more visible
+    // to company B than one written last week.
+    seedPair(sqlite, 4, WS_CO, WS_CO, 10);
+    seedPair(sqlite, 5, WS_CO2, WS_CO2, 9);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO, WS_CO2] });
+
+    const written = await insights(sqlite);
+    expect(written.map(r => r.workspace_id).sort()).toEqual([WS_CO, WS_CO2]);
+    // Both settled, neither destroyed.
+    expect(await statusOf(sqlite, "cand-4")).toBe("used");
+    expect(await statusOf(sqlite, "cand-5")).toBe("used");
+  });
+
+  it("still suppresses a within-run collision inside ONE company", async () => {
+    // And the guard is not switched off by the keying: two candidates in the
+    // SAME workspace reasoning to the same sentence is what the within-run half
+    // was written for, and the second is still settled `used` rather than
+    // written a second time.
+    seedPair(sqlite, 4, WS_CO, WS_CO, 10);
+    seedPair(sqlite, 5, WS_CO, WS_CO, 9);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO] });
+
+    expect(await insights(sqlite)).toHaveLength(1);
+    expect(await statusOf(sqlite, "cand-5")).toBe("used");
+  });
+
+  it("gives the same answer whether or not the other company exists at all", async () => {
+    // The two runs differ in exactly one thing — whether company A is on the
+    // deployment — and company B's data is identical in both. A floor that
+    // reads across companies makes those two runs disagree, which is the
+    // property that makes this a tenancy defect rather than a tuning choice.
+    const runB = async (withOtherCompany: boolean) => {
+      resetDatabaseInit();
+      const db = makeSqliteD1();
+      const seedWritten = (id: string, ws: string, text: string) => {
+        db.seed({
+          id, createdAt: NOW - DAY, tags: ["auto-insight"],
+          content: `${text}\n\n[Insight: contradiction — drawn from 2 memories]`,
+        });
+        db.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(ws, id).run();
+      };
+      if (withOtherCompany) seedWritten("prior", WS_CO, PER_TIER["0"]);
+      seedPair(db, 0, WS_CO2, WS_CO2, 10);
+      const slice = withOtherCompany ? [WS_CO, WS_CO2] : [WS_CO2];
+      await runWeeklyInsights(envOf(db), ctx, { onlyWorkspaceIds: slice });
+      const out = {
+        written: ((await db.db.prepare(
+          `SELECT COUNT(*) AS n FROM entries WHERE tags LIKE '%"auto-insight"%' AND workspace_id = ?`,
+        ).bind(WS_CO2).first()) as { n: number }).n,
+        status: ((await db.db.prepare(
+          `SELECT status FROM insight_candidates WHERE id = 'cand-0'`,
+        ).first()) as { status: string }).status,
+      };
+      db.close();
+      return out;
+    };
+
+    expect(await runB(true)).toEqual(await runB(false));
+  });
+
+  it("still lets a company's OWN earlier insight suppress it under a multi-company slice", async () => {
+    // The other half. Narrowing the floor to the candidate's own workspace must
+    // not switch it off: an insight the same company received last week is
+    // exactly what the floor exists to catch, slice width notwithstanding.
+    seedWrittenInsight("prior", WS_CO2, PER_TIER["0"]);
+    seedPair(sqlite, 0, WS_CO2, WS_CO2, 10);
+
+    await runWeeklyInsights(envOf(sqlite), ctx, { onlyWorkspaceIds: [WS_CO, WS_CO2] });
+
+    expect((await insights(sqlite)).filter(r => r.id !== "prior")).toHaveLength(0);
+    expect(await statusOf(sqlite, "cand-0")).toBe("used");
+  });
+
   // ── The bound-parameter ceiling ────────────────────────────────────────────
 
   const CANDIDATE_SELECT = /FROM insight_candidates c/;
+  const FLOOR_SELECT = /ROW_NUMBER\(\) OVER \(PARTITION BY workspace_id/;
 
   it("draws a slice too large for one statement to bind, including its last workspace", async () => {
     // Every slice id is bound TWICE — once for `a.workspace_id`, once for
@@ -364,6 +473,44 @@ describe("runWeeklyInsights — the workspace slice", () => {
     // slice is truncated rather than given a third statement — see the case
     // below.
     expect(await draws(98)).toBe(MAX_SLICE_STATEMENTS);
+  });
+
+  it("reads the novelty floor for the drawn candidates' workspaces, not the slice's", async () => {
+    // ONE statement for the floor however wide the slice is, and its
+    // parameters are the workspaces the drawn candidates can actually land in
+    // — at most WEEKLY_CANDIDATE_LIMIT of them — plus the window. Keyed on the
+    // slice instead, a 98-workspace deployment would bind 99 here, which fits
+    // today only because MAX_SLICE_STATEMENTS is 2; raising it puts the floor
+    // over the ceiling with no other change, and D1's rejection is swallowed
+    // by this pass's own catch.
+    const slice = Array.from({ length: 60 }, (_, i) => `ws-co-${i}`);
+    seedPair(sqlite, 0, slice[0], slice[0], 10);
+    const executed: { sql: string; params: number }[] = [];
+    const env = makeTestEnv(undefined, {
+      DB: withBoundParamLimit(sqlite.db, executed) as any,
+      AI: makeAI(), OAUTH_KV: makeMemoryKV(), VECTORIZE: makeVectorizeMock(),
+    }) as Env;
+
+    await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: slice });
+
+    const floor = executed.filter(e => FLOOR_SELECT.test(e.sql));
+    expect(floor).toHaveLength(1);
+    // One workspace drawn, so one workspace bound, plus RECENT_INSIGHT_WINDOW.
+    expect(floor[0].params).toBe(2);
+  });
+
+  it("issues no floor statement at all when nothing was drawn", async () => {
+    // Nothing to compare against nothing. The subrequest is not spent, which
+    // is the same reasoning lookupAuditNames applies to an empty id list.
+    const executed: { sql: string; params: number }[] = [];
+    const env = makeTestEnv(undefined, {
+      DB: withBoundParamLimit(sqlite.db, executed) as any,
+      AI: makeAI(), OAUTH_KV: makeMemoryKV(), VECTORIZE: makeVectorizeMock(),
+    }) as Env;
+
+    await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: ["ws-nope"] });
+
+    expect(executed.filter(e => FLOOR_SELECT.test(e.sql))).toHaveLength(0);
   });
 
   it("spends its write slots by score ACROSS chunks, not chunk by chunk", async () => {

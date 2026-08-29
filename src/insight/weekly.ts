@@ -225,28 +225,68 @@ export async function runWeeklyInsights(
     // shipped, zero unreviewed insights meant zero comparisons and a guard that
     // could not fire at all. Reviewing promptly was switching it off.
     //
-    // Sliced by the SAME workspaces the slate is drawn from, and for the same
-    // reason. The floor asks "has this reader already seen this?"; under a
-    // slice the reader is the company workspace, and an insight one member
-    // received privately is not something the team has seen. Left unsliced it
-    // is one layer's state deciding another layer's output — and not merely by
-    // skipping: a suppressed candidate is settled `used`, so a legitimate
-    // company insight is lost permanently rather than deferred. On a busy
-    // brain the ten-row window is dominated by personal insights, which is the
-    // team layer starved by exactly the competition spec 4.5 exists to end.
+    // THE FLOOR IS PER-WORKSPACE, and that is the whole of what it is.
     //
-    // Each id is bound once here, so this stays one statement (at most
-    // MAX_SLICE_STATEMENTS * 49 + 1 = 99 parameters) rather than needing the
-    // chunking the candidate draw above needs.
-    const floorSliceClause = drawnSliceIds.length
-      ? `AND workspace_id IN (${drawnSliceIds.map(() => "?").join(", ")})`
-      : "";
-    const { results: recentInsightRows } = await env.DB.prepare(
-      // scope-exempt: cron: system-authored novelty floor; content is compared, never returned. floorSliceClause is optionally present and is the same list of workspace IDS read from the `workspaces` table as the draw above, never from a request
-      `SELECT content FROM entries WHERE ${WRITTEN_INSIGHT_SQL}
-       ${floorSliceClause}
-       ORDER BY created_at DESC LIMIT ?`,
-    ).bind(...drawnSliceIds, RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };
+    // The floor asks "has this reader already seen this?", so its answer is a
+    // property of ONE workspace: the reader of an insight filed in W is the
+    // people who can read W, and nobody else. Getting that wrong does not
+    // merely skip a pair — a suppressed candidate is settled `used`, so the
+    // insight is DESTROYED rather than deferred, and the loser cannot come
+    // back next week the way one that lost a write slot can.
+    //
+    // It was first written unsliced, which let a member's personal insight
+    // destroy a company one. Slicing it by the pass's own slice fixed that and
+    // introduced the same fault one level up: companyWorkspaceIds() returns
+    // EVERY company on the deployment and src/index.ts hands the whole list to
+    // one call, so on a two-company deployment company A's last ten insights
+    // sat in company B's floor. "The reader" was never the slice; both
+    // spellings were approximations of the workspace, so this reads the
+    // workspace.
+    //
+    // Keyed on the workspaces the DRAWN candidates can actually land in, not
+    // on the slice: `results` is already in hand, an insight inherits its
+    // inputs' workspace when they agree (the gate below), and a pair whose two
+    // sides disagree is settled without ever reaching the model. That is at
+    // most WEEKLY_CANDIDATE_LIMIT distinct workspaces however wide the slice
+    // is, so this stays ONE statement at 11 bound parameters at the very worst
+    // — no chunking, and strictly narrower than either earlier spelling. With
+    // nothing drawn there is nothing to compare and the statement is not
+    // issued at all.
+    //
+    // ROW_NUMBER over a partition rather than a bare LIMIT: a plain
+    // `ORDER BY created_at DESC LIMIT 10` across several workspaces is a
+    // shared window again by another name, and one busy workspace would crowd
+    // every other one's floor down to nothing. Each workspace gets its own
+    // RECENT_INSIGHT_WINDOW rows, which is what a solo brain — one workspace —
+    // has always had.
+    const floorWorkspaces = [...new Set(
+      results
+        .filter(c => (c.a_workspace_id ?? "") === (c.b_workspace_id ?? ""))
+        .map(c => c.a_workspace_id ?? ""),
+    )];
+    const recentInsightRows: { workspace_id: string; content: string }[] = [];
+    if (floorWorkspaces.length) {
+      const { results: rows } = await env.DB.prepare(
+        // NOT caller-scoped, and it carries no licence saying it is: this is a
+        // cron, there is no caller, and check-scope.mjs is satisfied here on the
+        // merits because the `workspace_id IN (…)` predicate is literal in the
+        // source rather than interpolated the way its sliced predecessor was.
+        // What the list means is "which reader is this candidate measured
+        // against" — the drawn candidates' own workspace ids, read out of
+        // `entries` by the query above and never out of a request. The content
+        // is compared and never returned.
+        `SELECT workspace_id, content FROM (
+           SELECT workspace_id, content,
+                  ROW_NUMBER() OVER (PARTITION BY workspace_id ORDER BY created_at DESC) AS rn
+             FROM entries
+            WHERE ${WRITTEN_INSIGHT_SQL}
+              AND workspace_id IN (${floorWorkspaces.map(() => "?").join(", ")})
+         ) WHERE rn <= ?`,
+      ).bind(...floorWorkspaces, RECENT_INSIGHT_WINDOW).all() as {
+        results: { workspace_id: string; content: string }[]
+      };
+      recentInsightRows.push(...(rows ?? []));
+    }
 
     let written = 0;
     // D2 instrumentation (spec: "if it starts rejecting often, the corpus is
@@ -267,14 +307,31 @@ export async function runWeeklyInsights(
     // keeps the whole batch's statements prepared together — which is what
     // lets it join the status updates as a single subrequest.
     const drawnFromPairs: { insightId: string; targetId: string; workspaceId: string }[] = [];
-    // Texts to compare a new proposal against: insights still unreviewed from
-    // earlier runs, plus (appended below) whatever this run itself accepts.
-    // Two different candidate pairs — in this run, or one from weeks back —
-    // can reason to the same conclusion; a corpus full of near-duplicate
-    // memories makes that common, not rare, and each is a slot this run gets
-    // to spend only three of. Checked independently against each entry
-    // (restatesRecent), never concatenated.
-    const writtenThisRun: string[] = recentInsightRows.map(r => rawInsightText(r.content));
+    // Texts to compare a new proposal against, PER WORKSPACE: the insights that
+    // workspace has already been given, plus (appended below) whatever this run
+    // itself writes into it. Two different candidate pairs — in this run, or one
+    // from weeks back — can reason to the same conclusion; a corpus full of
+    // near-duplicate memories makes that common, not rare, and each is a slot
+    // this run gets to spend only three of. Checked independently against each
+    // entry (restatesRecent), never concatenated.
+    //
+    // The within-run half is keyed the same way as the cross-run half on
+    // purpose: an insight this run writes for company A is no more visible to
+    // company B than one written last week, so letting it suppress B's
+    // candidate would reintroduce the same defect inside a single run.
+    const seenByWorkspace = new Map<string, string[]>();
+    for (const row of recentInsightRows) {
+      const list = seenByWorkspace.get(row.workspace_id ?? "");
+      if (list) list.push(rawInsightText(row.content));
+      else seenByWorkspace.set(row.workspace_id ?? "", [rawInsightText(row.content)]);
+    }
+    const seenIn = (workspaceId: string): string[] => {
+      const list = seenByWorkspace.get(workspaceId);
+      if (list) return list;
+      const fresh: string[] = [];
+      seenByWorkspace.set(workspaceId, fresh);
+      return fresh;
+    };
 
     for (const candidate of results) {
       if (written >= MAX_INSIGHTS_PER_RUN) break;
@@ -360,12 +417,13 @@ export async function runWeeklyInsights(
       // sitting unreviewed. `rejected` is reserved for a pair the model
       // itself declined; marking a restatement `rejected` would make the
       // pass re-propose and re-pay for it on a later run.
-      if (restatesRecent(result.text, writtenThisRun)) {
+      const seenHere = seenIn(insightWorkspace);
+      if (restatesRecent(result.text, seenHere)) {
         restatementsSuppressed++;
         used.push(candidate.id);
         continue;
       }
-      writtenThisRun.push(result.text);
+      seenHere.push(result.text);
 
       // insightWorkspace was settled above, before the pair reached the model.
       const content = `${result.text}\n\n[Insight: ${result.shape} — drawn from 2 memories]`;
