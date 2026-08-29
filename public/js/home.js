@@ -86,11 +86,11 @@ function renderCaptureHint() {
 
 /**
  * At most one coach mark at a time, in a fixed order: what "shared" means, and
- * then — only once that has been dismissed — what "Default" resolves to.
+ * then — only once that has been dismissed — what "Auto" resolves to.
  *
  * Two callouts stacked under a one-line composer is a wall, and the second one
- * is only legible to someone who has already accepted the first: "Default
- * follows your team's policy" presupposes that there is a team layer at all.
+ * is only legible to someone who has already accepted the first: an "Auto"
+ * that resolves to a layer presupposes that there is a team layer at all.
  *
  * When both have been dismissed the second call's own coachDismissed check
  * hides the container — that third state is the primitive's, not this
@@ -112,7 +112,8 @@ function renderComposerCoach() {
     return
   }
   // The second mark points at the hint line directly — "the line above says
-  // where it lands today" — so it waits for that line to exist. When /team/me
+  // where it lands and whose setting decides that" — so it waits for that
+  // line to exist. When /team/me
   // has not answered, renderCaptureHint has just emptied it, and a callout
   // referring to a sentence that is not on screen is worse than no callout.
   // Handing the primitive a null copy is its own hide branch, so this needs no

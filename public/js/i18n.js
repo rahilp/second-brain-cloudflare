@@ -583,11 +583,24 @@ const I18N_EN = {
     dismiss: 'Got it',
     dismissAria: 'Dismiss this tip',
     sharedTitle: 'Shared means the whole team',
+    // Says nothing about where an UNMARKED capture lands: this mark can sit
+    // above a hint reading either “Auto → Personal” or “Auto → Shared”, and the
+    // old second sentence (“stays personal until you share it”) was flatly
+    // false beside the second of those. It also cannot refer to “the line
+    // above”, because it still shows when /team/me has not answered and the
+    // hint line is empty.
     sharedBody:
-      'A shared memory can be found by everyone on this team. Anything you capture stays personal until you share it.',
-    autoTitle: 'What “Default” does',
+      'A shared memory can be found by everyone on this team. A personal one is only ever yours — you decide which, for each memory or by default.',
+    // Named “Auto”, which is what the hint line it points at calls the control.
+    autoTitle: 'What “Auto” means',
+    // True whether the member has set their own default or is inheriting the
+    // org one, because it does not say WHOSE the value is — the hint line
+    // directly above already does, in the same breath as the value itself.
+    // It also names the Team screen control (team.yourCaptureTitle) that Task
+    // 3.2 gave the member: the previous copy called this “your team’s capture
+    // policy”, which taught a member not to look for a setting they now own.
     autoBody:
-      'Default follows your team’s capture policy. The line above says where it lands today — pick Personal or Shared to decide for one memory.',
+      'Auto means you have not picked a layer for this memory. The line above says where it lands and whose setting decides that — change your own under “Your new captures” on the Team screen.',
     lockTitle: 'Only the author can change a shared memory',
     lockBody:
       'Once a memory is shared, only the person who shared it — or an admin — can edit or delete it. Everyone else can read it and link to it.',
@@ -1174,10 +1187,10 @@ const I18N_IT = {
     dismissAria: 'Chiudi questo suggerimento',
     sharedTitle: 'Condiviso vuol dire tutto il team',
     sharedBody:
-      'Un ricordo condiviso è consultabile da tutte le persone del team. Ciò che salvi resta personale finché non lo condividi.',
-    autoTitle: 'Che cosa fa “Predefinito”',
+      'Un ricordo condiviso è consultabile da tutte le persone del team. Uno personale resta solo tuo: decidi tu quale sia, per ogni ricordo o come impostazione predefinita.',
+    autoTitle: 'Che cosa significa “Auto”',
     autoBody:
-      '“Predefinito” segue la politica di acquisizione del team. La riga qui sopra dice dove finisce oggi: scegli Personale o Condiviso per decidere per un singolo ricordo.',
+      '“Auto” vuol dire che non hai scelto un livello per questo ricordo. La riga qui sopra dice dove finisce e quale impostazione lo decide: cambia la tua in “Le tue nuove acquisizioni”, nella schermata Team.',
     lockTitle: 'Solo chi l’ha condiviso può modificarlo',
     lockBody:
       'Quando un ricordo è condiviso, solo chi l’ha condiviso — o un amministratore — può modificarlo o eliminarlo. Le altre persone possono leggerlo e collegarlo.',

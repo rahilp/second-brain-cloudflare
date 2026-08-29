@@ -214,10 +214,10 @@ describe("composer coach marks", () => {
     const mark = els.get("coach-home");
     expect(mark.hidden).toBe(false);
     expect(mark.innerHTML).toContain("Shared means the whole team");
-    expect(mark.innerHTML).not.toContain("What “Default” does");
+    expect(mark.innerHTML).not.toContain("What “Auto” means");
   });
 
-  it("moves on to what Default does only once the first mark is dismissed", async () => {
+  it("moves on to what Auto means only once the first mark is dismissed", async () => {
     // The ordering is this feature's whole design: "shared means the whole
     // team" is the fact the second sentence presupposes, and a new member
     // shown both at once reads neither.
@@ -228,7 +228,7 @@ describe("composer coach marks", () => {
     ctx.renderCaptureHint();
     const mark = els.get("coach-home");
     expect(mark.hidden).toBe(false);
-    expect(mark.innerHTML).toContain("What “Default” does");
+    expect(mark.innerHTML).toContain("What “Auto” means");
     expect(mark.innerHTML).not.toContain("Shared means the whole team");
   });
 
@@ -278,7 +278,7 @@ describe("composer coach marks", () => {
     expect(els.get("coach-home").innerHTML).toContain("Shared means the whole team");
   });
 
-  it("withholds the Default mark when there is no hint line for it to point at", async () => {
+  it("withholds the Auto mark when there is no hint line for it to point at", async () => {
     // Its body reads "the line above says where it lands today". With /team/me
     // unanswered the hint is empty and hidden, so the sentence would be
     // pointing at nothing.
@@ -290,6 +290,108 @@ describe("composer coach marks", () => {
     expect(els.get("home-layer-hint").textContent).toBe("");
     expect(els.get("coach-home").hidden).toBe(true);
     expect(els.get("coach-home").innerHTML).toBe("");
+  });
+
+  // ── The coach copy and the line it sits beside, asserted AS A PAIR ──────────
+  //
+  // Group D wrote the coach copy against a world in which Group C's
+  // member-owned capture default did not exist, and neither group could see
+  // the other's screen. Nothing caught it, because every existing assertion
+  // here reads ONE string at a time — a catalog entry, or one rendered mark.
+  // Two strings that are each individually fine and jointly contradictory are
+  // invisible to that shape of test, so these three read the rendered pair.
+
+  /** The four capture-default profiles the composer hint can describe. */
+  const PROFILES = [
+    { defaultShare: "personal", orgDefault: "company", effectiveDefault: "personal" },
+    { defaultShare: "", orgDefault: "personal", effectiveDefault: "personal" },
+    { defaultShare: "company", orgDefault: "personal", effectiveDefault: "company" },
+    { defaultShare: "", orgDefault: "company", effectiveDefault: "company" },
+  ];
+
+  /**
+   * Renders the hint and BOTH coach bodies for one profile and locale.
+   *
+   * Both marks matter: only one is on screen at a time, but they occupy the
+   * same slot under the same line, so either can end up beside any hint.
+   */
+  async function renderPair(profile: Record<string, unknown>, locale: "en" | "it") {
+    const { fn } = teamMeFetch(profile);
+    const { ctx, els } = setup(fn);
+    ctx.initI18n(locale);
+    await ctx.maybeRevealHomeLayer({ team: true });
+    const hint = els.get("home-layer-hint").textContent as string;
+    const sharedMark = els.get("coach-home").innerHTML as string;
+    ctx.dismissCoachMark("shared", "coach-home");
+    ctx.renderCaptureHint();
+    const autoMark = els.get("coach-home").innerHTML as string;
+    return { ctx, hint, sharedMark, autoMark };
+  }
+
+  /**
+   * Claims that an unmarked capture lands PERSONAL by default, per locale.
+   *
+   * Curated phrases rather than a general-purpose parser: the contradiction is
+   * semantic, and no regex over free prose can find it in the abstract. What
+   * makes this bind is that it is checked against the SHARED-default profiles,
+   * where any such claim is false no matter how it is worded — so a rewrite
+   * that reintroduces the contradiction with new words fails the "names the
+   * same destination" assertion below even if it dodges these.
+   */
+  const PERSONAL_BY_DEFAULT = {
+    en: [/stays personal until/i, /(?:captures?|memor(?:y|ies)) (?:stay|stays|are|is) personal/i],
+    it: [/resta personale finché/i, /(?:acquisizioni|ricordi) (?:restano|resta) personal/i],
+  } as const;
+
+  it("never claims captures stay personal beside a hint that says they are shared", async () => {
+    for (const locale of ["en", "it"] as const) {
+      for (const profile of PROFILES.filter((p) => p.effectiveDefault === "company")) {
+        const { hint, sharedMark, autoMark } = await renderPair(profile, locale);
+        for (const [name, html] of [["shared", sharedMark], ["auto", autoMark]] as const) {
+          for (const claim of PERSONAL_BY_DEFAULT[locale]) {
+            expect(
+              claim.test(html),
+              `${locale}/${name} coach body claims captures stay personal, directly under ` +
+                `a hint that reads "${hint}" (profile ${JSON.stringify(profile)})`,
+            ).toBe(false);
+          }
+        }
+      }
+    }
+  });
+
+  it("names the control the same way the line beside it does", async () => {
+    // The hint leads with the control's name, up to the arrow: "Auto → …".
+    // The coach mark explaining that control has to use that name — one
+    // control called two things an inch apart is the same defect as one
+    // control described two ways, just cheaper to see.
+    for (const locale of ["en", "it"] as const) {
+      const { hint, autoMark } = await renderPair(PROFILES[3], locale);
+      const controlName = hint.split("→")[0].trim();
+      expect(controlName, `hint "${hint}" has no name before the arrow`).not.toBe("");
+      expect(
+        autoMark,
+        `the coach mark for the ${locale} hint "${hint}" does not name its control "${controlName}"`,
+      ).toContain(controlName);
+    }
+  });
+
+  it("sends the member to the control they can actually change it with", async () => {
+    // Task 3.2 gave the member their own capture default, on the Team screen.
+    // A tip that describes the value as the team's policy teaches them not to
+    // look for a control they now have. Asserted against the section heading
+    // the Team screen itself renders, so the two cannot drift apart.
+    for (const locale of ["en", "it"] as const) {
+      for (const profile of PROFILES) {
+        const { ctx, autoMark, hint } = await renderPair(profile, locale);
+        const section = ctx.t("team.yourCaptureTitle") as string;
+        expect(
+          autoMark,
+          `the ${locale} Auto tip beside "${hint}" does not point at the Team screen's ` +
+            `"${section}" control (profile ${JSON.stringify(profile)})`,
+        ).toContain(section);
+      }
+    }
   });
 
   it("translates the first mark into Italian", async () => {
