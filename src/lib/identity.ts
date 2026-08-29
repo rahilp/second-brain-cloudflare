@@ -77,10 +77,56 @@ const IDENTITY_FROM =
 
 const IDENTITY_SQL =
   `SELECT u.id AS userId, u.role AS role, u.default_share AS defaultShare,` +
+  ` u.last_used_at AS lastUsedAt,` +
   ` p.id AS personalWorkspaceId, ${COMPANY_WORKSPACES_SELECT}` +
   IDENTITY_FROM +
   ` WHERE u.token_hash = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)` +
   ` GROUP BY u.id`;
+
+/**
+ * How stale `users.last_used_at` is allowed to be. One hour.
+ *
+ * This column is informational — it answers "is this token still in use?" on the
+ * admin roster and nothing else reads it — so it is bought at the cheapest price
+ * that still answers that question. Identity resolves on EVERY request, and an
+ * unthrottled stamp would be one D1 row written per request against a plan that
+ * caps writes per day; at one write per user per hour it cannot move that budget
+ * whatever the traffic.
+ *
+ * Two costs come with it, both accepted deliberately:
+ *
+ *  - The value can be up to an hour behind. "Last used 3 minutes ago" and "last
+ *    used 40 minutes ago" are the same answer to the only question being asked.
+ *  - A write can be dropped entirely. It is issued as a floating promise because
+ *    requireIdentity has no ExecutionContext to hand it to, and threading one
+ *    through the ~40 call sites is a far larger change than this metadata is
+ *    worth. The runtime may cancel it when the response finishes. The next
+ *    request an hour later simply retries, so the worst case is a timestamp that
+ *    is older than the truth — never one that is newer, and never a failed
+ *    request. Do not await it: that would put a D1 write on the latency path of
+ *    every request in the deployment.
+ */
+export const LAST_USED_THROTTLE_MS = 3_600_000;
+
+const LAST_USED_UPDATE_SQL = `UPDATE users SET last_used_at = ? WHERE id = ?`;
+
+/**
+ * Stamp last_used_at, at most once per user per hour. Never throws and never
+ * blocks — see LAST_USED_THROTTLE_MS for why both of those are deliberate.
+ */
+function touchLastUsed(env: Env, userId: string, lastUsedAt: number | null): void {
+  const now = Date.now();
+  if (now - (lastUsedAt ?? 0) <= LAST_USED_THROTTLE_MS) return;
+  try {
+    void env.DB.prepare(LAST_USED_UPDATE_SQL)
+      .bind(now, userId)
+      .run()
+      .catch((e) => console.error("last_used_at update failed (non-fatal):", e));
+  } catch (e) {
+    // prepare/bind can throw synchronously, which .catch() above would not see.
+    console.error("last_used_at update failed (non-fatal):", e);
+  }
+}
 
 /**
  * Resolve the caller's identity from their token, bootstrapping the tenancy rows
@@ -152,8 +198,11 @@ export async function resolveIdentityFromToken(token: string, env: Env): Promise
   await ensureIdentityReady(env);
   const row = await env.DB.prepare(IDENTITY_SQL)
     .bind(await hashToken(token))
-    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaces: string | null }>();
+    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaces: string | null; lastUsedAt: number | null }>();
   if (!row) return null;
+  // Only here, not in resolveIdentityByUserId below: this is the one path that
+  // proves someone presented the token, which is what the column reports.
+  touchLastUsed(env, row.userId, row.lastUsedAt ?? null);
   return rowToIdentity(row);
 }
 

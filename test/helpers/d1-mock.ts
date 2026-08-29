@@ -49,6 +49,7 @@ const SCHEMA_PROBE_RESULTS = [
   { kind: "edge_column", name: "workspace_id" },
   { kind: "user_column", name: "default_share" },
   { kind: "user_column", name: "removed_at" },
+  { kind: "user_column", name: "last_used_at" },
 ];
 
 export class D1Mock {

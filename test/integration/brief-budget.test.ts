@@ -77,11 +77,38 @@ describe("GET /brief", () => {
     // Six reads, run concurrently, plus v3's fixed identity cost on this first
     // request against a fresh database: one token→identity join, and the
     // one-time tenant bootstrap (two lookups + one provisioning batch — memoised
-    // per database, so later app opens pay only the join). 6 + 1 + 3 = 10. If
+    // per database, so later app opens pay only the join). 6 + 1 + 3 = 10, and
+    // one more for the users.last_used_at stamp, which this request owes because
+    // the column is NULL on a brain nobody has authenticated against yet. If
     // this goes up further, the endpoint got more expensive for every user on
     // every app open — that is the decision this assertion asks you to make
     // deliberately.
-    expect(sq.issued).toHaveLength(10);
+    expect(sq.issued).toHaveLength(11);
+  });
+
+  it("does not pay the last_used_at stamp again on the next app open", async () => {
+    // The throttle is what keeps the line above a once-an-hour cost rather than
+    // a permanent one. Without it every request in the deployment would carry
+    // an extra D1 write, which is the version of this feature that would not be
+    // worth shipping.
+    sq = await migrated();
+    sq.seed({ id: "id-0", content: "Memory", createdAt: Date.now() - HOUR });
+    // One env, so the tenant bootstrap memo (keyed on env.DB) survives between
+    // the two requests the way it does in production.
+    const env = envOf(sq);
+    await worker.fetch(req("GET", "/brief"), env, ctx);
+    await new Promise((resolve) => setImmediate(resolve)); // the stamp is un-awaited
+    const cold = sq.issued.length;
+    sq.issued.length = 0;
+
+    const res = await worker.fetch(req("GET", "/brief"), env, ctx);
+
+    expect(res.status).toBe(200);
+    expect(sq.issued.filter(s => /SET last_used_at/.test(s))).toEqual([]);
+    // Six reads and the identity join. Everything else the first open paid for
+    // — the bootstrap and the stamp — is gone.
+    expect(sq.issued).toHaveLength(7);
+    expect(cold).toBeGreaterThan(sq.issued.length);
   });
 
   it("reports what arrived and where it came from", async () => {

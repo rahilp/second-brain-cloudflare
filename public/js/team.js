@@ -154,7 +154,14 @@ function teamMemberRow(m) {
     m.suspended ? `<span class="tag-chip">${escHtml(t('team.suspendedChip'))}</span>` : '',
   ]
     .join('')
-  const subline = [m.email, tPlural('team.privateEntries', Number(m.privateEntries) || 0)]
+  // Whether a token is still in use is the question an admin is actually asking
+  // before they rotate or suspend one. Up to an hour stale by design, so the
+  // relative form is the honest one — an exact clock time would claim a
+  // precision the throttled write does not have.
+  const lastUsed = Number(m.lastUsedAt) > 0
+    ? t('team.lastUsed', { when: relativeTime(m.lastUsedAt) })
+    : t('team.lastUsedNever')
+  const subline = [m.email, tPlural('team.privateEntries', Number(m.privateEntries) || 0), lastUsed]
     .filter(Boolean)
     .map(escHtml)
     .join(' · ')
