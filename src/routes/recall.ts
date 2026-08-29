@@ -7,7 +7,7 @@ import { CORS_HEADERS, intParam, json, readWorkspaceParam } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
 import { assertCanMutateEntry } from "../lib/entry-access";
 import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
-import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
+import { lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../lib/actors";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { recallEntries } from "../recall/search";
 import { allowanceFor, snippetOf } from "../recall/snippet";
@@ -52,8 +52,19 @@ export async function handleRecallRoutes(
     if (before instanceof Response) return before;
     const workspace = readWorkspaceParam(url);
     if (workspace instanceof Response) return workspace;
+    // Who wrote it, as a filter. Resolved here rather than in the builder
+    // because resolution needs the caller's identity: the value that reaches
+    // SQL is always a user id from the caller's own roster, so `?actor=` can
+    // narrow the scoped listing and can never reach outside it.
+    const actorParam = url.searchParams.get("actor")?.trim();
+    let actor: string | undefined;
+    if (actorParam) {
+      const resolved = await resolveActorFilter(env, identity, actorParam);
+      if (!resolved.ok) return json({ ok: false, error: resolved.error }, 400);
+      actor = resolved.actorId;
+    }
 
-    const { sql, bindings } = scopeEntryFilterQuery(identity, buildEntryFilterQuery({ n, tag, after, before }), workspace);
+    const { sql, bindings } = scopeEntryFilterQuery(identity, buildEntryFilterQuery({ n, tag, after, before, actor }), workspace);
     const { results } = await env.DB.prepare(sql).bind(...bindings).all();
     const rows = results as Record<string, unknown>[];
     // Each row reports its layer so the dashboard can badge cards and offer

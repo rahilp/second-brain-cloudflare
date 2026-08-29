@@ -18,6 +18,14 @@ export function buildEntryFilterQuery(params: {
   tag?: string;
   after?: number;
   before?: number;
+  /**
+   * A single resolved actor_id, already checked against the caller's roster by
+   * resolveActorFilter (src/lib/actors.ts). One id, never a list: the filter has
+   * to stay ONE predicate with ONE binding, because binding one parameter per
+   * author is what put the author-label lookup over D1's 100-parameter ceiling
+   * on a large team and 500'd the request.
+   */
+  actor?: string;
 }): { sql: string; bindings: (string | number)[] } {
   const conds: string[] = [];
   const bindings: (string | number)[] = [];
@@ -26,6 +34,9 @@ export function buildEntryFilterQuery(params: {
   // list everything. A read, so over-broad rather than destructive — but a filter that
   // silently stops filtering is worse than one that returns nothing.
   if (params.tag) { conds.push(`tags LIKE ? ${TAG_LIKE_ESCAPE}`); bindings.push(tagLikePattern(params.tag)); }
+  // An equality on one id, ANDed with everything else including the caller's
+  // scope clause — so it can only ever narrow what the scope already allowed.
+  if (params.actor) { conds.push(`actor_id = ?`); bindings.push(params.actor); }
   if (params.after !== undefined) { conds.push(`created_at >= ?`); bindings.push(params.after); }
   if (params.before !== undefined) { conds.push(`created_at <= ?`); bindings.push(params.before); }
 
