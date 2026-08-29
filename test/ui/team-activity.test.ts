@@ -466,8 +466,8 @@ describe("the Team tab's activity reveal", () => {
  *
  * The entry arm does filter, to exactly four names, and that filter lives in
  * the route handler — which is not on this base. It is declared once below,
- * as ENTRY_EVENTS_IN_FEED, and the post-merge step is to point that constant
- * at the route's literal instead of at this comment.
+ * as ENTRY_EVENTS_IN_FEED, read directly out of the route's own clause, so
+ * both arms of the feed are anchored to source rather than to a copy.
  */
 describe("the activity feed's event vocabulary", () => {
   /** Members of a TypeScript string-literal union, read out of src/. */
@@ -492,31 +492,34 @@ describe("the activity feed's event vocabulary", () => {
   }
 
   /**
-   * The four entry-arm names the route's `event IN (…)` admits.
+   * The entry-arm names the route's `event IN (…)` really admits, read out of
+   * the handler itself.
    *
-   * POST-MERGE: replace this literal with a read of that clause in the route
-   * handler, the same way the admin arm is read out of src/lib/admin-audit.ts
-   * below. Until then this is the one hand-maintained edge in the chain.
+   * Both arms are now anchored to source: the admin arm to AdminEventName, this
+   * one to the clause that filters it. Nothing in this chain is a copy of a
+   * name, so adding an event to the route without teaching the UI to label it
+   * fails here rather than rendering a blank row in front of an auditor.
    */
-  const ENTRY_EVENTS_IN_FEED = ["shared", "unshared", "insight_confirmed", "insight_dismissed"];
+  function routeEntryEvents(): string[] {
+    const src = readFileSync(resolve(ROOT, "src/routes/admin.ts"), "utf8");
+    const m = src.match(/WHERE ev\.event IN \(([^)]*)\)/);
+    if (!m) throw new Error("the entry-arm event filter was not found in src/routes/admin.ts");
+    const names = [...m[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]);
+    if (names.length === 0) throw new Error("the entry-arm event filter parsed to nothing");
+    return names;
+  }
+
+  const ENTRY_EVENTS_IN_FEED = routeEntryEvents();
 
   /**
    * Names the endpoint emits that src/ does not declare on THIS base — they
    * arrive with the sibling worktree that builds the route. Once declared,
    * they are picked up by the live parse and this list is merely redundant.
    */
-  const NOT_YET_DECLARED_IN_SRC = [
-    "integration_connected",
-    "integration_disconnected",
-    "insight_confirmed",
-    "insight_dismissed",
-  ];
-
   const admitted = () => [
     ...new Set([
       ...tsUnionMembers("src/lib/admin-audit.ts", "AdminEventName"),
       ...ENTRY_EVENTS_IN_FEED,
-      ...NOT_YET_DECLARED_IN_SRC,
     ]),
   ];
 
@@ -543,9 +546,7 @@ describe("the activity feed's event vocabulary", () => {
 
   it("keeps the entry-arm names it lists anchored to EntryEventName", () => {
     const declared = new Set(tsUnionMembers("src/lib/audit.ts", "EntryEventName"));
-    const unanchored = ENTRY_EVENTS_IN_FEED.filter(
-      (e) => !declared.has(e) && !NOT_YET_DECLARED_IN_SRC.includes(e),
-    );
+    const unanchored = ENTRY_EVENTS_IN_FEED.filter((e) => !declared.has(e));
     expect(unanchored, "entry events the feed lists that src/ no longer declares").toEqual([]);
     // The two that are anchored today really are, so a rename in src/ trips it.
     expect(declared.has("shared") && declared.has("unshared")).toBe(true);
