@@ -82,7 +82,9 @@ function sessionEnded(code) {
 /**
  * One interceptor rather than 45 call sites. Every authenticated request in
  * the dashboard goes through the global fetch, and nothing else does; the
- * response is returned untouched, so no caller's behaviour changes.
+ * response is returned untouched, and — see the detached read below — at the
+ * same moment native fetch would have returned it, so no caller's behaviour
+ * and no caller's TIMING changes.
  */
 function installAuthWatch(scope) {
   const target = scope || (typeof globalThis !== 'undefined' ? globalThis : null)
@@ -99,10 +101,22 @@ function installAuthWatch(scope) {
     // slash from what it stores and all 45 call sites build `${WORKER_URL}/…`,
     // so this excludes nothing the dashboard actually asks for.
     if (reqUrl !== WORKER_URL && !reqUrl.startsWith(WORKER_URL + '/')) return res
-    try {
-      const body = await res.clone().json()
-      if (body && body.code) sessionEnded(body.code)
-    } catch {}
+    // DETACHED, not awaited. `await res.clone().json()` would hold the caller
+    // until the body finished streaming, while native fetch resolves at the
+    // HEADERS — so a 401 whose body is slow (or never lands) would stall every
+    // one of the 45 call sites behind a wrapper that is supposed to be
+    // invisible. Reading it on its own chain restores native timing and only
+    // moves the sign-out later, never away: sessionEnded still runs the moment
+    // the body arrives. The `.catch` is load-bearing now that nothing awaits
+    // this — a truncated or non-JSON body would otherwise become an unhandled
+    // rejection with no owner.
+    res
+      .clone()
+      .json()
+      .then((body) => {
+        if (body && body.code) sessionEnded(body.code)
+      })
+      .catch(() => {})
     return res
   }
 }

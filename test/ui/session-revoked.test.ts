@@ -191,6 +191,36 @@ function setup(locale: "en" | "it" = "en", missing: string[] = []) {
 const unauthorized = (code: string | undefined, counters: { clones: number }) =>
   makeResponse(401, code ? { ok: false, error: "x", code } : { ok: false, error: "x" }, counters);
 
+/**
+ * A Response whose body is still in flight, and a handle to land it later.
+ *
+ * Every earlier test in this file hands the interceptor a body that is already
+ * resolved, so `await res.clone().json()` costs one microtask and the caller
+ * never notices it happened. That is precisely why three reviews read the
+ * wrapper as timing-neutral. Native `fetch` resolves when the HEADERS arrive;
+ * a body that has not finished streaming is normal, not pathological, and a
+ * wrapper that awaits it changes when all 45 call sites resume.
+ */
+function makeStalledResponse(status: number, counters: { clones: number }) {
+  let land: (body: unknown) => void = () => {};
+  const body = new Promise<unknown>((resolve) => {
+    land = resolve;
+  });
+  const stub: Stub = {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => body,
+    clone: () => {
+      counters.clones++;
+      return { status, json: () => body };
+    },
+  };
+  return { stub, land: (value: unknown) => land(value) };
+}
+
+/** Resolves after the macrotask queue turns, so any pending `.then` has run. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 describe("a revoked token ends the session", () => {
   it("drops a suspended member back to the overlay, keeping only the address", async () => {
     const h = setup();
@@ -469,6 +499,90 @@ describe("a revoked token ends the session", () => {
     );
     expect(h.token()).toBe("");
     expect(h.removed).toContain("sb_token");
+  });
+
+  it("resolves the caller at the headers, not at the end of the body", async () => {
+    const h = setup();
+    h.signedIn();
+    h.ctx.installAuthWatch(h.ctx);
+    const stalled = makeStalledResponse(401, h.counters);
+    h.respondWith(() => stalled.stub);
+
+    // The wrapper must hand the Response back the moment the native fetch does.
+    // A body that never lands is the honest stand-in for one that lands slowly:
+    // if the caller's `await fetch(...)` is chained to the body at all, this
+    // race is won by the timer and every one of the 45 call sites inherits a
+    // hang the native API would never have given them.
+    const TIMED_OUT = Symbol("still unresolved");
+    const winner = await Promise.race([
+      h.ctx.fetch("http://localhost/list?n=50"),
+      new Promise((resolve) => setTimeout(() => resolve(TIMED_OUT), 150)),
+    ]);
+
+    expect(winner, "fetch() did not resolve until the body did").toBe(stalled.stub);
+  });
+
+  it("still ends the session when the stalled body finally arrives", async () => {
+    const h = setup();
+    h.signedIn();
+    h.ctx.installAuthWatch(h.ctx);
+    const stalled = makeStalledResponse(401, h.counters);
+    h.respondWith(() => stalled.stub);
+
+    // The other half of the trade: returning early must not mean giving up on
+    // the reason. Detaching the read moves the sign-out later, not away.
+    const TIMED_OUT = Symbol("still unresolved");
+    const winner = await Promise.race([
+      h.ctx.fetch("http://localhost/list?n=50"),
+      new Promise((resolve) => setTimeout(() => resolve(TIMED_OUT), 150)),
+    ]);
+    expect(winner).toBe(stalled.stub);
+    // Nothing has been read yet, so nothing has been decided yet.
+    expect(h.els.get("auth-error").writes).toBe(0);
+    expect(h.token()).toBe("a-real-looking-token");
+
+    stalled.land({ ok: false, error: "x", code: "suspended" });
+    await settle();
+
+    expect(h.els.get("auth-error").textContent).toBe(
+      "Your account is suspended. Ask a team admin to restore it.",
+    );
+    expect(h.els.get("auth-error").writes).toBe(1);
+    expect(h.token()).toBe("");
+    expect(h.removed).toContain("sb_token");
+  });
+
+  it("does not reject the caller when a detached body read blows up later", async () => {
+    const h = setup();
+    h.signedIn();
+    h.ctx.installAuthWatch(h.ctx);
+    let reject: (e: unknown) => void = () => {};
+    const body = new Promise<unknown>((_, r) => {
+      reject = r;
+    });
+    const original: Stub = {
+      ok: false,
+      status: 401,
+      json: () => body,
+      clone: () => {
+        h.counters.clones++;
+        return { status: 401, json: () => body };
+      },
+    };
+    h.respondWith(() => original);
+
+    // Once the read is detached it is no longer inside the caller's await, so
+    // its rejection can only surface as an unhandled rejection. The `.catch`
+    // on the chain is what keeps a truncated body from becoming a console
+    // error with no owner.
+    const res = await h.ctx.fetch("http://localhost/list?n=50");
+    expect(res).toBe(original);
+
+    reject(new TypeError("network error while reading body"));
+    await settle();
+
+    expect(h.token()).toBe("a-real-looking-token");
+    expect(h.els.get("auth-error").writes).toBe(0);
   });
 
   it("wraps the global fetch once however many times it is installed", async () => {
