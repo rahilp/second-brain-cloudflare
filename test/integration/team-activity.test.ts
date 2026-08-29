@@ -11,17 +11,22 @@
  *    "rows come back" test and silently drop rows the moment one trail is
  *    busier than the other, so the interleave case below is written to fail
  *    against that implementation specifically.
- *  - SCOPE on the memory half. requireAdmin authorises a SURFACE; it never
- *    widens which memory rows a caller may read. A share event an admin may
- *    read must still not hand back the text of a memory that has since moved
- *    into someone's personal layer.
+ *  - SCOPE on the memory arm, AT THE ROW. requireAdmin authorises a SURFACE; it
+ *    never widens which memory rows a caller may read. An event naming a memory
+ *    the caller cannot read is not in the feed at all — not its text, not its
+ *    id, not its actor, not the workspace id in its detail. A row hidden in one
+ *    column and disclosed in three others is not scoped, which is why the
+ *    second-company block below exists: every same-company case passes with the
+ *    predicate on either side of the join and so can never tell the two apart.
  *  - NAMES, never ids, in `actor` and `subject` — including for the two events
  *    an auditor most needs, member_suspended and member_removed, whose subjects
- *    are exactly the people listRoster deliberately hides.
+ *    are exactly the people listRoster deliberately hides. Two states only:
+ *    a name or null, never "".
  *
- * Timestamps are driven by a stubbed clock. Every event in this file is written
- * within the same millisecond of wall time otherwise, and an ordering assertion
- * over tied keys asserts nothing.
+ * Timestamps are driven by a stubbed clock, so "newest first" is a fact rather
+ * than a coin toss. The one place ties are deliberate is the tied-timestamp
+ * paging case, which is what production actually produces — a bulk resolve
+ * stamps ~97 rows with one Date.now().
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import worker from "../../src/index";
@@ -82,23 +87,30 @@ async function activity(query = ""): Promise<any> {
   return jsonOf(res);
 }
 
-async function adminRow(at: number, event: string, actorId = "", targetId = ""): Promise<void> {
+/** `id` and `payload` are overridable so a test can build a deliberate tie. */
+interface RowOpts { id?: string; payload?: string }
+
+async function adminRow(
+  at: number, event: string, actorId = "", targetId = "", opts: RowOpts = {},
+): Promise<void> {
   await sqlite.db
     .prepare(
       `INSERT INTO admin_events (id, actor_id, target_user_id, workspace_id, event, payload, created_at)
-       VALUES (?, ?, ?, '', ?, '{}', ?)`,
+       VALUES (?, ?, ?, '', ?, ?, ?)`,
     )
-    .bind(`ae-${at}-${event}`, actorId, targetId, event, at)
+    .bind(opts.id ?? `ae-${at}-${event}`, actorId, targetId, event, opts.payload ?? "{}", at)
     .run();
 }
 
-async function entryRow(at: number, event: string, entryId: string, actorId = ""): Promise<void> {
+async function entryRow(
+  at: number, event: string, entryId: string, actorId = "", opts: RowOpts = {},
+): Promise<void> {
   await sqlite.db
     .prepare(
       `INSERT INTO entry_events (id, entry_id, actor_id, event, payload, created_at)
-       VALUES (?, ?, ?, ?, '{}', ?)`,
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .bind(`ee-${at}-${event}`, entryId, actorId, event, at)
+    .bind(opts.id ?? `ee-${at}-${event}`, entryId, actorId, event, opts.payload ?? "{}", at)
     .run();
 }
 
@@ -270,6 +282,10 @@ describe("GET /team/activity — ordering and paging", () => {
       await adminRow(clock, "member_created");
       times.push(clock);
       tick();
+      // The memory has to EXIST and be readable: the entry arm is scoped at the
+      // row, so an event naming an entry the caller cannot read is not in the
+      // feed at all and there would be nothing to interleave.
+      await entry(`e-${i}`, `Memory ${i}`, roots.companyWorkspaceId, bob.member.userId);
       await entryRow(clock, "shared", `e-${i}`);
       times.push(clock);
     }
@@ -309,10 +325,43 @@ describe("GET /team/activity — ordering and paging", () => {
     // page is short, which is how it stops.
     expect(third.events.length).toBeLessThan(3);
   });
+
+  it("pages TIED timestamps deterministically, in both trails at once", async () => {
+    // The case the rest of this file's stubbed clock deliberately avoids, and
+    // the case production produces on purpose: POST /patterns/resolve writes
+    // one entry_events row per resolved id in a tight loop, so a 97-id resolve
+    // stamps ~97 rows with the same Date.now(). `ORDER BY created_at DESC`
+    // alone leaves the window boundary to whatever order the sorter happens to
+    // emit a tie group in, which is the classic skip/duplicate across pages.
+    //
+    // Six rows, one millisecond, alternating trails, ids chosen so the
+    // tiebreaker's answer is knowable: the marker in `detail.n` must come back
+    // 6..1 whichever way the rows are paged.
+    await entry("e-tie", "Tied memory", roots.companyWorkspaceId, bob.member.userId);
+    for (let n = 1; n <= 6; n++) {
+      const opts = { id: `tie-${n}`, payload: JSON.stringify({ n }) };
+      if (n % 2) await adminRow(clock, "member_created", roots.ownerUserId, "", opts);
+      else await entryRow(clock, "shared", "e-tie", bob.member.userId, opts);
+    }
+
+    const whole = await activity();
+    expect(new Set(whole.events.map((e: any) => e.at)).size).toBe(1);
+    expect(whole.events.map((e: any) => e.detail.n)).toEqual([6, 5, 4, 3, 2, 1]);
+
+    const pages = [
+      ...(await activity("?limit=2&offset=0")).events,
+      ...(await activity("?limit=2&offset=2")).events,
+      ...(await activity("?limit=2&offset=4")).events,
+    ];
+    // Same order, and — the property that actually matters — every row exactly
+    // once across the three pages.
+    expect(pages.map((e: any) => e.detail.n)).toEqual([6, 5, 4, 3, 2, 1]);
+    expect(new Set(pages.map((e: any) => e.detail.n)).size).toBe(6);
+  });
 });
 
 describe("GET /team/activity — scope", () => {
-  it("never hands back the text of a memory the admin cannot read", async () => {
+  it("returns NO ROW AT ALL for a memory the admin cannot read", async () => {
     const SECRET = "Bob's private salary negotiation notes";
     // Bob shares, then un-shares: the row now lives in Bob's personal layer.
     await entry("e-bob", SECRET, bob.member.personalWorkspaceId, bob.member.userId);
@@ -328,13 +377,12 @@ describe("GET /team/activity — scope", () => {
     // reaches any other key is still a leak.
     expect(raw).not.toContain(SECRET);
     expect(raw).not.toContain("salary");
+    // And not the id either. A null title with the row still present is HALF
+    // scoped: the row is hidden in one column and disclosed in three others.
+    expect(raw).not.toContain("e-bob");
 
     const body = JSON.parse(raw);
-    expect(body.events.map((e: any) => e.event)).toEqual(["unshared", "shared"]);
-    // Both events are visible — the admin may read that it happened.
-    expect(body.events[0].title).toBeNull();
-    expect(body.events[1].title).toBeNull();
-    expect(body.events[0].entryId).toBe("e-bob");
+    expect(body.events).toEqual([]);
   });
 
   it("names a memory the admin CAN read, first line only, truncated at 120", async () => {
@@ -348,14 +396,24 @@ describe("GET /team/activity — scope", () => {
     expect(body.events[0].title).not.toContain("second line");
   });
 
-  it("keeps the share event of a deleted entry, with a null title", async () => {
-    // The LEFT JOIN's other reason: a trail that loses its rows when the thing
-    // they are about is deleted is not a trail.
+  it("DROPS the share event of a deleted entry — the documented limit of a scoped arm", async () => {
+    // Pinned as a known, accepted loss rather than left to be discovered.
+    //
+    // entry_events carries no workspace column, so the ONLY way to decide
+    // whether a row belongs to the caller is to join the entry it names. Once
+    // that entry is gone there is nothing left to decide with, and a row that
+    // cannot be attributed cannot be shown without showing every other
+    // company's deleted rows along with it. So share/unshare history for a
+    // DELETED memory does not appear in this feed.
+    //
+    // Keeping it would require either a workspace column on entry_events —
+    // which is blank for every row already written, so it would buy a
+    // half-true trail — or a second unscoped join on entries to prove the id
+    // is dead, which discloses "a memory that no longer exists was shared to
+    // ws-companyY" to an admin of company X. Both are worse than this gap.
     await entryRow(clock, "shared", "e-gone", bob.member.userId);
     const body = await activity();
-    expect(body.events.length).toBe(1);
-    expect(body.events[0].entryId).toBe("e-gone");
-    expect(body.events[0].title).toBeNull();
+    expect(body.events).toEqual([]);
   });
 
   it("shows only shares and un-shares from the entry trail", async () => {
@@ -368,6 +426,104 @@ describe("GET /team/activity — scope", () => {
     await entryRow(clock, "shared", "e-c", bob.member.userId);
     const body = await activity();
     expect(body.events.map((e: any) => e.event)).toEqual(["shared"]);
+  });
+});
+
+/**
+ * The axis nothing covered, and the one the two-layer tenancy exists for.
+ *
+ * Every other scope case in this file is same-deployment, same-company: Bob's
+ * personal layer against Alice's. That case passes with the workspace
+ * predicate on either side of the join, so it could never have shown that the
+ * predicate governed only which TITLE was populated and not which ROWS came
+ * back. A second company is what tells the two apart.
+ */
+describe("GET /team/activity — a SECOND COMPANY on the same deployment", () => {
+  const OTHER_WS = "ws-companyY";
+  const OTHER_USER = "usr-yankee";
+
+  /** A whole second tenant: its own company workspace, member and memory. */
+  async function companyY(): Promise<void> {
+    await sqlite.db
+      .prepare(`INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'company', 'Company Y', ?)`)
+      .bind(OTHER_WS, clock).run();
+    await sqlite.db
+      .prepare(
+        `INSERT INTO users (id, name, email, role, token_hash, suspended, created_at)
+         VALUES (?, 'Yankee', NULL, 'admin', 'hash-yankee', 0, ?)`,
+      )
+      .bind(OTHER_USER, clock).run();
+    await sqlite.db
+      .prepare(`INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, 'admin', ?)`)
+      .bind(OTHER_USER, OTHER_WS, clock).run();
+    await entry("e-y", "Company Y acquisition memo", OTHER_WS, OTHER_USER);
+  }
+
+  it("returns none of company Y's entry rows to an admin of company X", async () => {
+    await companyY();
+    // The real payload shape POST /entry/share writes: { workspaceId }.
+    await entryRow(clock, "shared", "e-y", OTHER_USER, {
+      payload: JSON.stringify({ workspaceId: OTHER_WS }),
+    });
+
+    const res = await call("GET", "/team/activity", ALICE);
+    await settle();
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    // Four separate crossings, asserted against the whole serialised body
+    // because a row hidden in one column and disclosed in another is not
+    // scoped: the memory's TEXT, its ID, the ACTOR who shared it, and the
+    // TARGET WORKSPACE ID out of detail — the last of which is reachable
+    // nowhere else, since listTeamWorkspaces binds only the caller's own ids.
+    expect(raw).not.toContain("acquisition");
+    expect(raw).not.toContain("e-y");
+    expect(raw).not.toContain(OTHER_WS);
+    expect(JSON.parse(raw).events).toEqual([]);
+  });
+
+  it("still returns the caller's OWN company rows in the same request", async () => {
+    // So the arm is scoped, not switched off.
+    await companyY();
+    await entryRow(clock, "shared", "e-y", OTHER_USER, {
+      payload: JSON.stringify({ workspaceId: OTHER_WS }),
+    });
+    tick();
+    await entry("e-x", "Company X hiring plan", roots.companyWorkspaceId, bob.member.userId);
+    await entryRow(clock, "shared", "e-x", bob.member.userId, {
+      payload: JSON.stringify({ workspaceId: roots.companyWorkspaceId }),
+    });
+
+    const body = await activity();
+    expect(body.events.length).toBe(1);
+    expect(body.events[0]).toMatchObject({
+      kind: "entry",
+      event: "shared",
+      entryId: "e-x",
+      title: "Company X hiring plan",
+      actor: "Bob",
+      detail: { workspaceId: roots.companyWorkspaceId },
+    });
+  });
+
+  it("DOES return company Y's ADMIN rows — deployment-wide, and accepted", async () => {
+    // Stated as a pinned fact rather than left implicit. admin_events carries
+    // no usable workspace ('' on every member event), and GET /team/members is
+    // already scope-exempt and names every user on the deployment, so this arm
+    // adds no exposure that the roster does not already have. If that ever
+    // stops being true, this test is the one that has to be argued with.
+    await companyY();
+    await adminRow(clock, "member_suspended", OTHER_USER, OTHER_USER);
+
+    const body = await activity();
+    expect(body.events.length).toBe(1);
+    expect(body.events[0]).toMatchObject({
+      kind: "admin",
+      event: "member_suspended",
+      actor: "Yankee",
+      subject: "Yankee",
+      entryId: null,
+      title: null,
+    });
   });
 });
 
@@ -419,7 +575,33 @@ describe("GET /team/activity — names, never ids", () => {
     }
   });
 
+  it("resolves a member whose name is EMPTY to null, not to an empty string", async () => {
+    // `actor` and `subject` are documented as "a name or null" — two states.
+    // A users row with a blank name used to produce a third, "", which every
+    // consumer written as `actor ?? "System"` renders as an empty cell while
+    // one written as `actor || "Removed account"` renders a label. Two
+    // consumers disagreeing about the same row is the drift; the fix is that
+    // the third state does not exist.
+    await sqlite.db
+      .prepare(
+        `INSERT INTO users (id, name, email, role, token_hash, suspended, created_at)
+         VALUES ('usr-nameless', '', NULL, 'member', 'hash-nameless', 0, ?)`,
+      )
+      .bind(clock).run();
+    await adminRow(clock, "member_created", "usr-nameless", "usr-nameless");
+
+    const body = await activity();
+    expect(body.events.length).toBe(1);
+    expect(body.events[0].actor).toBeNull();
+    expect(body.events[0].subject).toBeNull();
+    // Asserted as identity, not falsiness: "" is falsy and would pass a
+    // `toBeFalsy()` written for this.
+    expect(body.events[0].actor).not.toBe("");
+    expect(body.events[0].subject).not.toBe("");
+  });
+
   it("leaves actor and subject null for a row that carries neither", async () => {
+    await entry("e-x", "Nobody's memory", roots.companyWorkspaceId, "");
     await entryRow(clock, "shared", "e-x");
     const body = await activity();
     expect(body.events[0].actor).toBeNull();
@@ -478,6 +660,7 @@ describe("GET /team/activity — cost", () => {
   it("issues NO name statement when every row's actor and subject are empty", async () => {
     await adminRow(clock, "team_renamed");
     tick();
+    await entry("e-anon", "Nobody's memory", roots.companyWorkspaceId, "");
     await entryRow(clock, "shared", "e-anon");
     const counts = countPrepares();
     const body = await activity();

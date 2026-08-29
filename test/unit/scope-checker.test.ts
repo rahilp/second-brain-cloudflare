@@ -791,12 +791,18 @@ describe("the checker over the real source tree", () => {
   // same commit as the change that moved them.
   // MOVED 88 -> 89 by Phase 4 Task 2. GET /team/activity is the one statement
   // in that phase that references `entries`: its second UNION arm joins the
-  // table to put a title on a share event, `LEFT JOIN entries m ON m.id =
-  // ev.entry_id AND m.${scope.clause}`, which is the caller's own scope carried
-  // in the ON clause. The checker read the whole compound as ONE query, so this
-  // is +1 and not +2 — recorded as the tool printed it, with the SQL left in
-  // the shape the paging correctness needs rather than reshaped for the lexer.
-  // Exceptions stay 49 and scope-checked stays 7: nothing was exempted.
+  // table so a share event is emitted only for a memory the caller may read,
+  // `JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}` — the caller's
+  // own scope, carried in the ON clause. The checker read the whole compound as
+  // ONE query, so this is +1 and not +2 — recorded as the tool printed it, with
+  // the SQL left in the shape the paging correctness needs rather than reshaped
+  // for the lexer. Exceptions stay 49 and scope-checked stays 7: nothing was
+  // exempted.
+  //
+  // The later change from LEFT JOIN to JOIN — which is what made that predicate
+  // govern the ROW SET rather than only the title — moved NONE of the three
+  // numbers, since the checker's unit is the query and its verdict was already
+  // "satisfied". Re-run and confirmed at 89/49/7.
   it("reports exactly 89 queries, 49 documented exceptions and 7 scope-checked", () => {
     const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
       cwd: ROOT,

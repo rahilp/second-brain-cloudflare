@@ -172,7 +172,17 @@ export async function lookupAuditNames(env: Env, ids: string[]): Promise<Map<str
     // auditor came for.
     `SELECT id, name FROM users WHERE id IN (${placeholders})`,
   ).bind(...unique).all<{ id: string; name: string | null }>();
-  return new Map((results ?? []).map((r) => [r.id, r.name || ""]));
+  // A blank name is NOT an entry. Callers publish this as "a name or null" —
+  // two states — and mapping a NULL or empty `users.name` to "" invents a
+  // third that no consumer's contract admits: one written `actor ?? "System"`
+  // renders an empty cell, one written `actor || "Removed account"` renders a
+  // label, for the same row. Dropping the row makes the caller's `?? null`
+  // produce the null it already documents.
+  return new Map(
+    (results ?? [])
+      .filter((r): r is { id: string; name: string } => Boolean(r.name))
+      .map((r) => [r.id, r.name]),
+  );
 }
 
 export class TeamAdminError extends Error {

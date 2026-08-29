@@ -384,12 +384,33 @@ export async function handleAdminRoutes(
   // GET /team/activity — the compliance feed. Two INSERT-only trails, one
   // time-ordered answer.
   //
-  // WHAT IS SCOPED AND WHAT IS NOT, stated plainly rather than implied:
+  // WHAT EACH ARM GUARANTEES, stated exactly rather than implied. A comment
+  // here that claims more than its arm delivers is the defect, not a rounding
+  // error: it is what a future reader will trust when deciding whether a new
+  // field on this route needs scoping.
   //
-  //  - The MEMORY half IS scoped. The LEFT JOIN below carries the caller's own
-  //    scope in its ON clause, so a title appears only for a row this caller
-  //    could read through GET /entry.
-  //  - The ADMIN-EVENT half is DEPLOYMENT-WIDE and is not scoped at all.
+  //  - The MEMORY arm is SCOPED AT THE ROW, not at the title. Its join is an
+  //    INNER join carrying the caller's own scope, so a row appears only when
+  //    the memory it names is one this caller could read through GET /entry.
+  //    Nothing about an unreadable memory is emitted: not its text, not its
+  //    id, not its actor, and not the target workspace id in `detail`. That
+  //    last one is why a title-only predicate was not enough — a row hidden in
+  //    one column and disclosed in three others is not scoped, and
+  //    listTeamWorkspaces binds only the caller's own workspace ids, so
+  //    another company's id is reachable nowhere else on this deployment.
+  //
+  //    THE PRICE, accepted and pinned by a test: entry_events has no workspace
+  //    column, so the joined entry is the only thing that can attribute a row.
+  //    Share/unshare history for a memory that has since been DELETED can no
+  //    longer be attributed and therefore DOES NOT APPEAR in this feed. The two
+  //    ways to keep it are both worse — a workspace column on entry_events is
+  //    blank for every row already written, and a second unscoped join proving
+  //    the id is dead would disclose "some deleted memory was shared to
+  //    ws-companyY" to an admin of company X. The per-entry trail
+  //    (idx_entry_events_entry) still holds those rows; this feed is the one
+  //    place that cannot show them.
+  //
+  //  - The ADMIN-EVENT arm is DEPLOYMENT-WIDE and is not scoped at all.
   //    admin_events.workspace_id is populated only by `team_renamed`; every
   //    member event stores "". So on a deployment with two companies, an admin
   //    of one sees the other's member events. That is accepted, not overlooked:
@@ -417,27 +438,35 @@ export async function handleAdminRoutes(
     // together in JS silently drop rows the moment one trail is busier than
     // the other. SQLite applies the ORDER BY and LIMIT to the whole compound.
     //
-    // The entries side is a LEFT JOIN carrying the caller's scope IN THE ON
-    // CLAUSE, exactly as the /patterns source hydration does and for the same
-    // reason: a share event the admin may read must still not hand back the
-    // text of a memory that has since moved into someone's personal layer.
-    // An unreadable memory reads exactly like a deleted one — title null —
-    // which is the same answer GET /entry gives for that id.
+    // The entries side is an INNER JOIN carrying the caller's scope, so the
+    // scope predicate decides WHICH ROWS EXIST rather than merely which of
+    // them gets a title. See the arm-by-arm note above the route for what that
+    // costs and why the cheaper spellings are worse.
     //
     // substr in the projection, not the whole column: a compliance feed names
     // a memory, it does not reproduce it.
+    //
+    // ORDER BY carries a tiebreaker because ties are built here on purpose:
+    // POST /patterns/resolve stamps one entry_events row per resolved id in a
+    // tight loop, so ~97 rows share a millisecond, and LIMIT/OFFSET over a tie
+    // group the sorter may emit in any order is how a row lands on two pages or
+    // on none. `event_id` is each trail's own primary key, unique within its
+    // table and a UUID across both, so `created_at DESC, event_id DESC` is a
+    // total order — arbitrary within a tie, but the SAME arbitrary order for
+    // every page of the same data, which is the whole requirement. It is
+    // projected only to be sorted on; the response does not carry it.
     const { results } = await env.DB.prepare(
-      `SELECT 'admin' AS kind, ae.event AS event, ae.actor_id AS actor_id,
+      `SELECT 'admin' AS kind, ae.id AS event_id, ae.event AS event, ae.actor_id AS actor_id,
               ae.target_user_id AS subject_id, '' AS entry_id, NULL AS title,
               ae.payload AS payload, ae.created_at AS created_at
          FROM admin_events ae
        UNION ALL
-       SELECT 'entry', ev.event, ev.actor_id, '', ev.entry_id,
+       SELECT 'entry', ev.id, ev.event, ev.actor_id, '', ev.entry_id,
               substr(m.content, 1, 160), ev.payload, ev.created_at
          FROM entry_events ev
-         LEFT JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}
+         JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}
         WHERE ev.event IN ('shared', 'unshared', 'insight_confirmed', 'insight_dismissed')
-       ORDER BY created_at DESC
+       ORDER BY created_at DESC, event_id DESC
        LIMIT ? OFFSET ?`,
     ).bind(...scope.bindings, limit, offset).all();
 
