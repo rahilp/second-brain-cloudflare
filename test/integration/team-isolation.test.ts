@@ -16,6 +16,8 @@
  * and every write surface is asked whether Bob can change it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import worker from "../../src/index";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
@@ -51,6 +53,7 @@ let aliceUserId = "";
 let aliceWorkspaceId = "";
 let bobUserId = "";
 let bobWorkspaceId = "";
+let companyWorkspaceId = "";
 
 /**
  * A pending pair for the insight queues. Inserted directly for the same reason
@@ -65,6 +68,31 @@ function seedCandidate(id: string, aId: string, bId: string, score: number) {
     )
     .bind(id, aId, bId, score, score, SEEDED_AT)
     .run();
+}
+
+/**
+ * An AI double for the nightly digest pass, recording every prompt it is given
+ * so the ROWS a rollup was built from can be audited — the digest text alone
+ * cannot show whether two workspaces were pooled.
+ */
+function digestAI(prompts: string[]): Ai {
+  const sse = (text: string) => new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(text)}}\n\n`));
+      c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+      c.close();
+    },
+  });
+  return {
+    run: vi.fn().mockImplementation(async (model: string, opts: any) => {
+      if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
+      if (opts?.stream) {
+        prompts.push(String(opts?.messages?.[0]?.content ?? ""));
+        return sse("A digest paragraph covering the period.");
+      }
+      return { response: "3" };
+    }),
+  } as unknown as Ai;
 }
 
 /** An AI double that always reasons the pair into one given insight. */
@@ -119,6 +147,7 @@ beforeEach(async () => {
   aliceWorkspaceId = roots.ownerPersonalWorkspaceId;
   bobUserId = bob.member.userId;
   bobWorkspaceId = bob.member.personalWorkspaceId;
+  companyWorkspaceId = roots.companyWorkspaceId;
 
   ids = {
     alicePrivate: "e-alice",
@@ -431,5 +460,281 @@ describe("cross-user isolation — administration", () => {
   it("a suspended member resolves to no identity at all", async () => {
     await sqlite.db.prepare(`UPDATE users SET suspended = 1 WHERE name = 'Bob'`).run();
     expect((await call("GET", "/list", bobToken)).status).toBe(401);
+  });
+});
+
+/**
+ * The matrix above asks whether one member can reach another's rows through a
+ * REQUEST. These ask the same question of the machinery that runs with no
+ * request at all: the nightly cron, the repair routes, and the paged review
+ * queues, where isolation has to hold without an identity to scope by.
+ *
+ * A single-workspace brain is the case every one of these must not change, so
+ * each asserts the positive too — the pass still does its work, the repair
+ * routes still repair every workspace.
+ */
+describe("cross-user isolation — maintenance passes", () => {
+  // The nightly trigger from wrangler.jsonc. Routed by string in src/index.ts:
+  // the integration and insight crons get their own invocation and budget, and
+  // everything else falls through to maintenance.
+  const NIGHTLY_CRON = "0 1 * * *";
+
+  it("drives the cron string wrangler.jsonc actually schedules", () => {
+    // The routing in src/index.ts is by string, and a cron this file no longer
+    // matches falls through to maintenance anyway — so a stale constant here
+    // would keep every case below green while testing a trigger that no longer
+    // exists. Pinned to the deployment config rather than to a copy of it.
+    const wrangler = readFileSync(resolve(import.meta.dirname, "../../wrangler.jsonc"), "utf8");
+    expect(wrangler).toContain(`"${NIGHTLY_CRON}"`);
+  });
+
+  /**
+   * A Vectorize double that answers the way a real, unfiltered index answers:
+   * every seeded near-duplicate is a strong neighbour of every other, whichever
+   * workspace it lives in. src/graph/pass.ts queries with no filter, so this is
+   * the honest double — the default mock returns no matches at all, which would
+   * let the two cases below pass without the pass ever having had the chance to
+   * bridge two workspaces.
+   */
+  const crossWorkspaceVectorize = () => ({
+    ...env.VECTORIZE,
+    query: vi.fn().mockResolvedValue({
+      matches: [
+        { id: "alice-link", score: 0.97, metadata: { parentId: "alice-link" } },
+        { id: "bob-link", score: 0.96, metadata: { parentId: "bob-link" } },
+      ],
+    }),
+  }) as unknown as VectorizeIndex;
+
+  /**
+   * A ctx that can be awaited. src/index.ts hands every nightly pass to
+   * ctx.waitUntil, so the no-op double used by the request tests above would let
+   * these assertions run against a database no pass had touched yet.
+   */
+  function collectingCtx() {
+    const pending: Promise<unknown>[] = [];
+    return {
+      ctx: { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as unknown as ExecutionContext,
+      drain: async () => { await Promise.allSettled(pending.splice(0)); },
+    };
+  }
+
+  const nightly = async () => {
+    const { ctx: cronCtx, drain } = collectingCtx();
+    await worker.scheduled({ cron: NIGHTLY_CRON } as unknown as ScheduledEvent, env, cronCtx);
+    await drain();
+  };
+
+  const cursor = async () => await sqlite.db.prepare(
+    `SELECT workspace_id FROM maintenance_cursor WHERE id = 1`,
+  ).first() as { workspace_id: string } | null;
+
+  /**
+   * Park the ring immediately before `workspaceId` so the next run picks exactly
+   * that slice. The cursor is set to the id with its last character dropped: that
+   * sorts strictly before the id, and no other `ws-<uuid>` can fall between the
+   * two without sharing all but the last character of a UUID. Deterministic
+   * without reaching into rotation.ts for its internals.
+   */
+  async function parkCursorBefore(workspaceId: string) {
+    await sqlite.db.prepare(
+      `INSERT INTO maintenance_cursor (id, workspace_id, advanced_at) VALUES (1, ?, 0)
+       ON CONFLICT(id) DO UPDATE SET workspace_id = excluded.workspace_id`,
+    ).bind(workspaceId.slice(0, -1)).run();
+  }
+
+  it("the nightly ring moves to a different workspace each night", async () => {
+    // One workspace per invocation is the whole point of the cursor (see
+    // src/runtime/rotation.ts): a corpus-wide nightly pass costs more D1
+    // subrequests with every team member added. A ring that never advanced would
+    // process one member's memories every night and nobody else's, forever.
+    await sqlite.db.prepare(
+      `INSERT INTO maintenance_cursor (id, workspace_id, advanced_at) VALUES (1, ?, 0)
+       ON CONFLICT(id) DO UPDATE SET workspace_id = excluded.workspace_id`,
+    ).bind(aliceWorkspaceId).run();
+
+    await nightly();
+    const first = (await cursor())?.workspace_id;
+    await nightly();
+    const second = (await cursor())?.workspace_id;
+
+    // Three workspaces carry entries here — Alice's, Bob's, and the company
+    // layer — so two consecutive nights must land on two different ones.
+    expect(first).not.toBe(aliceWorkspaceId);
+    expect(second).not.toBe(first);
+    expect([aliceWorkspaceId, bobWorkspaceId, companyWorkspaceId]).toContain(first);
+    expect([aliceWorkspaceId, bobWorkspaceId, companyWorkspaceId]).toContain(second);
+  });
+
+  /**
+   * KNOWN DEFECT, recorded rather than weakened.
+   *
+   * `it.fails` asserts that this assertion currently does NOT hold: the nightly
+   * graph pass queries Vectorize with no workspace filter
+   * (src/graph/pass.ts calls `env.VECTORIZE.query(values, { topK: 5 })`), so a
+   * near-duplicate in another member's personal workspace comes back as a
+   * neighbour and `inferEdgesOnWrite` writes the edge. `relates_to` is
+   * symmetric, so edgeInsertStatement also reorders the endpoints — the edge is
+   * stamped with the acting entry's workspace while its `source_id` may be the
+   * colleague's row.
+   *
+   * It is left failing on purpose. Fixing it means changing src/, which this
+   * task does not own, and deleting the case would lose the only record that
+   * anyone looked. When the pass learns to filter, this flips red and someone
+   * changes `it.fails` back to `it`.
+   *
+   * What contains it today is asserted for real in the test directly below.
+   */
+  it.fails("the graph pass never links a memory to one in another workspace", async () => {
+    // Near-identical text on both sides, and a Vectorize double that answers the
+    // way a real unfiltered index answers: every entry is a strong neighbour of
+    // every other. Without that the backfill gets an empty match list and the
+    // assertion below passes without the pass ever having had the chance to
+    // build a cross-workspace edge.
+    seed("alice-link", aliceWorkspaceId, aliceUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    seed("bob-link", bobWorkspaceId, bobUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    env.VECTORIZE = crossWorkspaceVectorize();
+
+    await parkCursorBefore(aliceWorkspaceId);
+    await nightly();
+
+    const { results: crossings } = await sqlite.db.prepare(
+      `SELECT e.source_id, e.target_id, s.workspace_id AS sw, t.workspace_id AS tw
+         FROM edges e
+         JOIN entries s ON s.id = e.source_id
+         JOIN entries t ON t.id = e.target_id
+        WHERE s.workspace_id != t.workspace_id`,
+    ).all();
+    expect(crossings).toEqual([]);
+  });
+
+  it("a cross-workspace edge the graph pass writes still draws no colleague's node", async () => {
+    // The containment that DOES hold, and the reason the defect above is a
+    // defect rather than an outage: GET /graph hydrates nodes through the
+    // caller's scope, so the foreign endpoint drops out of the drawing even
+    // though the edge row exists. Asserted here so a change to the hydration
+    // cannot quietly turn the recorded defect into a live content leak.
+    seed("alice-link", aliceWorkspaceId, aliceUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    seed("bob-link", bobWorkspaceId, bobUserId,
+      "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
+    env.VECTORIZE = crossWorkspaceVectorize();
+
+    await parkCursorBefore(aliceWorkspaceId);
+    await nightly();
+
+    // The pass really did write the edge — otherwise this proves nothing.
+    const bridged = await sqlite.db.prepare(
+      `SELECT COUNT(*) AS n FROM edges e
+         JOIN entries s ON s.id = e.source_id
+         JOIN entries t ON t.id = e.target_id
+        WHERE s.workspace_id != t.workspace_id`,
+    ).first() as { n: number };
+    expect(bridged.n).toBeGreaterThan(0);
+
+    const bobGraph = await jsonOf(await call("GET", "/graph", bobToken));
+    const bobNodes = (bobGraph.nodes ?? []).map((n: any) => n.id);
+    expect(bobNodes).not.toContain("alice-link");
+    expect(JSON.stringify(bobGraph)).not.toContain("Alice private");
+
+    const aliceGraph = await jsonOf(await call("GET", "/graph", ALICE));
+    expect((aliceGraph.nodes ?? []).map((n: any) => n.id)).not.toContain("bob-link");
+  });
+
+  it("the digest pass never pools two workspaces' memories into one rollup", async () => {
+    // Driven through worker.scheduled rather than compressTag directly: the unit
+    // test in test/unit/team-scoping.test.ts already covers the function, and
+    // what is untested is whether the cron that actually calls it every night
+    // preserves the partition.
+    //
+    // Eleven a side, because the candidate query keeps only tags with count > 10.
+    for (let i = 0; i < 11; i++) {
+      seed(`a-proj-${i}`, aliceWorkspaceId, aliceUserId, `ALPHA note ${i} on the proj plan`, ["proj"]);
+      seed(`b-proj-${i}`, bobWorkspaceId, bobUserId, `BETA note ${i} on the proj plan`, ["proj"]);
+    }
+    const prompts: string[] = [];
+    env.AI = digestAI(prompts);
+
+    await parkCursorBefore(aliceWorkspaceId);
+    await nightly();
+
+    // Not one prompt saw both sides. Asserting on the prompts rather than the
+    // digest text is what makes this sharp: a rollup built from mixed rows would
+    // be a leak even if the model's summary happened to name neither marker.
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const p of prompts) expect(p.includes("ALPHA") && p.includes("BETA")).toBe(false);
+
+    const { results: digests } = await sqlite.db.prepare(
+      `SELECT id, workspace_id FROM entries WHERE tags LIKE '%"synthesized"%'`,
+    ).all() as { results: { id: string; workspace_id: string }[] };
+    expect(digests.length).toBeGreaterThan(0);
+    for (const d of digests) {
+      expect([aliceWorkspaceId, bobWorkspaceId]).toContain(d.workspace_id);
+    }
+  });
+
+  it("GET /patterns pages within the caller's own queue, not the deployment's", async () => {
+    // The existing case checks page one of a two-row queue, which a broken OFFSET
+    // would also pass. Sixty of Bob's ahead of Alice's one is the shape that
+    // separates "scoped" from "scoped enough to look right on the first page".
+    for (let i = 0; i < 60; i++) {
+      seed(`bob-ins-${i}`, bobWorkspaceId, bobUserId,
+        `Bob private insight ${i}: the redundancy consultation is next month`, ["auto-insight"]);
+    }
+    seed("alice-ins", aliceWorkspaceId, aliceUserId,
+      "Alice insight: the pricing page converts better without the comparison table", ["auto-insight"]);
+
+    const page = await jsonOf(await call("GET", "/patterns?limit=50&offset=0", ALICE));
+    expect(page.patterns.map((p: any) => p.id)).toEqual(["alice-ins"]);
+    expect(page.total).toBe(1);
+    expect(JSON.stringify(page)).not.toContain("redundancy consultation");
+
+    // Page two of a one-row queue is empty, not Bob's overflow.
+    const second = await jsonOf(await call("GET", "/patterns?limit=50&offset=50", ALICE));
+    expect(second.patterns).toEqual([]);
+  });
+
+  it("GET /stale pages within the caller's own queue too", async () => {
+    for (let i = 0; i < 60; i++) {
+      seed(`bob-stale-${i}`, bobWorkspaceId, bobUserId,
+        `Bob private ${i}: the settlement figure was agreed in March`, ["stale:as-of"]);
+    }
+    seed("alice-stale", aliceWorkspaceId, aliceUserId,
+      "Alice: the office lease runs to 2027", ["stale:as-of"]);
+
+    const page = await jsonOf(await call("GET", "/stale?limit=50&offset=0", ALICE));
+    expect(page.entries.map((e: any) => e.id)).toEqual(["alice-stale"]);
+    expect(page.total).toBe(1);
+    expect(JSON.stringify(page)).not.toContain("settlement figure");
+  });
+
+  it("the repair routes stay deployment-wide but never move a row between workspaces", async () => {
+    // POST /vectorize-pending and /classify-pending are the two documented
+    // exceptions to the scope rule: they must reach every workspace or a member's
+    // unindexed rows stay unindexed with nothing on screen to say so. The rule
+    // they still owe is that repairing a row is not a way to relocate it — a
+    // repair that stamped the acting admin's workspace onto Bob's memory would
+    // move it into her readable set, which is a leak written by the fix.
+    const { results: before } = await sqlite.db.prepare(
+      `SELECT id, workspace_id, actor_id FROM entries WHERE workspace_id = ? ORDER BY id`,
+    ).bind(bobWorkspaceId).all() as { results: { id: string; workspace_id: string; actor_id: string }[] };
+    expect(before.length).toBeGreaterThan(0);
+
+    expect((await call("POST", "/vectorize-pending", ALICE)).status).toBe(200);
+    expect((await call("POST", "/classify-pending", ALICE)).status).toBe(200);
+
+    const { results: after } = await sqlite.db.prepare(
+      `SELECT id, workspace_id, actor_id FROM entries WHERE id IN (${before.map(() => "?").join(",")}) ORDER BY id`,
+    ).bind(...before.map(r => r.id)).all() as { results: { id: string; workspace_id: string; actor_id: string }[] };
+    expect(after).toEqual(before);
+
+    // And the repair actually reached Bob's rows: an admin whose scope silently
+    // narrowed these would pass the assertion above by doing nothing at all.
+    const stillPending = await sqlite.db.prepare(
+      `SELECT COUNT(*) AS n FROM entries WHERE workspace_id = ? AND vector_ids = '[]'`,
+    ).bind(bobWorkspaceId).first() as { n: number };
+    expect(stillPending.n).toBe(0);
   });
 });
