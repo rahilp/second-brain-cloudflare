@@ -2426,10 +2426,19 @@ pub async fn fetch_connection_role(worker_url: &str, auth_token: &str) -> Connec
             return none;
         }
     };
+    role_probe_from_body(&body)
+}
+
+/// The parse, split from the request so a test can hand it a body no brain this
+/// app talks to would send.
+///
+/// A 200 is not a promise about shape. `as_bool() == Some(true)` rather than
+/// truthiness: a body carrying `owner: "yes"` or `owner: 1` is unexpected, and
+/// an unexpected body must not promote anyone. Same for `role`, which is only
+/// taken when it is genuinely a string.
+fn role_probe_from_body(body: &serde_json::Value) -> ConnectionRoleProbe {
     ConnectionRoleProbe {
         role: body["profile"]["role"].as_str().map(str::to_string),
-        // `as_bool() == Some(true)`, not truthiness: a body carrying
-        // `owner: "yes"` is unexpected, and unexpected must not promote anyone.
         owner: body["profile"]["owner"].as_bool() == Some(true),
     }
 }
@@ -2486,6 +2495,7 @@ mod tests {
         app_mode, bindings_are_a_brains, blocked_by_migration, brain_index_names,
         clear_pending_rotation, cloudflare_client_for_brain, confirm_target_is_a_brain,
         dashboard_credentials, fetch_connection_role, for_log, normalize_worker_url,
+        role_probe_from_body,
         password_opens_brain, ConnectionRoleProbe,
         previous_index_for, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
         rotation_address, rotation_block, rotation_failure, rotation_target, RotateError,
@@ -3012,6 +3022,45 @@ mod tests {
         // is the ordinary state for anyone who updated the app first.
         let old = fetch_connection_role(&format!("{}/nope", brain.base_url()), PASSWORD).await;
         assert_eq!(old, ConnectionRoleProbe::default());
+    }
+
+    /// A 200 is not a promise about shape.
+    ///
+    /// Every one of these is a body some Worker could send — an older one, a
+    /// proxy's error page rendered as JSON, a field that changed type — and none
+    /// of them is a reason to tell the person in front of the app that they own
+    /// this deployment. `owner: "yes"` is the one that matters: it is truthy,
+    /// and the natural way to write this check would take it.
+    #[test]
+    fn an_unexpected_body_promotes_nobody() {
+        use serde_json::json;
+        for body in [
+            json!({}),
+            json!(null),
+            json!({ "ok": true, "profile": {} }),
+            json!({ "ok": true, "profile": { "role": "member" } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": "yes" } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": 1 } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": "true" } }),
+            json!({ "ok": true, "profile": { "owner": {} } }),
+            json!({ "ok": false, "error": "Unauthorized" }),
+        ] {
+            assert!(
+                !role_probe_from_body(&body).owner,
+                "{body} was read as ownership"
+            );
+        }
+
+        // A role that is not a string is no role at all, rather than a stringified one.
+        assert_eq!(role_probe_from_body(&json!({ "profile": { "role": 42 } })).role, None);
+
+        // And the shape src/routes/admin.ts actually sends still reads.
+        let real = role_probe_from_body(&json!({
+            "ok": true,
+            "profile": { "userId": "usr-1", "role": "admin", "owner": true }
+        }));
+        assert_eq!(real.role.as_deref(), Some("admin"));
+        assert!(real.owner);
     }
 
     /// A rebuild that could not be asked about is not a rebuild in progress.

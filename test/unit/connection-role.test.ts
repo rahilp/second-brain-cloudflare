@@ -237,6 +237,81 @@ describe("who may be offered a password change", () => {
   });
 });
 
+describe("the setup flow's own derivation", () => {
+  // `main.ts` resolves `#app` at module scope and cannot be imported here, so
+  // these are read off the source — the technique `test/ui/dashboard-modules`
+  // and `test/ui/confirm-sheet-callers` already use for exactly this reason.
+  const source = readFileSync(
+    resolve(import.meta.dirname, "../../installer/src/main.ts"),
+    "utf8",
+  );
+  /**
+   * One function's CODE, comments stripped.
+   *
+   * Stripped because these assertions are about what the derivation can
+   * consult, and the comment explaining why it must not consult a Cloudflare
+   * session names the thing it forbids — a scan over raw text would fail on its
+   * own documentation, and the obvious fix for that is to delete the
+   * explanation.
+   */
+  const bodyOf = (signature: string) => {
+    const start = source.indexOf(signature);
+    expect(start, `${signature} is not in main.ts any more`).toBeGreaterThan(-1);
+    const end = source.indexOf("\n}", start);
+    return source
+      .slice(start, end)
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("*"))
+      .join("\n");
+  };
+
+  it("passes the brain nothing local as evidence of ownership", () => {
+    // MAJOR-1 at the call site rather than in the rule. `roleFromProbe` no
+    // longer HAS a `hasCloudflareSession` input, so re-adding one would be
+    // inert — but a future edit could reach for `signedInToCloudflare()` again,
+    // and it is still in this file for the rotation screens, which is the only
+    // place it means anything. What matters is that the role derivation cannot
+    // see it.
+    const derive = bodyOf("async function deriveConnectionRole(");
+    expect(derive, "the role derivation must not consult a Cloudflare session").not.toMatch(
+      /signedInToCloudflare|hasCloudflareSession|accounts\.length/,
+    );
+    // And it asks through the bounded helper rather than a bare fetch.
+    expect(derive).toMatch(/fetchRoleProbe\(/);
+    expect(derive, "no unbounded fetch on the connect path").not.toMatch(/fetch\(`/);
+  });
+
+  it("sets the mode on every branch that derives a role", () => {
+    // The derivation on the already-recorded-team-brain branch was a dead
+    // store: `detailsScreen` renders the team card only under
+    // `teamMode ? [teamCard(connectionRole)] : []`, and that branch returned
+    // before anything set `teamMode`. A returning member — the exact person the
+    // branch exists for — reached the end of setup on the solo "all set" copy
+    // with no card at all, so the corrected wording reached one path only.
+    const screen = bodyOf("async function existingTeamScreen(");
+    const derivations = [...screen.matchAll(/connectionRole = await deriveConnectionRole\(/g)];
+    expect(derivations.length, "both team branches derive").toBe(2);
+    for (const match of derivations) {
+      const before = screen.slice(Math.max(0, match.index! - 400), match.index!);
+      expect(
+        before,
+        "a derived role that no screen reads is a request paid for and thrown away",
+      ).toMatch(/teamMode = true;\s*$/);
+    }
+  });
+
+  it("bounds the other request on the same screen", () => {
+    // /health had the same property as the probe and this screen awaits it too,
+    // so a black-holed connection stalled here instead of falling through to
+    // the audience question.
+    const health = bodyOf("async function brainReportsMembers(");
+    expect(health).toMatch(/AbortController/);
+    expect(health).toMatch(/signal: controller\.signal/);
+    expect(health).toMatch(/PROBE_TIMEOUT_MS/);
+    expect(health, "the timer must be cleared on the answered path too").toMatch(/clearTimeout/);
+  });
+});
+
 describe("the details window asks rather than assumes", () => {
   // Read from source because `details.ts` boots a Tauri window at import time
   // — it resolves `#app` at module scope — and cannot be loaded here. The same
