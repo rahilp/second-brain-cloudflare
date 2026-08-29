@@ -6,6 +6,11 @@ import { hashToken } from "./identity";
  * requireAdmin (src/routes/admin.ts) — none of them re-check roles, by the same
  * convention that keeps the rest of the admin surface single-gated.
  *
+ * Two exceptions, both member-facing and both scoped by the caller's own
+ * identity rather than by their role: listTeamWorkspaces and listRoster take
+ * the workspace ids to read as an argument, so what a caller may see is decided
+ * by the identity that resolved them, not by the gate on the route.
+ *
  * Tokens are generated server-side and shown exactly once: like AUTH_TOKEN,
  * only the SHA-256 lands in D1, so a leaked list of rows can never sign anyone
  * in. Suspension is soft offboarding — entries stay put so nothing is lost,
@@ -63,6 +68,73 @@ export async function listMembers(env: Env): Promise<TeamMember[]> {
     // undefined-for-absent-column behaviour on a brain mid-migration.
     lastUsedAt: r.lastUsedAt ?? null,
     defaultShare: r.defaultShare === "company" ? "company" : r.defaultShare === "personal" ? "personal" : "",
+  }));
+}
+
+/**
+ * One person as a PEER may see them. Three fields, and the type is the
+ * allowlist: everything on TeamMember above that is missing here is missing
+ * deliberately.
+ *   - `email`, `createdAt` and `lastUsedAt` are personal data about a colleague.
+ *   - `privateEntries` counts rows in a workspace the caller cannot read, and a
+ *     count is still a fact about someone's private memory.
+ *   - `personalWorkspaceId` is a scoping key, so publishing it hands every
+ *     member the identifier every other member's rows are keyed by.
+ *   - `defaultShare` is a policy no peer has a say over.
+ *   - `suspended` is an employment fact; see listRoster's WHERE.
+ * `userId` stays because the client needs a stable key to mark "you".
+ */
+export interface RosterMember {
+  userId: string;
+  name: string;
+  role: "admin" | "member";
+}
+
+/**
+ * The people in the caller's own teams: names and roles, nothing else.
+ *
+ * The member-facing twin of listMembers. Two things make it safe to hand to a
+ * non-admin, and both are properties of the query rather than of the caller:
+ *
+ * 1. The columns are named POSITIVELY. It is a three-column SELECT, not
+ *    `u.*` with fields deleted afterwards — so a column added to `users`
+ *    tomorrow (the next `lastUsedAt`) cannot appear here by default. Widening
+ *    this list has to be a deliberate edit to this line, which is what
+ *    test/integration/team-roster.test.ts's exhaustive key assertion pins.
+ * 2. The set of PEOPLE is scoped through `memberships` to the workspace ids on
+ *    the caller's resolved identity — never a bare `FROM users`. Constraint 1
+ *    applies to people as much as to memories: on a deployment with two company
+ *    workspaces, this join is the thing that stops one team's roster reaching
+ *    the other.
+ *
+ * Suspended members are omitted rather than flagged. A suspended member cannot
+ * authenticate, so they are not someone you can share with; and publishing the
+ * flag would publish an employment fact only an admin has business knowing.
+ * Admins keep the full picture — suspension included — through GET /team/members.
+ *
+ * DISTINCT because a colleague in two of the caller's teams is two membership
+ * rows and one person.
+ */
+export async function listRoster(env: Env, companyWorkspaceIds: string[]): Promise<RosterMember[]> {
+  // A member of no team has no peers. Returning early also keeps the IN () list
+  // from rendering empty, which SQLite rejects.
+  if (!companyWorkspaceIds.length) return [];
+  const placeholders = companyWorkspaceIds.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT u.id AS userId, u.name AS name, u.role AS role
+       FROM users u
+       JOIN memberships m ON m.user_id = u.id
+      WHERE m.workspace_id IN (${placeholders})
+        AND u.suspended = 0
+        AND (u.removed_at IS NULL OR u.removed_at = 0)
+      ORDER BY u.name ASC, u.id ASC`,
+  ).bind(...companyWorkspaceIds).all<{ userId: string; name: string | null; role: string }>();
+  return (results ?? []).map((r) => ({
+    userId: r.userId,
+    name: r.name || "",
+    // Narrowed rather than cast: the column is free text in SQLite, and an
+    // unexpected value reading as "member" is the safe direction.
+    role: r.role === "admin" ? "admin" : "member",
   }));
 }
 

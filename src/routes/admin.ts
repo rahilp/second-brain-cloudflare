@@ -21,7 +21,7 @@ import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
 import { adminAuditEvent } from "../lib/admin-audit";
-import { createMember, listMembers, listTeamWorkspaces, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
+import { createMember, listMembers, listRoster, listTeamWorkspaces, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -40,11 +40,35 @@ export async function handleAdminRoutes(
   ctx: ExecutionContext,
 ): Promise<Response | null> {
   const cfg = await resolveConfig(env);
-  // ── Team administration (v3). All routes behind requireAdmin. ──────────
+  // ── Team administration (v3). Administrative routes are behind requireAdmin;
+  // the member-facing reads (/team/roster, /team/me, /team/workspaces) are
+  // behind requireIdentity and scope themselves to the caller's own identity.
+  // Which gate a route uses is stated on the route. ──────────────────────
   if (url.pathname === "/team/members" && request.method === "GET") {
     const auth = await requireAdmin(request, env);
     if (auth instanceof Response) return auth;
     return json({ ok: true, members: await listMembers(env), you: auth.userId });
+  }
+
+  // GET /team/roster — the member-facing people list: names and roles, and no
+  // more. requireIdentity, not requireAdmin, because knowing who is on your team
+  // is what makes "share with the team" mean anything; the admin row with its
+  // emails, private-entry counts and suspension state stays on /team/members.
+  //
+  // Not audited. An audit row records an administrative ACTION taken on someone
+  // (src/lib/admin-audit.ts); reading your own team's names is neither.
+  if (url.pathname === "/team/roster" && request.method === "GET") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    return json({
+      ok: true,
+      // Both lists are derived from the SAME resolved ids, so the teams named
+      // here and the people listed here cannot disagree about who the caller is.
+      teams: await listTeamWorkspaces(env, auth.companyWorkspaceIds),
+      members: await listRoster(env, auth.companyWorkspaceIds),
+      you: auth.userId,
+      admin: auth.role === "admin",
+    });
   }
 
   if (url.pathname === "/team/members" && request.method === "POST") {
