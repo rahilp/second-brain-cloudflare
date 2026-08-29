@@ -104,7 +104,6 @@ const I18N_EN = {
     sugLastWeekQuery: 'What happened last week?',
     sugThisMonth: 'This month',
     sugThisMonthQuery: 'What did I decide this month?',
-    sugOutOfDate: 'What might be out of date?',
     empty: "I couldn't find anything matching that. Try different words, or browse Memories.",
     error: 'Something went wrong. Check your connection and try again.',
     youAsked: 'You asked',
@@ -552,7 +551,6 @@ const I18N_EN = {
     withTag: '{label} ({tag})',
   },
   common: {
-    cancel: 'Cancel',
     justNow: 'just now',
     minutesAgo: '{n}m ago',
     hoursAgo: '{n}h ago',
@@ -708,7 +706,6 @@ const I18N_IT = {
     sugLastWeekQuery: 'Cosa è successo la settimana scorsa?',
     sugThisMonth: 'Questo mese',
     sugThisMonthQuery: 'Cosa ho deciso questo mese?',
-    sugOutOfDate: 'Cosa potrebbe essere datato?',
     empty: 'Non ho trovato nulla di corrispondente. Prova altre parole, oppure sfoglia Ricordi.',
     error: 'Qualcosa è andato storto. Controlla la connessione e riprova.',
     youAsked: 'Hai chiesto',
@@ -1155,7 +1152,6 @@ const I18N_IT = {
     withTag: '{label} ({tag})',
   },
   common: {
-    cancel: 'Annulla',
     justNow: 'adesso',
     minutesAgo: '{n}m fa',
     hoursAgo: '{n}h fa',
