@@ -263,11 +263,11 @@
                  every render by renderBulkBar() in js/recent.js. -->
             <div class="mem-bulk-bar" id="mem-bulk-bar" style="display: none">
               <span class="mem-bulk-count" id="mem-bulk-count"></span>
-              <button class="digest-btn" type="button" onclick="selectAllVisible()" data-i18n="bulk.selectAll">Select all</button>
-              <button class="digest-btn" type="button" onclick="clearSelection()" data-i18n="bulk.clear">Clear</button>
+              <button class="digest-btn digest-btn--quiet" type="button" onclick="selectAllVisible()" data-i18n="bulk.selectAll">Select all</button>
+              <button class="digest-btn digest-btn--quiet" type="button" onclick="clearSelection()" data-i18n="bulk.clear">Clear</button>
               <button class="digest-btn" id="mem-bulk-share" type="button" onclick="confirmBulkLayerMove('company')" data-i18n="bulk.shareAction">Share with team</button>
               <button class="digest-btn" id="mem-bulk-private" type="button" onclick="confirmBulkLayerMove('personal')" data-i18n="bulk.privateAction">Make private</button>
-              <button class="digest-btn" type="button" onclick="toggleSelectMode()" data-i18n="bulk.exit">Done</button>
+              <button class="digest-btn digest-btn--quiet" type="button" onclick="toggleSelectMode()" data-i18n="bulk.exit">Done</button>
             </div>
 
             <!-- The author lock, written by renderMemoriesCoach() in
