@@ -162,7 +162,7 @@ function makeRecentCard(entry) {
   </div>
   <div class="card-tags">${shown.map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join('')}${layerChip}${vecChip}</div>
   <div class="card-actions">
-    <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> ${escHtml(t('memories.append'))}</button>
+    <button class="card-action-btn append-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> ${escHtml(t('memories.append'))}</button>
     <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> ${escHtml(t('memories.edit'))}</button>
     <div class="card-overflow">
       <button class="card-action-btn overflow-btn" aria-label="${escAttr(t('memories.moreActions'))}" aria-haspopup="true" aria-expanded="false"><i class="ti ti-dots"></i></button>
@@ -206,5 +206,11 @@ function makeRecentCard(entry) {
   overflow.addEventListener('click', (ev) => ev.stopPropagation())
   card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card)
   card.querySelector('.edit-btn').onclick = () => openEdit(entry.id, entry.content, tags)
+  // Last, so it runs over the finished markup and after the handlers it
+  // disables. GET /list reports `can_edit` per row; without reading it here a
+  // member taps Edit on a colleague's shared card, types, saves, and only then
+  // meets the 403. Same helper the detail sheet uses, so the two surfaces
+  // cannot drift apart on who may change what.
+  applyCardAuthorLock(entry, card)
   return card
 }

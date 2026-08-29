@@ -391,15 +391,50 @@ function renderViewTimeline(entry) {
  * only on readability (src/routes/graph.ts), so a reader may remove a link.
  */
 function applyAuthorLock(entry) {
+  lockAuthoredControls(entry, ['view-btn-append', 'view-btn-edit', 'view-btn-forget'].map((id) => document.getElementById(id)), 'view-btn--locked')
+}
+
+/**
+ * One reading of `can_edit`, for every surface that offers those controls.
+ *
+ * The detail sheet and the list card are two renderings of the same three
+ * buttons over the same row, and the moment they answer "may I edit this?"
+ * separately they can disagree - which is exactly the defect this phase has
+ * already shipped twice. So the predicate, the disabled state, the dimming,
+ * the `aria-disabled` and the explanatory title all live here once, and each
+ * surface supplies only its own buttons and its own dimming class.
+ *
+ * `locked` is strictly `=== false`. Absent means "this Worker does not report
+ * it", not "you may not", so an older Worker and a solo brain are untouched.
+ */
+function lockAuthoredControls(entry, buttons, lockedClass) {
   const locked = entry.can_edit === false
-  for (const id of ['view-btn-append', 'view-btn-edit', 'view-btn-forget']) {
-    const btn = document.getElementById(id)
+  for (const btn of buttons) {
     if (!btn) continue
     btn.disabled = locked
-    btn.classList.toggle('view-btn--locked', locked)
+    btn.classList.toggle(lockedClass, locked)
     btn.title = locked ? t('memories.authorLockedTitle') : ''
     btn.setAttribute('aria-disabled', String(locked))
   }
+  return locked
+}
+
+/**
+ * The same lock on a list card.
+ *
+ * The card shows "Shared - Bob" already, so the user can see whose memory it
+ * is; what they could not see was that Append, Edit and Forget would 403. The
+ * set is deliberately the SAME three the detail sheet locks, for the same
+ * reason: those three routes gate on `assertCanMutateEntry`, the predicate
+ * `can_edit` reports. The share control is left alone here as unlink is left
+ * alone there - a different route with its own answer.
+ */
+function applyCardAuthorLock(entry, card) {
+  return lockAuthoredControls(
+    entry,
+    ['.append-btn', '.edit-btn', '.forget-btn'].map((sel) => card.querySelector(sel)),
+    'card-action-btn--locked',
+  )
 }
 
 /** Which memory the sheet is currently showing, so a late response can tell. */
