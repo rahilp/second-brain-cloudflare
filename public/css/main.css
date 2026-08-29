@@ -4382,6 +4382,26 @@
         align-items: center;
       }
 
+      /* In select mode the tick takes over the gutter the row number sits in.
+         Two leading markers on one row is clutter, and the number is the less
+         useful of the two while you are picking rows. Putting the tick in the
+         gutter rather than in the flow also means the content column does not
+         move when select mode turns on — the list does not reflow under your
+         thumb. */
+      #recent-list .memory-card--selecting::before {
+        content: none;
+      }
+
+      #recent-list .memory-card--selecting > .card-select {
+        position: absolute;
+        left: 1px;
+        /* Optically centred on the title's first line rather than the card:
+           a tall card would otherwise float its tick somewhere near the tags. */
+        top: 8px;
+        margin: 0;
+        justify-content: center;
+      }
+
       /* --accent as a BOUNDARY, never as ink. An outline (rather than a
          border) so a selected card does not shift by a pixel against its
          unselected neighbours. */

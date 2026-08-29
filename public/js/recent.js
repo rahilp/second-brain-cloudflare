@@ -570,7 +570,7 @@ function makeRecentCard(entry) {
     ? `<label class="card-select"><input type="checkbox" ${picked ? 'checked' : ''} onchange="toggleMemorySelection('${escAttr(entry.id)}', this.checked)" /></label>`
     : ''
   const card = document.createElement('div')
-  card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '') + (isStale ? ' card--stale' : '') + (picked ? ' memory-card--selected' : '')
+  card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '') + (isStale ? ' card--stale' : '') + (selecting ? ' memory-card--selecting' : '') + (picked ? ' memory-card--selected' : '')
   card.dataset.id = entry.id
   card.innerHTML =
     selectBox +
