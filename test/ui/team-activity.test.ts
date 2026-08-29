@@ -117,13 +117,25 @@ function ok(events: any[]) {
   return { ok: true, status: 200, json: async () => ({ ok: true, events }) };
 }
 
+/**
+ * A row in the shape GET /team/activity really sends.
+ *
+ * `at` is EPOCH MILLISECONDS — `at: Number(r.created_at) || 0` at
+ * src/routes/admin.ts — and `kind` is 'admin' or 'entry', never 'member'.
+ * These fixtures carried an ISO string and "member" until a review found that
+ * `new Date(String(row.at))`, which is Invalid Date for every real row, passed
+ * the whole suite. A fixture that disagrees with the endpoint it stands in for
+ * is a test that cannot see the bug it exists to catch.
+ */
+const AT_BASE = Date.UTC(2026, 7, 20, 10, 0, 0);
+
 function memberRow(i: number, over: Record<string, unknown> = {}) {
   return {
-    at: `2026-08-2${(i % 9) + 1}T10:0${i % 10}:00.000Z`,
+    at: AT_BASE + i * 60_000,
     event: "member_created",
     actor: `Ada ${i}`,
     subject: `Bob ${i}`,
-    kind: "member",
+    kind: "admin",
     title: null,
     entryId: null,
     detail: {},
@@ -145,6 +157,41 @@ describe("the activity feed", () => {
     expect(html).toContain("Added a member");
     expect(html).toContain("Bob Stone");
     expect(html).toContain("Ada Lovelace");
+  });
+
+  it("renders the timestamp the endpoint really sends, not a string spelling of it", async () => {
+    // `at` arrives as epoch milliseconds. `new Date(1760000000000)` is a date;
+    // `new Date(String(1760000000000))` is Invalid Date — and the whole suite
+    // used to pass with the latter because every fixture sent an ISO string,
+    // which parses either way. The cell is asserted here so the number is what
+    // has to work.
+    const { ctx, els } = setup(async () => ok([memberRow(0)]));
+    await ctx.maybeRevealActivity();
+    const html = els.get("activity-list").innerHTML as string;
+    expect(html).toContain(new Date(AT_BASE).toLocaleString(ctx.localeTag()));
+    expect(html).not.toContain("Invalid Date");
+  });
+
+  it("leaves the when-cell empty for a row whose clock is missing or unusable", async () => {
+    // The export already refuses to guess (activityIsoAt: empty, never a
+    // marker word, and never `new Date(null)`'s 1970). The view renders the
+    // same rows and must not answer differently — "Invalid Date" is noise in a
+    // compliance record and a 1970 date is a false statement in one.
+    // Read as the CELL, not as "the page does not contain 1970": epoch 0
+    // renders as 1969 west of UTC, so a substring check would have called the
+    // most misleading output of all a pass.
+    const whenCell = (html: string) =>
+      (html.match(/<div class="activity-when">([\s\S]*?)<\/div>/) as RegExpMatchArray)[1];
+
+    for (const at of [null, undefined, "", "not a date", NaN, 0]) {
+      const { ctx, els } = setup(async () => ok([memberRow(0, { at })]));
+      await ctx.maybeRevealActivity();
+      const html = els.get("activity-list").innerHTML as string;
+      expect(whenCell(html), `at=${String(at)}`).toBe("");
+      // The row itself still renders — one unusable cell is not a reason to
+      // drop the sentence an auditor came for.
+      expect(html).toContain("Added a member");
+    }
   });
 
   it("sends the bearer token the rest of the dashboard sends", async () => {

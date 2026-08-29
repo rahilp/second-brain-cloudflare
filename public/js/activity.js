@@ -37,24 +37,54 @@ function activityEventsFrom(data) {
 }
 
 /**
+ * Does this row have a clock reading at all?
+ *
+ * ONE definition, read by the export (activityIsoAt) and the view
+ * (activityWhen) alike. They render the same rows, so an `at` one of them
+ * refuses and the other prints is two different answers to one question — and
+ * the view had exactly that: it printed "Invalid Date", and for `at: null` it
+ * printed 31 December 1969.
+ *
+ * `at` is EPOCH MILLISECONDS on the wire (`Number(r.created_at) || 0`,
+ * src/routes/admin.ts); an ISO string is accepted too, because the dry-run and
+ * export paths have both carried one. The cases that matter are neither:
+ *
+ *  - missing, empty or unparseable — a row that used to throw out of
+ *    toISOString() and cost the admin the WHOLE file. One unusable row is not
+ *    a reason to refuse the other nine hundred.
+ *  - ZERO, which is the route's own spelling of "no clock": `|| 0` turns an
+ *    absent or unparseable created_at into 0, and `new Date(0)` is a perfectly
+ *    valid date that would have this column assert, in a compliance record,
+ *    that the thing happened in 1970 — or in 1969, west of UTC, which is worse
+ *    because a substring check for "1970" calls it a pass.
+ *
+ * Inventing a date is the one answer that is never acceptable here.
+ */
+function activityHasClock(at) {
+  if (at === null || at === undefined || at === '' || at === 0) return false
+  return !Number.isNaN(new Date(at).getTime())
+}
+
+/**
  * A row's timestamp as ISO 8601, or an empty cell if it does not have one.
  *
- * `at` is epoch milliseconds on the wire and an ISO string is also accepted,
- * but the case that matters is neither: a row with a missing or unparseable
- * `at` used to throw out of toISOString() and cost the admin the WHOLE file.
- * One unusable row is not a reason to refuse the other nine hundred.
- *
- * Empty, not a marker word and never a guess. `new Date(null)` is epoch 0, so
- * a bare `new Date()` would have this column assert, in a compliance record,
- * that the thing happened in 1970 — inventing a date is the one answer that is
- * never acceptable here. A literal like "unknown" would give an ISO-8601
- * column a second grammar for a parser to trip over; an empty cell is what
- * every other column in this document already uses for an absent value.
+ * Empty, not a marker word and never a guess. A literal like "unknown" would
+ * give an ISO-8601 column a second grammar for a parser to trip over; an empty
+ * cell is what every other column in this document already uses for an absent
+ * value.
  */
 function activityIsoAt(at) {
-  if (at === null || at === undefined || at === '') return ''
-  const d = new Date(at)
-  return Number.isNaN(d.getTime()) ? '' : d.toISOString()
+  return activityHasClock(at) ? new Date(at).toISOString() : ''
+}
+
+/**
+ * The same reading, formatted for the screen instead of for a parser.
+ *
+ * Empty for the same reason and by the same test: the view and the export must
+ * not disagree about which rows have a time.
+ */
+function activityWhen(at) {
+  return activityHasClock(at) ? new Date(at).toLocaleString(localeTag()) : ''
 }
 
 /**
@@ -151,7 +181,7 @@ function activityRow(row) {
     ]
       .filter(Boolean)
       .join(' · ')}</div>` +
-    `<div class="activity-when">${escHtml(new Date(row.at).toLocaleString(localeTag()))}</div>` +
+    `<div class="activity-when">${escHtml(activityWhen(row.at))}</div>` +
     `</div>`
   )
 }
