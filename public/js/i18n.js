@@ -401,6 +401,10 @@ const I18N_EN = {
           'At appleid.apple.com → Sign-In and Security → <b>App-Specific Passwords</b>, generate one, then enter your iCloud email and that password.',
       },
     },
+    connectedByLabel: 'Connected by {name}',
+    mirrorPersonal: 'Synced memories land in the personal layer',
+    mirrorShared: 'Synced memories land in the shared team layer',
+    connectedOn: 'Connected {when}',
   },
   team: {
     title: 'Team',
@@ -969,6 +973,10 @@ const I18N_IT = {
           'Su appleid.apple.com → Accesso e sicurezza → <b>Password specifiche per le app</b>, genera una, poi inserisci l’email iCloud e quella password.',
       },
     },
+    connectedByLabel: 'Collegata da {name}',
+    mirrorPersonal: 'I ricordi sincronizzati finiscono nel livello personale',
+    mirrorShared: 'I ricordi sincronizzati finiscono nel livello condiviso del team',
+    connectedOn: 'Collegata il {when}',
   },
   team: {
     title: 'Team',
