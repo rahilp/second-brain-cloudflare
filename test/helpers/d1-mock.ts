@@ -82,7 +82,11 @@ export class D1Mock {
     // test/unit/team-scoping.test.ts.
     const scopeDrop = new Set<number>();
     if (/workspace_id IN \(/.test(s)) {
-      const clauseRe = /(?:AND |WHERE )workspace_id IN \(((?:\?(?:, )?)+)\)/g;
+      // The alias prefix is optional: a statement that joins another table
+      // qualifies the column (`e.workspace_id`), and missing that form would
+      // leave the clause in place AND its workspace ids in `args`, where the
+      // branch below reads them as entry ids.
+      const clauseRe = /(?:AND |WHERE )(?:[A-Za-z_][A-Za-z0-9_]*\.)?workspace_id IN \(((?:\?(?:, )?)+)\)/g;
       for (const m of s.matchAll(clauseRe)) {
         const offset = (s.slice(0, m.index!).match(/\?/g) ?? []).length;
         const n = (m[1].match(/\?/g) ?? []).length;
@@ -609,11 +613,25 @@ export class D1Mock {
             .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id }));
           return { results };
         }
-        if (s.includes("SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN")) {
-          // buildGraph node hydration.
+        if (s.includes("FROM entries e LEFT JOIN users u ON u.id = e.actor_id")) {
+          // buildGraph node hydration. workspace_id/actor_id/source are what the
+          // node's `workspace` layer and `actor_name` are derived from; a row
+          // seeded without them reads as "", the pre-tenancy value. The join is
+          // modelled rather than ignored — it is where the author's name comes
+          // from now, and a soft-removed member must resolve to no name at all
+          // so the caller falls through to "Former member".
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, importance_score: e.importance_score ?? 0, created_at: e.created_at }));
+            .map((e: any) => {
+              const author = db.users.find((u: any) =>
+                u.id === (e.actor_id ?? "") && !u.removed_at);
+              return {
+                id: e.id, content: e.content, tags: e.tags,
+                importance_score: e.importance_score ?? 0, created_at: e.created_at,
+                workspace_id: e.workspace_id ?? "", actor_id: e.actor_id ?? "",
+                source: e.source ?? "", actor_display_name: author?.name ?? null,
+              };
+            });
           return { results };
         }
         if (s.includes("SELECT id, tags FROM entries WHERE id IN")) {

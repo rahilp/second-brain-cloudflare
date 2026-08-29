@@ -3,7 +3,8 @@ import { DEFAULTS, type Config } from "../config";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { getKind } from "../memory/kind";
 import { getStatus } from "../memory/status";
-import { scopeWhere } from "../lib/scope";
+import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
+import { resolveActorLabel } from "../lib/actors";
 import type { Identity } from "../lib/identity";
 import { edgeLabel } from "./edges";
 import type { Connection, EdgeProvenance, GraphNeighbor, GraphView } from "./types";
@@ -24,8 +25,28 @@ const GRAPH_MAX_NODES = 50;
 // a deterministically dead graph tab for every free-plan brain that large, and
 // runGraphPass backfills edges nightly, so a brain arrives there on its own.
 //
-// 47 is the WARM figure. On a cold isolate the budget is shared with
-// initializeDatabase, which fires under waitUntil and spends about 12 more on
+// That formula is the IDENTITY-LESS arithmetic — the cron callers. A scoped
+// caller costs more, and it always did: the scope bindings share each
+// statement's 100-parameter budget with the ids, so the batches shrink and the
+// batch COUNT rises. Measured at N=1500 by counting D1 calls (a batch counts
+// once, as the platform charges it):
+//
+//   identity-less                                    46
+//   member, any view — personal, company or both     48
+//   admin (reads the legacy '' layer too)            49
+//
+// Layer and author cost NOTHING on top of that: workspace_id and actor_id ride
+// in the hydration's projection and the author's name arrives through a LEFT
+// JOIN on it, so there is no per-view statement and no per-author bound
+// parameter. A whole served request adds the identity batch and the KV config
+// read: 50 for a member at N=1500, the entire free-plan budget with nothing
+// spare. THAT TOTAL IS PINNED by "costs exactly this many subrequests at
+// GRAPH_VIEW_MAX_NODES" in test/integration/graph-team-aware.test.ts — change it
+// deliberately or not at all, and remember a cold isolate still pays
+// initializeDatabase's DDL on top (#282).
+//
+// 47 is the WARM figure for the identity-less path. On a cold isolate the
+// budget is shared with initializeDatabase, which fires under waitUntil and spends about 12 more on
 // its DDL, so the first request against a fresh isolate costs ~59 and is over
 // the limit — 1500 buys margin on the warm path, it does not clear the cold one.
 // That is #282 (probe sqlite_master once instead of issuing twelve blind
@@ -241,7 +262,7 @@ export async function getConnections(id: string, type: string | undefined, env: 
   return out;
 }
 
-export async function buildGraph(opts: { seed?: string; limit?: number }, env: Env, config: Readonly<Config> = DEFAULTS, identity?: Identity): Promise<GraphView> {
+export async function buildGraph(opts: { seed?: string; limit?: number; only?: "personal" | "company" }, env: Env, config: Readonly<Config> = DEFAULTS, identity?: Identity): Promise<GraphView> {
   // "No cap" resolves to GRAPH_VIEW_MAX_NODES, never to Infinity. Anything that
   // is not a positive finite number — absent, 0, negative, NaN — takes that
   // branch, so a caller who reaches here past the route's own validation still
@@ -258,9 +279,12 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
   const limit = Math.min(asked, GRAPH_VIEW_MAX_NODES);
 
   let nodeIds: string[];
-  const scope = identity ? scopeWhere(identity) : null;
+  // `only` narrows every one of the three scoped statements below — the edge
+  // scan, the seed walk and the node hydration. Narrowing one and not the rest
+  // would answer with nodes from one layer joined by edges from both.
+  const scope = identity ? scopeWhere(identity, opts.only) : null;
   if (opts.seed) {
-    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true }, env, config, identity);
+    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true, only: opts.only }, env, config, identity);
     nodeIds = [opts.seed, ...neighbors.map(n => n.id)].slice(0, limit);
   } else {
     const { results } = await env.DB.prepare(
@@ -283,18 +307,64 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
   if (!nodeIds.length) return { nodes: [], edges: [] };
 
   const nodeRows = new Map<string, Record<string, any>>();
-  const nodeScopeSql = scope ? ` AND ${scope.clause}` : "";
+  /**
+   * actor_id → display name, read off the join below rather than looked up.
+   *
+   * The author names cost NO statement and NO bound parameter: a second query
+   * would have to bind one parameter per distinct author against D1's hard
+   * ceiling of 100 (D1_MAX_BOUND_PARAMS), and this is the one caller that cannot
+   * promise to stay under it — GET /list is bounded by its page size and GET
+   * /entry by one row, but a GRAPH_VIEW_MAX_NODES view can span every author on
+   * the deployment. At 101 distinct authors that statement is rejected outright
+   * and the whole graph request 500s. node:sqlite has no such limit, so no test
+   * against it can show this; the join is what removes the possibility.
+   */
+  const actorNames = new Map<string, string>();
+  // Aliased, and the scope clause names the alias: once a second table is in the
+  // statement, an unqualified `workspace_id` is a clause a reader (and the scope
+  // checker) has to resolve by knowing which table has the column.
+  const nodeScope = identity ? scopeWhere(identity, opts.only, "e.workspace_id") : null;
+  const nodeScopeSql = nodeScope ? ` AND ${nodeScope.clause}` : "";
   // Scope bindings share the statement's bound-parameter budget with the ids.
-  const nodeTake = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  const nodeTake = D1_MAX_BOUND_PARAMS - (nodeScope?.bindings.length ?? 0);
   for (let i = 0; i < nodeIds.length; i += nodeTake) {
     const batch = nodeIds.slice(i, i + nodeTake);
     const ph = batch.map(() => "?").join(", ");
-    // scope-checked: the caller's clause IS applied — nodeScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
+    // workspace_id, actor_id and source ride along in the projection the
+    // hydration was already issuing, and the author's name arrives with them
+    // through a join on the users primary key: same rows, same statement, no
+    // extra read. The join is soft-delete aware exactly as lookupActorLabels is,
+    // so a removed member still resolves to "Former member" rather than to a
+    // stale name.
+    //
+    // Keep the annotation below immediately above the statement: it is spent by
+    // the first query within five lines of it, and prose in between silently
+    // pushes the statement out of that window.
+    // scope-checked: the caller's clause IS applied — nodeScopeSql is built as ` AND ${nodeScope.clause}` above, against the `e` alias, and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. The joined `users` rows are labels for the entries this clause already admitted, never a second source of rows. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN (${ph})${nodeScopeSql}`
-    ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
-    for (const r of results) nodeRows.set(r.id as string, r);
+      `SELECT e.id, e.content, e.tags, e.importance_score, e.created_at,
+              e.workspace_id, e.actor_id, e.source, u.name AS actor_display_name
+       FROM entries e
+       LEFT JOIN users u ON u.id = e.actor_id AND (u.removed_at IS NULL OR u.removed_at = 0)
+       WHERE e.id IN (${ph})${nodeScopeSql}`
+    ).bind(...batch, ...(nodeScope?.bindings ?? [])).all() as { results: Record<string, any>[] };
+    for (const r of results) {
+      nodeRows.set(r.id as string, r);
+      if (r.actor_id && r.actor_display_name) {
+        actorNames.set(String(r.actor_id), String(r.actor_display_name));
+      }
+    }
   }
+
+  // Exactly GET /list's layer rule, so the canvas and the list badge the same
+  // row the same way. Without an Identity there is no personal or company layer
+  // to be in — the cron and unit callers get "system" on every node and no
+  // author lookup at all.
+  const layerOf = (wid: unknown): "personal" | "company" | "system" =>
+    !identity ? "system"
+    : wid === identity.personalWorkspaceId ? "personal"
+    : isCompanyWorkspace(identity, wid) ? "company"
+    : "system";
 
   const nodes: GraphView["nodes"] = [];
   for (const id of nodeIds) {
@@ -302,6 +372,7 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     if (!r) continue;
     const tags: string[] = JSON.parse(r.tags ?? "[]");
     if (tags.some(t => MACHINE_AUTHORED_TAGS.has(t))) continue;
+    const workspace = layerOf(r.workspace_id);
     nodes.push({
       id,
       label: (r.content as string).slice(0, 80),
@@ -310,8 +381,20 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
       status: getStatus(tags),
       importance: (r.importance_score as number) ?? 0,
       created_at: r.created_at as number,
+      workspace,
+      // Named by the same resolver /list and /entry use, given the same inputs —
+      // including `source`, so a row the pipeline wrote reads "System" on the
+      // canvas exactly as it does in the list. Only company-layer nodes have an
+      // author to name; `viewerId` is what turns the caller's own into "You".
+      actor_name: workspace === "company"
+        ? resolveActorLabel(String(r.actor_id ?? ""), actorNames, {
+            viewerId: identity?.userId,
+            source: String(r.source ?? ""),
+          })
+        : null,
     });
   }
+
   const nodeIdSet = new Set(nodes.map(n => n.id));
   if (!nodeIdSet.size) return { nodes: [], edges: [] };
 

@@ -3,8 +3,9 @@ import { resolveConfig } from "../config";
 import { LLM_MODEL, VECTORIZE_FIX_HINT } from "../constants";
 import { buildEntryFilterQuery } from "../capture/entry";
 import { compressTag } from "../compression/digest";
-import { CORS_HEADERS, intParam, json } from "../lib/http";
+import { CORS_HEADERS, intParam, json, readWorkspaceParam } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
+import { assertCanMutateEntry } from "../lib/entry-access";
 import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -27,20 +28,6 @@ function scopeEntryFilterQuery(
     ? q.sql.replace(" ORDER BY", ` AND ${scope.clause} ORDER BY`)
     : q.sql.replace(" ORDER BY", ` WHERE ${scope.clause} ORDER BY`);
   return { sql, bindings: [...q.bindings.slice(0, -1), ...scope.bindings, ...q.bindings.slice(-1)] };
-}
-
-/**
- * The ?workspace= layer filter shared by /list and /recall. Only narrows the
- * caller's readable set — "personal" and "company" both resolve from the
- * identity, so a caller can never name a workspace it does not belong to.
- */
-function readWorkspaceParam(url: URL): "personal" | "company" | undefined | Response {
-  const raw = url.searchParams.get("workspace")?.trim();
-  if (!raw) return undefined;
-  if (raw !== "personal" && raw !== "company") {
-    return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
-  }
-  return raw;
 }
 
 export async function handleRecallRoutes(
@@ -91,6 +78,17 @@ export async function handleRecallRoutes(
       return {
         ...r,
         workspace: layer,
+        // The same answer GET /entry gives, from the same predicate the mutation
+        // routes enforce with: a card the caller cannot edit says so before they
+        // try. Computed for every row, not only company ones, so a client can
+        // read a missing field as "old Worker" and a present `true` as a real
+        // answer. workspace_id and actor_id are already in the projection —
+        // layerOf reads the first and lookupActorLabels the second — so this
+        // costs no query.
+        can_edit: assertCanMutateEntry(identity, {
+          workspace_id: String(r.workspace_id ?? ""),
+          actor_id: String(r.actor_id ?? ""),
+        }) === null,
         actor_name: layer === "company"
           ? resolveActorLabel(String(r.actor_id ?? ""), labelMap, {
               viewerId: identity.userId,

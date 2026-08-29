@@ -15,6 +15,20 @@ export function json(data: unknown, status = 200): Response {
 }
 
 /**
+ * The ?workspace= layer filter shared by /list, /recall and /graph. Only narrows
+ * the caller's readable set — "personal" and "company" both resolve from the
+ * identity, so a caller can never name a workspace it does not belong to.
+ */
+export function readWorkspaceParam(url: URL): "personal" | "company" | undefined | Response {
+  const raw = url.searchParams.get("workspace")?.trim();
+  if (!raw) return undefined;
+  if (raw !== "personal" && raw !== "company") {
+    return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
+  }
+  return raw;
+}
+
+/**
  * The legacy AUTH_TOKEN check: `Authorization: Bearer <token>` and nothing else.
  *
  * The `?token=` query form was removed in v3 for the reason extractToken

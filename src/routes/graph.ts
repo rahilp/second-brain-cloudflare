@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { intParam, json } from "../lib/http";
+import { intParam, json, readWorkspaceParam } from "../lib/http";
 import { getReadableEntry } from "../lib/entry-access";
 import { requireIdentity } from "../lib/identity";
 import { createEdge, deleteEdge, isValidEdgeType, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
@@ -99,8 +99,12 @@ export async function handleGraphRoutes(
     // floor of 1 is what stops `?limit=0` and `?limit=-1` from meaning that too.
     const limit = intParam(url, "limit", { min: 1 });
     if (limit instanceof Response) return limit;
+    // Same layer filter, same 400, as /list and /recall — it can only ever
+    // narrow the caller's readable set, never name a workspace outside it.
+    const workspace = readWorkspaceParam(url);
+    if (workspace instanceof Response) return workspace;
 
-    const { nodes, edges } = await buildGraph({ seed, limit }, env, await resolveConfig(env), auth);
+    const { nodes, edges } = await buildGraph({ seed, limit, only: workspace }, env, await resolveConfig(env), auth);
     return json({ ok: true, nodes, edges });
   }
 
