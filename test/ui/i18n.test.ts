@@ -408,29 +408,72 @@ describe("dashboard i18n", () => {
     // list is a closed set on purpose: a NEW dynamic call site — whether a fresh
     // interpolation or a fresh indirection — must land here deliberately, not vanish
     // between this check and the catalog-parity check above.
+    //
+    // Entries are `file expression` — deliberately WITHOUT the line number. Pinning the
+    // line would make this assertion fire on an unrelated edit (anything added above that
+    // line in the same file), which trains people to update the list without reading it
+    // and defeats the point. The line number still appears in the failure message below,
+    // where it's the thing that makes a real failure actionable.
+    //
+    // This is a MULTISET, not a set: if the same file+expression pair legitimately occurs
+    // twice, list it twice. Today nothing collides (`t(key)` in home.js and utils.js are
+    // different files; integrations.js's `t(key)` and `t(fallbackKey)` are different
+    // expressions), but a same-file, same-expression duplicate must still force a decision
+    // rather than being silently absorbed into a set of one.
     const EXPECTED_DYNAMIC_CALL_SITES = [
-      "public/js/brief.js:142 t(`patterns.shapes.${shape}`)",
+      "public/js/brief.js t(`patterns.shapes.${shape}`)",
       // Both of these resolve through captureDefaultKey() in public/utils.js, which
       // returns one of exactly four literals — home.auto{Shared,Personal}{Yours,Org}.
       // The composer and the Team screen's member readout share it precisely so one
       // profile cannot be described two ways, which is also why neither site can spell
       // the keys out. All four are asserted verbatim in ui/composer-policy-hint.test.ts
       // and reached again in ui/team-panel.test.ts.
-      "public/js/home.js:80 t(key)",
-      "public/js/team.js:234 t(defaultKey)",
-      "public/js/integrations.js:29 t(keys[id] || 'integrations.categoryOther')",
-      "public/js/integrations.js:39 tPlural(integrationNounKey(provider))",
-      "public/js/integrations.js:44 t(key)",
-      "public/js/integrations.js:47 t(fallbackKey)",
-      "public/js/memory-crud.js:348 t(keys[event])",
-      "public/js/patterns.js:78 t(`patterns.shapes.${shape}`)",
-      "public/utils.js:225 t(key)",
+      "public/js/home.js t(key)",
+      "public/js/team.js t(defaultKey)",
+      "public/js/integrations.js t(keys[id] || 'integrations.categoryOther')",
+      "public/js/integrations.js tPlural(integrationNounKey(provider))",
+      "public/js/integrations.js t(key)",
+      "public/js/integrations.js t(fallbackKey)",
+      "public/js/memory-crud.js t(keys[event])",
+      "public/js/patterns.js t(`patterns.shapes.${shape}`)",
+      "public/utils.js t(key)",
     ].sort();
 
-    const actualDynamicCallSites = dynamicHits
-      .map((d) => `${d.file}:${d.line} ${d.fn}(${d.snippet})`)
+    function dynamicIdentity(file: string, fn: string, snippet: string): string {
+      return `${file} ${fn}(${snippet})`;
+    }
+
+    const actualDynamicIdentities = dynamicHits
+      .map((d) => dynamicIdentity(d.file, d.fn, d.snippet))
       .sort();
 
-    expect(actualDynamicCallSites).toEqual(EXPECTED_DYNAMIC_CALL_SITES);
+    // Multiset diff, done by hand rather than expect(...).toEqual(...) on the raw lists,
+    // so a real failure can name the file:line of whatever's new — the identity above
+    // deliberately can't.
+    const remaining = new Map<string, number>();
+    for (const expected of EXPECTED_DYNAMIC_CALL_SITES) {
+      remaining.set(expected, (remaining.get(expected) ?? 0) + 1);
+    }
+    const mismatches: string[] = [];
+    for (const hit of dynamicHits) {
+      const id = dynamicIdentity(hit.file, hit.fn, hit.snippet);
+      const left = remaining.get(id) ?? 0;
+      if (left > 0) {
+        remaining.set(id, left - 1);
+      } else {
+        mismatches.push(`NEW dynamic call site not in EXPECTED_DYNAMIC_CALL_SITES: ${hit.file}:${hit.line} ${hit.fn}(${hit.snippet})`);
+      }
+    }
+    for (const [id, count] of remaining) {
+      for (let i = 0; i < count; i++) {
+        mismatches.push(`EXPECTED_DYNAMIC_CALL_SITES entry no longer found as a dynamic call site: ${id}`);
+      }
+    }
+    expect(mismatches, "dynamic call sites (file+expression, order-independent) drifted from EXPECTED_DYNAMIC_CALL_SITES").toEqual([]);
+
+    // Belt-and-suspenders: the multiset diff above already proves it, but keep a plain
+    // sorted-array equality too, since it's what a reader expects a "closed list" check to
+    // look like at a glance.
+    expect(actualDynamicIdentities).toEqual([...EXPECTED_DYNAMIC_CALL_SITES].sort());
   });
 });
