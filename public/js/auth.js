@@ -12,7 +12,20 @@ async function connect() {
   err.textContent = ''
   try {
     const res = await fetch(`${url}/list?n=1`, { headers: { Authorization: `Bearer ${tok}` } })
-    if (res.status === 401) throw new Error(t('auth.invalidToken'))
+    if (res.status === 401) {
+      // The Worker says WHY (src/lib/identity.ts): a suspended or removed member
+      // holds a token that is not wrong, so "Invalid token" sent them off to
+      // re-copy a token that was never the problem. Only a token that hashes to
+      // a real member can produce anything but invalid_token, so this cannot
+      // report an account state to someone who guessed. An older Worker sends no
+      // code at all, which falls through to the message it always sent.
+      const body = await res.json().catch(() => ({}))
+      throw new Error(
+        t(
+          `auth.${body.code === 'suspended' ? 'accountSuspended' : body.code === 'removed' ? 'accountRemoved' : 'invalidToken'}`,
+        ),
+      )
+    }
     if (!res.ok) throw new Error(t('auth.serverError', { status: res.status }))
     localStorage.setItem('sb_url', url)
     localStorage.setItem('sb_token', tok)

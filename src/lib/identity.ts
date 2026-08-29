@@ -201,13 +201,105 @@ export async function resolveIdentityForRequest(
 }
 
 /**
+ * Why a request failed to authenticate, for a client that has to say something
+ * useful about it. `invalid_token` is the only one a caller who is not already
+ * holding a real token can ever see — see classifyAuthFailure.
+ */
+export type AuthFailureCode = "invalid_token" | "suspended" | "removed";
+
+/**
+ * `invalid_token` keeps the exact string it has always had. Two suites assert it
+ * verbatim (test/integration/auth.test.ts, test/ui/team-panel.test.ts) and,
+ * more to the point, it is the answer every unauthenticated caller gets — it
+ * must stay as uninformative as it was.
+ */
+const AUTH_FAILURE_MESSAGE: Record<AuthFailureCode, string> = {
+  invalid_token: "Unauthorized",
+  suspended: "Your account is suspended. Ask a team admin to restore it.",
+  removed: "Your account has been removed from this team.",
+};
+
+const CLASSIFY_FAILURE_SQL = `SELECT suspended, removed_at FROM users WHERE token_hash = ?`;
+const CLASSIFY_FAILURE_BY_ID_SQL = `SELECT suspended, removed_at FROM users WHERE id = ?`;
+
+/** Removal beats suspension; a row with neither flag failed for some other reason. */
+function codeForRow(row: { suspended: number | null; removed_at: number | null } | null): AuthFailureCode {
+  if (!row) return "invalid_token";
+  // Removal is checked first: removeMember does not clear `suspended`, so a
+  // member an admin suspended and then removed carries both flags, and removal
+  // is the more final of the two facts.
+  if (Number(row.removed_at) > 0) return "removed";
+  if (row.suspended) return "suspended";
+  // Neither flag set — the identity failed for some other reason (no personal
+  // workspace membership, say). Nothing actionable to report.
+  return "invalid_token";
+}
+
+/**
+ * Distinguish "your access was revoked" from "that is not a token", WITHOUT
+ * turning the endpoint into an account-existence oracle.
+ *
+ * The whole property rests on the lookup key: this selects on `token_hash`, the
+ * SHA-256 of the token the caller actually presented. Nobody can produce a hash
+ * that collides with a member's token without holding that member's token, so a
+ * caller who guessed wrong finds no row and is told `invalid_token` — bit for
+ * bit the answer they got before this function existed. There is no id, name or
+ * email predicate here, and there must never be one: any lookup by a value an
+ * attacker can enumerate would leak exactly what this is careful not to.
+ *
+ * Runs on the failure path only. The happy path resolves through IDENTITY_SQL
+ * and never reaches here, so authenticating still costs one query.
+ */
+async function classifyAuthFailure(token: string, env: Env): Promise<AuthFailureCode> {
+  if (!token) return "invalid_token";
+  const row = await env.DB.prepare(CLASSIFY_FAILURE_SQL)
+    .bind(await hashToken(token))
+    .first<{ suspended: number | null; removed_at: number | null }>();
+  return codeForRow(row);
+}
+
+/**
+ * The same classification for the MCP OAuth-grant path, where there is no bearer
+ * token in `users` to hash — the credential is the provider's own access token
+ * and the user id arrives out of the grant.
+ *
+ * Looking a user up by id is safe HERE and nowhere else: `userId` is not
+ * caller-supplied. @cloudflare/workers-oauth-provider sets it from a grant it
+ * has already decrypted out of KV, so reaching this line means the caller
+ * already holds a valid grant for that exact user. It is never reachable from a
+ * guessed id, which is why classifyAuthFailure above must keep hashing instead.
+ */
+async function classifyAuthFailureByUserId(userId: string, env: Env): Promise<AuthFailureCode> {
+  if (!userId) return "invalid_token";
+  const row = await env.DB.prepare(CLASSIFY_FAILURE_BY_ID_SQL)
+    .bind(userId)
+    .first<{ suspended: number | null; removed_at: number | null }>();
+  return codeForRow(row);
+}
+
+/**
+ * The 401 body every auth guard in this file returns. Shared so the three
+ * surfaces (REST, MCP, and the legacy AUTH_TOKEN guard in http.ts) cannot drift
+ * into different shapes.
+ */
+function authFailureResponse(code: AuthFailureCode): Response {
+  return json({ ok: false, error: AUTH_FAILURE_MESSAGE[code], code }, 401);
+}
+
+/** Classify the request's bearer token, skipping the query when there is none. */
+async function unauthorized(request: Request, env: Env): Promise<Response> {
+  const token = extractToken(request);
+  return authFailureResponse(token ? await classifyAuthFailure(token, env) : "invalid_token");
+}
+
+/**
  * The requireAuth twin: resolves identity or returns the 401 Response to send back.
  * Used as `const auth = await requireIdentity(req, env); if (auth instanceof Response) return auth;`
  */
 export async function requireIdentity(request: Request, env: Env): Promise<Identity | Response> {
   const identity = await resolveIdentity(request, env);
   if (identity) return identity;
-  return json({ ok: false, error: "Unauthorized" }, 401);
+  return unauthorized(request, env);
 }
 
 /**
@@ -237,5 +329,17 @@ export async function requireIdentityForMcp(
 ): Promise<Identity | Response> {
   const identity = await resolveIdentityForRequest(request, env, oauthUserId);
   if (identity && !(identity instanceof Response)) return identity;
-  return json({ ok: false, error: "Unauthorized" }, 401);
+  // Bearer first, matching the resolve order above: a member signing in with the
+  // token an admin issued them is classified by hashing it, exactly as REST does.
+  const token = extractToken(request);
+  if (token) {
+    const code = await classifyAuthFailure(token, env);
+    if (code !== "invalid_token") return authFailureResponse(code);
+  }
+  // Then the grant. A browser-OAuth client's access token is the provider's own
+  // opaque form and is not in `users`, so the hash above finds nothing and this
+  // is the only thing that can tell a suspended member why their MCP client
+  // stopped working.
+  if (oauthUserId) return authFailureResponse(await classifyAuthFailureByUserId(oauthUserId, env));
+  return authFailureResponse("invalid_token");
 }

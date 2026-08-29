@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import type { AuthFailureCode } from "./identity";
 
 export const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -20,9 +21,17 @@ export function isAuthorized(request: Request, env: Env): boolean {
 
 // Returns a 401 Response if the request lacks a valid token, otherwise null —
 // lets routes early-return with `const authErr = requireAuth(...); if (authErr) return authErr;`
+//
+// Carries the same `code` field requireIdentity's 401s do, so a client can read
+// one shape across every surface. Always "invalid_token": this guard compares
+// against the AUTH_TOKEN binding and has no users row to classify, so there is
+// no suspension or removal for it to report. The type import is erased at
+// compile time, so naming AuthFailureCode here costs no runtime cycle with
+// identity.ts (which imports json from this file).
 export function requireAuth(request: Request, env: Env): Response | null {
   if (isAuthorized(request, env)) return null;
-  return json({ ok: false, error: "Unauthorized" }, 401);
+  const code: AuthFailureCode = "invalid_token";
+  return json({ ok: false, error: "Unauthorized", code }, 401);
 }
 
 // Anchored so the whole value has to be an integer. parseInt stops at the first
