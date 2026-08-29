@@ -25,6 +25,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   PROBE_TIMEOUT_MS,
   canRotatePassword,
+  canUpdateWorker,
   fetchRoleProbe,
   roleFromDetailsProbe,
   roleFromProbe,
@@ -345,11 +346,45 @@ describe("the details window asks rather than assumes", () => {
     );
   });
 
+  it("offers the Worker update as a button only to the owner", () => {
+    // A member's app self-updates from GitHub Releases with no Cloudflare
+    // involvement, so their BUNDLED Worker version races ahead of the team's
+    // DEPLOYED one purely by staying current — and the update card then
+    // offered them a button that dead-ends at ErrorWrongCfAccount. The card
+    // stays: a member seeing features they do not have deserves the
+    // explanation. The button does not.
+    expect(source).toMatch(/updateCard\(update\.availableVersion, canUpdateWorker\(connectionRole\)\)/);
+    // And the non-owner branch must render prose, not a disabled button.
+    const card = source.slice(source.indexOf("function updateCard("));
+    expect(card.slice(0, card.indexOf("\n}"))).toMatch(/details\.updateDescOther/);
+  });
+
   it("cannot fail into a claim", () => {
     // The `.catch` is the least-privilege guarantee at this boundary: an
     // unregistered command, a locked keychain or an unreachable brain must all
     // reach `null`, which `roleFromDetailsProbe` reads as "member".
     expect(source).toMatch(/invoke<unknown>\("connection_role"\)\.catch/);
+  });
+});
+
+describe("who may update the Worker", () => {
+  it("is the owner and nobody else — not even a team admin", () => {
+    // The update redeploys the Worker, which happens inside the Cloudflare
+    // account it lives in. A promoted team admin has no more access to that
+    // account than a member does, so `role === "admin"` must not unlock it:
+    // `start_worker_update` resolves the account by matching the brain's
+    // workers.dev subdomain and answers ErrorWrongCfAccount to anyone else.
+    expect(canUpdateWorker("owner")).toBe(true);
+    expect(canUpdateWorker("admin")).toBe(false);
+    expect(canUpdateWorker("member")).toBe(false);
+  });
+
+  it("is the same answer as the password change, for the same reason", () => {
+    // Both need a Cloudflare session for the account the Worker is deployed
+    // into. If these two ever disagree, one of them is wrong.
+    for (const role of ["owner", "admin", "member"] as ConnectionRole[]) {
+      expect(canUpdateWorker(role)).toBe(canRotatePassword(role));
+    }
   });
 });
 

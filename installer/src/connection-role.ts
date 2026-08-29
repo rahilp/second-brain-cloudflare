@@ -174,3 +174,23 @@ export function teamCardKeys(role: ConnectionRole): { label: string; body: strin
 export function canRotatePassword(role: ConnectionRole): boolean {
   return role === "owner";
 }
+
+/**
+ * Whether this install may offer to update the deployed Worker.
+ *
+ * The same answer as `canRotatePassword`, for the same reason and not by
+ * coincidence: both redeploy something inside the Cloudflare account the Worker
+ * lives in, and `start_worker_update` resolves that account by matching the
+ * brain's workers.dev subdomain against the signed-in session. A team admin has
+ * no more access to it than a member does, so "admin" does not unlock this.
+ *
+ * The desktop app self-updates from GitHub Releases with no Cloudflare
+ * involvement, which is why this matters: a member keeping their app current
+ * pushes their BUNDLED Worker version ahead of the team's DEPLOYED one, so
+ * `is_behind` is true on every launch and stays true until the owner acts.
+ * Without this gate they were offered the update every single time, and it
+ * could never succeed.
+ */
+export function canUpdateWorker(role: ConnectionRole): boolean {
+  return role === "owner";
+}

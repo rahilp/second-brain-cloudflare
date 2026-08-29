@@ -1079,6 +1079,46 @@ pub async fn worker_update_available(
     Ok(compute_worker_update(session.dry_run).await)
 }
 
+/// Whether the Worker-update prompt is this user's to see.
+///
+/// Pure, so the rule is testable without a keychain or a network — the two
+/// facts it needs are gathered by [`worker_update_is_offerable`] below.
+///
+/// The prompt leads to `start_worker_update`, which resolves the hosting
+/// account by matching the brain's workers.dev subdomain against the signed-in
+/// Cloudflare session and answers `ErrorWrongCfAccount` to anyone else. So the
+/// question is not "may this person administer the brain" — a team admin may,
+/// and still cannot do this — it is "does this person hold the Cloudflare
+/// account the Worker is deployed into". Only `owner` answers that.
+///
+/// A one-person brain is exempt and asks nothing: its owner is whoever holds
+/// the token, there is nobody else on it to mislead, and a Worker old enough to
+/// be behind may well predate `/team/me` entirely.
+fn update_prompt_is_offerable(team_brain: bool, probe: &ConnectionRoleProbe) -> bool {
+    if !team_brain {
+        return true;
+    }
+    // Not `role == "admin"`, and not "could not tell" either. Least privilege:
+    // being wrong this way costs an owner one click in the tray window; being
+    // wrong the other way nags every member on every launch, forever, for an
+    // action that cannot succeed.
+    probe.owner
+}
+
+/// The two facts [`update_prompt_is_offerable`] needs, gathered.
+///
+/// A solo install makes no request at all, so its launch is what it always was.
+async fn worker_update_is_offerable() -> bool {
+    if !secure_store::is_team_mode() {
+        return true;
+    }
+    let Some(info) = secure_store::load_setup() else {
+        return false;
+    };
+    let probe = fetch_connection_role(&info.worker_url, &info.auth_token).await;
+    update_prompt_is_offerable(true, &probe)
+}
+
 /// Launch-time check on the brain this computer is connected to.
 ///
 /// Two outcomes are worth interrupting for: the Worker is behind the bundled
@@ -1097,6 +1137,16 @@ pub fn check_brain_at_launch(app: &AppHandle) {
             }
             LaunchCheck::Update(update) => update,
         };
+        // After the stale-password arm, deliberately: a password changed on
+        // another computer is a real problem and it is the member's own to
+        // fix, so that screen reaches everyone. This one does not.
+        if !worker_update_is_offerable().await {
+            log::info!(
+                "the deployed Worker is behind, but this computer's token does not own the \
+                 deployment — no update prompt"
+            );
+            return;
+        }
         let message = i18n::t_fmt(
             locale,
             Key::WorkerUpdateMessage,
@@ -2495,7 +2545,7 @@ mod tests {
         app_mode, bindings_are_a_brains, blocked_by_migration, brain_index_names,
         clear_pending_rotation, cloudflare_client_for_brain, confirm_target_is_a_brain,
         dashboard_credentials, fetch_connection_role, for_log, normalize_worker_url,
-        role_probe_from_body,
+        role_probe_from_body, update_prompt_is_offerable,
         password_opens_brain, ConnectionRoleProbe,
         previous_index_for, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
         rotation_address, rotation_block, rotation_failure, rotation_target, RotateError,
@@ -3022,6 +3072,81 @@ mod tests {
         // is the ordinary state for anyone who updated the app first.
         let old = fetch_connection_role(&format!("{}/nope", brain.base_url()), PASSWORD).await;
         assert_eq!(old, ConnectionRoleProbe::default());
+    }
+
+    /// Who the launch-time Worker-update prompt is for.
+    ///
+    /// `check_for_updates` self-updates the DESKTOP app from GitHub Releases
+    /// with no Cloudflare involvement — correct, and it must keep working for
+    /// everyone. The consequence is that a team member's BUNDLED Worker version
+    /// races ahead of the team's DEPLOYED one purely by their keeping the app
+    /// current, `is_behind` goes true on every launch, and they were shown an
+    /// OK/Cancel dialog offering an update that resolves the hosting account by
+    /// matching the brain's workers.dev subdomain — and so dead-ends at
+    /// ErrorWrongCfAccount for anyone but the owner. Indefinitely, and
+    /// *because* they kept their app up to date.
+    ///
+    /// Owner, not admin: a promoted team admin has no more access to that
+    /// Cloudflare account than a member does.
+    #[test]
+    fn the_worker_update_prompt_is_the_owners_alone() {
+        let member = ConnectionRoleProbe { role: Some("member".into()), owner: false };
+        let promoted = ConnectionRoleProbe { role: Some("admin".into()), owner: false };
+        let owner = ConnectionRoleProbe { role: Some("admin".into()), owner: true };
+
+        assert!(update_prompt_is_offerable(true, &owner), "the owner still gets asked");
+        assert!(!update_prompt_is_offerable(true, &member), "a member must not be nagged");
+        assert!(
+            !update_prompt_is_offerable(true, &promoted),
+            "a promoted admin has no Cloudflare account here either"
+        );
+
+        // Least privilege: a brain that could not be asked is not a brain that
+        // said yes. The cost of being wrong this way is an owner who clicks
+        // Update in the tray window instead; the cost of the other way is the
+        // bug above.
+        assert!(
+            !update_prompt_is_offerable(true, &ConnectionRoleProbe::default()),
+            "an unanswerable probe must suppress the prompt, not raise it"
+        );
+
+        // And a one-person brain is unchanged in every case — including the
+        // unanswerable one. There is nobody on it to mislead, its owner is
+        // whoever holds the token by construction, and a Worker too old to
+        // answer /team/me is exactly the Worker most likely to be behind.
+        for probe in [ConnectionRoleProbe::default(), member.clone(), owner.clone()] {
+            assert!(update_prompt_is_offerable(false, &probe), "a solo install must not change");
+        }
+    }
+
+    /// The prompt is gated; the stale-password screen is not.
+    ///
+    /// A member's password going stale is genuinely theirs to fix, and routing
+    /// them to it needs no Cloudflare account. Gating both behind one check is
+    /// the easy mistake here, so it is asserted on the source: the scan runs
+    /// over the function body only, so this test's own text cannot satisfy it.
+    #[test]
+    fn a_dead_password_still_reaches_everyone() {
+        let src = include_str!("commands.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("the test module is the boundary of the scannable source")];
+        let start = code.find("pub fn check_brain_at_launch").expect("check_brain_at_launch");
+        let body = &code[start..];
+        let body = &body[..body.find("\n}\n").expect("end of fn")];
+
+        let stale = body.find("StalePassword").expect("the stale-password arm");
+        let gate = body.find("worker_update_is_offerable").expect("the update gate");
+        assert!(
+            stale < gate,
+            "the stale-password arm must return before the ownership gate — a member \
+             whose password was changed elsewhere has a real problem that is theirs to fix"
+        );
+        let stale_arm = &body[stale..gate];
+        assert!(
+            !stale_arm.contains("worker_update_is_offerable"),
+            "the stale-password screen must not be gated on owning the deployment"
+        );
     }
 
     /// A 200 is not a promise about shape.

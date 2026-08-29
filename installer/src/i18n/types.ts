@@ -434,6 +434,7 @@ export type Messages = {
     navComputer: string;
     updateLabel: string;
     updateDesc: string;
+    updateDescOther: string;
     updateButton: string;
     allSetTitle: string;
     allSetLede: string;

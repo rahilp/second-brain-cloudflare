@@ -702,6 +702,10 @@ export const it: Messages = {
     updateLabel: "È disponibile un nuovo Second Brain ({version})",
     updateDesc:
       "Aggiorna per le ultime novità. Memorie, password e strumenti collegati restano.",
+    updateDescOther:
+      "Chi ha creato questo brain deve aggiornarlo: l'aggiornamento avviene nel " +
+      "suo account Cloudflare, quindi non è un'operazione che questo computer " +
+      "può fare. Nel frattempo nulla di ciò che hai salvato viene toccato.",
     updateButton: "Aggiorna il Second Brain",
     allSetTitle: "Tutto pronto",
     allSetLede: "Due link da conservare. Li trovi sempre qui in Dettagli connessione.",

@@ -717,6 +717,14 @@ export const en: Messages = {
     updateLabel: "A newer Second Brain is available ({version})",
     updateDesc:
       "Update to get the latest improvements. Your memories, password, and connected tools are kept.",
+    // Read by anyone who cannot perform the update: the redeploy happens inside
+    // the Cloudflare account the brain lives in, and only the person who
+    // created it has one. Says who can, rather than going quiet — a member
+    // whose brain is behind is missing features and deserves the reason.
+    updateDescOther:
+      "Whoever set this brain up needs to update it — the update runs in their " +
+      "own Cloudflare account, so it isn't something this computer can do. " +
+      "Nothing you've saved is affected in the meantime.",
     updateButton: "Update my Second Brain",
     allSetTitle: "You're all set",
     allSetLede: "Two links to keep. You can always find them again in this app under Connection details.",

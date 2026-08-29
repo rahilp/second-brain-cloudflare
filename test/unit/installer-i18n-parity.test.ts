@@ -55,6 +55,8 @@ describe("the three strings a member-token install depends on", () => {
     "details.teamCardBodyAdmin",
     "details.teamCardBodyMember",
     "connectExisting.passwordPlaceholder",
+    // What a non-owner reads in place of the "Update my Second Brain" button.
+    "details.updateDescOther",
   ];
 
   it("is present, non-blank and actually translated", () => {
@@ -113,6 +115,23 @@ describe("the three strings a member-token install depends on", () => {
     // Said positively, so deleting the phrase rather than correcting it fails.
     expect(String(enFlat.get("details.teamCardBodyMember"))).toMatch(/company layer/i);
     expect(String(itFlat.get("details.teamCardBodyMember"))).toMatch(/livello aziendale/i);
+  });
+
+  it("explains a Worker update a non-owner cannot perform, rather than hiding it", () => {
+    // Not silently dropped: a member whose brain is behind sees features go
+    // missing and deserves to know why. The note has to say who CAN do it,
+    // and must not read like a temporary failure.
+    for (const catalog of [enFlat, itFlat]) {
+      const other = String(catalog.get("details.updateDescOther"));
+      expect(other.trim().length).toBeGreaterThan(0);
+      expect(other, "the note must not be the owner's copy").not.toBe(
+        String(catalog.get("details.updateDesc")),
+      );
+      // And it must not offer an action, which is the whole point.
+      expect(other).not.toMatch(/Update my Second Brain|Aggiorna il Second Brain/);
+    }
+    expect(String(enFlat.get("details.updateDescOther"))).toMatch(/Cloudflare/);
+    expect(String(itFlat.get("details.updateDescOther"))).toMatch(/Cloudflare/);
   });
 
   it("says something different to each of the three roles", () => {

@@ -13,7 +13,7 @@ import {
   teamCard,
 } from "./shared";
 import { integrationRows, toolRows } from "./shared";
-import { canRotatePassword, roleFromDetailsProbe } from "./connection-role";
+import { canRotatePassword, canUpdateWorker, roleFromDetailsProbe } from "./connection-role";
 import { initI18n, settingsSection, t } from "./i18n";
 import "./style.css";
 
@@ -148,7 +148,7 @@ async function boot() {
     }
     return [
       h("h2", { class: "pane-title" }, [t("details.navComputer")]),
-      ...(update ? [updateCard(update.availableVersion)] : []),
+      ...(update ? [updateCard(update.availableVersion, canUpdateWorker(connectionRole))] : []),
       settingsSection(() => render()),
       logoutSection(),
     ];
@@ -186,11 +186,33 @@ async function boot() {
   render();
 }
 
-function updateCard(availableVersion: string): HTMLElement {
+/**
+ * Shown, but not always actionable.
+ *
+ * The update redeploys the Worker inside the Cloudflare account it lives in, so
+ * only the owner can complete it — `start_worker_update` matches the brain's
+ * workers.dev subdomain against the signed-in session and refuses anyone else.
+ * The card still renders for everybody on purpose: a member whose brain is
+ * behind sees features they have read about and do not have, and the honest
+ * answer is to say why and who can fix it. What they do not get is a button
+ * that walks them through a Cloudflare sign-in before failing.
+ */
+function updateCard(availableVersion: string, mayUpdate: boolean): HTMLElement {
+  const label = h("div", { class: "url-label" }, [
+    t("details.updateLabel", { version: availableVersion }),
+  ]);
+  if (!mayUpdate) {
+    // Prose, not a disabled button: a greyed-out control reads as "not right
+    // now" about something that is not theirs to do at all.
+    return h("div", { class: "card", style: "border-color: var(--accent);" }, [
+      label,
+      h("div", { class: "url-desc" }, [t("details.updateDescOther")]),
+    ]);
+  }
   const button = h("button", { class: "btn-primary" }, [t("details.updateButton")]);
   button.addEventListener("click", () => void invoke("begin_worker_update"));
   return h("div", { class: "card", style: "border-color: var(--accent);" }, [
-    h("div", { class: "url-label" }, [t("details.updateLabel", { version: availableVersion })]),
+    label,
     h("div", { class: "url-desc" }, [t("details.updateDesc")]),
     button,
   ]);
