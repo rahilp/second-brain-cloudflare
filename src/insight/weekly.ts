@@ -45,9 +45,11 @@ export const RECENT_INSIGHT_WINDOW = 10;
  *
  * Chunking the slice (below) trades the bound-parameter ceiling for a
  * subrequest one: each statement past the first is one more of the invocation's
- * 50, and the team invocation already measures 47 of 50 at its worst slate
- * (test/integration/insight-cron-budget.test.ts), so two statements is 48 of 50
- * at the very worst and the slack survives. Two covers 98 company workspaces —
+ * 50, and the team invocation measures 47 of 50 at its worst slate on one
+ * workspace and 48 of 50 at 50 and at 98 — both MEASURED end to end through
+ * scheduled() in test/integration/insight-cron-budget.test.ts, not inferred
+ * from the 47 by adding one. The slack survives, and a regression past 50 is
+ * now a red test rather than a production incident. Two covers 98 company workspaces —
  * far past any brain this ships to — and leaves the novelty floor's own slice
  * (which binds each id ONCE, so 98 + 1 = 99) inside the bound-parameter
  * ceiling without a second statement of its own.

@@ -460,6 +460,78 @@ describe("the worst case, not the cheapest branch", () => {
     expect(measured).toBe(47);
     sqlite.close();
   });
+
+  /**
+   * THE CHUNKED ARM, measured rather than inferred.
+   *
+   * 47 above is one company workspace, so the slice fits one statement and the
+   * second chunk never executes. weekly.ts's own comment reasons from it to
+   * "two statements is 48 of 50 at the very worst" — which is exactly the
+   * "pass + 2 is a calculation nothing checks" this file objects to elsewhere.
+   * So it is driven end to end through scheduled(), at the two workspace
+   * counts that bracket the behaviour:
+   *
+   *   49 workspaces — 2N + 1 = 99 parameters, still ONE statement, still 47.
+   *   50 workspaces — 101 parameters unchunked, so the second statement is
+   *                   owed and the invocation costs 48.
+   *   98 workspaces — the whole capacity (MAX_SLICE_STATEMENTS chunks). Still
+   *                   48: a third statement is never issued, which is what
+   *                   MAX_SLICE_STATEMENTS is for.
+   *
+   * The slate lives in the LAST workspace of the slice on purpose, so the
+   * measured run is one where the second chunk is the chunk that does the
+   * work, not one where it comes back empty.
+   */
+  const teamInvocationCost = async (workspaceCount: number): Promise<number> => {
+    resetDatabaseInit();
+    const sqlite: SqliteD1 = makeSqliteD1();
+    const ids = Array.from({ length: workspaceCount }, (_, i) => `ws-co-${i}`);
+    for (const id of ids) {
+      sqlite.db.prepare(
+        `INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'company', ?, 0)`,
+      ).bind(id, id).run();
+    }
+    seedFullSlate(sqlite, ids[ids.length - 1]);
+    const kv = makeMemoryKV();
+    await kv.put(CONFIG_KEY, JSON.stringify({ TEAM_INSIGHTS: "on" }));
+    const before = sqlite.issued.length;
+    const env = makeTestEnv(undefined, {
+      DB: sqlite.db as any, OAUTH_KV: kv, VECTORIZE: makeVectorizeMock(),
+      AI: makeDecliningAI(WEEKLY_CANDIDATE_LIMIT - MAX_INSIGHTS_PER_RUN),
+    }) as Env;
+    const kvGet = vi.spyOn(kv, "get");
+    const kvPut = vi.spyOn(kv, "put");
+
+    const pending: Promise<unknown>[] = [];
+    await (worker as any).scheduled(
+      { cron: INSIGHT_TEAM_WEEKLY_CRON } as any,
+      env,
+      { waitUntil: (pr: Promise<unknown>) => pending.push(pr) } as unknown as ExecutionContext,
+    );
+    await Promise.allSettled(pending);
+
+    // Still the expensive branch, or the number below is a cheaper run.
+    const written = (await sqlite.db.prepare(
+      `SELECT COUNT(*) AS n FROM entries WHERE tags LIKE '%"auto-insight"%' AND workspace_id = ?`,
+    ).bind(ids[ids.length - 1]).first()) as { n: number };
+    expect(written.n).toBe(MAX_INSIGHTS_PER_RUN);
+
+    const measured = (sqlite.issued.length - before) + countBindings(env, kvGet, kvPut);
+    sqlite.close();
+    return measured;
+  };
+
+  it("stays inside the budget when the slice needs a second statement", async () => {
+    expect(await teamInvocationCost(49)).toBe(47);
+    const fifty = await teamInvocationCost(50);
+    expect(fifty).toBeLessThan(SUBREQUEST_BUDGET);
+    // 48 of 50. TWO subrequests of slack for the whole team invocation on a
+    // deployment big enough to need chunking. This is the number the
+    // MAX_SLICE_STATEMENTS comment reasons to, now measured.
+    expect(fifty).toBe(48);
+    // The whole capacity, and no third statement.
+    expect(await teamInvocationCost(98)).toBe(48);
+  });
 });
 
 describe("POST /insights/accrue stays inside one invocation's budget", () => {
