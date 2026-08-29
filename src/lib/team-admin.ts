@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { hashToken } from "./identity";
+import { D1_MAX_BOUND_PARAMS } from "../constants";
 
 /**
  * Team member administration. Every function here is called from behind
@@ -165,24 +166,43 @@ export async function lookupAuditNames(env: Env, ids: string[]): Promise<Map<str
   // empty subject — a solo brain's, typically — costs one subrequest, not two.
   // It also keeps `IN ()` from rendering empty, which SQLite rejects.
   if (!unique.length) return new Map();
-  const placeholders = unique.map(() => "?").join(", ");
-  const { results } = await env.DB.prepare(
-    // Removed and suspended rows are INCLUDED, unlike lookupActorLabels and
-    // listRoster. See the doc comment: those are the subjects of the rows an
-    // auditor came for.
-    `SELECT id, name FROM users WHERE id IN (${placeholders})`,
-  ).bind(...unique).all<{ id: string; name: string | null }>();
-  // A blank name is NOT an entry. Callers publish this as "a name or null" —
-  // two states — and mapping a NULL or empty `users.name` to "" invents a
-  // third that no consumer's contract admits: one written `actor ?? "System"`
-  // renders an empty cell, one written `actor || "Removed account"` renders a
-  // label, for the same row. Dropping the row makes the caller's `?? null`
-  // produce the null it already documents.
-  return new Map(
-    (results ?? [])
-      .filter((r): r is { id: string; name: string } => Boolean(r.name))
-      .map((r) => [r.id, r.name]),
-  );
+  const names = new Map<string, string>();
+  // Chunked against the platform's bound-parameter ceiling, the way every other
+  // dynamic IN-list in src/ is (entries/import.ts, graph/traverse.ts,
+  // insight/weekly.ts). The caller is GET /team/activity, whose `limit` is
+  // admitted up to 100 and whose every admin row can carry TWO different people
+  // — an actor and a subject — so one page can name up to 200 people. Unchunked
+  // that is 200 bound parameters against a ceiling of 100: D1 rejects the
+  // statement outright, and there is no try/catch between this line and the
+  // platform, so the rejection is a 500 on every page of that team's compliance
+  // feed rather than a degraded one. See the note at the route.
+  //
+  // Each id is bound ONCE, so the chunk is the whole ceiling rather than the
+  // halved one the two-alias slice in insight/weekly.ts needs. That makes the
+  // worst case two statements — two of the ~5 subrequests this route spends of
+  // its 50 — and the common case, a page naming a hundred people or fewer, is
+  // the one statement it has always been.
+  //
+  // The maps are MERGED, not replaced: a person whose id lands in the second
+  // chunk is named in the response exactly like one in the first.
+  for (let i = 0; i < unique.length; i += D1_MAX_BOUND_PARAMS) {
+    const chunk = unique.slice(i, i + D1_MAX_BOUND_PARAMS);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const { results } = await env.DB.prepare(
+      // Removed and suspended rows are INCLUDED, unlike lookupActorLabels and
+      // listRoster. See the doc comment: those are the subjects of the rows an
+      // auditor came for.
+      `SELECT id, name FROM users WHERE id IN (${placeholders})`,
+    ).bind(...chunk).all<{ id: string; name: string | null }>();
+    // A blank name is NOT an entry. Callers publish this as "a name or null" —
+    // two states — and mapping a NULL or empty `users.name` to "" invents a
+    // third that no consumer's contract admits: one written `actor ?? "System"`
+    // renders an empty cell, one written `actor || "Removed account"` renders a
+    // label, for the same row. Dropping the row makes the caller's `?? null`
+    // produce the null it already documents.
+    for (const r of results ?? []) if (r.name) names.set(r.id, r.name);
+  }
+  return names;
 }
 
 export class TeamAdminError extends Error {

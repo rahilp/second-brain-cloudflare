@@ -1086,11 +1086,32 @@ describe("the checker over the real source tree", () => {
   //                  INNER, so its ON clause is a row filter and it passes on
   //                  the merits — which is the whole point of pinning it.
   //
+  // MOVED 48 -> 47 by the per-company novelty floor in src/insight/weekly.ts.
+  // That query's workspace predicate used to be an interpolated `${floorSliceClause}`
+  // — invisible to the lexer, so it needed a `scope-exempt:` licence. Narrowing
+  // the floor to the drawn candidates' own workspaces put a LITERAL
+  // `workspace_id IN (?, …)` in the source, which the checker is satisfied by on
+  // the merits, and the licence became one nothing used. It was removed rather
+  // than left in place: a dead licence is a sentence a future reader would trust.
+  //
+  //   queries        89 -> 89, UNCHANGED. One prepare() was replaced by one
+  //                  prepare(); nothing was newly seen or newly dropped, and
+  //                  holding this still while exempt moves is the evidence of it.
+  //   exempt         48 -> 47, the licence named above, removed and not moved.
+  //   scope-checked  7 -> 7, UNCHANGED. Nothing about a clause assembled in
+  //                  JavaScript changed — the clause stopped being assembled in
+  //                  JavaScript, which is why it landed in neither bucket.
+  //   outer-join     1 -> 1, UNCHANGED. The floor's read is a bare FROM.
+  //
+  // The SQL was NOT reshaped to please the lexer: the predicate is literal
+  // because the workspace list is now bounded by WEEKLY_CANDIDATE_LIMIT rather
+  // than by the slice, which is the fix, and the lexer's opinion of it followed.
+  //
   // As the tool printed it:
-  //   ✔ scope check: 89 queries, 48 documented exceptions, 7 scope-checked
+  //   ✔ scope check: 89 queries, 47 documented exceptions, 7 scope-checked
   //     (clause assembled in JS), 1 scope-outer-join (clause governs a column,
   //     not the row set)
-  it("reports exactly 89 queries, 48 exceptions, 7 scope-checked and 1 outer-join", () => {
+  it("reports exactly 89 queries, 47 exceptions, 7 scope-checked and 1 outer-join", () => {
     const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
       cwd: ROOT,
       encoding: "utf8",
@@ -1105,7 +1126,7 @@ describe("the checker over the real source tree", () => {
       { queries, exempt, checked, outerJoin },
       "check:scope counts moved. If that was deliberate, say so out loud and " +
         "update this expectation in the same commit.",
-    ).toEqual({ queries: 89, exempt: 48, checked: 7, outerJoin: 1 });
+    ).toEqual({ queries: 89, exempt: 47, checked: 7, outerJoin: 1 });
   });
 
   it("is wired into package.json and CI, or nothing runs it", () => {

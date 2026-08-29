@@ -8,24 +8,36 @@ The one-shot migration script that performed this split was removed after use; d
 
 | Layer | Path | May depend on |
 |-------|------|----------------|
-| Pure | `utils.js` | — (DOM optional via injection) |
-| Infra | `js/state.js`, `js/api.js` | pure |
+| Pure | `utils.js`, `credits.js` | — (DOM optional via injection) |
+| Infra | `js/i18n.js`, `js/state.js`, `js/api.js` | pure |
 | UI kit | `js/theme.js`, `js/ui-chat.js`, `js/toast.js`, `js/coach.js`, `js/confirm-sheet.js` | pure, state |
-| Feature | `js/recall.js`, `recent.js`, `remember.js`, `memory-crud.js`, `settings.js`, `integrations.js`, `team.js`, `activity.js`, `graph-canvas.js` | infra, UI kit, pure |
-| Shell | `js/nav.js`, `js/auth.js`, `js/app.js` | feature, infra |
+| Feature | `js/recall.js`, `js/recent.js`, `js/remember.js`, `js/memory-crud.js`, `js/settings.js`, `js/patterns.js`, `js/stale.js`, `js/integrations.js`, `js/team.js`, `js/activity.js`, `js/graph-canvas.js`, `js/brief.js`, `js/home.js` | infra, UI kit, pure |
+| Shell | `js/nav.js`, `js/refresh.js`, `js/auth.js`, `js/download-app.js`, `js/app.js` | feature, infra |
 | Entry | `index.html` | link/script tags only |
+
+Every script `index.html` loads appears above, and the chain below is the page's
+own order. Both are pinned against `public/index.html` by
+`test/ui/dashboard-modules.test.ts` — a table that omits a module is how
+`home.js`, the file that sets `TEAM_MODE`, went undocumented while `nav.js`
+warned about the ordering hazard it creates.
 
 **Never:** pure → feature; feature → `app.js`.
 
 ## Script load order
 
 ```
-utils.js → credits.js → state.js → toast.js → coach.js → confirm-sheet.js → api.js
-→ theme.js → ui-chat.js
+i18n.js → utils.js → credits.js → state.js → toast.js → coach.js
+→ confirm-sheet.js → api.js → theme.js → ui-chat.js
 → recall.js → recent.js → remember.js → memory-crud.js
-→ settings.js → integrations.js → team.js → activity.js → graph-canvas.js
-→ nav.js → auth.js → app.js
+→ settings.js → patterns.js → stale.js → integrations.js → team.js → activity.js
+→ graph-canvas.js → brief.js → home.js
+→ nav.js → refresh.js → auth.js → download-app.js → app.js
 ```
+
+`home.js` is the file that sets `TEAM_MODE`, and it loads BEFORE `nav.js` — the
+ordering `nav.js` depends on when it reveals the team surfaces. It was missing
+from this chain, along with six others, which is why the chain is now checked
+against the page rather than maintained by hand.
 
 ## Module map (original `index.html` sections)
 

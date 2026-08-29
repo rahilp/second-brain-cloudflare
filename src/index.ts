@@ -104,6 +104,14 @@ export default {
     // terms 4.5 stopped the shared layer competing with personal pairs on.
     // Known and DEFERRED — per-team scheduling belongs with the multi-team
     // switcher work, which is out of scope for this whole effort.
+    //
+    // WRITE SLOTS, and nothing else. What makes that deferral acceptable is
+    // that losing a slot leaves a candidate `pending`, so it comes back next
+    // week. Anything in this pass that SETTLES a candidate on another company's
+    // state would destroy it instead, which is a different and much worse
+    // outcome and is not what was accepted here. The novelty floor is the one
+    // thing that settles, and it is keyed per workspace for exactly that
+    // reason — see runWeeklyInsights.
     if (event.cron === INSIGHT_TEAM_WEEKLY_CRON) {
       job("team insights", (async () => {
         const cfg = await resolveConfig(env);

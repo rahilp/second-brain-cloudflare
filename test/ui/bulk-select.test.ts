@@ -476,6 +476,32 @@ describe("memories multi-select — the solo brain", () => {
   });
 });
 
+describe("memories multi-select — the brain that stops being a team", () => {
+  // renderBulkBar's TEAM_MODE term, pinned at the ASSIGNMENT and not merely at
+  // the branch that reads it. The Select button is the only way into
+  // selectMode and it is gated, so on every path a user can walk the term is
+  // defence in depth — which is exactly why it survived being deleted. The one
+  // path it uniquely covers is the transition the comment above it claims:
+  // TEAM_MODE flipping false while a selection is LIVE, with renderBulkBar
+  // reached from maybeRevealMemoryLayerFilter as /health lands.
+  it("takes the bar down mid-selection, without needing the mode or the selection cleared", async () => {
+    const h = await selected({ entries: THREE }, ["a", "b"]);
+    expect(h.el("mem-bulk-bar").style.display).toBe("");
+
+    vm.runInContext("TEAM_MODE = false", h.ctx);
+    h.ctx.maybeRevealMemoryLayerFilter({ team: false });
+
+    expect(h.el("mem-bulk-bar").style.display).toBe("none");
+    // The mode is still on and the rows are still ticked, so nothing else in
+    // this path could have taken the bar down: the TEAM_MODE term in
+    // renderBulkBar's own assignment is the only thing that did.
+    expect(vm.runInContext("selectMode", h.ctx), "the mode was not cleared").toBe(true);
+    expect(h.selection(), "the selection was not cleared").toEqual(["a", "b"]);
+    // Still on the list, too — this is not the graph path taking it down.
+    expect(vm.runInContext("memoryView", h.ctx)).toBe("list");
+  });
+});
+
 describe("memories multi-select — leaving the list", () => {
   // Selection is over what is ON SCREEN. The graph projection draws no cards,
   // so a selection that outlived the list would be a live bulk action over

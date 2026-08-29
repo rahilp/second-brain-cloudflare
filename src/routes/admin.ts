@@ -440,6 +440,39 @@ export async function handleAdminRoutes(
   //    here on, which cannot repair rows already written, and would leave a feed
   //    that is narrow for new rows and wide for old ones.
   //
+  // WHY THIS ROUTE IS UNCAUGHT, decided rather than inherited.
+  //
+  // Nothing between here and the platform catches: createDefaultHandler
+  // (src/routes/index.ts) awaits each handler bare, so a rejected statement
+  // here is a 500 with no body of ours. That was raised as a defect on the
+  // grounds that a route which 500s on a valid request is worse than one that
+  // degrades, and for most routes it would be. It is the wrong trade HERE, on
+  // this surface specifically, for three reasons:
+  //
+  //  1. Every degradation available to this route is a LIE. Answering
+  //     `{ ok: true, events: [] }` says nothing happened — public/js/activity.js
+  //     states the principle in its own words, "an empty audit log is not an
+  //     empty result, it is a claim that nothing happened". Answering the rows
+  //     with the names dropped is no better: `actor` is defined on this wire as
+  //     a NAME OR NULL, and null means "no actor", so a page of unresolved
+  //     names claims a hundred administrative acts nobody performed. A
+  //     compliance feed that cannot be read has to say so.
+  //  2. The client already degrades, visibly and correctly. A non-200 renders
+  //     `activity.loadFailed` and leaves the rows that are on screen alone
+  //     (public/js/activity.js). That is the same information, shown to the
+  //     person who can act on it, without the server asserting anything false.
+  //  3. No route in this worker is individually wrapped, and a catch here alone
+  //     would be a local exception with no principle behind it — the next
+  //     reader would copy it onto a route where swallowing IS wrong.
+  //
+  // So the disposal for the bound-parameter defect that raised the question is
+  // to remove the CAUSE, not to hide the symptom: lookupAuditNames now chunks
+  // (src/lib/team-admin.ts), and the ceiling is driven by a test that enforces
+  // the 100 node:sqlite does not. The one thing this route does swallow stays
+  // swallowed, and it is swallowed because it is not a failure: a hand-edited
+  // `payload` column is bad data in one cell of one row, not an unreadable
+  // feed, and safeParse below answers it with {} rather than losing the page.
+  //
   // requireAdmin, not requireIdentity: the feed names who suspended whom, which
   // is administration and not a peer fact. The gate authorises this SURFACE and
   // widens nothing about which memory rows may be read — that is the scope

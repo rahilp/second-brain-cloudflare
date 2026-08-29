@@ -121,13 +121,22 @@ function ok(events: any[]) {
   return { ok: true, status: 200, json: async () => ({ ok: true, events }) };
 }
 
+/**
+ * A row in the shape GET /team/activity really sends: `at` in EPOCH
+ * MILLISECONDS (`Number(r.created_at) || 0`, src/routes/admin.ts) and `kind`
+ * one of 'admin' / 'entry'. AT_ISO is the same instant spelled the way the CSV
+ * has to render it, so the assertions below still read as dates.
+ */
+const AT_ISO = "2026-08-20T09:00:00.000Z";
+const AT_MS = Date.parse(AT_ISO);
+
 function row(i: number, over: Record<string, unknown> = {}) {
   return {
-    at: "2026-08-20T09:00:00.000Z",
+    at: AT_MS,
     event: "member_created",
     actor: `Ada ${i}`,
     subject: `Bob ${i}`,
-    kind: "member",
+    kind: "admin",
     title: null,
     entryId: null,
     detail: { role: "member" },
@@ -189,7 +198,7 @@ describe("the activity CSV export", () => {
     const { ctx, els, createdFrom } = setup(async () =>
       ok([
         row(0, {
-          at: "2026-08-20T09:00:00.000Z",
+          at: AT_MS,
           event: "shared",
           actor: "Ada",
           subject: "the team",
@@ -314,7 +323,7 @@ describe("the activity CSV export", () => {
     // read by a compliance tool and by a spreadsheet formula someone wrote last
     // quarter; a header that changes with the operator's browser language is a
     // file format that changes with the operator's browser language.
-    const good = setup(async () => ok([row(0, { at: "2026-08-20T09:00:00.000Z" })]), { locale: "it" });
+    const good = setup(async () => ok([row(0, { at: AT_MS })]), { locale: "it" });
     await good.ctx.exportActivityCsv(good.els.get("activity-export"));
     const text: string = await rawText(good.createdFrom[0]);
     const lines = text.slice(1).split("\r\n");
@@ -331,7 +340,7 @@ describe("the activity CSV export", () => {
     const { ctx, els, createdFrom, toasts } = setup(async () =>
       ok([
         row(0, { at: undefined, actor: "No clock" }),
-        row(1, { at: "2026-08-20T09:00:00.000Z", actor: "Good row" }),
+        row(1, { at: AT_MS, actor: "Good row" }),
         row(2, { at: null, actor: "Null clock" }),
         row(3, { at: "not a date at all", actor: "Junk clock" }),
         row(4, { at: 1755680400000, actor: "Epoch row" }),
