@@ -17,6 +17,7 @@ import { reasonOverPair, restatesRecent } from "./reason";
 import { PENDING_INSIGHT_SQL, WRITTEN_INSIGHT_SQL } from "../memory/patterns";
 import { edgeInsertStatement } from "../graph/edges";
 import { isEligiblePair, parseTags } from "./candidates";
+import { D1_MAX_BOUND_PARAMS } from "../constants";
 
 /** Pairs considered per run. Each costs one model call. */
 export const WEEKLY_CANDIDATE_LIMIT = 10;
@@ -39,8 +40,29 @@ export const MAX_INSIGHTS_PER_RUN = 3;
  */
 export const RECENT_INSIGHT_WINDOW = 10;
 
+/**
+ * The most candidate statements one run will spend on a workspace slice.
+ *
+ * Chunking the slice (below) trades the bound-parameter ceiling for a
+ * subrequest one: each statement past the first is one more of the invocation's
+ * 50, and the team invocation already measures 47 of 50 at its worst slate
+ * (test/integration/insight-cron-budget.test.ts), so two statements is 48 of 50
+ * at the very worst and the slack survives. Two covers 98 company workspaces —
+ * far past any brain this ships to — and leaves the novelty floor's own slice
+ * (which binds each id ONCE, so 98 + 1 = 99) inside the bound-parameter
+ * ceiling without a second statement of its own.
+ *
+ * Past 98 the slice is TRUNCATED and the truncation is logged. Losing the tail
+ * of the list is a real loss, but it is a bounded and legible one, where
+ * overflowing the budget mid-loop throws, loses the whole run including the
+ * batch that settles the candidates, and is swallowed by the catch at the
+ * bottom of this file.
+ */
+export const MAX_SLICE_STATEMENTS = 2;
+
 interface CandidateRow {
   id: string;
+  score: number;
   a_id: string;
   b_id: string;
   a_content: string;
@@ -70,12 +92,78 @@ export function rawInsightText(content: string): string {
   return footer === -1 ? content : content.slice(0, footer);
 }
 
-export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promise<void> {
+/**
+ * Every company workspace on the deployment. A cron has no caller to
+ * scope to; `kind` is the whole predicate and the result is a list of
+ * ids, never content.
+ */
+export async function companyWorkspaceIds(env: Env): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM workspaces WHERE kind = 'company'`,
+  ).all<{ id: string }>();
+  return (results ?? []).map(r => r.id);
+}
+
+/**
+ * `onlyWorkspaceIds` narrows the candidate slate to pairs whose BOTH sides sit
+ * in one of the named workspaces. Absent or empty means the whole corpus — the
+ * personal pass — so a solo brain's empty company list reads as "no
+ * restriction was asked for" rather than "restrict to nothing".
+ *
+ * One implementation, two invocations. Everything the personal and team passes
+ * do differs by this predicate and nothing else: the eligibility gate, the
+ * same-workspace gate, the novelty floor, the three-per-run cap, the
+ * drawn_from edges and the batch are behaviour both need and neither may drift
+ * on, so a second function would be two things to keep in step rather than one
+ * thing to get right.
+ */
+export async function runWeeklyInsights(
+  env: Env,
+  ctx: ExecutionContext,
+  opts?: { onlyWorkspaceIds?: string[] },
+): Promise<void> {
   try {
     const cfg = await resolveConfig(env);
     await initializeDatabase(env);
 
-    // One statement rather than a select-then-hydrate: the join is what keeps
+    const sliceIds = opts?.onlyWorkspaceIds ?? [];
+    // Chunked against the platform's bound-parameter ceiling, the way every
+    // other IN-list in src/ is (entries/import.ts, graph/traverse.ts,
+    // insight/candidates.ts). Each slice id is bound TWICE below — once per
+    // alias — so a statement costs 2N + 1 parameters for N workspaces, and the
+    // /2 here is the same arithmetic traverse.ts's edgeTake does for the same
+    // reason. Unchunked, a deployment with 50 company workspaces sends 101
+    // parameters, D1 rejects the statement outright, the catch at the bottom of
+    // this function swallows the rejection, and the team pass stops producing
+    // anything forever with no user-visible signal.
+    //
+    // ceil(N / 49) statements, capped at MAX_SLICE_STATEMENTS, so a brain with
+    // one or two teams — every brain that exists — pays exactly what it paid
+    // before: one subrequest. Each extra chunk is one more subrequest out of
+    // the same 50 the model calls come from, which is why the chunk is as
+    // large as the ceiling allows rather than a round number.
+    //
+    // One consequence worth naming: past 49 workspaces a candidate whose two
+    // sides sit in DIFFERENT chunks is no longer drawn at all, where before it
+    // was drawn and then discarded by the same-workspace gate below. It stays
+    // `pending` instead of being settled `used` — the same outcome the pass
+    // already gives a pair with only one side inside the slice.
+    const sliceChunkSize = Math.floor((D1_MAX_BOUND_PARAMS - 1) / 2);
+    const sliceCapacity = sliceChunkSize * MAX_SLICE_STATEMENTS;
+    if (sliceIds.length > sliceCapacity) {
+      console.error("[insight] weekly pass: slice truncated to fit the subrequest budget", {
+        workspaces: sliceIds.length, drawn: sliceCapacity, dropped: sliceIds.length - sliceCapacity,
+      });
+    }
+    const drawnSliceIds = sliceIds.slice(0, sliceCapacity);
+    const sliceChunks: string[][] = drawnSliceIds.length
+      ? Array.from(
+          { length: Math.ceil(drawnSliceIds.length / sliceChunkSize) },
+          (_, i) => drawnSliceIds.slice(i * sliceChunkSize, (i + 1) * sliceChunkSize),
+        )
+      : [[]];   // no slice asked for: one statement over the whole corpus
+
+    // One statement per chunk rather than a select-then-hydrate: the join is what keeps
     // this inside the subrequest budget, and a candidate whose entries have
     // since been forgotten drops out of the result rather than needing a guard.
     //
@@ -91,20 +179,39 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // only at accrual, or every candidate accrued before D1 existed keeps
     // being drawn under the old rule until the pool empties. Free: the JOIN
     // was already selecting these rows, this only widens the column list.
-    const { results } = await env.DB.prepare(
-      // scope-exempt: cron: no caller to scope to. Both workspaces are projected, and the loop below compares them BEFORE the pair reaches the model: a candidate whose two entries sit in different workspaces is skipped and settled, never reasoned over and never written anywhere. Accrual refuses to pair across workspaces (candidates.ts), so that only fires for pre-tenancy candidate rows
-      `SELECT c.id, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
-              a.tags AS a_tags, b.tags AS b_tags,
-              a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id
-       FROM insight_candidates c
-       JOIN entries a ON a.id = c.a_id
-       JOIN entries b ON b.id = c.b_id
-       WHERE c.status = 'pending'
-         AND a.tags NOT LIKE '%"status:deprecated"%'
-         AND b.tags NOT LIKE '%"status:deprecated"%'
-       ORDER BY c.score DESC
-       LIMIT ?`,
-    ).bind(WEEKLY_CANDIDATE_LIMIT).all() as { results: CandidateRow[] };
+    const drawn: CandidateRow[] = [];
+    for (const chunk of sliceChunks) {
+      // Built here rather than inline in the template so the query carries a
+      // plain identifier: a conditional written inside `${…}` is unscoped on the
+      // arm that matters and scripts/check-scope.mjs refuses it on sight.
+      const slicePlaceholders = chunk.map(() => "?").join(", ");
+      const sliceClause = chunk.length
+        ? `AND a.workspace_id IN (${slicePlaceholders}) AND b.workspace_id IN (${slicePlaceholders})`
+        : "";
+      const { results: chunkRows } = await env.DB.prepare(
+        // scope-exempt: cron: no caller to scope to. Both workspaces are projected, and the loop below compares them BEFORE the pair reaches the model: a candidate whose two entries sit in different workspaces is skipped and settled, never reasoned over and never written anywhere. Accrual refuses to pair across workspaces (candidates.ts), so that only fires for pre-tenancy candidate rows. sliceClause is optionally present and is a list of workspace IDS read from the `workspaces` table (companyWorkspaceIds, below), never from a request — it narrows this cron's slate, it does not scope it to a caller, and there is no caller to scope to on either invocation
+        `SELECT c.id, c.score, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
+                a.tags AS a_tags, b.tags AS b_tags,
+                a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id
+         FROM insight_candidates c
+         JOIN entries a ON a.id = c.a_id
+         JOIN entries b ON b.id = c.b_id
+         WHERE c.status = 'pending'
+           AND a.tags NOT LIKE '%"status:deprecated"%'
+           AND b.tags NOT LIKE '%"status:deprecated"%'
+           ${sliceClause}
+         ORDER BY c.score DESC
+         LIMIT ?`,
+      ).bind(...chunk, ...chunk, WEEKLY_CANDIDATE_LIMIT).all() as { results: CandidateRow[] };
+      drawn.push(...chunkRows);
+    }
+    // Each chunk returned its own top WEEKLY_CANDIDATE_LIMIT, so the ordering
+    // the pass spends its three write slots by has to be re-established across
+    // chunks. A no-op on the one-chunk path every real deployment takes: the
+    // rows arrive ordered and there are at most LIMIT of them.
+    const results = drawn
+      .sort((x, y) => y.score - x.score)
+      .slice(0, WEEKLY_CANDIDATE_LIMIT);
 
     // Seeds the novelty floor with what a reader would already have seen: the
     // last RECENT_INSIGHT_WINDOW insights the pass has WRITTEN, not just what
@@ -117,11 +224,29 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // as fast as the queue is reviewed: measured on a real brain the day this
     // shipped, zero unreviewed insights meant zero comparisons and a guard that
     // could not fire at all. Reviewing promptly was switching it off.
+    //
+    // Sliced by the SAME workspaces the slate is drawn from, and for the same
+    // reason. The floor asks "has this reader already seen this?"; under a
+    // slice the reader is the company workspace, and an insight one member
+    // received privately is not something the team has seen. Left unsliced it
+    // is one layer's state deciding another layer's output — and not merely by
+    // skipping: a suppressed candidate is settled `used`, so a legitimate
+    // company insight is lost permanently rather than deferred. On a busy
+    // brain the ten-row window is dominated by personal insights, which is the
+    // team layer starved by exactly the competition spec 4.5 exists to end.
+    //
+    // Each id is bound once here, so this stays one statement (at most
+    // MAX_SLICE_STATEMENTS * 49 + 1 = 99 parameters) rather than needing the
+    // chunking the candidate draw above needs.
+    const floorSliceClause = drawnSliceIds.length
+      ? `AND workspace_id IN (${drawnSliceIds.map(() => "?").join(", ")})`
+      : "";
     const { results: recentInsightRows } = await env.DB.prepare(
-      // scope-exempt: cron: system-authored novelty floor; content is compared, never returned
+      // scope-exempt: cron: system-authored novelty floor; content is compared, never returned. floorSliceClause is optionally present and is the same list of workspace IDS read from the `workspaces` table as the draw above, never from a request
       `SELECT content FROM entries WHERE ${WRITTEN_INSIGHT_SQL}
+       ${floorSliceClause}
        ORDER BY created_at DESC LIMIT ?`,
-    ).bind(RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };
+    ).bind(...drawnSliceIds, RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };
 
     let written = 0;
     // D2 instrumentation (spec: "if it starts rejecting often, the corpus is
@@ -191,9 +316,14 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       //
       // Accrual (src/insight/candidates.ts) already refuses to pair across
       // workspaces in both paths, so this only fires for candidates that predate
-      // tenancy — which is every candidate an upgraded v2 brain carries in. Team
-      // insights are a Phase 4 feature (spec 4.5), deliberately scoped to the
-      // company workspace and attributed; this is not that.
+      // tenancy — which is every candidate an upgraded v2 brain carries in.
+      //
+      // It holds identically on the sliced (team) invocation, and it is not
+      // made redundant by the slice: `onlyWorkspaceIds` can name more than one
+      // company workspace, and a pair with one side in each passes both IN
+      // predicates. This gate is the only thing between such a pair and the
+      // model. Team insights (spec 4.5) are a company-SCOPED pass, not a
+      // cross-workspace one.
       const inputWorkspaces = new Set([candidate.a_workspace_id ?? "", candidate.b_workspace_id ?? ""]);
       if (inputWorkspaces.size !== 1) {
         used.push(candidate.id);
@@ -285,6 +415,12 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     ];
     if (statements.length) await env.DB.batch(statements);
   } catch (e) {
-    console.error("Weekly insight pass failed (non-fatal):", e);
+    // The ONLY signal either invocation ever failed. It carries the slice size
+    // because the personal and team passes share this implementation and this
+    // line: without it a rejected statement on the team pass reads exactly like
+    // one on the personal pass, and a pass that dies permanently and says
+    // nothing distinguishable is how the unchunked bind above stayed invisible.
+    console.error("Weekly insight pass failed (non-fatal):",
+      { sliceWorkspaces: opts?.onlyWorkspaceIds?.length ?? 0 }, e);
   }
 }

@@ -7,6 +7,10 @@ import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { makeTestEnv, makeMemoryKV, makeVectorizeMock } from "../helpers/make-env";
 import { handleAdminRoutes } from "../../src/routes/admin";
 import { req } from "../helpers/make-request";
+import type { Env } from "../../src/env";
+import worker from "../../src/index";
+import { CONFIG_KEY } from "../../src/config";
+import { INSIGHT_TEAM_WEEKLY_CRON } from "../../src/insight/schedule";
 
 /**
  * A Worker invocation gets 50 D1 subrequests on the free plan, and every
@@ -71,6 +75,52 @@ function makeReasoningAI() {
       };
       const insight = `{"insight": true, "shape": "contradiction", "text": "${perTier[tier] ?? perTier["0"]}"}`;
       return sse(prompt.includes("Memory A:") ? insight : "3");
+    }),
+  } as unknown as Ai;
+}
+
+/**
+ * The model DECLINES every candidate but the last three.
+ *
+ * makeReasoningAI above accepts the first thing it is offered, so the pass
+ * breaks out of its loop at MAX_INSIGHTS_PER_RUN after three of the ten
+ * candidates — that measures the CHEAPEST branch, not the ceiling. Nothing
+ * stops a real run reasoning over the whole WEEKLY_CANDIDATE_LIMIT slate: a
+ * corpus of near-duplicate memories declines constantly, which is the exact
+ * corpus the pass exists for. Every declined candidate is one more AI.run
+ * against the same 50-subrequest invocation, so the honest worst case is
+ * "every candidate reaches the model AND three of them are written".
+ *
+ * The three accepted tiers reuse the same three texts makeReasoningAI uses,
+ * for the same reason: they are genuinely differently worded, so the novelty
+ * floor does not suppress the second and third write and turn this back into
+ * a cheap run wearing an expensive fixture.
+ */
+function makeDecliningAI(acceptFromTier: number) {
+  const sse = (text: string) => new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify(text)}}\n\n`));
+      c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+      c.close();
+    },
+  });
+  const accepted = [
+    "You priced this tier at nine dollars flat, then moved it entirely to usage-based billing.",
+    "This tier's predictable monthly amount got swapped for pricing tied to actual usage instead.",
+    "That flat monthly price got left behind once usage-based charges took over instead.",
+  ];
+  return {
+    run: vi.fn().mockImplementation(async (model: string, opts: any) => {
+      if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
+      const prompt = String(opts?.messages?.[0]?.content ?? "");
+      if (!prompt.includes("Memory A:")) return sse("3");
+      const tier = Number(prompt.match(/tier (\d+)/)?.[1] ?? "0");
+      // An explicit refusal, the shape reasonOverPair reads as "declined"
+      // (src/insight/reason.ts) — settled, not retried, and one model call
+      // spent either way.
+      if (tier < acceptFromTier) return sse('{"insight": false}');
+      const text = accepted[(tier - acceptFromTier) % accepted.length];
+      return sse(`{"insight": true, "shape": "contradiction", "text": "${text}"}`);
     }),
   } as unknown as Ai;
 }
@@ -191,14 +241,16 @@ describe("insight crons stay inside one invocation's budget", () => {
       kvPut.mock.calls.length;
     const measured = (sqlite.issued.length - before) + bindingCalls;
     expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
-    // The <SUBREQUEST_BUDGET check above has 12 requests of slack at this
-    // candidate slate (measured 38 of 50) — comfortably wide enough that
-    // spending six more unbatched subrequests here (two drawn_from edges per
-    // insight via createEdge, rather than joining the batch below) would
-    // still read as "under budget" and this test would not catch the
-    // regression edgeInsertStatement exists to prevent. Pinned to the
-    // measured value so that regression fails loudly instead of quietly
-    // eating slack.
+    // 38 is what THIS fixture costs, and this fixture is the cheapest branch:
+    // the model accepts the first three candidates, so the loop breaks after
+    // three of the ten and seven model calls are never made. The ceiling is
+    // measured separately, at a slate the model refuses ("the worst case, not
+    // the cheapest branch" below): 45 for the pass, 47 for the team
+    // invocation, which is THREE of slack rather than twelve. Read that number
+    // before spending any of it — six more unbatched subrequests here (two
+    // drawn_from edges per insight via createEdge instead of joining the batch
+    // below) would be 51, over the ceiling, while this assertion still read as
+    // "under budget".
     expect(measured).toBe(38);
 
     // Verified after the budget assertion, not before: this SELECT is a test
@@ -209,6 +261,203 @@ describe("insight crons stay inside one invocation's budget", () => {
     // rather than costing MAX_INSIGHTS_PER_RUN * 2 extra subrequests via
     // createEdge.
     expect(await drawnFrom(sqlite)).toHaveLength(MAX_INSIGHTS_PER_RUN * 2);
+    sqlite.close();
+  });
+
+  it("the sliced team pass stays under budget at a full candidate slate", async () => {
+    // The team pass is its own invocation and therefore its own 50, and this
+    // is the measurement the fifth cron trigger is justified by: if the two
+    // passes shared one invocation the total would be the sum of this number
+    // and the one above, which is well past the ceiling and would leave the
+    // second pass dead half-written.
+    //
+    // A FULL slate inside the slice, plus personal candidates outscoring every
+    // one of them — the worst case, and the shape a real team brain has. The
+    // personal rows are what make the measurement honest: a slice that cost
+    // less only because it drew fewer candidates would prove nothing.
+    const sqlite: SqliteD1 = makeSqliteD1();
+    const seedIn = (id: string, workspaceId: string, content: string, createdAt: number) => {
+      sqlite.seed({ id, content, createdAt, tags: ["pricing"] });
+      return sqlite.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(workspaceId, id).run();
+    };
+    for (let i = 0; i < WEEKLY_CANDIDATE_LIMIT; i++) {
+      await seedIn(`co-a-${i}`, "ws-co",
+        `Decision: price tier ${i} flat at nine dollars a month for predictable billing.`, FIXTURE_NOW - 120 * DAY);
+      await seedIn(`co-b-${i}`, "ws-co",
+        `Decision: move tier ${i} to usage-based billing instead of flat pricing.`, FIXTURE_NOW);
+      await sqlite.db.prepare(
+        `INSERT INTO insight_candidates (id, a_id, b_id, similarity, gap_ms, score, signal, status, created_at)
+         VALUES (?, ?, ?, 0.87, ?, ?, 'vector', 'pending', ?)`,
+      ).bind(`co-c-${i}`, `co-a-${i}`, `co-b-${i}`, 120 * DAY, 10 - i, FIXTURE_NOW).run();
+      // A higher-scoring personal pair per company pair, which the slice must
+      // remove in the query rather than after drawing it.
+      await seedIn(`p-a-${i}`, "ws-alice",
+        `Decision: price plan ${i} flat at nine dollars a month for predictable billing.`, FIXTURE_NOW - 120 * DAY);
+      await seedIn(`p-b-${i}`, "ws-alice",
+        `Decision: move plan ${i} to usage-based billing instead of flat pricing.`, FIXTURE_NOW);
+      await sqlite.db.prepare(
+        `INSERT INTO insight_candidates (id, a_id, b_id, similarity, gap_ms, score, signal, status, created_at)
+         VALUES (?, ?, ?, 0.87, ?, ?, 'vector', 'pending', ?)`,
+      ).bind(`p-c-${i}`, `p-a-${i}`, `p-b-${i}`, 120 * DAY, 100 - i, FIXTURE_NOW).run();
+    }
+    const before = sqlite.issued.length;   // seeding is not the pass
+
+    const kv = makeMemoryKV();
+    const env = makeTestEnv(undefined, {
+      DB: sqlite.db as any, OAUTH_KV: kv, VECTORIZE: makeVectorizeMock(),
+      AI: makeReasoningAI(),
+    });
+    const kvGet = vi.spyOn(kv, "get");
+    const kvPut = vi.spyOn(kv, "put");
+
+    await runWeeklyInsights(env, ctx, { onlyWorkspaceIds: ["ws-co"] });
+
+    // The expensive branch: three real captures, all of them in the slice.
+    const written = (await sqlite.db.prepare(
+      `SELECT COUNT(*) AS n FROM entries WHERE tags LIKE '%"auto-insight"%' AND workspace_id = 'ws-co'`,
+    ).first()) as { n: number };
+    expect(written.n).toBe(MAX_INSIGHTS_PER_RUN);
+
+    const bindingCalls =
+      (env.AI.run as any).mock.calls.length +
+      (env.VECTORIZE.query as any).mock.calls.length +
+      (env.VECTORIZE.insert as any).mock.calls.length +
+      (env.VECTORIZE.upsert as any).mock.calls.length +
+      kvGet.mock.calls.length +
+      kvPut.mock.calls.length;
+    const measured = (sqlite.issued.length - before) + bindingCalls;
+    expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
+    // Pinned, like the unsliced case above: the slice is a WHERE predicate on
+    // a query that already ran, so it costs the same 38 the personal pass
+    // costs. A future change that made the team pass more expensive than the
+    // personal one is exactly what this number is here to surface.
+    expect(measured).toBe(38);
+
+    // What the scheduled() branch spends AROUND the pass: one KV read for the
+    // config flag and one D1 read for companyWorkspaceIds. Arithmetic, not
+    // measurement — the invocation itself is measured end to end in "the whole
+    // team invocation at its most expensive slate" below, which is the number
+    // to trust.
+    expect(measured + 2).toBeLessThan(SUBREQUEST_BUDGET);
+
+    expect(await drawnFrom(sqlite)).toHaveLength(MAX_INSIGHTS_PER_RUN * 2);
+    sqlite.close();
+  });
+});
+
+describe("the worst case, not the cheapest branch", () => {
+  beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(FIXTURE_NOW);
+    resetDatabaseInit();
+  });
+
+  /**
+   * A full slate the model mostly refuses: ten candidates all reach
+   * reasonOverPair and only the last three are written. Both fixtures above
+   * hand the model something it accepts immediately, so their loop breaks after
+   * three of the ten candidates and the 38 they pin is a SAMPLE of the cheapest
+   * branch. This is the ceiling: nothing in the pass can cost more than a full
+   * WEEKLY_CANDIDATE_LIMIT of model calls plus MAX_INSIGHTS_PER_RUN captures.
+   */
+  const seedFullSlate = (sqlite: SqliteD1, workspaceId?: string) => {
+    for (let i = 0; i < WEEKLY_CANDIDATE_LIMIT; i++) {
+      sqlite.seed({
+        id: `a-${i}`, createdAt: FIXTURE_NOW - 120 * DAY, tags: ["pricing"],
+        content: `Decision: price tier ${i} flat at nine dollars a month for predictable billing.`,
+      });
+      sqlite.seed({
+        id: `b-${i}`, createdAt: FIXTURE_NOW, tags: ["pricing"],
+        content: `Decision: move tier ${i} to usage-based billing instead of flat pricing.`,
+      });
+      if (workspaceId) {
+        sqlite.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id IN (?, ?)`)
+          .bind(workspaceId, `a-${i}`, `b-${i}`).run();
+      }
+      sqlite.db.prepare(
+        `INSERT INTO insight_candidates (id, a_id, b_id, similarity, gap_ms, score, signal, status, created_at)
+         VALUES (?, ?, ?, 0.87, ?, ?, 'vector', 'pending', ?)`,
+      ).bind(`c-${i}`, `a-${i}`, `b-${i}`, 120 * DAY, 10 - i, FIXTURE_NOW).run();
+    }
+  };
+
+  const countBindings = (env: Env, kvGet: any, kvPut: any) =>
+    (env.AI.run as any).mock.calls.length +
+    (env.VECTORIZE.query as any).mock.calls.length +
+    (env.VECTORIZE.insert as any).mock.calls.length +
+    (env.VECTORIZE.upsert as any).mock.calls.length +
+    kvGet.mock.calls.length +
+    kvPut.mock.calls.length;
+
+  it("the weekly pass at its most expensive slate", async () => {
+    const sqlite: SqliteD1 = makeSqliteD1();
+    seedFullSlate(sqlite);
+    const before = sqlite.issued.length;
+    const kv = makeMemoryKV();
+    const env = makeTestEnv(undefined, {
+      DB: sqlite.db as any, OAUTH_KV: kv, VECTORIZE: makeVectorizeMock(),
+      AI: makeDecliningAI(WEEKLY_CANDIDATE_LIMIT - MAX_INSIGHTS_PER_RUN),
+    }) as Env;
+    const kvGet = vi.spyOn(kv, "get");
+    const kvPut = vi.spyOn(kv, "put");
+
+    await runWeeklyInsights(env, ctx);
+
+    // The whole slate reached the model AND three insights were still written:
+    // without both halves this measures a cheaper run than the ceiling.
+    const reasonCalls = (env.AI.run as any).mock.calls.filter(
+      (c: any[]) => String(c[1]?.messages?.[0]?.content ?? "").includes("Memory A:"),
+    ).length;
+    expect(reasonCalls).toBe(WEEKLY_CANDIDATE_LIMIT);
+    const written = (await sqlite.db.prepare(
+      `SELECT COUNT(*) AS n FROM entries WHERE tags LIKE '%"auto-insight"%'`,
+    ).first()) as { n: number };
+    expect(written.n).toBe(MAX_INSIGHTS_PER_RUN);
+
+    const measured = (sqlite.issued.length - before) + countBindings(env, kvGet, kvPut);
+    expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
+    expect(measured).toBe(45);
+    sqlite.close();
+  });
+
+  it("the whole team invocation at its most expensive slate", async () => {
+    // Measured end to end through scheduled(), not the pass plus arithmetic:
+    // the branch's own config read and companyWorkspaceIds query are part of
+    // the same 50, and "the pass costs 45, call the invocation 47" is a
+    // calculation nothing checks. This is the number a sixth subrequest
+    // anywhere in the team branch has to fit under.
+    const sqlite: SqliteD1 = makeSqliteD1();
+    sqlite.db.prepare(`INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'company', ?, 0)`)
+      .bind("ws-co", "ws-co").run();
+    seedFullSlate(sqlite, "ws-co");
+    const kv = makeMemoryKV();
+    await kv.put(CONFIG_KEY, JSON.stringify({ TEAM_INSIGHTS: "on" }));
+    const before = sqlite.issued.length;
+    const env = makeTestEnv(undefined, {
+      DB: sqlite.db as any, OAUTH_KV: kv, VECTORIZE: makeVectorizeMock(),
+      AI: makeDecliningAI(WEEKLY_CANDIDATE_LIMIT - MAX_INSIGHTS_PER_RUN),
+    }) as Env;
+    const kvGet = vi.spyOn(kv, "get");
+    const kvPut = vi.spyOn(kv, "put");
+
+    const pending: Promise<unknown>[] = [];
+    await (worker as any).scheduled(
+      { cron: INSIGHT_TEAM_WEEKLY_CRON } as any,
+      env,
+      { waitUntil: (pr: Promise<unknown>) => pending.push(pr) } as unknown as ExecutionContext,
+    );
+    await Promise.allSettled(pending);
+
+    const written = (await sqlite.db.prepare(
+      `SELECT COUNT(*) AS n FROM entries WHERE tags LIKE '%"auto-insight"%' AND workspace_id = 'ws-co'`,
+    ).first()) as { n: number };
+    expect(written.n).toBe(MAX_INSIGHTS_PER_RUN);
+
+    const measured = (sqlite.issued.length - before) + countBindings(env, kvGet, kvPut);
+    expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
+    // 47 of 50. THREE subrequests of slack for the whole team invocation —
+    // not the twelve the fixture-shaped 38 above suggests. Anything added to
+    // this pass or to the branch around it has to fit in three.
+    expect(measured).toBe(47);
     sqlite.close();
   });
 });

@@ -6,7 +6,7 @@ import { compressTag } from "../compression/digest";
 import { CORS_HEADERS, intParam, json, readWorkspaceParam } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
 import { assertCanMutateEntry } from "../lib/entry-access";
-import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../lib/actors";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { recallEntries } from "../recall/search";
@@ -69,17 +69,13 @@ export async function handleRecallRoutes(
     const rows = results as Record<string, unknown>[];
     // Each row reports its layer so the dashboard can badge cards and offer
     // share/unshare without knowing the caller's workspace ids itself.
-    const layerOf = (wid: unknown): string =>
-      wid === identity.personalWorkspaceId ? "personal"
-      : isCompanyWorkspace(identity, wid) ? "company"
-      : "system";
-    const companyRows = rows.filter((r) => layerOf(r.workspace_id) === "company");
+    const companyRows = rows.filter((r) => layerOf(identity, r.workspace_id) === "company");
     const labelMap = await lookupActorLabels(
       env,
       companyRows.map((r) => String(r.actor_id ?? "")),
     );
     return json(rows.map((r) => {
-      const layer = layerOf(r.workspace_id);
+      const layer = layerOf(identity, r.workspace_id);
       // actor_name is always present, null where there is no author to name —
       // the same contract GET /recall's results carry. It used to be added only
       // on company rows, which made the KEY's existence depend on whether the

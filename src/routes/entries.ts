@@ -4,7 +4,7 @@ import { initializeDatabase } from "../db/init";
 import { json } from "../lib/http";
 import { requireIdentity } from "../lib/identity";
 import { assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
-import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
@@ -194,10 +194,7 @@ export async function handleEntriesRoutes(
       ...(eventRows ?? []).map((e) => e.actor_id),
     ];
     const labelMap = await lookupActorLabels(env, actorIds);
-    const layer =
-      row.workspace_id === auth.personalWorkspaceId ? "personal"
-      : isCompanyWorkspace(auth, row.workspace_id) ? "company"
-      : "system";
+    const layer = layerOf(auth, row.workspace_id);
     const actorName = resolveActorLabel(String(row.actor_id ?? ""), labelMap, {
       viewerId: auth.userId,
       source: row.source as string,
