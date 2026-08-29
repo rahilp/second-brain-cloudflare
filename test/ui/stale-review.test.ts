@@ -192,7 +192,10 @@ function loadWithCrud(entries: any[]) {
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   installI18n(ctx, "en");
-  for (const f of ["public/utils.js", "public/js/memory-crud.js", "public/js/stale.js"]) {
+  // confirm-sheet.js drives the one `#confirm-dialog` the whole page shares;
+  // memory-crud.js is a caller of it, so the page's script list is what this
+  // has to mirror. Assertions below are unchanged — only the module list is.
+  for (const f of ["public/utils.js", "public/js/confirm-sheet.js", "public/js/memory-crud.js", "public/js/stale.js"]) {
     vm.runInContext(readFileSync(resolve(ROOT, f), "utf8"), ctx);
   }
   ctx.__els = els;

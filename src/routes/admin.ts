@@ -1,11 +1,13 @@
 import type { Env } from "../env";
-import { resolveConfig } from "../config";
+import { readOverrides, resetOverride, resolveConfig } from "../config";
 import { SB_VERSION } from "../env";
 import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "../compression/eligibility";
 import { intParam, json } from "../lib/http";
-import { D1_MAX_BOUND_PARAMS } from "../constants";
+import { D1_MAX_BOUND_PARAMS, VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY } from "../constants";
 import { requireAdmin, requireIdentity, type Identity } from "../lib/identity";
-import { primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
+import { effectiveWriteTarget, layerOf, primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
+import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
+import { ensureTenantBootstrap } from "../lib/tenancy";
 import { graceMs } from "../lib/ai";
 import { classifyEntry } from "../capture/classify";
 import { storeEntry } from "../capture/store";
@@ -15,11 +17,14 @@ import { STALE_REVIEW_SQL } from "../memory/stale";
 import { getStatus, withStatus } from "../memory/status";
 import { withKind } from "../memory/kind";
 import { checkVectorizeHealth } from "../vectorize/health";
+import { vectorizeFilterState } from "../vectorize/scope";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
 import { runInsightAccrual, isEligiblePair, parseTags } from "../insight/candidates";
-import { createMember, listMembers, listTeamWorkspaces, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../lib/team-admin";
+import { adminAuditEvent } from "../lib/admin-audit";
+import { auditEvents, type AuditEventInput } from "../lib/audit";
+import { createMember, listMembers, listRoster, listTeamWorkspaces, lookupAuditNames, removeMember, renameTeamWorkspace, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, isTeamBrain, TeamAdminError } from "../lib/team-admin";
 
 /**
  * Ids accepted by one bulk resolve. D1 allows 100 bound parameters per
@@ -38,11 +43,42 @@ export async function handleAdminRoutes(
   ctx: ExecutionContext,
 ): Promise<Response | null> {
   const cfg = await resolveConfig(env);
-  // ── Team administration (v3). All routes behind requireAdmin. ──────────
+  // ── Team administration (v3). Administrative routes are behind requireAdmin;
+  // the member-facing reads (/team/roster, /team/me, /team/workspaces) are
+  // behind requireIdentity and scope themselves to the caller's own identity.
+  // Which gate a route uses is stated on the route. ──────────────────────
   if (url.pathname === "/team/members" && request.method === "GET") {
     const auth = await requireAdmin(request, env);
     if (auth instanceof Response) return auth;
     return json({ ok: true, members: await listMembers(env), you: auth.userId });
+  }
+
+  // GET /team/roster — the member-facing people list: names and roles, and no
+  // more. requireIdentity, not requireAdmin, because knowing who is on your team
+  // is what makes "share with the team" mean anything; the admin row with its
+  // emails, private-entry counts and suspension state stays on /team/members.
+  //
+  // Not audited. An audit row records an administrative ACTION taken on someone
+  // (src/lib/admin-audit.ts); reading your own team's names is neither.
+  if (url.pathname === "/team/roster" && request.method === "GET") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    // Both lists are derived from the SAME resolved ids, so the teams named here
+    // and the people listed here cannot disagree about who the caller is — and
+    // because neither read depends on the other, they are issued together rather
+    // than one after the next. This is a page-load endpoint; serially awaiting
+    // two independent D1 reads inside the object literal costs both round trips.
+    const [teams, members] = await Promise.all([
+      listTeamWorkspaces(env, auth.companyWorkspaceIds),
+      listRoster(env, auth.companyWorkspaceIds),
+    ]);
+    return json({
+      ok: true,
+      teams,
+      members,
+      you: auth.userId,
+      admin: auth.role === "admin",
+    });
   }
 
   if (url.pathname === "/team/members" && request.method === "POST") {
@@ -59,6 +95,44 @@ export async function handleAdminRoutes(
         email: body.email,
         role: body.role as "admin" | "member" | undefined,
       });
+      // Never the token or its hash: this trail is read by more people than the
+      // token is, and a role plus "was an email supplied" is the whole of what an
+      // auditor needs to reconstruct the decision.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: member.userId,
+        event: "member_created",
+        payload: { role: member.role, hasEmail: !!member.email },
+      });
+      // A stored TEAM_MODE "off" is now a lie, and this is where it stops
+      // being one. Inviting someone is an unambiguous statement that this is a
+      // team, and the "off" can only be a leftover from the solo era — PATCH
+      // /config refuses to write it once a second person is here.
+      //
+      // This changes NO behaviour: the floor in isTeamBrain() already makes the
+      // effective flag true. It exists so the blob a human or a support script
+      // reads next says what the brain actually is.
+      //
+      // CLEARED, not set to "on". "on" would replace one recorded intent with
+      // another the owner never stated, and would outlive the team — remove
+      // everybody and the brain stays pinned to team mode, needing a second
+      // manual write to undo. Clearing hands the key back to "auto", which is
+      // right at every future headcount, one included.
+      //
+      // A KV read on a rare admin action, and a write only in the state that
+      // needs correcting: a brain that never overrode the key gains nothing.
+      //
+      // Swallowed, because the member and their token already exist and the
+      // token is shown exactly once. A KV blip must not turn a successful
+      // invitation into a 500 that loses the secret — and the floor has already
+      // made the effective flag right without this write.
+      //
+      // One line, deliberately: test/unit/config-threading-complete.test.ts
+      // reads a bare tunable name outside a property access as a module-scope
+      // config read, and the guarded call has to sit beside the guard for that
+      // to stay true.
+      const overrides = await readOverrides(env);
+      if (overrides.TEAM_MODE === "off") await resetOverride(env, "TEAM_MODE").catch(() => {});
       // The token is returned exactly once — only its hash is stored.
       return json({ ok: true, member, token }, 201);
     } catch (e) {
@@ -75,6 +149,13 @@ export async function handleAdminRoutes(
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     try {
       const token = await rotateMemberToken(env, body.id.trim());
+      // Deliberately an empty payload: that the rotation happened, to whom and by
+      // whom is the whole record. The new secret is not part of it.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: body.id.trim(),
+        event: "member_token_rotated",
+      });
       return json({ ok: true, id: body.id.trim(), token });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
@@ -89,8 +170,16 @@ export async function handleAdminRoutes(
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     try {
-      await setMemberSuspended(env, auth.userId, body.id.trim(), body.suspended !== false);
-      return json({ ok: true, id: body.id.trim(), suspended: body.suspended !== false });
+      const suspended = body.suspended !== false;
+      await setMemberSuspended(env, auth.userId, body.id.trim(), suspended);
+      // Two event names rather than one with a boolean: an auditor scanning for
+      // "who lost access" should not have to read a payload to find out.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: body.id.trim(),
+        event: suspended ? "member_suspended" : "member_unsuspended",
+      });
+      return json({ ok: true, id: body.id.trim(), suspended });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
       throw e;
@@ -111,11 +200,64 @@ export async function handleAdminRoutes(
     }
     try {
       await setMemberDefaultShare(env, body.id.trim(), body.default as "personal" | "company" | "inherit");
+      // Where a member's future captures land is a visibility decision, so the
+      // value set is the point of the record.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: body.id.trim(),
+        event: "member_default_share_set",
+        payload: { default: body.default },
+      });
       return json({ ok: true, id: body.id.trim(), default: body.default });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
       throw e;
     }
+  }
+
+  // POST /team/me/default-share — a member's own capture-visibility override.
+  //
+  // requireIdentity, and the body has NO id field. That is the security
+  // property: the admin route above takes a target and must therefore be gated
+  // on who the caller is, while this one cannot name a target at all, so there
+  // is no branch to get wrong. The subject is auth.userId, which came from the
+  // resolved identity and not from anything the request could say. An `id` in
+  // the body is not rejected, it is simply unreadable from here.
+  //
+  // Returns the three recomputed fields rather than { ok: true } so the caller
+  // re-renders from the server's own precedence answer instead of predicting
+  // it — the same drift GET /team/me's effectiveDefault exists to prevent.
+  if (url.pathname === "/team/me/default-share" && request.method === "POST") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+    let body: { default?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (body.default !== "personal" && body.default !== "company" && body.default !== "inherit") {
+      return json({ ok: false, error: 'default must be "personal", "company", or "inherit"' }, 400);
+    }
+    // setMemberDefaultShare throws TeamAdminError(404) when no row changed, and
+    // that cannot happen here: requireIdentity already resolved this row. No
+    // try/catch — the same argument GET /team/me's unreachable 404 records
+    // above. If the invariant ever breaks, it should reach the 500 handler.
+    await setMemberDefaultShare(env, auth.userId, body.default);
+    const orgDefault = cfg.TEAM_DEFAULT_WORKSPACE === "company" ? "company" : "personal";
+    const defaultShare = body.default === "inherit" ? "" : body.default;
+    // Audited like the admin twin, with self: true. Where a person's captures
+    // land is a visibility decision whether or not an admin made it, so the
+    // compliance view must not go blind the moment members can act.
+    adminAuditEvent(env, ctx, {
+      actorId: auth.userId,
+      targetUserId: auth.userId,
+      event: "member_default_share_set",
+      payload: { default: body.default, self: true },
+    });
+    return json({
+      ok: true,
+      default: body.default,
+      defaultShare,
+      orgDefault,
+      effectiveDefault: effectiveWriteTarget({ ...auth, defaultShare }, undefined, orgDefault),
+    });
   }
 
   // POST /team/members/remove — soft offboarding. Marks the member removed,
@@ -131,6 +273,17 @@ export async function handleAdminRoutes(
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     try {
       const result = await removeMember(env, auth.userId, body.id.trim());
+      // Audited before the Vectorize delete, not after: the D1 rows are already
+      // gone by here, so a Vectorize failure must not also cost the record of the
+      // destruction. The counts, never the content — this is the one
+      // administration action that destroys memories, so how many is what a later
+      // reader needs.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: body.id.trim(),
+        event: "member_removed",
+        payload: { removedEntries: result.removedEntries, removedVectors: result.vectorIds.length },
+      });
       if (result.vectorIds.length) {
         await env.VECTORIZE.deleteByIds(result.vectorIds);
       }
@@ -148,8 +301,57 @@ export async function handleAdminRoutes(
     const row = await env.DB.prepare(
       `SELECT id AS userId, name, email, role FROM users WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
     ).bind(auth.userId).first<{ userId: string; name: string; email: string | null; role: string }>();
+    // Unreachable through a bearer token, and kept anyway. IDENTITY_SQL and
+    // IDENTITY_BY_ID_SQL (src/lib/identity.ts) both exclude suspended and removed
+    // users, so a caller who got past requireIdentity always has a row here — a
+    // removed member gets 401 from the auth layer, never this 404. The
+    // unreachability is therefore an invariant maintained in a DIFFERENT file:
+    // deleting this branch would trade one line for a non-null assertion or a
+    // crash if that invariant ever loosened, so it stays and fails closed.
+    // Do not write a test for this 404 through the HTTP surface — the state it
+    // guards cannot be reached from one.
     if (!row) return json({ ok: false, error: "Not found" }, 404);
-    return json({ ok: true, profile: row });
+    // Where this member's next capture lands, and the two inputs that decided
+    // it. All three are additive — the four fields above keep their names and
+    // values, so loadProfileName() in public/js/settings.js is untouched.
+    //
+    // TEAM_DEFAULT_WORKSPACE is a free-text config key, so it is narrowed to the
+    // enum here rather than passed through: anything that is not "company" is
+    // private-by-default, matching effectiveWriteTarget's own reading of it.
+    const orgDefault = cfg.TEAM_DEFAULT_WORKSPACE === "company" ? "company" : "personal";
+    // Who owns the deployment — the one thing `role` cannot say. tenancy.ts
+    // hashes this brain's AUTH_TOKEN into a users row with role 'admin'
+    // (invariant 4), and rowToIdentity narrows role to "admin" | "member", so
+    // the person who created the brain and a colleague they promoted are the
+    // same value on this route. The desktop app has to tell them apart: a
+    // password change and a Worker update both need a Cloudflare session for
+    // the account the Worker is deployed into, and only the owner has one.
+    // Offering either to a promoted admin dead-ends at ErrorWrongCfAccount
+    // after a full sign-in; withholding them from the owner takes away their
+    // only in-app route to both.
+    //
+    // Free: requireIdentity above has already awaited this bootstrap, which is
+    // memoised per DB binding, so no second query is issued and the scope
+    // checker sees no new statement.
+    const roots = await ensureTenantBootstrap(env);
+    return json({
+      ok: true,
+      profile: {
+        ...row,
+        // Consumed by installer/src-tauri/src/commands.rs::connection_role,
+        // which hands it to installer/src/connection-role.ts.
+        owner: row.userId === roots.ownerUserId,
+        // Already on the resolved Identity — no second column read, no second query.
+        defaultShare: auth.defaultShare,
+        orgDefault,
+        // Resolved by the same function the write path calls (src/lib/scope.ts),
+        // with no explicit target, because that is the case the composer's
+        // "Default" option describes. Computed here rather than in the client:
+        // a client that re-derives the precedence order drifts from it silently,
+        // showing "Personal" while the capture lands in the company layer.
+        effectiveDefault: effectiveWriteTarget(auth, undefined, orgDefault),
+      },
+    });
   }
 
   // GET /team/workspaces — the teams the caller belongs to, with names.
@@ -184,6 +386,15 @@ export async function handleAdminRoutes(
     }
     try {
       const name = await renameTeamWorkspace(env, id, body.name ?? "");
+      // The only administration event whose subject is a workspace rather than a
+      // member, so target_user_id stays empty and workspace_id carries the team.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: "",
+        workspaceId: id,
+        event: "team_renamed",
+        payload: { name },
+      });
       return json({ ok: true, id, name });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
@@ -203,11 +414,176 @@ export async function handleAdminRoutes(
     }
     try {
       await setMemberProfile(env, targetId, { name: body.name, email: body.email });
+      // `self` separates a member renaming themselves — routine, and the common
+      // case — from an admin renaming someone else, which is administration.
+      // The new name and email are omitted: they are member-supplied content.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        targetUserId: targetId,
+        event: "member_profile_updated",
+        payload: { self: targetId === auth.userId },
+      });
       return json({ ok: true, id: targetId });
     } catch (e) {
       if (e instanceof TeamAdminError) return json({ ok: false, error: e.message }, e.status);
       throw e;
     }
+  }
+
+  // GET /team/activity — the compliance feed. Two INSERT-only trails, one
+  // time-ordered answer.
+  //
+  // WHAT EACH ARM GUARANTEES, stated exactly rather than implied. A comment
+  // here that claims more than its arm delivers is the defect, not a rounding
+  // error: it is what a future reader will trust when deciding whether a new
+  // field on this route needs scoping.
+  //
+  //  - The MEMORY arm is SCOPED AT THE ROW, not at the title. Its join is an
+  //    INNER join carrying the caller's own scope, so a row appears only when
+  //    the memory it names is one this caller could read through GET /entry.
+  //    Nothing about an unreadable memory is emitted: not its text, not its
+  //    id, not its actor, and not the target workspace id in `detail`. That
+  //    last one is why a title-only predicate was not enough — a row hidden in
+  //    one column and disclosed in three others is not scoped, and
+  //    listTeamWorkspaces binds only the caller's own workspace ids, so
+  //    another company's id is reachable nowhere else on this deployment.
+  //
+  //    THE PRICE, accepted and pinned by a test: entry_events has no workspace
+  //    column, so the joined entry is the only thing that can attribute a row.
+  //    Share/unshare history for a memory that has since been DELETED can no
+  //    longer be attributed and therefore DOES NOT APPEAR in this feed. The two
+  //    ways to keep it are both worse — a workspace column on entry_events is
+  //    blank for every row already written, and a second unscoped join proving
+  //    the id is dead would disclose "some deleted memory was shared to
+  //    ws-companyY" to an admin of company X. The per-entry trail
+  //    (idx_entry_events_entry) still holds those rows; this feed is the one
+  //    place that cannot show them.
+  //
+  //  - The ADMIN-EVENT arm is DEPLOYMENT-WIDE and is not scoped at all.
+  //    admin_events.workspace_id is populated only by `team_renamed`; every
+  //    member event stores "". So on a deployment with two companies, an admin
+  //    of one sees the other's member events. That is accepted, not overlooked:
+  //    it is exactly as wide as GET /team/members already is — listMembers is
+  //    scope-exempt with no membership filter — so it adds NO new exposure.
+  //    Narrowing it would mean stamping workspace_id on every admin event from
+  //    here on, which cannot repair rows already written, and would leave a feed
+  //    that is narrow for new rows and wide for old ones.
+  //
+  // WHY THIS ROUTE IS UNCAUGHT, decided rather than inherited.
+  //
+  // Nothing between here and the platform catches: createDefaultHandler
+  // (src/routes/index.ts) awaits each handler bare, so a rejected statement
+  // here is a 500 with no body of ours. That was raised as a defect on the
+  // grounds that a route which 500s on a valid request is worse than one that
+  // degrades, and for most routes it would be. It is the wrong trade HERE, on
+  // this surface specifically, for three reasons:
+  //
+  //  1. Every degradation available to this route is a LIE. Answering
+  //     `{ ok: true, events: [] }` says nothing happened — public/js/activity.js
+  //     states the principle in its own words, "an empty audit log is not an
+  //     empty result, it is a claim that nothing happened". Answering the rows
+  //     with the names dropped is no better: `actor` is defined on this wire as
+  //     a NAME OR NULL, and null means "no actor", so a page of unresolved
+  //     names claims a hundred administrative acts nobody performed. A
+  //     compliance feed that cannot be read has to say so.
+  //  2. The client already degrades, visibly and correctly. A non-200 renders
+  //     `activity.loadFailed` and leaves the rows that are on screen alone
+  //     (public/js/activity.js). That is the same information, shown to the
+  //     person who can act on it, without the server asserting anything false.
+  //  3. No route in this worker is individually wrapped, and a catch here alone
+  //     would be a local exception with no principle behind it — the next
+  //     reader would copy it onto a route where swallowing IS wrong.
+  //
+  // So the disposal for the bound-parameter defect that raised the question is
+  // to remove the CAUSE, not to hide the symptom: lookupAuditNames now chunks
+  // (src/lib/team-admin.ts), and the ceiling is driven by a test that enforces
+  // the 100 node:sqlite does not. The one thing this route does swallow stays
+  // swallowed, and it is swallowed because it is not a failure: a hand-edited
+  // `payload` column is bad data in one cell of one row, not an unreadable
+  // feed, and safeParse below answers it with {} rather than losing the page.
+  //
+  // requireAdmin, not requireIdentity: the feed names who suspended whom, which
+  // is administration and not a peer fact. The gate authorises this SURFACE and
+  // widens nothing about which memory rows may be read — that is the scope
+  // clause's job, below.
+  if (url.pathname === "/team/activity" && request.method === "GET") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+    const limit = intParam(url, "limit", { fallback: 50, min: 1, max: 100 });
+    if (limit instanceof Response) return limit;
+    const offset = intParam(url, "offset", { fallback: 0, min: 0 });
+    if (offset instanceof Response) return offset;
+    const scope = scopeWhere(auth);
+    // ONE compound statement, not two selects merged in JavaScript. Paging is
+    // the reason: LIMIT/OFFSET over a merged list is only correct if the merge
+    // happens before the window, and two independently-paged selects stitched
+    // together in JS silently drop rows the moment one trail is busier than
+    // the other. SQLite applies the ORDER BY and LIMIT to the whole compound.
+    //
+    // The entries side is an INNER JOIN carrying the caller's scope, so the
+    // scope predicate decides WHICH ROWS EXIST rather than merely which of
+    // them gets a title. See the arm-by-arm note above the route for what that
+    // costs and why the cheaper spellings are worse.
+    //
+    // substr in the projection, not the whole column: a compliance feed names
+    // a memory, it does not reproduce it.
+    //
+    // ORDER BY carries a tiebreaker because ties are built here on purpose:
+    // POST /patterns/resolve stamps one entry_events row per resolved id in a
+    // tight loop, so ~97 rows share a millisecond, and LIMIT/OFFSET over a tie
+    // group the sorter may emit in any order is how a row lands on two pages or
+    // on none. `event_id` is each trail's own primary key, unique within its
+    // table and a UUID across both, so `created_at DESC, event_id DESC` is a
+    // total order — arbitrary within a tie, but the SAME arbitrary order for
+    // every page of the same data, which is the whole requirement. It is
+    // projected only to be sorted on; the response does not carry it.
+    const { results } = await env.DB.prepare(
+      `SELECT 'admin' AS kind, ae.id AS event_id, ae.event AS event, ae.actor_id AS actor_id,
+              ae.target_user_id AS subject_id, '' AS entry_id, NULL AS title,
+              ae.payload AS payload, ae.created_at AS created_at
+         FROM admin_events ae
+       UNION ALL
+       SELECT 'entry', ev.id, ev.event, ev.actor_id, '', ev.entry_id,
+              substr(m.content, 1, 160), ev.payload, ev.created_at
+         FROM entry_events ev
+         JOIN entries m ON m.id = ev.entry_id AND m.${scope.clause}
+        WHERE ev.event IN ('shared', 'unshared', 'insight_confirmed', 'insight_dismissed')
+       ORDER BY created_at DESC, event_id DESC
+       LIMIT ? OFFSET ?`,
+    ).bind(...scope.bindings, limit, offset).all();
+
+    const rows = results as Record<string, unknown>[];
+    // Resolved once for the page, and through lookupAuditNames rather than
+    // listRoster: see that function. `actor` and `subject` are NAMES OR NULL,
+    // never ids — the rule Phase 2 established for the roster and Phase 3 for
+    // connectedBy, applied to every people-shaped field this codebase publishes.
+    const names = await lookupAuditNames(env, rows.flatMap((r) =>
+      [String(r.actor_id ?? ""), String(r.subject_id ?? "")]));
+    const nameOf = (id: unknown) => {
+      const key = String(id ?? "");
+      return key ? names.get(key) ?? null : null;
+    };
+    // A hand-edited payload must not 500 the feed.
+    const safeParse = (x: string) => { try { return JSON.parse(x); } catch { return {}; } };
+    return json({
+      ok: true,
+      events: rows.map((r) => ({
+        at: Number(r.created_at) || 0,
+        kind: String(r.kind),
+        event: String(r.event),
+        actor: nameOf(r.actor_id),
+        subject: nameOf(r.subject_id),
+        entryId: String(r.entry_id ?? "") || null,
+        title: r.title == null ? null : String(r.title).split("\n")[0].slice(0, 120),
+        detail: safeParse(String(r.payload ?? "{}")),
+      })),
+      // There is no `total`: a COUNT(*) over the same compound is a second full
+      // scan for a number nobody acts on, and "the page came back full, so
+      // there may be more" is the same information at no cost. The client's
+      // Show-more button reads events.length === limit.
+      limit,
+      offset,
+    });
   }
 
   // GET /stats
@@ -237,6 +613,7 @@ export async function handleAdminRoutes(
         // unvectorized skips deprecated entries: their vectors were deleted
         // deliberately, so counting them here offered the user a repair for
         // something that is not broken.
+        // scope-exempt: the row set here is deliberately corpus-wide — unvectorized and unclassified are deployment repair counters and would under-report if narrowed (see the block comment above and team-isolation.test.ts). The caller's clause is applied INSIDE the CASE for count/avg_importance, which scopes those two numbers and not the rows read; that is why it is spelled as a CASE and not a WHERE
         `SELECT
            SUM(CASE WHEN ${scope.clause} THEN 1 ELSE 0 END) as count,
            AVG(CASE WHEN ${scope.clause} THEN importance_score END) as avg_importance,
@@ -258,6 +635,12 @@ export async function handleAdminRoutes(
            AND ${scope.clause}
          GROUP BY value ORDER BY n DESC LIMIT 5`,
       ).bind(...scope.bindings).all(),
+      // Scoped like top_tags directly above, and for the same reason: this list
+      // is tag NAMES, and it is rendered on the admin's dashboard. Unscoped it
+      // named colleagues' private topics — "divorce-paperwork" beside a count —
+      // from workspaces the same token gets a 404 from /entry for. The nightly
+      // compression pass picks its own tags per workspace (src/compression), so
+      // narrowing this display list costs no repair coverage.
       env.DB.prepare(`
         SELECT value as tag, COUNT(*) as count
         FROM entries, json_each(entries.tags)
@@ -267,19 +650,24 @@ export async function handleAdminRoutes(
           AND entries.tags NOT LIKE '%"auto-pattern"%'
           AND entries.tags NOT LIKE '%"auto-insight"%'
           AND ${compressionEligibilitySql("entries.", cfg)}
+          AND entries.${scope.clause}
         GROUP BY value
         HAVING count > 10
         ORDER BY count DESC
         LIMIT 10
-      `).bind(Date.now() - cfg.COMPRESSION_MIN_AGE_MS).all(),
+      `).bind(Date.now() - cfg.COMPRESSION_MIN_AGE_MS, ...scope.bindings).all(),
     ]);
 
     const cutoff = Date.now() - 86400000;
     const digestCandidates: { tag: string; count: number }[] = [];
     for (const row of candidateRows.results as any[]) {
+      // Scoped to match the query that produced `row`: "has this tag already
+      // been digested?" has to be asked of the same rows the tag was counted
+      // over, or a colleague's digest in an unreadable workspace silently
+      // removes a real candidate from the admin's own list.
       const existing = await env.DB.prepare(
-        `SELECT id FROM entries WHERE tags LIKE '%"synthesized"%' AND tags LIKE ? ${TAG_LIKE_ESCAPE} AND created_at > ? LIMIT 1`
-      ).bind(tagLikePattern(row.tag as string), cutoff).first();
+        `SELECT id FROM entries WHERE tags LIKE '%"synthesized"%' AND tags LIKE ? ${TAG_LIKE_ESCAPE} AND created_at > ? AND ${scope.clause} LIMIT 1`
+      ).bind(tagLikePattern(row.tag as string), cutoff, ...scope.bindings).first();
       if (!existing) digestCandidates.push({ tag: row.tag as string, count: row.count as number });
     }
 
@@ -307,8 +695,35 @@ export async function handleAdminRoutes(
     // target, share actions, layer filters). Layers exist on every v3 brain,
     // but until a second member is invited the toggle is noise for a solo
     // owner, so the flag reads actual membership, not provisioning.
-    const members = await env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
-    return json({ ok: vectorize.ok, version: SB_VERSION, vectorize, team: (members?.n ?? 0) > 1 });
+    //
+    // isTeamBrain owns the whole decision — the TEAM_MODE setting and, when it
+    // says "auto", the headcount. countActiveMembers, not a bare COUNT(*):
+    // a removed member keeps their `users` row as a tombstone so their shared
+    // memories stay attributable, and counting those made "team" a one-way door
+    // — add one colleague ever, and the brain could never read as solo again.
+    // Suspended people still count; see that function's comment for why.
+    const team = await isTeamBrain(env);
+    // Result-quality signal, not correctness: every hydration below this is
+    // scoped at the SQL layer regardless, so a degraded filter never leaks
+    // another workspace's data — it just lets foreign candidates crowd out
+    // the caller's own in the vector index's own topK before SQL filters
+    // them back out. `latchedAt` reads the durable KV marker rather than
+    // trusting the in-memory latch alone, so the signal survives isolate
+    // churn between deploys.
+    const { supported, degradedQueries } = vectorizeFilterState();
+    // A KV blip must not turn this route's other, independently-available
+    // signals (vectorize.ok, team) into a 500 — /health previously depended
+    // on describe() and one D1 count only. `.catch(() => null)` degrades
+    // latchedAt to "unknown" instead, exactly like a marker that was never
+    // written.
+    const latchedAtRaw = await env.OAUTH_KV.get(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY).catch(() => null);
+    const latchedAt = latchedAtRaw ? Number(latchedAtRaw) : null;
+    return json({
+      ok: vectorize.ok,
+      version: SB_VERSION,
+      vectorize: { ...vectorize, workspaceFilter: { supported, degradedQueries, latchedAt } },
+      team,
+    });
   }
 
   // GET /patterns — the whole review queue, paged.
@@ -348,7 +763,11 @@ export async function handleAdminRoutes(
     const scope = scopeWhere(auth);
     const [rows, countRow] = await Promise.all([
       env.DB.prepare(
-        `SELECT id, content, created_at FROM entries
+        // workspace_id, actor_id and source ride along on the query that
+        // already runs: the queue's rows have to say which layer they belong
+        // to and who wrote them, and three more columns on an existing
+        // projection is no new statement and no check:scope movement.
+        `SELECT id, content, created_at, workspace_id, actor_id, source FROM entries
          WHERE ${PENDING_INSIGHT_SQL} AND ${scope.clause}
          ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       ).bind(...scope.bindings, limit, offset).all(),
@@ -359,18 +778,41 @@ export async function handleAdminRoutes(
       ).bind(...scope.bindings).first() as Promise<Record<string, any> | null>,
     ]);
 
-    const pageIds = (rows.results as Record<string, any>[]).map(r => r.id as string);
+    const pageRows = rows.results as Record<string, any>[];
+    const pageIds = pageRows.map(r => r.id as string);
     // One query for the whole page rather than one per insight. LEFT JOIN so a
     // source deleted after the edge was written still surfaces as a row — the
     // edges table has no foreign keys, so an edge can outlive its target, and
     // the reviewer needs to be told the source is gone rather than shown a gap.
     const sourcesByInsight = new Map<string, ({ id: string; content: string } | { id: string; missing: true })[]>();
     if (pageIds.length) {
+      // The scope goes in the JOIN's ON clause, not the WHERE. Only `e.source_id`
+      // was ever constrained here — those are the scoped page's insight ids — but
+      // the CONTENT returned comes from `e.target_id`, which nothing constrained,
+      // so an insight the caller may read handed back the full text of a memory
+      // in a colleague's personal workspace. It is the same defect as the
+      // /insights/dry-run pair query: a join through an unscoped table, not a
+      // by-id lookup.
+      //
+      // In the ON clause rather than the WHERE because this is a LEFT JOIN whose
+      // whole point is that a source deleted after the edge was written still
+      // surfaces as a row. A WHERE predicate would drop those rows (NULL IN (...)
+      // is never true) and take the "missing" signal with them. In the ON clause,
+      // an unreadable source reads exactly like a deleted one — the reviewer is
+      // told the source is unavailable rather than shown a colleague's memory,
+      // which is the same answer GET /entry gives for that id.
+      //
+      // Written `m.${scope.clause}` rather than building the clause with the
+      // alias baked in, so the alias is visible in the template itself: that is
+      // what lets scripts/check-scope.mjs attribute the clause to `m` instead of
+      // counting it against whichever table reference it reaches first.
+      const mScope = scopeWhere(auth);
+      // scope-outer-join: the edges alias e is pinned by source_id IN (the scoped insight page above), so every row here already belongs to the caller; the entries alias m is reached by a LEFT JOIN and its clause is in the ON, which nulls a column rather than dropping a row. That is sufficient HERE and only here, because m contributes exactly one column: `content`. The row itself, and the `id` beside it, come from `e.target_id` — an edge of the caller's own insight — so an unreadable source renders as { missing: true }, which is what a source DELETED after the edge was written renders as, and what GET /entry answers for that id. A WHERE predicate would drop those rows and take the "missing" signal with them
       const sourceRows = (await env.DB.prepare(
         `SELECT e.source_id AS insight_id, e.target_id AS id, m.content AS content
-         FROM edges e LEFT JOIN entries m ON m.id = e.target_id
+         FROM edges e LEFT JOIN entries m ON m.id = e.target_id AND m.${mScope.clause}
          WHERE e.type = 'drawn_from' AND e.source_id IN (${pageIds.map(() => "?").join(",")})`,
-      ).bind(...pageIds).all()).results as Record<string, any>[];
+      ).bind(...mScope.bindings, ...pageIds).all()).results as Record<string, any>[];
       for (const r of sourceRows) {
         const list = sourcesByInsight.get(r.insight_id as string) ?? [];
         list.push(
@@ -382,13 +824,36 @@ export async function handleAdminRoutes(
       }
     }
 
+    // Exactly GET /list's layer rule, because it is literally that function
+    // (src/lib/scope.ts). The client cannot infer this itself: it holds no
+    // workspace ids, and the one thing it could read a layer off (`sources`)
+    // describes the INPUTS, not the insight.
+    // Issues NO statement for an empty list — and in practice it always is
+    // empty, because every row in this queue carries `auto-insight` and every
+    // auto-insight row is written with actorId "". The call is made anyway
+    // rather than skipped on that basis: "every row here is system-authored"
+    // is an invariant of a different file, and the cost of not relying on it
+    // is zero.
+    const labelMap = await lookupActorLabels(
+      env,
+      pageRows.filter(r => layerOf(auth, r.workspace_id) === "company").map(r => String(r.actor_id ?? "")),
+    );
+
     return json({
       ok: true,
-      patterns: (rows.results as Record<string, any>[]).map(r => ({
+      patterns: pageRows.map(r => ({
         id: r.id as string,
         content: r.content as string,
         created_at: r.created_at as number,
         sources: sourcesByInsight.get(r.id as string) ?? [],
+        workspace: layerOf(auth, r.workspace_id),
+        // The same resolver /list, /entry and /graph call, given the same
+        // inputs — so an insight cannot be attributed one way in the review
+        // queue and another way on the card the reader opens next.
+        actor_name: resolveActorLabel(String(r.actor_id ?? ""), labelMap, {
+          viewerId: auth.userId,
+          source: String(r.source ?? ""),
+        }),
       })),
       total: (countRow?.n as number) ?? 0,
       limit,
@@ -521,6 +986,16 @@ export async function handleAdminRoutes(
     const statements: D1PreparedStatement[] = [];
     const vectorsToDrop: string[] = [];
     const resolved: string[] = [];
+    // The record of who ruled on what. There is deliberately NO author lock on
+    // this route — an insight has actor_id "" and no author, so it is a shared
+    // suggestion and any member acting on one is the feature working. That is
+    // precisely why the record matters: without it, a member dismissing a
+    // company-layer insight for everyone leaves no trace, and GET /team/activity
+    // is blind to the one action on this surface that is invisible by design.
+    //
+    // Two names rather than one plus a payload flag, for the reason
+    // member_suspended and member_unsuspended are two names.
+    const auditRows: AuditEventInput[] = [];
 
     for (const row of found) {
       const tags: string[] = JSON.parse(row.tags ?? "[]");
@@ -550,11 +1025,22 @@ export async function handleAdminRoutes(
         vectorsToDrop.push(...(JSON.parse(row.vector_ids ?? "[]") as string[]));
       }
       resolved.push(row.id as string);
+      auditRows.push({
+        entryId: row.id as string,
+        actorId: auth.userId,
+        event: action === "confirm" ? "insight_confirmed" : "insight_dismissed",
+      });
     }
 
     // One subrequest however many statements it holds, which is the whole reason
     // the loop above builds them instead of running them.
     if (statements.length) await env.DB.batch(statements);
+    // After the state change and off the critical path: one batch however many
+    // ids the request carried, so the route's cost stays flat in the id count,
+    // and fire-and-forget so a lost row can never cost a resolution. Only rows
+    // actually ruled on are recorded — a skipped or out-of-scope id was not
+    // resolved, and a false entry in an INSERT-only trail cannot be corrected.
+    auditEvents(env, ctx, auditRows);
 
     if (vectorsToDrop.length) {
       try {
@@ -592,7 +1078,8 @@ export async function handleAdminRoutes(
     // brain to drop, and crowding the vector query with candidates that recall
     // discards at hydration anyway.
     const { results: toProcess } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at FROM entries
+      // scope-exempt: admin repair backlog: deployment-wide by design, returns counts not content
+      `SELECT id, content, tags, source, created_at, workspace_id, actor_id FROM entries
        WHERE vector_ids = '[]' AND created_at < ? AND ${INDEXABLE_SQL}
        ORDER BY created_at DESC LIMIT 25`
     ).bind(graceCutoff).all();
@@ -612,7 +1099,11 @@ export async function handleAdminRoutes(
           // Without this the backfill embeds with DEFAULTS.EMBEDDING_MODEL while
           // capture and recall use the configured one, writing vectors from the
           // wrong model into the index — scores go quietly wrong, nothing throws.
-          cfg
+          cfg,
+          // This route repairs OTHER members' rows by design — the context comes
+          // from the row, never from `auth`. Stamping the admin's workspace here
+          // would move every repaired vector into the admin's own space.
+          { workspaceId: row.workspace_id as string, actorId: row.actor_id as string },
         );
         processed++;
       } catch (e) {
@@ -625,6 +1116,7 @@ export async function handleAdminRoutes(
     // dashboard presses this until `remaining` is 0, so counting rows the select
     // refuses to process would spin until the batch-made-no-progress guard.
     const remaining = await env.DB.prepare(
+      // scope-exempt: admin repair backlog: must match the SELECT above or the loop never reaches zero
       `SELECT COUNT(*) as count FROM entries WHERE vector_ids = '[]' AND created_at < ? AND ${INDEXABLE_SQL}`
     ).bind(graceCutoff).first() as Record<string, any> | null;
 
@@ -643,6 +1135,7 @@ export async function handleAdminRoutes(
     const UNCLASSIFIED_WHERE = `tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%'`;
 
     const { results: toProcess } = await env.DB.prepare(
+      // scope-exempt: admin repair backlog: deployment-wide by design, returns counts not content
       `SELECT id, content, tags FROM entries
        WHERE ${UNCLASSIFIED_WHERE}
        ORDER BY created_at ASC LIMIT 25`
@@ -668,6 +1161,7 @@ export async function handleAdminRoutes(
     }
 
     const remaining = await env.DB.prepare(
+      // scope-exempt: admin repair backlog: must match the SELECT above or the loop never reaches zero
       `SELECT COUNT(*) as count FROM entries WHERE ${UNCLASSIFIED_WHERE}`
     ).first() as Record<string, any> | null;
 
@@ -739,6 +1233,15 @@ export async function handleAdminRoutes(
     // pass applies (src/insight/weekly.ts) — without them, this endpoint
     // could not tell an assistant-authored pair from any other and would
     // report exactly what production refuses as if it would be written.
+    //
+    // requireAdmin authorises this surface; it does not widen the readable row
+    // set (src/lib/scope.ts). Both sides of the pair are scoped independently:
+    // a candidate is previewable only when the caller could have read BOTH of
+    // the memories it draws on, which is the same rule GET /entry applies one
+    // row at a time. This one reaches `entries` through JOIN rather than FROM,
+    // which is how it stayed unscoped while every sibling query was fixed.
+    const aScope = scopeWhere(auth, undefined, "a.workspace_id");
+    const bScope = scopeWhere(auth, undefined, "b.workspace_id");
     const { results } = await env.DB.prepare(
       `SELECT c.id, c.a_id, c.b_id, c.score, a.content AS a_content, b.content AS b_content,
               a.tags AS a_tags, b.tags AS b_tags
@@ -748,9 +1251,10 @@ export async function handleAdminRoutes(
        WHERE c.status = 'pending'
          AND a.tags NOT LIKE '%"status:deprecated"%'
          AND b.tags NOT LIKE '%"status:deprecated"%'
+         AND ${aScope.clause} AND ${bScope.clause}
        ORDER BY c.score DESC
        LIMIT ?`,
-    ).bind(limit).all() as { results: Record<string, any>[] };
+    ).bind(...aScope.bindings, ...bScope.bindings, limit).all() as { results: Record<string, any>[] };
 
     // D2's comparison list, built exactly as src/insight/weekly.ts builds it:
     // insights still unreviewed from earlier runs, seeded before the loop and
@@ -758,10 +1262,17 @@ export async function handleAdminRoutes(
     // could not reproduce the spec's own motivating case — a candidate
     // restating an insight a PRIOR run already wrote is invisible to a
     // same-run-only check.
+    //
+    // Scoped for the same reason the candidate query is, and the leak here is
+    // quieter: the comparison text is never printed, but an unscoped list lets a
+    // colleague's private proposal suppress the caller's own candidate with the
+    // reason "restates a recently written insight" — an admin told her preview
+    // duplicates something she cannot see and did not write.
+    const scope = scopeWhere(auth);
     const { results: recentInsightRows } = await env.DB.prepare(
-      `SELECT content FROM entries WHERE ${PENDING_INSIGHT_SQL}
+      `SELECT content FROM entries WHERE ${PENDING_INSIGHT_SQL} AND ${scope.clause}
        ORDER BY created_at DESC LIMIT ?`,
-    ).bind(RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };
+    ).bind(...scope.bindings, RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };
     const writtenThisRun: string[] = recentInsightRows.map(r => rawInsightText(r.content));
 
     const candidates = [];

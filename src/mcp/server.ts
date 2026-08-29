@@ -6,15 +6,15 @@ import { VECTORIZE_FIX_HINT } from "../constants";
 import { buildEntryFilterQuery, captureEntry } from "../capture/entry";
 import { appendToEntry, updateEntryContent } from "../capture/store";
 import { applyStatus, forgetEntry } from "../capture/lifecycle";
-import { moveEntry } from "../capture/share";
+import { moveEntry, restampVectorWorkspace } from "../capture/share";
 import { auditEvent } from "../lib/audit";
-import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
-import { createEdge, deleteEdge, edgeLabel } from "../graph/edges";
+import { lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../lib/actors";
+import { createEdge, deleteEdge, edgeLabel, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
 import type { Identity } from "../lib/identity";
 import { assertCanEditContent, assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
-import { isCompanyWorkspace, scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
+import { layerOf, scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
@@ -133,17 +133,12 @@ const LIST_RECENT_DESCRIPTION =
   "list_recent: List the most recent entries by date from your second brain. Use it to browse recent activity "
   + "or to locate an entry by time. It returns entries by recency, not by semantic relevance — when you want "
   + "memories that match a meaning, use recall. Long entries are shortened: a result ending in a [truncated …] "
-  + "marker is PARTIAL, so call get(id) for its full text.";
+  + "marker is PARTIAL, so call get(id) for its full text. "
+  + "Pass actor to list only what one person wrote — their name as shown in the header, their user id, or \"me\".";
 
 /** Which layer a raw entries row is in, from the caller's point of view. */
-function layerOfRow(
-  identity: Identity | undefined,
-  row: Record<string, any>,
-): "personal" | "company" | "system" {
-  if (!identity) return "system";
-  if (row.workspace_id === identity.personalWorkspaceId) return "personal";
-  return isCompanyWorkspace(identity, row.workspace_id) ? "company" : "system";
-}
+const layerOfRow = (identity: Identity | undefined, row: Record<string, any>) =>
+  layerOf(identity, row.workspace_id);
 
 /**
  * Resolve author names for a page of rows, in one query, and only when a company
@@ -397,6 +392,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       if (result.status === "forbidden") return { content: [{ type: "text", text: `Only the entry's author or an admin can un-share ${id}.` }] };
       if (result.status === "no_change") return { content: [{ type: "text", text: `Entry ${id} is already in the ${workspace ?? "company"} workspace.` }] };
       auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: result.status, payload: { workspaceId: result.workspaceId } });
+      // After the audit event, before the response — see moveEntry's own
+      // comment: the D1 move is already committed, so a Vectorize outage
+      // here costs only this cosmetic ranking follow-up.
+      ctx.waitUntil(restampVectorWorkspace(env, result.vectorIds, result.workspaceId));
       return { content: [{ type: "text", text: `Entry ${id} ${result.status} — now in the ${workspace ?? "company"} workspace.` }] };
     }
   );
@@ -444,14 +443,33 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
         workspace: z.enum(["personal", "company"]).optional().describe("Restrict the listing to one layer: the user's private workspace or the shared company layer. Omit to list both"),
+        actor: z.string().optional().describe('Only entries written by one person: their display name as it appears in the header, their user id, or "me" for your own'),
       },
     },
-    async ({ n, tag, after, before, workspace }) => {
+    async ({ n, tag, after, before, workspace, actor }) => {
+      // The same author filter GET /list takes, through the same resolver, so a
+      // name means the same thing on both surfaces. An identity-less caller has
+      // no roster to resolve a name against and no actor_id worth trusting, so
+      // `actor` is ignored outright for it — the byte-identical pre-tenancy
+      // behaviour the scoping below keeps too. A name nobody on the team answers
+      // to is a text answer rather than a thrown error: this tool's contract is
+      // a text answer, and "no one matches that" is one.
+      // Trimmed here so the two surfaces agree on blank input: GET /list reads
+      // `?actor=` through the same `trim()` and treats what is left of a
+      // whitespace-only value as no filter at all. Without this, the same blank
+      // meant "everything" over HTTP and "no one matches that" over MCP.
+      const actorQuery = actor?.trim();
+      let actorId: string | undefined;
+      if (actorQuery && identity) {
+        const resolved = await resolveActorFilter(env, identity, actorQuery);
+        if (!resolved.ok) return { content: [{ type: "text", text: `${resolved.error}.` }] };
+        actorId = resolved.actorId;
+      }
       // Same inline scoping as GET /list (src/routes/recall.ts): the filter
       // builder has no hook of its own, and its SQL always ends in ORDER BY.
       // workspace_id and actor_id come back so the header can say which layer a
       // row is in and who wrote it — the same two facts recall reports.
-      let { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+      let { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before, actor: actorId });
       if (identity) {
         const scope = scopeWhere(identity, workspace);
         sql = sql.includes("WHERE")
@@ -515,6 +533,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
     async ({ id }) => {
       const scope = identity ? scopeWhere(identity) : null;
       const row = await env.DB.prepare(
+        // scope-exempt: identity-less branch: production MCP always resolves an identity (src/mcp/handler.ts); this arm is unit fixtures only
         `SELECT id, content, tags, source, created_at, workspace_id, actor_id FROM entries WHERE id = ?${scope ? ` AND ${scope.clause}` : ""}`
       ).bind(...(scope ? [id, ...scope.bindings] : [id])).first() as Record<string, any> | null;
       if (!row) {
@@ -576,8 +595,12 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       if (!source) return { content: [{ type: "text", text: `No entry found with ID: ${source_id}` }] };
       const target = await getReadableEntry(env, identity, target_id);
       if (!target) return { content: [{ type: "text", text: `No entry found with ID: ${target_id}` }] };
+      // Same rule and same sentence as POST /link — see CROSS_WORKSPACE_LINK_MESSAGE.
+      if (source.workspace_id !== target.workspace_id) {
+        return { content: [{ type: "text", text: CROSS_WORKSPACE_LINK_MESSAGE }] };
+      }
 
-      const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0 }, env);
+      const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0, workspaceId: source.workspace_id }, env);
       if (!edge) return { content: [{ type: "text", text: "Cannot link an entry to itself." }] };
       return { content: [{ type: "text", text: `Linked ${edge.source_id} → ${edge.target_id} (${edgeLabel(edge.type)}).` }] };
     }

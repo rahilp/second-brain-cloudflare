@@ -141,6 +141,18 @@ Memory is most useful when capturing information is easy. Second Brain connects 
   npm install -g second-brain-cf-cli
   ```
 
+  On a team brain, `remember` and `recall` take a layer:
+
+  ```bash
+  brain remember --workspace <personal|company> "the release train leaves Thursdays"
+  brain recall   --workspace <personal|company> "when does the release train leave?"
+  ```
+
+  The default is unset, not `personal`. Leave the flag off and the brain
+  decides: your own capture default first, then your organisation's default —
+  the same precedence the dashboard composer's **Auto** follows. Pass it only
+  when you want to override that for one command.
+
 * **Notion:** Connect your Notion workspace from **Settings → Integrations** in the web dashboard. Create an internal **connection** in the [Notion developer portal](https://app.notion.com/developers/connections) (a connection, not a personal access token — only connections appear in a page's Connections menu), share the pages you want remembered with it, and paste its secret — shared pages sync into memory automatically (hourly, or on demand with **Sync now**) and stay updated as they change in Notion.
 
 * **Calendar:** Connect Google, Outlook, or iCloud from **Settings → Integrations** and paste your calendar's private **iCal (`.ics`) link** (Google: *your calendar → Integrate calendar → "Secret address in iCal format"*; Outlook: *Calendar → Shared calendars → Publish*; iCloud: *Share Calendar → Public Calendar*). Read-only — upcoming events sync into memory automatically (hourly, or on demand with **Sync now**), and past events are kept as a bounded history.
@@ -187,6 +199,10 @@ Use either:
   ```
 
 Save this token somewhere secure. You will need it when authorizing clients and testing your deployment.
+
+> **Removed in v3:** `?token=` query-parameter authentication. Use the
+> `Authorization: Bearer <token>` header. Query-string credentials leak into
+> browser history, proxy logs and `Referer` headers.
 
 ### 2. Deploy to Cloudflare
 

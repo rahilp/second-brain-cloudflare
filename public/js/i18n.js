@@ -14,8 +14,16 @@ const I18N_EN = {
     connectingEllipsis: 'Connecting…',
     fillBoth: 'Please fill in both fields.',
     invalidToken: 'Invalid token',
+    accountSuspended: 'Your account is suspended. Ask a team admin to restore it.',
+    accountRemoved: 'Your account has been removed from this team.',
     couldNotConnect: 'Could not connect.',
     serverError: 'Server error: {status}',
+    haveInvite: 'I received a team invite',
+    inviteHide: 'Hide',
+    inviteStep1: 'Leave the address above as it is — it is already this team’s Second Brain.',
+    inviteStep2: 'Paste the one-time token your admin sent you into the field above.',
+    inviteStep3: 'Press Connect. Everything you capture stays personal until you share it with the team.',
+    sessionExpired: 'Your access token is no longer valid. Sign in again with a current token.',
   },
   nav: {
     home: 'Home',
@@ -28,6 +36,7 @@ const I18N_EN = {
       one: '{n} memory stored',
       other: '{n} memories stored',
     },
+    vectorizeFilterDegraded: 'Workspace filtering unavailable — results are ranked across all layers',
   },
   home: {
     greetingDefault: 'Hello',
@@ -73,6 +82,12 @@ const I18N_EN = {
       'Memories is everything you have kept — as a list by date, or as a graph of how it connects.',
     firstRunStep3:
       'Settings is where you connect Claude, ChatGPT, Cursor, your email and calendar, so they read from and add to this same memory.',
+    autoPersonalYours: 'Auto → Personal (your setting)',
+    autoPersonalOrg: 'Auto → Personal (org default)',
+    autoSharedYours: 'Auto → Shared (your setting)',
+    autoSharedOrg: 'Auto → Shared (org default)',
+    pinnedPersonal: 'This one stays personal',
+    pinnedShared: 'This one goes to the whole team',
   },
   recall: {
     eyebrow: 'Recall',
@@ -89,7 +104,6 @@ const I18N_EN = {
     sugLastWeekQuery: 'What happened last week?',
     sugThisMonth: 'This month',
     sugThisMonthQuery: 'What did I decide this month?',
-    sugOutOfDate: 'What might be out of date?',
     empty: "I couldn't find anything matching that. Try different words, or browse Memories.",
     error: 'Something went wrong. Check your connection and try again.',
     youAsked: 'You asked',
@@ -116,7 +130,6 @@ const I18N_EN = {
     loadingShort: 'Loading...',
     loadFailed: 'Could not load memories.',
     empty: 'No memories yet. Use Remember to save your first one.',
-    vecOnTitle: 'Vectorized — searchable via recall',
     vecPendingTitle: 'Vectorizing… (just captured)',
     vecOffTitle: "Not vectorized — won't appear in recall",
     vecNotIndexed: 'Not indexed',
@@ -185,6 +198,18 @@ const I18N_EN = {
     removeLink: 'Remove link',
     removeLinkConfirm: 'Remove this link? The memories stay; only the connection is deleted.',
     untitled: 'Untitled memory',
+    evCreated: 'Captured',
+    evUpdated: 'Edited',
+    evAppended: 'Added to',
+    evDeleted: 'Deleted',
+    evStatusChanged: 'Status changed',
+    evShared: 'Shared with the team',
+    evUnshared: 'Made personal again',
+    authorLockedTitle: 'Only the author can change a shared memory',
+    authorLocked: 'Shared by {name} — only they can edit or delete it',
+    allAuthors: 'All authors',
+    authorFilterTitle: 'Show only what one person shared',
+    authorYou: 'You',
   },
   graph: {
     empty: 'No connections yet — link memories, or let them auto-connect as you add more.',
@@ -193,6 +218,12 @@ const I18N_EN = {
     zoomIn: 'Zoom in',
     fit: 'Fit to view',
     relayout: 'Re-lay out',
+    layerTitle: 'Show one layer, or both',
+    layerAll: 'All layers',
+    layerPersonal: 'Personal',
+    layerShared: 'Shared',
+    sharedLegend: 'Shared with the team',
+    byAuthor: 'by {name}',
   },
   menu: {
     title: 'Your brain',
@@ -327,9 +358,12 @@ const I18N_EN = {
     lastSync: 'Last sync: {when}',
     never: 'never',
     disconnectConfirm: 'Disconnect {name}? It will stop syncing.',
+    // A checkbox label, not a dialog: it names what ticking it does. It used to
+    // end "OK = delete them / Cancel = keep them", which described a pair of
+    // buttons that are no longer on screen.
     purgeConfirm: {
-      one: 'Also delete the {n} synced {noun}?\n\nOK = delete them\nCancel = keep them as regular memories',
-      other: 'Also delete the {n} synced {noun}?\n\nOK = delete them\nCancel = keep them as regular memories',
+      one: 'Also delete the {n} synced {noun}',
+      other: 'Also delete the {n} synced {noun}',
     },
     disconnecting: 'Disconnecting…',
     disconnectFailed: 'Disconnect failed',
@@ -369,6 +403,10 @@ const I18N_EN = {
           'At appleid.apple.com → Sign-In and Security → <b>App-Specific Passwords</b>, generate one, then enter your iCloud email and that password.',
       },
     },
+    connectedByLabel: 'Connected by {name}',
+    mirrorPersonal: 'Synced memories land in the personal layer',
+    mirrorShared: 'Synced memories land in the shared team layer',
+    connectedOn: 'Connected {when}',
   },
   team: {
     title: 'Team',
@@ -381,7 +419,12 @@ const I18N_EN = {
     membersLabel: 'Members',
     colMember: 'Member',
     colCaptures: 'Captures',
+    lastUsed: 'Last used {when}',
+    lastUsedNever: 'Never used',
     adminsOnly: 'Only workspace admins can manage team members.',
+    rosterHint: 'Everyone on this team. Only admins can add or remove people.',
+    yourCaptureTitle: 'Your new captures',
+    yourCaptureHint: 'Where your captures go when you don’t pick a layer. You can still choose per memory.',
     roleAdmin: 'Admin',
     roleMember: 'Member',
     you: 'you',
@@ -396,7 +439,6 @@ const I18N_EN = {
     rotateConfirm:
       'Issue a fresh sign-in token for {name}? Their current token stops working once the new one is used.',
     suspendConfirm: 'Suspend {name}? They lose access immediately.',
-    restoreConfirm: 'Restore access for {name}?',
     addTitle: 'Add member',
     namePlaceholder: 'Name',
     emailPlaceholder: 'Email (optional)',
@@ -416,14 +458,42 @@ const I18N_EN = {
     sharePersonal: 'Personal (private)',
     shareCompany: 'Company (shared)',
     shareInherit: 'Org default',
-    shareConfirm: 'Share this memory with the whole team?',
-    unshareConfirm: 'Make this memory private again? Only you (or an admin) can un-share someone else\'s shared memory.',
     sharedToast: 'Shared with the team',
     unsharedToast: 'Moved back to personal',
     undo: 'Undo',
     profileTitle: 'Your display name',
     profileSave: 'Save name',
     profileSaved: 'Name updated',
+    rotateTitle: 'Reset this member’s token?',
+    suspendTitle: 'Suspend this member?',
+    removeTitle: 'Remove this member?',
+    restoredToast: 'Access restored',
+    rotating: 'Resetting…',
+    suspending: 'Suspending…',
+    removing: 'Removing…',
+    myDefaultLabel: 'New captures:',
+    myDefaultSaved: 'Capture default updated',
+    insightsLabel: 'Weekly team insights',
+    insightsOff: 'Off',
+    insightsOn: 'On',
+    insightsHint:
+      'When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone’s review queue.',
+    modeTitle: 'Team mode',
+    modeLabel: 'Shared team layer',
+    modeHint:
+      'Turning this on adds a shared layer everyone on the team can read. Your personal memories stay private.',
+    modeLocked:
+      'There are {n} people on this team, so the shared layer stays on. Remove everyone but yourself to turn it off.',
+    modeOnSaved: 'Team mode on — the shared layer is live',
+    modeOffSaved: 'Team mode off — this brain is personal again',
+  },
+  invite: {
+    copy: 'Copy invite message',
+    copied: 'Invite copied',
+    email: 'Email invite',
+    subject: 'Your Second Brain team invite',
+    body:
+      'Hi {name},\n\nYou have been added to our shared Second Brain — one memory the whole team can search.\n\n1. Open {url}\n2. Paste this one-time sign-in token:\n{token}\n3. Press Connect.\n\nAnything you capture stays personal unless you share it with the team. The token is shown once, so keep this message until you have signed in.',
   },
   brief: {
     eyebrow: 'Your brain, lately',
@@ -493,7 +563,6 @@ const I18N_EN = {
     withTag: '{label} ({tag})',
   },
   common: {
-    cancel: 'Cancel',
     justNow: 'just now',
     minutesAgo: '{n}m ago',
     hoursAgo: '{n}h ago',
@@ -515,6 +584,102 @@ const I18N_EN = {
     invalidResponse: 'Invalid response',
     mcpError: 'MCP error',
   },
+  danger: {
+    removeLinkTitle: 'Remove this link?',
+    removeLinkAction: 'Remove link',
+    disconnectTitle: 'Disconnect this integration?',
+  },
+  coach: {
+    dismiss: 'Got it',
+    dismissAria: 'Dismiss this tip',
+    sharedTitle: 'Shared means the whole team',
+    // Says nothing about where an UNMARKED capture lands: this mark can sit
+    // above a hint reading either “Auto → Personal” or “Auto → Shared”, and the
+    // old second sentence (“stays personal until you share it”) was flatly
+    // false beside the second of those. It also cannot refer to “the line
+    // above”, because it still shows when /team/me has not answered and the
+    // hint line is empty.
+    sharedBody:
+      'A shared memory can be found by everyone on this team. A personal one is only ever yours — you decide which, for each memory or by default.',
+    // Named “Auto”, which is what the hint line it points at calls the control.
+    autoTitle: 'What “Auto” means',
+    // True whether the member has set their own default or is inheriting the
+    // org one, because it does not say WHOSE the value is — the hint line
+    // directly above already does, in the same breath as the value itself.
+    // It also names the Team screen control (team.yourCaptureTitle) that Task
+    // 3.2 gave the member: the previous copy called this “your team’s capture
+    // policy”, which taught a member not to look for a setting they now own.
+    autoBody:
+      'Auto means you have not picked a layer for this memory. The line above says where it lands and whose setting decides that — change your own under “Your new captures” on the Team screen.',
+    lockTitle: 'Only the author can change a shared memory',
+    lockBody:
+      'Once a memory is shared, only the person who shared it — or an admin — can edit or delete it. Everyone else can read it and link to it.',
+  },
+  // The admin activity feed. The ev* family is reached only through
+  // activityEventLabel()'s map in js/activity.js, keyed by the audit event
+  // name — which is why it is declared in DYNAMICALLY_REFERENCED.
+  activity: {
+    title: 'Recent activity',
+    intro: 'Who changed what, newest first. Kept as a record — nothing here can be edited.',
+    loading: 'Loading…',
+    empty: 'Nothing has happened on this team yet.',
+    loadFailed: 'Could not load the activity log.',
+    more: 'Show more',
+    // A trail outlives the people in it: an actor row can point at an account
+    // that is gone, and a shared-memory row at a memory that is.
+    unknownActor: 'Removed account',
+    memoryGone: 'Memory no longer readable',
+    evMemberCreated: 'Added a member',
+    evMemberRemoved: 'Removed a member',
+    evMemberSuspended: 'Suspended a member',
+    evMemberUnsuspended: 'Restored a member',
+    evMemberTokenRotated: 'Issued a new sign-in token',
+    evMemberDefaultShareSet: 'Changed where new captures land',
+    evMemberProfileUpdated: 'Edited a profile',
+    evTeamRenamed: 'Renamed the team',
+    evIntegrationConnected: 'Connected an integration',
+    evIntegrationDisconnected: 'Disconnected an integration',
+    evShared: 'Shared a memory with the team',
+    evUnshared: 'Made a memory personal again',
+    evInsightConfirmed: 'Confirmed an insight',
+    evInsightDismissed: 'Dismissed an insight',
+    exportCsv: 'Export CSV',
+    exportFailed: 'Could not export the activity log.',
+  },
+  bulk: {
+    select: 'Select',
+    exit: 'Done',
+    selectAll: 'Select all',
+    clear: 'Clear',
+    count: {
+      one: '{n} selected',
+      other: '{n} selected',
+    },
+    shareAction: 'Share with team',
+    privateAction: 'Make private',
+    confirmShareTitle: {
+      one: 'Share this memory with the team?',
+      other: 'Share {n} memories with the team?',
+    },
+    confirmShareBody:
+      'Everyone on this team will be able to find them. You can make each one personal again afterwards.',
+    confirmPrivateTitle: {
+      one: 'Make this memory personal again?',
+      other: 'Make {n} memories personal again?',
+    },
+    confirmPrivateBody:
+      'They move back to your personal layer. Anything written by someone else is refused and stays shared.',
+    working: 'Moving {done} of {total}…',
+    resultMoved: {
+      one: '{n} moved',
+      other: '{n} moved',
+    },
+    resultRefused: {
+      one: '{n} refused — still selected',
+      other: '{n} refused — still selected',
+    },
+    resultNone: 'Nothing moved',
+  },
 }
 
 const I18N_IT = {
@@ -528,8 +693,16 @@ const I18N_IT = {
     connectingEllipsis: 'Connessione…',
     fillBoth: 'Compila entrambi i campi.',
     invalidToken: 'Token non valido',
+    accountSuspended: 'Il tuo account è sospeso. Chiedi a un amministratore del team di ripristinarlo.',
+    accountRemoved: 'Il tuo account è stato rimosso da questo team.',
     couldNotConnect: 'Impossibile connettersi.',
     serverError: 'Errore del server: {status}',
+    haveInvite: 'Ho ricevuto un invito al team',
+    inviteHide: 'Nascondi',
+    inviteStep1: 'Lascia l’indirizzo qui sopra com’è — è già il Second Brain di questo team.',
+    inviteStep2: 'Incolla nel campo qui sopra il token monouso che ti ha inviato l’amministratore.',
+    inviteStep3: 'Premi Connetti. Tutto ciò che salvi resta personale finché non lo condividi col team.',
+    sessionExpired: 'Il tuo token di accesso non è più valido. Accedi di nuovo con un token aggiornato.',
   },
   nav: {
     home: 'Inizio',
@@ -542,6 +715,7 @@ const I18N_IT = {
       one: '{n} ricordo salvato',
       other: '{n} ricordi salvati',
     },
+    vectorizeFilterDegraded: 'Filtro per spazio di lavoro non disponibile — i risultati sono ordinati su tutti i livelli',
   },
   home: {
     greetingDefault: 'Ciao',
@@ -587,6 +761,12 @@ const I18N_IT = {
       'Ricordi è tutto ciò che hai tenuto — come elenco per data, o come grafo di come si collega.',
     firstRunStep3:
       'Impostazioni è dove colleghi Claude, ChatGPT, Cursor, email e calendario, così leggono e aggiungono a questa stessa memoria.',
+    autoPersonalYours: 'Auto → Personale (tua impostazione)',
+    autoPersonalOrg: 'Auto → Personale (predefinito dell’organizzazione)',
+    autoSharedYours: 'Auto → Condiviso (tua impostazione)',
+    autoSharedOrg: 'Auto → Condiviso (predefinito dell’organizzazione)',
+    pinnedPersonal: 'Questo resta personale',
+    pinnedShared: 'Questo va a tutto il team',
   },
   recall: {
     eyebrow: 'Richiamo',
@@ -603,7 +783,6 @@ const I18N_IT = {
     sugLastWeekQuery: 'Cosa è successo la settimana scorsa?',
     sugThisMonth: 'Questo mese',
     sugThisMonthQuery: 'Cosa ho deciso questo mese?',
-    sugOutOfDate: 'Cosa potrebbe essere datato?',
     empty: 'Non ho trovato nulla di corrispondente. Prova altre parole, oppure sfoglia Ricordi.',
     error: 'Qualcosa è andato storto. Controlla la connessione e riprova.',
     youAsked: 'Hai chiesto',
@@ -630,7 +809,6 @@ const I18N_IT = {
     loadingShort: 'Caricamento...',
     loadFailed: 'Impossibile caricare i ricordi.',
     empty: 'Nessun ricordo ancora. Usa Ricorda per salvarne il primo.',
-    vecOnTitle: 'Vettorializzato — ricercabile nel richiamo',
     vecPendingTitle: 'Vettorializzazione… (appena catturato)',
     vecOffTitle: 'Non vettorializzato — non apparirà nel richiamo',
     vecNotIndexed: 'Non indicizzato',
@@ -646,6 +824,8 @@ const I18N_IT = {
     sharedTitle: 'Visibile a tutto il team — il menu lo rende di nuovo privato',
     shareWithTeam: 'Condividi col team',
     makePrivate: 'Rendi privato',
+    authorLabel: 'Autore: {name}',
+    timelineLabel: 'Cronologia',
     confirmTitle: 'Dimenticare questo ricordo?',
     confirmBody: 'Questa azione non si può annullare. Il ricordo verrà rimosso dal cervello.',
     cancel: 'Annulla',
@@ -698,6 +878,18 @@ const I18N_IT = {
     removeLinkConfirm:
       'Rimuovere questo collegamento? I ricordi restano; viene eliminata solo la connessione.',
     untitled: 'Ricordo senza titolo',
+    evCreated: 'Salvato',
+    evUpdated: 'Modificato',
+    evAppended: 'Integrato',
+    evDeleted: 'Eliminato',
+    evStatusChanged: 'Stato cambiato',
+    evShared: 'Condiviso col team',
+    evUnshared: 'Reso di nuovo personale',
+    authorLockedTitle: 'Solo l’autore può modificare un ricordo condiviso',
+    authorLocked: 'Condiviso da {name} — solo questa persona può modificarlo o eliminarlo',
+    allAuthors: 'Tutti gli autori',
+    authorFilterTitle: 'Mostra solo ciò che ha condiviso una persona',
+    authorYou: 'Tu',
   },
   graph: {
     empty:
@@ -707,6 +899,12 @@ const I18N_IT = {
     zoomIn: 'Aumenta zoom',
     fit: 'Adatta alla vista',
     relayout: 'Ridisponi',
+    layerTitle: 'Mostra un livello, o entrambi',
+    layerAll: 'Tutti i livelli',
+    layerPersonal: 'Personale',
+    layerShared: 'Condiviso',
+    sharedLegend: 'Condiviso col team',
+    byAuthor: 'di {name}',
   },
   menu: {
     title: 'Il tuo cervello',
@@ -828,6 +1026,7 @@ const I18N_IT = {
       'Crea una <strong>connessione</strong> interna (non un token di accesso personale) su <a href="https://app.notion.com/developers/connections" target="_blank" rel="noopener">app.notion.com/developers/connections</a>, condividi le pagine da sincronizzare con quella connessione, poi incolla qui il segreto.',
     needEmailPw: 'Inserisci email e password app.',
     needSecret: 'Incolla prima il segreto.',
+    mirrorLayerTitle: 'Dove finiscono i ricordi sincronizzati',
     couldNotConnectShort: 'Connessione non riuscita',
     syncNow: 'Sincronizza ora',
     syncing: 'Sincronizzazione…',
@@ -840,8 +1039,8 @@ const I18N_IT = {
     never: 'mai',
     disconnectConfirm: 'Disconnettere {name}? Smetterà di sincronizzare.',
     purgeConfirm: {
-      one: 'Eliminare anche il {n} {noun} sincronizzato?\n\nOK = eliminali\nAnnulla = tienili come ricordi normali',
-      other: 'Eliminare anche i {n} {noun} sincronizzati?\n\nOK = eliminali\nAnnulla = tienili come ricordi normali',
+      one: 'Elimina anche il {n} {noun} sincronizzato',
+      other: 'Elimina anche i {n} {noun} sincronizzati',
     },
     disconnecting: 'Disconnessione…',
     disconnectFailed: 'Disconnessione non riuscita',
@@ -881,6 +1080,10 @@ const I18N_IT = {
           'Su appleid.apple.com → Accesso e sicurezza → <b>Password specifiche per le app</b>, genera una, poi inserisci l’email iCloud e quella password.',
       },
     },
+    connectedByLabel: 'Collegata da {name}',
+    mirrorPersonal: 'I ricordi sincronizzati finiscono nel livello personale',
+    mirrorShared: 'I ricordi sincronizzati finiscono nel livello condiviso del team',
+    connectedOn: 'Collegata il {when}',
   },
   team: {
     title: 'Team',
@@ -893,7 +1096,12 @@ const I18N_IT = {
     membersLabel: 'Membri',
     colMember: 'Membro',
     colCaptures: 'Acquisizioni',
+    lastUsed: 'Ultimo utilizzo {when}',
+    lastUsedNever: 'Mai utilizzato',
     adminsOnly: 'Solo gli amministratori possono gestire i membri del team.',
+    rosterHint: 'Tutte le persone di questo team. Solo gli amministratori possono aggiungerle o rimuoverle.',
+    yourCaptureTitle: 'Le tue nuove acquisizioni',
+    yourCaptureHint: 'Dove finiscono le tue acquisizioni quando non scegli un livello. Puoi comunque decidere per ogni singolo ricordo.',
     roleAdmin: 'Amministratore',
     roleMember: 'Membro',
     you: 'tu',
@@ -908,7 +1116,6 @@ const I18N_IT = {
     rotateConfirm:
       'Emettere un nuovo token di accesso per {name}? Il token attuale smetterà di funzionare quando quello nuovo verrà usato.',
     suspendConfirm: 'Sospendere {name}? Perderà l’accesso immediatamente.',
-    restoreConfirm: 'Ripristinare l’accesso di {name}?',
     addTitle: 'Aggiungi membro',
     namePlaceholder: 'Nome',
     emailPlaceholder: 'Email (facoltativa)',
@@ -928,6 +1135,42 @@ const I18N_IT = {
     sharePersonal: 'Personale (privato)',
     shareCompany: 'Azienda (condiviso)',
     shareInherit: 'Predefinito organizzazione',
+    sharedToast: 'Condiviso con il team',
+    unsharedToast: 'Riportato in personale',
+    undo: 'Annulla',
+    profileTitle: 'Il tuo nome visualizzato',
+    profileSave: 'Salva nome',
+    profileSaved: 'Nome aggiornato',
+    rotateTitle: 'Reimpostare il token di questa persona?',
+    suspendTitle: 'Sospendere questa persona?',
+    removeTitle: 'Rimuovere questa persona?',
+    restoredToast: 'Accesso ripristinato',
+    rotating: 'Reimpostazione…',
+    suspending: 'Sospensione…',
+    removing: 'Rimozione…',
+    myDefaultLabel: 'Nuove acquisizioni:',
+    myDefaultSaved: 'Predefinito di acquisizione aggiornato',
+    insightsLabel: 'Approfondimenti settimanali del team',
+    insightsOff: 'Disattivati',
+    insightsOn: 'Attivi',
+    insightsHint:
+      'Quando è attivo, una volta a settimana il cervello cerca collegamenti tra i ricordi condivisi e mette ciò che trova nella coda di revisione di tutti.',
+    modeTitle: 'Modalità team',
+    modeLabel: 'Livello condiviso del team',
+    modeHint:
+      'Attivandolo aggiungi un livello condiviso che tutto il team può leggere. I tuoi ricordi personali restano privati.',
+    modeLocked:
+      'In questo team ci sono {n} persone, quindi il livello condiviso resta attivo. Rimuovi tutte le altre persone per disattivarlo.',
+    modeOnSaved: 'Modalità team attiva — il livello condiviso è operativo',
+    modeOffSaved: 'Modalità team disattivata — questo cervello torna personale',
+  },
+  invite: {
+    copy: 'Copia messaggio d’invito',
+    copied: 'Invito copiato',
+    email: 'Invia per email',
+    subject: 'Il tuo invito al team di Second Brain',
+    body:
+      'Ciao {name},\n\nSei stata/o aggiunta/o al nostro Second Brain condiviso — una memoria che tutto il team può consultare.\n\n1. Apri {url}\n2. Incolla questo token di accesso monouso:\n{token}\n3. Premi Connetti.\n\nTutto ciò che salvi resta personale finché non lo condividi col team. Il token viene mostrato una sola volta, quindi conserva questo messaggio finché non hai effettuato l’accesso.',
   },
   brief: {
     eyebrow: 'Il tuo cervello, di recente',
@@ -998,7 +1241,6 @@ const I18N_IT = {
     withTag: '{label} ({tag})',
   },
   common: {
-    cancel: 'Annulla',
     justNow: 'adesso',
     minutesAgo: '{n}m fa',
     hoursAgo: '{n}h fa',
@@ -1014,11 +1256,90 @@ const I18N_IT = {
     sourceDashboard: 'dashboard',
     sourcePhone: 'telefono',
     sourceVoice: 'voce',
-    sourceImport: 'import',
+    sourceImport: 'importazione',
     sourceSystem: 'sistema',
     sourceClaudeCode: 'claude code',
     invalidResponse: 'Risposta non valida',
     mcpError: 'Errore MCP',
+  },
+  danger: {
+    removeLinkTitle: 'Rimuovere questo collegamento?',
+    removeLinkAction: 'Rimuovi collegamento',
+    disconnectTitle: 'Disconnettere questa integrazione?',
+  },
+  coach: {
+    dismiss: 'Ho capito',
+    dismissAria: 'Chiudi questo suggerimento',
+    sharedTitle: 'Condiviso vuol dire tutto il team',
+    sharedBody:
+      'Un ricordo condiviso è consultabile da tutte le persone del team. Uno personale resta solo tuo: decidi tu quale sia, per ogni ricordo o come impostazione predefinita.',
+    autoTitle: 'Che cosa significa “Auto”',
+    autoBody:
+      '“Auto” vuol dire che non hai scelto un livello per questo ricordo. La riga qui sopra dice dove finisce e quale impostazione lo decide: cambia la tua in “Le tue nuove acquisizioni”, nella schermata Team.',
+    lockTitle: 'Solo chi l’ha condiviso può modificarlo',
+    lockBody:
+      'Quando un ricordo è condiviso, solo chi l’ha condiviso — o un amministratore — può modificarlo o eliminarlo. Le altre persone possono leggerlo e collegarlo.',
+  },
+  activity: {
+    title: 'Attività recente',
+    intro:
+      'Chi ha cambiato cosa, dal più recente. Conservato come registro: nulla di ciò che vedi qui è modificabile.',
+    loading: 'Caricamento…',
+    empty: 'Non è ancora successo nulla in questo team.',
+    loadFailed: 'Impossibile caricare il registro attività.',
+    more: 'Mostra altro',
+    unknownActor: 'Account rimosso',
+    memoryGone: 'Ricordo non più leggibile',
+    evMemberCreated: 'Ha aggiunto una persona',
+    evMemberRemoved: 'Ha rimosso una persona',
+    evMemberSuspended: 'Ha sospeso una persona',
+    evMemberUnsuspended: 'Ha riattivato una persona',
+    evMemberTokenRotated: 'Ha emesso un nuovo token di accesso',
+    evMemberDefaultShareSet: 'Ha cambiato dove finiscono le nuove acquisizioni',
+    evMemberProfileUpdated: 'Ha modificato un profilo',
+    evTeamRenamed: 'Ha rinominato il team',
+    evIntegrationConnected: 'Ha collegato un’integrazione',
+    evIntegrationDisconnected: 'Ha scollegato un’integrazione',
+    evShared: 'Ha condiviso un ricordo col team',
+    evUnshared: 'Ha reso di nuovo personale un ricordo',
+    evInsightConfirmed: 'Ha confermato un insight',
+    evInsightDismissed: 'Ha ignorato un insight',
+    exportCsv: 'Esporta CSV',
+    exportFailed: 'Impossibile esportare il registro attività.',
+  },
+  bulk: {
+    select: 'Seleziona',
+    exit: 'Fatto',
+    selectAll: 'Seleziona tutto',
+    clear: 'Deseleziona',
+    count: {
+      one: '{n} selezionato',
+      other: '{n} selezionati',
+    },
+    shareAction: 'Condividi col team',
+    privateAction: 'Rendi privato',
+    confirmShareTitle: {
+      one: 'Condividere questo ricordo col team?',
+      other: 'Condividere {n} ricordi col team?',
+    },
+    confirmShareBody:
+      'Tutte le persone del team potranno trovarli. Potrai renderli di nuovo personali uno alla volta.',
+    confirmPrivateTitle: {
+      one: 'Rendere di nuovo personale questo ricordo?',
+      other: 'Rendere di nuovo personali {n} ricordi?',
+    },
+    confirmPrivateBody:
+      'Torneranno nel tuo livello personale. Ciò che ha scritto qualcun altro viene rifiutato e resta condiviso.',
+    working: 'Spostamento {done} di {total}…',
+    resultMoved: {
+      one: '{n} spostato',
+      other: '{n} spostati',
+    },
+    resultRefused: {
+      one: '{n} rifiutato — resta selezionato',
+      other: '{n} rifiutati — restano selezionati',
+    },
+    resultNone: 'Niente spostato',
   },
 }
 

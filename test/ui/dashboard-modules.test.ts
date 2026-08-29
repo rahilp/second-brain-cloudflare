@@ -146,3 +146,50 @@ describe("dashboard modules", () => {
     expect(creditsRoot.innerHTML).toMatch(/Rahil Pirani/);
   });
 });
+
+/**
+ * docs/dashboard-architecture.md against the page it describes.
+ *
+ * The document is load-bearing, not decorative: it is what a reader consults
+ * before adding a script or reasoning about what is defined by the time
+ * something runs. Its chain omitted SEVEN files, `home.js` among them — the
+ * file that sets TEAM_MODE, and therefore the one ordering hazard nav.js
+ * warns about. A hand-maintained copy of a list the page owns drifts, and this
+ * one had; DASHBOARD_SCRIPTS above is scraped from the page for exactly that
+ * reason, so the document gets held to the same source.
+ */
+describe("docs/dashboard-architecture.md", () => {
+  const DOC = readFileSync(resolve(ROOT, "docs/dashboard-architecture.md"), "utf8");
+  /** Bare file names, so `js/home.js` and `home.js` compare as the same module. */
+  const bare = (path: string) => path.replace(/^.*\//, "");
+  const LOADED = DASHBOARD_SCRIPTS.map(bare);
+
+  it("states the page's load order, in the page's order", () => {
+    const fence = DOC.match(/## Script load order\s*\n+```\n([\s\S]*?)```/);
+    expect(fence, "the load-order code fence was not found").not.toBeNull();
+    const documented = (fence as RegExpMatchArray)[1]
+      .split("→")
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .map(bare);
+    expect(documented).toEqual(LOADED);
+  });
+
+  it("places every script the page loads in the layers table", () => {
+    // The table ROWS, not the section: prose around the table names modules
+    // too, and a paragraph mentioning `home.js` would otherwise excuse the row
+    // that no longer lists it — the same shape of stale excuse this check was
+    // written to end.
+    const section = DOC.match(/## Layers[\s\S]*?(?=\n## )/);
+    expect(section, "the layers table was not found").not.toBeNull();
+    const rows = (section as RegExpMatchArray)[0]
+      .split("\n")
+      .filter((line) => line.startsWith("|") && !line.startsWith("|---"));
+    expect(rows.length, "the layers table parsed to nothing").toBeGreaterThan(3);
+    const named = new Set(
+      [...rows.join("\n").matchAll(/`([^`]+\.js)`/g)].map((m) => bare(m[1])),
+    );
+    expect(LOADED.filter((f) => !named.has(f)), "scripts the page loads that no layer claims")
+      .toEqual([]);
+  });
+});

@@ -18,6 +18,14 @@ export function buildEntryFilterQuery(params: {
   tag?: string;
   after?: number;
   before?: number;
+  /**
+   * A single resolved actor_id, already checked against the caller's roster by
+   * resolveActorFilter (src/lib/actors.ts). One id, never a list: the filter has
+   * to stay ONE predicate with ONE binding, because binding one parameter per
+   * author is what put the author-label lookup over D1's 100-parameter ceiling
+   * on a large team and 500'd the request.
+   */
+  actor?: string;
 }): { sql: string; bindings: (string | number)[] } {
   const conds: string[] = [];
   const bindings: (string | number)[] = [];
@@ -26,9 +34,17 @@ export function buildEntryFilterQuery(params: {
   // list everything. A read, so over-broad rather than destructive — but a filter that
   // silently stops filtering is worse than one that returns nothing.
   if (params.tag) { conds.push(`tags LIKE ? ${TAG_LIKE_ESCAPE}`); bindings.push(tagLikePattern(params.tag)); }
+  // An equality on one id, ANDed with everything else including the caller's
+  // scope clause — so it can only ever narrow what the scope already allowed.
+  // Tested against undefined rather than truthiness for the reason the tag
+  // comment above gives: `actor: ""` is the legacy authorless rows, a real and
+  // narrow answer, and a filter that silently stops filtering and returns the
+  // whole listing instead is the worst of the three outcomes.
+  if (params.actor !== undefined) { conds.push(`actor_id = ?`); bindings.push(params.actor); }
   if (params.after !== undefined) { conds.push(`created_at >= ?`); bindings.push(params.after); }
   if (params.before !== undefined) { conds.push(`created_at <= ?`); bindings.push(params.before); }
 
+  // scope-exempt: builder only: callers splice the caller's scope in before ORDER BY — routes/recall.ts always, but mcp/server.ts only `if (identity)`, so an identity-less MCP caller gets this SQL unscoped
   let sql = `SELECT id, content, tags, source, created_at, vector_ids, workspace_id, actor_id FROM entries`;
   if (conds.length) sql += ` WHERE ` + conds.join(` AND `);
   sql += ` ORDER BY created_at DESC LIMIT ?`;
@@ -64,7 +80,7 @@ export async function captureEntry(
   const c = cleanContent || raw;
   const t = [...new Set([...tags.map(tag => tag.toLowerCase()), ...hashtags])];
 
-  const { duplicate: dup, contradiction, mergeAction, neighbors } = await checkDuplicateAndContradiction(c, env, cfg, writeCtx.workspaceId);
+  const { duplicate: dup, contradiction, mergeAction, neighbors } = await checkDuplicateAndContradiction(c, env, cfg, writeCtx.workspaceId, ctx);
 
   if (dup.status === "blocked") {
     return { status: "blocked", matchId: dup.matchId, score: dup.score };
@@ -75,6 +91,7 @@ export async function captureEntry(
     const newContent = mergeAction.action === "merge" ? mergeAction.merged_content : c;
 
     const targetRow = await env.DB.prepare(
+      // scope-exempt: by-id: the merge target is one of the ids checkDuplicateAndContradiction hydrated under `AND workspace_id = ?` against this same writeCtx.workspaceId, and it only returns ids it hydrated — so this row is already known to be in the workspace being written to
       `SELECT tags, source, vector_ids, importance_score FROM entries WHERE id = ?`
     ).bind(targetId).first() as Record<string, any> | null;
 
@@ -90,7 +107,7 @@ export async function captureEntry(
 
       let newVectorIds: string[] | null = null;
       try {
-        newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg);
+        newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg, writeCtx);
       } catch (e) {
         console.error("Merge re-embed failed — keeping both, target untouched:", e);
       }
@@ -148,6 +165,7 @@ export async function captureEntry(
   if (contradiction.detected && contradiction.conflicting_id) {
     const conflictId = contradiction.conflicting_id;
     const conflictRow = await env.DB.prepare(
+      // scope-exempt: by-id: the conflict id is one of the ids checkDuplicateAndContradiction hydrated under `AND workspace_id = ?` against this same writeCtx.workspaceId, and it only returns ids it hydrated — so this row is already known to be in the workspace being written to
       `SELECT tags FROM entries WHERE id = ?`
     ).bind(conflictId).first() as Record<string, any> | null;
     const conflictStatus = conflictRow ? getStatus(JSON.parse(conflictRow.tags ?? "[]")) : null;
@@ -177,7 +195,14 @@ export async function captureEntry(
       console.error("Contradiction deprecation failed (non-fatal):", e);
     }
     try {
-      await createEdge(id, conflictId, "supersedes", { provenance: "system", weight: 1.0 }, env);
+      // Stamped with the workspace this capture was written to, for the same
+      // reason POST /link and the MCP link tool stamp theirs: edges.workspace_id
+      // has no default worth having — it falls back to "", the legacy/system
+      // space, which readableWorkspaces grants to ADMINS ONLY. An edge left
+      // there is one the member whose capture drew it can never see in their own
+      // graph. writeCtx is already the resolved answer to "which workspace did
+      // this entry land in", so no second lookup is needed.
+      await createEdge(id, conflictId, "supersedes", { provenance: "system", weight: 1.0, workspaceId: writeCtx.workspaceId }, env);
     } catch (e) {
       console.error("Supersedes edge creation failed (non-fatal):", e);
     }

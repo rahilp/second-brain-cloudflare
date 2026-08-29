@@ -21,17 +21,121 @@ let homeModeLocked = false
 // default decides. The dropdown only exists on team brains — /health says so
 // and checkVectorize() reveals it; solo brains never see layer UI anywhere.
 
+/** { defaultShare, orgDefault, effectiveDefault } from GET /team/me, or null
+ * before it has answered (or on a solo brain, where it is never fetched). */
+let captureDefault = null
+
 function onHomeLayerChange(value) {
   homeLayer = value || null
+  renderCaptureHint()
+}
+
+/** GET /team/me tells the composer what Auto will resolve to, and whose choice
+ * that is — the member's own, or the org's fallback. Failure (offline, an
+ * older Worker, a non-ok status) clears the hint rather than showing a stale
+ * or guessed one. */
+async function loadCaptureDefault() {
+  try {
+    const res = await fetch(`${WORKER_URL}/team/me`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    const p = data.profile || {}
+    captureDefault = { defaultShare: p.defaultShare, orgDefault: p.orgDefault, effectiveDefault: p.effectiveDefault }
+  } catch {
+    captureDefault = null
+  }
+  renderCaptureHint()
+}
+
+/**
+ * Writes #home-layer-hint. Exhaustive table (a defaultShare that disagrees
+ * with effectiveDefault cannot occur — the server computes one from the
+ * other):
+ *
+ *   homeLayer | effectiveDefault | defaultShare | key
+ *   null      | personal         | 'personal'   | autoPersonalYours
+ *   null      | personal         | ''           | autoPersonalOrg
+ *   null      | company          | 'company'    | autoSharedYours
+ *   null      | company          | ''           | autoSharedOrg
+ *   'personal'| —                | —            | pinnedPersonal
+ *   'company' | —                | —            | pinnedShared
+ *
+ * The four Auto rows are chosen by captureDefaultKey() in utils.js rather than
+ * inline, because the Team screen's own readout (js/team.js) has to reach the
+ * same answer from the same profile and there must be exactly one table.
+ */
+function renderCaptureHint() {
+  const el = document.getElementById('home-layer-hint')
+  // A branch rather than an early return, because the coach mark below has to
+  // run on BOTH paths — including the solo one, where its job is to hide.
+  if (el) {
+    if (!TEAM_MODE || captureDefault === null) {
+      el.style.display = 'none'
+      el.textContent = ''
+    } else {
+      let key
+      if (homeLayer === 'personal') key = 'home.pinnedPersonal'
+      else if (homeLayer === 'company') key = 'home.pinnedShared'
+      else key = captureDefaultKey(captureDefault)
+      el.style.display = ''
+      el.textContent = t(key)
+    }
+  }
+  renderComposerCoach()
+}
+
+/**
+ * At most one coach mark at a time, in a fixed order: what "shared" means, and
+ * then — only once that has been dismissed — what "Auto" resolves to.
+ *
+ * Two callouts stacked under a one-line composer is a wall, and the second one
+ * is only legible to someone who has already accepted the first: an "Auto"
+ * that resolves to a layer presupposes that there is a team layer at all.
+ *
+ * When both have been dismissed the second call's own coachDismissed check
+ * hides the container — that third state is the primitive's, not this
+ * function's, which is also why the !TEAM_MODE case needs no branch here.
+ */
+function renderComposerCoach() {
+  // The primitive gates on TEAM_MODE too, but it is restated here because
+  // choosing WHICH of the two marks is due means consulting the dismissal
+  // record — and coach.js's guarantee is that a solo brain does not so much as
+  // read that key. Leaning on the primitive alone would read it on every
+  // renderCaptureHint() and quietly falsify the claim. A null copy is the
+  // primitive's own hide branch, so this still states both branches.
+  if (!TEAM_MODE) {
+    renderCoachMark('coach-home', 'shared', null)
+    return
+  }
+  if (!coachDismissed('shared')) {
+    renderCoachMark('coach-home', 'shared', { title: t('coach.sharedTitle'), body: t('coach.sharedBody') })
+    return
+  }
+  // The second mark points at the hint line directly — "the line above says
+  // where it lands and whose setting decides that" — so it waits for that
+  // line to exist. When /team/me
+  // has not answered, renderCaptureHint has just emptied it, and a callout
+  // referring to a sentence that is not on screen is worse than no callout.
+  // Handing the primitive a null copy is its own hide branch, so this needs no
+  // second code path.
+  renderCoachMark(
+    'coach-home',
+    'auto',
+    captureDefault === null ? null : { title: t('coach.autoTitle'), body: t('coach.autoBody') },
+  )
 }
 
 /** /health reports whether more than one member exists; solo brains never see layer UI. */
-function maybeRevealHomeLayer(health) {
+async function maybeRevealHomeLayer(health) {
   TEAM_MODE = !!(health && health.team)
   // Every layer control states both branches: the flag is the single source of
   // truth, so a re-probe can always correct a stale reveal.
   const wrap = document.getElementById('home-layer-wrap')
   if (wrap) wrap.style.display = TEAM_MODE ? '' : 'none'
+  // Both branches: a brain that stops being a team drops the hint rather than
+  // leaving it to describe a policy that no longer applies to anyone.
+  if (TEAM_MODE) await loadCaptureDefault()
+  else renderCaptureHint()
 }
 
 /** Leading words that make a sentence a question even without a question mark. */

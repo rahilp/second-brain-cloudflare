@@ -4,6 +4,31 @@ import { EDGE_TYPES, type EdgeProvenance, type EdgeType } from "./types";
 
 const DEFAULT_EDGE_WEIGHT = 0.5;
 
+/**
+ * What POST /link and the MCP `link` tool both say when a caller asks to join two
+ * entries that live in different workspaces.
+ *
+ * One constant rather than two string literals: the two surfaces are one
+ * operation, and the repo's parity convention (test/integration/update-parity.test.ts)
+ * is that they must not be able to drift. It names a fix, because the alternative
+ * the user is offered is otherwise invisible.
+ *
+ * It says "workspace" and not "layer", and it does not name WHICH side to move,
+ * because the check is `source.workspace_id !== target.workspace_id` and three
+ * shapes reach it — only one of which has a personal side:
+ *
+ *   - personal <-> company, the ordinary case;
+ *   - company A <-> company B, for a member of two teams: both are the company
+ *     layer, so "layer" is the wrong word and neither is personal;
+ *   - "" <-> anything, for an admin: "" is the legacy/system space, and no share
+ *     moves an entry INTO it.
+ *
+ * Naming the personal one was a single-team assumption, which spec item 4.1
+ * forbids introducing.
+ */
+export const CROSS_WORKSPACE_LINK_MESSAGE =
+  "Both memories must be in the same workspace — move one into the other's workspace first";
+
 export function isValidEdgeType(type: string): type is EdgeType {
   return Object.prototype.hasOwnProperty.call(EDGE_TYPES, type);
 }
@@ -84,6 +109,7 @@ export async function deleteEdge(
   type: string | undefined,
   env: Env,
 ): Promise<number> {
+  // scope-exempt: by-id: both endpoints checked readable at the route/MCP edge
   let sql = `DELETE FROM edges WHERE ((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))`;
   const bindings: string[] = [sourceId, targetId, targetId, sourceId];
   if (type) {
@@ -112,13 +138,61 @@ export async function inferEdgesOnWrite(
   // the nightly graph backfill (src/graph/pass.ts) runs corpus-wide by design, and
   // without this copy every edge it inferred would land in "" no matter which
   // workspace the entry itself lives in — invisible to that owner's scoped walks.
-  // One read per write batch; ids are globally unique so no scoping is needed.
-  const source = await env.DB.prepare(
-    `SELECT workspace_id FROM entries WHERE id = ?`
-  ).bind(newId).first<{ workspace_id: string | null }>();
-  const workspaceId = source?.workspace_id ?? "";
+  //
+  // The neighbours' workspaces come back from the SAME statement, which is what
+  // makes the check below free: one read per write batch either way, no
+  // per-neighbour subrequest. Ids are globally unique, so a by-id read needs no
+  // scope clause of its own.
+  const ids = [newId, ...top.map(n => n.id)];
+  const { results } = await env.DB.prepare(
+    // scope-exempt: by-id: reads each endpoint's own workspace, to stamp the edge with the source's and to refuse a pair whose workspaces disagree
+    `SELECT id, workspace_id FROM entries WHERE id IN (${ids.map(() => "?").join(", ")})`
+  ).bind(...ids).all() as { results: { id: string; workspace_id: string | null }[] };
+  const workspaceById = new Map(results.map(r => [r.id, r.workspace_id ?? ""]));
+  const workspaceId = workspaceById.get(newId) ?? "";
 
   for (const n of top) {
+    // Two different members' private entries are never linked, whatever the
+    // vector index returned. This is the ENFORCEMENT, not a backstop behind one:
+    // of the three paths that reach here, two send the vector index no workspace
+    // filter at all.
+    //
+    //   - src/graph/pass.ts (nightly backfill) queries unfiltered on purpose —
+    //     its candidate rows include entries whose vectors predate workspace
+    //     stamping, so a filter on that field can match nothing (see the comment
+    //     there);
+    //   - src/capture/store.ts's append and update paths go through
+    //     neighborsFromVectorQuery (src/graph/traverse.ts), a plain unfiltered
+    //     query;
+    //   - only src/capture/entry.ts's capture path filters, via
+    //     checkDuplicateAndContradiction — and that filter is best-effort by
+    //     contract anyway (src/vectorize/scope.ts degrades to an unfiltered query
+    //     on a filter-shaped rejection and latches it per isolate).
+    //
+    // So a foreign neighbour arriving here is the ordinary case rather than the
+    // degraded one, and this check — which reads both endpoints' workspaces from
+    // `entries`, the authoritative source, never from vector metadata — is the
+    // only thing that makes the invariant true.
+    //
+    // A neighbour with no `entries` row at all — a vector whose entry has since
+    // been forgotten — is NOT refused here. It has no workspace to disagree
+    // with, so it is not the case this check is about, and narrowing that too
+    // would change what the pass does for a reason unrelated to tenancy.
+    //
+    // The edge it produces is inert FOR READS, which is not the same as inert:
+    // every graph read hydrates both endpoints through the caller's scope and
+    // drops the ones that are missing, so nothing can be reached through it
+    // today. But a dangling id is not permanently dangling — src/entries/import.ts
+    // accepts caller-supplied entry ids, so a later import can create a row with
+    // that id in ANOTHER workspace and turn this into a live crossing edge that
+    // an audit query over `edges` would find. Low reachability, and the read
+    // paths still contain it, but it is a row that can become wrong rather than
+    // one that is harmless.
+    //
+    // Within one workspace nothing changes at all, which is every pair on a
+    // solo brain.
+    const neighborWorkspace = workspaceById.get(n.id);
+    if (neighborWorkspace !== undefined && neighborWorkspace !== workspaceId) continue;
     await createEdge(newId, n.id, "relates_to", { weight: n.score, provenance: "inferred", workspaceId }, env);
   }
 }

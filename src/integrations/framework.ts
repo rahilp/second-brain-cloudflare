@@ -129,6 +129,17 @@ export function integrationStatus(
     lastSyncedAt: record?.lastSyncedAt ?? null,
     lastSyncError: record?.lastSyncError ?? null,
     itemCount: record ? Object.keys(record.itemMap).length : 0,
+    // Connection provenance. `mirrorWorkspace` is NARROWED here rather than
+    // passed through, exactly as mirrorWriteContext narrows it: `config` is a
+    // Record<string, unknown> escape hatch, and anything that is not "company"
+    // is personal-by-default on the write path — so the readout has to agree
+    // with the writer rather than with the blob.
+    mirrorWorkspace: record?.config?.mirrorWorkspace === "company" ? "company" : "personal",
+    // The id, not the name. Resolving it needs D1 and the caller's own team
+    // scope, neither of which this module has; the route swaps it for a name
+    // and drops the id before the response leaves (src/routes/integrations.ts).
+    connectedByUserId: typeof record?.config?.connectedByUserId === "string" ? record.config.connectedByUserId : null,
+    connectedAt: record?.createdAt ?? null,
     ...(provider.connectLabel ? { connectLabel: provider.connectLabel } : {}),
     ...(provider.connectPlaceholder ? { connectPlaceholder: provider.connectPlaceholder } : {}),
     ...(provider.connectHint ? { connectHint: provider.connectHint } : {}),

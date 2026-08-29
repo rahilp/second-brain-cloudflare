@@ -366,6 +366,58 @@ function syncVectorizeBanner(doc, banner) {
   return el;
 }
 
+/* Build the dashboard warning chip contents when this isolate has degraded to
+ * unfiltered Vectorize queries (src/vectorize/scope.ts's per-isolate latch).
+ * Returns null when filtering is supported or unknown (health absent, the
+ * field absent, or `supported` is `true`/`null`), so a fresh isolate or a
+ * transient fetch failure never raises a false alarm — and also returns null
+ * when `health.team` is false, since the message names "layers", a concept a
+ * solo (non-team) brain has no UI for at all.
+ *
+ * This is a RESULT-QUALITY signal, not a correctness one: every hydration is
+ * already scoped at the SQL layer regardless of whether the Vectorize filter
+ * itself is applied, so this must never be read as "data may be leaking
+ * across workspaces" — it only means ranking quality is degraded because
+ * foreign candidates can crowd out the caller's own before SQL filters them
+ * back out. */
+function workspaceFilterChip(health) {
+  if (!health || !health.vectorize || !health.vectorize.workspaceFilter) return null;
+  if (health.vectorize.workspaceFilter.supported !== false) return null;
+  // Team vocabulary ("results are ranked across all layers") on a brain with
+  // no layer UI at all would be a lie the solo owner cannot act on — every
+  // other layer affordance in checkVectorize (nav.js) is gated on `team`, and
+  // this one must be too, or a solo brain whose index rejects the filter gets
+  // a permanent banner about a concept (layers) it does not have.
+  if (!health.team) return null;
+  return { title: t('nav.vectorizeFilterDegraded') };
+}
+
+/* Mount, update, or remove the workspace-filter chip against an injected
+ * document. Styled the same way as the vectorize banner (syncVectorizeBanner)
+ * and stacked directly under it — `offsetTop` is the height of whatever sits
+ * above the chip (normally the banner's own offsetHeight, or 0 when there is
+ * no banner) — so the two never overlap. Returns the element, or null when
+ * removed. */
+function syncWorkspaceFilterChip(doc, chip, offsetTop) {
+  offsetTop = offsetTop || 0;
+  let el = doc.getElementById('vectorize-filter-chip');
+  if (!chip) {
+    if (el) el.remove();
+    doc.body.style.paddingTop = offsetTop ? offsetTop + 'px' : '';
+    return null;
+  }
+  if (!el) {
+    el = doc.createElement('div');
+    el.id = 'vectorize-filter-chip';
+    el.style.cssText = 'position:fixed;left:0;right:0;z-index:9998;background:#7c2d12;color:#fff;padding:8px 16px;font-size:12px;line-height:1.4;box-shadow:0 1px 4px rgba(0,0,0,0.25)';
+    doc.body.appendChild(el);
+  }
+  el.style.top = offsetTop + 'px';
+  el.textContent = chip.title;
+  doc.body.style.paddingTop = (offsetTop + (el.offsetHeight || 0)) + 'px';
+  return el;
+}
+
 /* ---- System tags ----------------------------------------------------------------------
  *
  * Which tags are the brain's own bookkeeping, and which are the person's words.
@@ -720,6 +772,118 @@ function packGraphCircles(radii, gap) {
   return { centers, R };
 }
 
+/**
+ * Which of the four "Auto → …" strings describes where a member's next
+ * capture lands, and whose choice that is.
+ *
+ * The PRECEDENCE is not decided here and must never be. Explicit request →
+ * member override → org default → personal lives in src/lib/scope.ts, and GET
+ * /team/me returns the answer it produced as `effectiveDefault`. This reads
+ * that verbatim. The only question it asks of `defaultShare` is one of
+ * ATTRIBUTION — did the member's own override produce that answer, or the
+ * org's fallback — which changes the sentence, never the outcome.
+ *
+ * Shared so the composer hint (js/home.js) and the Team screen's readout
+ * (js/team.js) cannot end up describing one profile two different ways.
+ *
+ * There used to be a SURFACE parameter that gave the override case a second
+ * voice on the Team screen — "(set for you)" instead of the composer's "(your
+ * setting)" — justified by only an admin being able to write `defaultShare`.
+ * POST /team/me/default-share makes the member the owner of that value on
+ * both screens, so "(your setting)" is true wherever this is read, and a
+ * helper whose whole job is to stop one profile being described two ways has
+ * no business carrying a parameter whose job was to describe it two ways.
+ *
+ * @param profile {{ effectiveDefault?: string, defaultShare?: string }|null}
+ * @returns an i18n key path, or null when nothing is known yet.
+ */
+function captureDefaultKey(profile) {
+  if (!profile) return null
+  const own = !!profile.defaultShare
+  if (profile.effectiveDefault === 'company') {
+    return own ? 'home.autoSharedYours' : 'home.autoSharedOrg'
+  }
+  return own ? 'home.autoPersonalYours' : 'home.autoPersonalOrg'
+}
+
+/**
+ * One CSV cell, RFC 4180 and spreadsheet-safe.
+ *
+ * Always quoted, never conditionally: a conditional quote is a rule about
+ * the value that has to be right for every value, and "always" is right for
+ * all of them. Internal quotes double.
+ *
+ * The leading apostrophe is the part that is not about CSV at all. A cell
+ * beginning =, +, - or @ is a FORMULA to Excel, Numbers and Sheets, and this
+ * file is an audit log full of names and memory titles that people type. A
+ * memory called "=cmd|…" is a real attack on whoever opens the export, and
+ * the export is opened by the one person on the team with the most access.
+ *
+ * The guard runs on the RAW string, before any quoting: a guard applied after
+ * the wrap would test `"` and never fire. It also looks past leading
+ * whitespace, because a spreadsheet that trims before it parses reads " =1+1"
+ * as the formula OWASP's first-character set was written to catch. Only
+ * whitespace that LEADS TO a formula character counts — an indented name is
+ * still just a name, and "a=b" is still just a value.
+ */
+function csvCell(value) {
+  let s = value == null ? '' : String(value)
+  if (/^[\t\r]|^\s*[=+\-@]/.test(s)) s = `'${s}`
+  return `"${s.replace(/"/g, '""')}"`
+}
+
+/** One CSV document. rows is an array of arrays; header is the first line. */
+function csvDocument(header, rows) {
+  return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')
+}
+
+/**
+ * Hand a string to the browser as a download. Extracted so the memories
+ * export and the activity export are one mechanism rather than two: a second
+ * copy of this five-line sequence is how one of them ends up without the
+ * revokeObjectURL and leaks a blob per click.
+ *
+ * The BOM is not decoration. Excel reads a BOM-less UTF-8 CSV as the system
+ * codepage, and this file carries member names and Italian memory titles.
+ */
+function downloadTextFile(doc, content, filename, mime) {
+  const blob = new Blob([mime.startsWith('text/csv') ? '\ufeff' + content : content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = doc.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * The "shared" badge, for any row that reports a workspace and an author.
+ *
+ * ONE implementation, two callers — makeRecentCard (js/recent.js) and
+ * patternRow (js/patterns.js). The card built this expression inline and the
+ * review queue built nothing, so a member ruling on a pattern could not tell
+ * their own half-formed thought from something the whole team can read, and
+ * those are different acts. Two chips that merely looked alike would drift the
+ * first time either was touched; this cannot.
+ *
+ * teamMode is a parameter and not the global, for the reason
+ * workspaceFilterChip takes `health`: this file loads before api.js declares
+ * TEAM_MODE, and a pure helper that reads a binding from three modules
+ * downstream is only pure by accident. It is also the difference between a
+ * function a unit test can call and one that needs a whole sandbox.
+ *
+ * Personal rows and system rows get nothing. That is the same silence the
+ * card has always kept — a badge on every row is not a badge.
+ */
+function layerChipHtml(entry, teamMode) {
+  if (!teamMode || !entry || entry.workspace !== 'company') return ''
+  const who = entry.actor_name ? `${t('memories.sharedChip')} · ${entry.actor_name}` : t('memories.sharedChip')
+  return `<span class="tag-chip tag-chip--shared" title="${escAttr(t('memories.sharedTitle'))}"><i class="ti ti-users-group"></i> ${escHtml(who)}</span>`
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles };
+  // downloadTextFile is deliberately absent: it needs a live URL and Blob, and
+  // it is exercised through its two callers (exportMemories in js/settings.js
+  // and exportActivityCsv in js/activity.js) rather than in isolation.
+  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles, captureDefaultKey, csvCell, csvDocument, layerChipHtml };
 }

@@ -3,6 +3,7 @@ import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { isSymmetric, isValidEdgeType } from "../graph/edges";
 import type { EdgeProvenance } from "../graph/types";
 import { PROVENANCE_VALUES } from "../graph/types";
+import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
 
 /**
  * Default page size: array positions examined per call, inserts and skips alike.
@@ -17,8 +18,6 @@ export const IMPORT_D1_BATCH_SIZE = 50;
 /** Edge endpoint lookups bind each id twice (source IN + target IN). */
 export const EDGE_ENDPOINT_QUERY_BATCH = Math.floor(D1_MAX_BOUND_PARAMS / 2);
 
-// workspace_id/actor_id bind '' for now: imports land in the importer's personal
-// workspace in P2, and '' preserves legacy owner semantics until then.
 const ENTRY_INSERT_SQL_TEMPLATE =
   `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, recall_count, importance_score, contradiction_wins, contradiction_losses, workspace_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
@@ -87,6 +86,12 @@ export interface ImportOptions {
   offset?: number;
   /** Index into `edges` where this call's page starts. */
   edgeOffset?: number;
+  /**
+   * Whose workspace/actor the imported rows and edges are stamped with. Defaults
+   * to OWNER_WRITE_CONTEXT ('', '') so existing unit fixtures compile — routes
+   * that have a real Identity must pass one resolved at the edge.
+   */
+  writeCtx?: WriteContext;
 }
 
 export interface ImportSummary {
@@ -217,6 +222,7 @@ async function loadExistingIds(env: Env, ids: string[]): Promise<Set<string>> {
     const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
+      // scope-exempt: by-id: primary-key existence check for dedupe; a collision is skipped, never read
       `SELECT id FROM entries WHERE id IN (${placeholders})`,
     ).bind(...batch).all() as { results: { id: string }[] };
     for (const row of results) found.add(row.id);
@@ -231,6 +237,7 @@ async function loadExistingEdgeKeys(env: Env, endpoints: string[]): Promise<Set<
     const batch = endpoints.slice(i, i + EDGE_ENDPOINT_QUERY_BATCH);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
+      // scope-exempt: by-id: edge-key existence check for dedupe; endpoints are not read
       `SELECT source_id, target_id, type FROM edges WHERE source_id IN (${placeholders}) OR target_id IN (${placeholders})`,
     ).bind(...batch, ...batch).all() as {
       results: { source_id: string; target_id: string; type: string }[];
@@ -271,7 +278,7 @@ export function parseCreatedAt(
   return { ok: true, value };
 }
 
-function bindInsert(env: Env, row: PendingInsert) {
+function bindInsert(env: Env, row: PendingInsert, writeCtx: WriteContext) {
   return env.DB.prepare(ENTRY_INSERT_SQL).bind(
     row.id,
     row.content,
@@ -284,8 +291,8 @@ function bindInsert(env: Env, row: PendingInsert) {
     row.importance_score,
     row.contradiction_wins,
     row.contradiction_losses,
-    "",
-    "",
+    writeCtx.workspaceId,
+    writeCtx.actorId,
   );
 }
 
@@ -295,10 +302,11 @@ async function flushInsertBatch(
   existingIds: Set<string>,
   results: ImportResultItem[],
   counters: { imported: number; failed: number },
+  writeCtx: WriteContext,
 ): Promise<void> {
   if (!batch.length) return;
 
-  const stmts = batch.map(row => bindInsert(env, row));
+  const stmts = batch.map(row => bindInsert(env, row, writeCtx));
   try {
     await env.DB.batch(stmts);
     for (const row of batch) {
@@ -309,7 +317,7 @@ async function flushInsertBatch(
   } catch {
     for (const row of batch) {
       try {
-        await bindInsert(env, row).run();
+        await bindInsert(env, row, writeCtx).run();
         existingIds.add(row.id);
         counters.imported++;
         results.push({ id: row.id, status: "imported" });
@@ -326,7 +334,7 @@ async function flushInsertBatch(
   }
 }
 
-function bindEdgeInsert(env: Env, edge: PendingEdge) {
+function bindEdgeInsert(env: Env, edge: PendingEdge, writeCtx: WriteContext) {
   let source = edge.source_id;
   let target = edge.target_id;
   if (isValidEdgeType(edge.type) && isSymmetric(edge.type) && source > target) {
@@ -334,10 +342,13 @@ function bindEdgeInsert(env: Env, edge: PendingEdge) {
   }
   const now = Date.now();
   return env.DB.prepare(
-    `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_id, target_id, type) DO UPDATE SET weight = max(weight, excluded.weight), updated_at = excluded.updated_at`,
-  ).bind(crypto.randomUUID(), source, target, edge.type, edge.weight, edge.provenance, "{}", edge.created_at, now);
+  ).bind(
+    crypto.randomUUID(), source, target, edge.type, edge.weight, edge.provenance, "{}", edge.created_at, now,
+    writeCtx.workspaceId,
+  );
 }
 
 async function flushEdgeBatch(
@@ -346,10 +357,11 @@ async function flushEdgeBatch(
   existingEdgeKeys: Set<string>,
   results: ImportResultItem[],
   counters: { imported: number; failed: number },
+  writeCtx: WriteContext,
 ): Promise<void> {
   if (!batch.length) return;
 
-  const stmts = batch.map(row => bindEdgeInsert(env, row));
+  const stmts = batch.map(row => bindEdgeInsert(env, row, writeCtx));
   try {
     await env.DB.batch(stmts);
     for (const row of batch) {
@@ -366,7 +378,7 @@ async function flushEdgeBatch(
   } catch {
     for (const row of batch) {
       try {
-        await bindEdgeInsert(env, row).run();
+        await bindEdgeInsert(env, row, writeCtx).run();
         const key = normalizedEdgeKey(row.source_id, row.target_id, row.type);
         existingEdgeKeys.add(key);
         counters.imported++;
@@ -417,6 +429,7 @@ export async function importExportPayload(
   const edges = body.edges ?? [];
   const offset = Math.min(Math.max(opts.offset ?? 0, 0), entries.length);
   const edgeOffset = Math.min(Math.max(opts.edgeOffset ?? 0, 0), edges.length);
+  const writeCtx = opts.writeCtx ?? OWNER_WRITE_CONTEXT;
 
   const results: ImportResultItem[] = [];
   let imported = 0;
@@ -459,11 +472,11 @@ export async function importExportPayload(
     pendingBatch.push(p.row);
 
     if (pendingBatch.length >= IMPORT_D1_BATCH_SIZE) {
-      await flushInsertBatch(env, pendingBatch.splice(0), existingIds, results, batchCounters);
+      await flushInsertBatch(env, pendingBatch.splice(0), existingIds, results, batchCounters, writeCtx);
     }
   }
   if (pendingBatch.length) {
-    await flushInsertBatch(env, pendingBatch.splice(0), existingIds, results, batchCounters);
+    await flushInsertBatch(env, pendingBatch.splice(0), existingIds, results, batchCounters, writeCtx);
   }
   imported += batchCounters.imported;
   failed += batchCounters.failed;
@@ -516,11 +529,11 @@ export async function importExportPayload(
       pendingEdgeBatch.push(p.edge);
 
       if (pendingEdgeBatch.length >= IMPORT_D1_BATCH_SIZE) {
-        await flushEdgeBatch(env, pendingEdgeBatch.splice(0), existingEdgeKeys, results, edgeBatchCounters);
+        await flushEdgeBatch(env, pendingEdgeBatch.splice(0), existingEdgeKeys, results, edgeBatchCounters, writeCtx);
       }
     }
     if (pendingEdgeBatch.length) {
-      await flushEdgeBatch(env, pendingEdgeBatch.splice(0), existingEdgeKeys, results, edgeBatchCounters);
+      await flushEdgeBatch(env, pendingEdgeBatch.splice(0), existingEdgeKeys, results, edgeBatchCounters, writeCtx);
     }
     edges_imported += edgeBatchCounters.imported;
     edges_failed += edgeBatchCounters.failed;

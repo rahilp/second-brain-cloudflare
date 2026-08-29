@@ -35,10 +35,11 @@ const tagMatchesLike = (tags: string[], tag: string) =>
 /** What src/db/init.ts's probe sees on a migrated brain — see the handler in all(). */
 const SCHEMA_PROBE_RESULTS = [
   ...["entries", "edges", "insight_candidates", "workspaces", "users", "memberships",
-    "entry_events", "maintenance_cursor"].map(name => ({ kind: "table", name })),
+    "entry_events", "admin_events", "maintenance_cursor"].map(name => ({ kind: "table", name })),
   ...["idx_entries_created_at", "idx_entries_source", "idx_entries_workspace_created",
     "idx_edges_source", "idx_edges_target", "idx_edges_weight", "idx_insight_candidates_queue",
-    "idx_workspaces_kind", "idx_users_token_hash", "idx_entry_events_entry"]
+    "idx_workspaces_kind", "idx_users_token_hash", "idx_entry_events_entry",
+    "idx_entry_events_created", "idx_admin_events_created"]
     .map(name => ({ kind: "index", name })),
   ...["id", "content", "tags", "source", "created_at", "vector_ids", "recall_count",
     "importance_score", "contradiction_wins", "contradiction_losses", "updated_at",
@@ -49,6 +50,13 @@ const SCHEMA_PROBE_RESULTS = [
   { kind: "edge_column", name: "workspace_id" },
   { kind: "user_column", name: "default_share" },
   { kind: "user_column", name: "removed_at" },
+  { kind: "user_column", name: "last_used_at" },
+  // admin_events' subject columns arrive by ALTER on brains created before they
+  // existed and live in the base CREATE on fresh ones — a migrated brain reports
+  // both either way. Omitting them here would make this double claim a brain
+  // whose audit trail cannot record what an action was done TO.
+  { kind: "admin_event_column", name: "target_user_id" },
+  { kind: "admin_event_column", name: "workspace_id" },
 ];
 
 export class D1Mock {
@@ -75,7 +83,11 @@ export class D1Mock {
     // test/unit/team-scoping.test.ts.
     const scopeDrop = new Set<number>();
     if (/workspace_id IN \(/.test(s)) {
-      const clauseRe = /(?:AND |WHERE )workspace_id IN \(((?:\?(?:, )?)+)\)/g;
+      // The alias prefix is optional: a statement that joins another table
+      // qualifies the column (`e.workspace_id`), and missing that form would
+      // leave the clause in place AND its workspace ids in `args`, where the
+      // branch below reads them as entry ids.
+      const clauseRe = /(?:AND |WHERE )(?:[A-Za-z_][A-Za-z0-9_]*\.)?workspace_id IN \(((?:\?(?:, )?)+)\)/g;
       for (const m of s.matchAll(clauseRe)) {
         const offset = (s.slice(0, m.index!).match(/\?/g) ?? []).length;
         const n = (m[1].match(/\?/g) ?? []).length;
@@ -98,8 +110,25 @@ export class D1Mock {
     const makeStmt = (allArgs: any[]) => {
       // Drop the bindings that belonged to the stripped scope clauses, positionally.
       const args = scopeDrop.size ? allArgs.filter((_, i) => !scopeDrop.has(i)) : allArgs;
-      return {
+      const stmt: any = {
       async run() {
+        // D1 returns each batched statement's rows as well as its meta, and a
+        // batch carries reads as well as writes: identity resolution pairs its
+        // SELECT with the throttled last_used_at write so the pair costs one
+        // subrequest. batch() below runs statements through run(), so a SELECT
+        // has to answer with its rows here. Additive — writes are untouched.
+        //
+        // all() then first(): the branches in this double are split across the
+        // two by what each query's only caller happened to use, so a
+        // single-row SELECT like IDENTITY_SQL is modelled in first() and
+        // answers all() with nothing. Asking both is what makes a batched read
+        // see the same row the unbatched one does.
+        if (/^\s*(SELECT|WITH)\b/i.test(s)) {
+          const many = await stmt.all();
+          if (many.results.length) return { ...many, meta: { changes: 0 } };
+          const one = await stmt.first();
+          return { results: one ? [one] : [], meta: { changes: 0 } };
+        }
         if (s.startsWith("INSERT INTO workspaces")) {
           db.workspaces.push({ id: args[0], kind: args[1], name: args[2], created_at: args[3] });
           return { meta: { changes: 1 } };
@@ -539,8 +568,18 @@ export class D1Mock {
             })
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .slice(0, limit)
-            .map((e: any) => ({ id: e.id, content: e.content }));
+            .map((e: any) => ({ id: e.id, content: e.content, workspace_id: e.workspace_id ?? "" }));
           return { results: rows };
+        }
+        if (s.includes("SELECT id, workspace_id FROM entries WHERE id IN")) {
+          // inferEdgesOnWrite: the source row's workspace (to stamp the edge with)
+          // and each candidate neighbour's (to refuse a pair that disagrees). Rows
+          // seeded without the column read as "", the pre-tenancy value, so a
+          // fixture that says nothing about workspaces still links exactly as it did.
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id, workspace_id: e.workspace_id ?? "" }));
+          return { results };
         }
         if (s.includes("SELECT id FROM entries WHERE id IN")) {
           const results = db.entries
@@ -575,11 +614,25 @@ export class D1Mock {
             .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id }));
           return { results };
         }
-        if (s.includes("SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN")) {
-          // buildGraph node hydration.
+        if (s.includes("FROM entries e LEFT JOIN users u ON u.id = e.actor_id")) {
+          // buildGraph node hydration. workspace_id/actor_id/source are what the
+          // node's `workspace` layer and `actor_name` are derived from; a row
+          // seeded without them reads as "", the pre-tenancy value. The join is
+          // modelled rather than ignored — it is where the author's name comes
+          // from now, and a soft-removed member must resolve to no name at all
+          // so the caller falls through to "Former member".
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, importance_score: e.importance_score ?? 0, created_at: e.created_at }));
+            .map((e: any) => {
+              const author = db.users.find((u: any) =>
+                u.id === (e.actor_id ?? "") && !u.removed_at);
+              return {
+                id: e.id, content: e.content, tags: e.tags,
+                importance_score: e.importance_score ?? 0, created_at: e.created_at,
+                workspace_id: e.workspace_id ?? "", actor_id: e.actor_id ?? "",
+                source: e.source ?? "", actor_display_name: author?.name ?? null,
+              };
+            });
           return { results };
         }
         if (s.includes("SELECT id, tags FROM entries WHERE id IN")) {
@@ -885,6 +938,7 @@ export class D1Mock {
         return { results: [] };
       }
       };
+      return stmt;
     };
 
     return {

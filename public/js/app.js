@@ -1,4 +1,8 @@
 function init() {
+  // First, so no authenticated request can outrun it: a token revoked while the
+  // window sat open has to end the session rather than be swallowed. See
+  // installAuthWatch in js/auth.js.
+  installAuthWatch()
   initI18n()
   applyI18nDom()
   applyTheme()

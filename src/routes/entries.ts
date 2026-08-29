@@ -4,11 +4,11 @@ import { initializeDatabase } from "../db/init";
 import { json } from "../lib/http";
 import { requireIdentity } from "../lib/identity";
 import { assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
-import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
-import { moveEntry, type ShareTarget } from "../capture/share";
+import { moveEntry, restampVectorWorkspace, type ShareTarget } from "../capture/share";
 import { auditEvent } from "../lib/audit";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
 import { getTagVocabulary } from "../tags/vocabulary";
@@ -124,7 +124,11 @@ export async function handleEntriesRoutes(
     const limit = parseImportLimit(url.searchParams.get("limit"));
     const offset = parseImportOffset(url.searchParams.get("offset"));
     const edgeOffset = parseImportOffset(url.searchParams.get("edge_offset"));
-    const summary = await importExportPayload(env, parsed.payload, { limit, offset, edgeOffset });
+    // Import always lands in the caller's own personal workspace, never the
+    // company layer: a restore is not a share, and the company layer is only
+    // ever reached through POST /share ("move, not copy").
+    const writeCtx = { workspaceId: auth.personalWorkspaceId, actorId: auth.userId };
+    const summary = await importExportPayload(env, parsed.payload, { limit, offset, edgeOffset, writeCtx });
     return json(summary);
   }
 
@@ -190,10 +194,7 @@ export async function handleEntriesRoutes(
       ...(eventRows ?? []).map((e) => e.actor_id),
     ];
     const labelMap = await lookupActorLabels(env, actorIds);
-    const layer =
-      row.workspace_id === auth.personalWorkspaceId ? "personal"
-      : isCompanyWorkspace(auth, row.workspace_id) ? "company"
-      : "system";
+    const layer = layerOf(auth, row.workspace_id);
     const actorName = resolveActorLabel(String(row.actor_id ?? ""), labelMap, {
       viewerId: auth.userId,
       source: row.source as string,
@@ -223,6 +224,17 @@ export async function handleEntriesRoutes(
         indexed: Array.isArray(vectorIds) && vectorIds.length > 0,
         workspace: layer,
         actor_name: actorName,
+        // Whether this caller may edit or forget it, answered by the very
+        // predicate the mutation routes enforce with — so the dashboard stops
+        // offering an action it will be refused for. One flag rather than two
+        // because the server checks edit and delete through the same guard
+        // (assertCanEditContent is a re-export of assertCanMutateEntry), and two
+        // flags that can never disagree are one flag. Both columns are already
+        // in the SELECT above: no extra query.
+        can_edit: assertCanMutateEntry(auth, {
+          workspace_id: String(row.workspace_id ?? ""),
+          actor_id: String(row.actor_id ?? ""),
+        }) === null,
         timeline,
       },
     });
@@ -262,6 +274,10 @@ export async function handleEntriesRoutes(
       event: result.status,
       payload: { workspaceId: result.workspaceId },
     });
+    // After the audit event, before the response: the D1 move and the audit
+    // row are both already committed, so a Vectorize outage here can only
+    // cost this cosmetic ranking follow-up, never the state change itself.
+    ctx.waitUntil(restampVectorWorkspace(env, result.vectorIds, result.workspaceId));
     return json({ ok: true, id, status: result.status, workspaceId: result.workspaceId });
   }
 

@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS users (
   suspended     INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL,
   default_share TEXT NOT NULL DEFAULT '',          -- capture-visibility override ('' = inherit org TEAM_DEFAULT_WORKSPACE)
-  removed_at    INTEGER                             -- soft offboarding, NULL/0 = active member
+  removed_at    INTEGER,                            -- soft offboarding, NULL/0 = active member
+  last_used_at  INTEGER                             -- last successful identity resolution (throttled; NULL = never seen since the column shipped)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash);
@@ -117,12 +118,30 @@ CREATE TABLE IF NOT EXISTS entry_events (
   id         TEXT PRIMARY KEY,
   entry_id   TEXT NOT NULL,
   actor_id   TEXT NOT NULL DEFAULT '',
-  event      TEXT NOT NULL,                      -- created | updated | appended | deleted | status_changed | shared | unshared
+  event      TEXT NOT NULL,                      -- created | updated | appended | deleted | status_changed | shared | unshared | insight_confirmed | insight_dismissed
   payload    TEXT NOT NULL DEFAULT '{}',         -- JSON escape hatch for per-event detail
   created_at INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_entry_events_entry ON entry_events(entry_id, created_at DESC);
+-- The per-entry index above needs an entry_id to seek on. GET /team/activity has
+-- none: it orders the whole trail by time. Without this the feed scans
+-- entry_events and sorts all of it to return one page.
+CREATE INDEX IF NOT EXISTS idx_entry_events_created ON entry_events(created_at DESC);
+
+-- Immutable administration audit trail. Same contract as entry_events:
+-- application code only ever INSERTs here. Consumed by Phase 4.2.
+CREATE TABLE IF NOT EXISTS admin_events (
+  id             TEXT PRIMARY KEY,
+  actor_id       TEXT NOT NULL DEFAULT '',
+  target_user_id TEXT NOT NULL DEFAULT '',
+  workspace_id   TEXT NOT NULL DEFAULT '',
+  event          TEXT NOT NULL,
+  payload        TEXT NOT NULL DEFAULT '{}',
+  created_at     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_events_created ON admin_events(created_at DESC);
 
 -- Single-row table driving the nightly round-robin over workspaces so free-plan
 -- invocations stay inside their subrequest budget. P6 wires the readers.

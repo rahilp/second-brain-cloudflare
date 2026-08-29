@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import type { AuthFailureCode } from "./identity";
 
 export const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -13,16 +14,47 @@ export function json(data: unknown, status = 200): Response {
   });
 }
 
+/**
+ * The ?workspace= layer filter shared by /list, /recall and /graph. Only narrows
+ * the caller's readable set — "personal" and "company" both resolve from the
+ * identity, so a caller can never name a workspace it does not belong to.
+ */
+export function readWorkspaceParam(url: URL): "personal" | "company" | undefined | Response {
+  const raw = url.searchParams.get("workspace")?.trim();
+  if (!raw) return undefined;
+  if (raw !== "personal" && raw !== "company") {
+    return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
+  }
+  return raw;
+}
+
+/**
+ * The legacy AUTH_TOKEN check: `Authorization: Bearer <token>` and nothing else.
+ *
+ * The `?token=` query form was removed in v3 for the reason extractToken
+ * (src/lib/identity.ts) gives — a URL is copied into browser history, proxy and
+ * CDN access logs and outbound Referer headers, none of which a credential
+ * should reach. It mattered most here: the two surfaces behind this guard are
+ * the migration runner and OAuth revocation, so the token it compares is the
+ * deployment-wide AUTH_TOKEN rather than one member's.
+ */
 export function isAuthorized(request: Request, env: Env): boolean {
-  if (request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`) return true;
-  return new URL(request.url).searchParams.get("token") === env.AUTH_TOKEN;
+  return request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`;
 }
 
 // Returns a 401 Response if the request lacks a valid token, otherwise null —
 // lets routes early-return with `const authErr = requireAuth(...); if (authErr) return authErr;`
+//
+// Carries the same `code` field requireIdentity's 401s do, so a client can read
+// one shape across every surface. Always "invalid_token": this guard compares
+// against the AUTH_TOKEN binding and has no users row to classify, so there is
+// no suspension or removal for it to report. The type import is erased at
+// compile time, so naming AuthFailureCode here costs no runtime cycle with
+// identity.ts (which imports json from this file).
 export function requireAuth(request: Request, env: Env): Response | null {
   if (isAuthorized(request, env)) return null;
-  return json({ ok: false, error: "Unauthorized" }, 401);
+  const code: AuthFailureCode = "invalid_token";
+  return json({ ok: false, error: "Unauthorized", code }, 401);
 }
 
 // Anchored so the whole value has to be an integer. parseInt stops at the first

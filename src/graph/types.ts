@@ -48,6 +48,21 @@ export interface GraphNode {
   status: MemoryStatus | null;
   importance: number;
   created_at: number;
+  /**
+   * Which layer of the two-layer model this node lives in, in the same
+   * vocabulary GET /list uses — the canvas badges a shared node from this and
+   * nothing else. "system" is the legacy/'' space and, for a caller with no
+   * Identity at all (the cron and unit callers), every node.
+   */
+  workspace: "personal" | "company" | "system";
+  /**
+   * Who wrote it, on company-layer nodes only; null everywhere else. Required
+   * rather than optional for the reason GET /list gives at
+   * src/routes/recall.ts's list branch: a key whose EXISTENCE depends on the
+   * page's contents cannot tell a client "no author here" from "this deployment
+   * does not report authors".
+   */
+  actor_name: string | null;
 }
 
 export interface GraphView {

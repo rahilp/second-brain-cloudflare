@@ -3,6 +3,7 @@
 // tokens stay in the Rust core.
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
+import { teamCardKeys, type ConnectionRole } from "./connection-role";
 
 export interface ConnectionDetails {
   workerUrl: string;
@@ -88,13 +89,25 @@ export function detailCards(details: ConnectionDetails): HTMLElement[] {
 }
 
 /// Shown when setup chose team mode — on the setup's last screen and in the
-/// Connection pane. Pure copy: what the owner can do that members cannot, and
-/// where to do it. Administration itself lives in the dashboard's Team panel,
-/// so there is nothing to invoke here.
-export function teamCard(): HTMLElement {
+/// Connection pane. Pure copy: what this role can do that the others cannot,
+/// and where to do it. Administration itself lives in the dashboard's Team
+/// panel, so there is nothing to invoke here.
+///
+/// The role is a parameter rather than something this function works out,
+/// because it is derived from a probe the caller makes and must never be
+/// cached: a member promoted to admin next month has to see the admin card the
+/// next time they connect, not the one written on install day.
+export function teamCard(role: ConnectionRole): HTMLElement {
+  const keys = teamCardKeys(role);
+  // `connection-role.ts` imports nothing — that is what makes it testable
+  // outside a webview — so it cannot name `t`'s key type and returns plain
+  // strings. Both keys are `details.*` by construction, and
+  // test/unit/connection-role.test.ts asserts that prefix on all three roles;
+  // the catalogs themselves are checked by test/unit/installer-i18n-parity.
+  const key = (path: string) => path as `details.${string}`;
   return h("div", { class: "card url-card" }, [
-    h("div", { class: "url-label" }, [t("details.teamCardLabel")]),
-    h("div", { class: "url-desc" }, [t("details.teamCardBody")]),
+    h("div", { class: "url-label" }, [t(key(keys.label))]),
+    h("div", { class: "url-desc" }, [t(key(keys.body))]),
   ]);
 }
 

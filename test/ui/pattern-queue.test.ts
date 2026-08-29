@@ -17,7 +17,13 @@ import { installI18n } from "./_i18n-harness";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
-function load(pages: any[] = []) {
+/**
+ * `team` reaches `patternRow` through the TEAM_MODE global the review queue
+ * reads, exactly as `checkVectorize` sets it in the page. Defaulted to false so
+ * every assertion written before the layer chip existed sees the queue it was
+ * written against.
+ */
+function load(pages: any[] = [], { team = false }: { team?: boolean } = {}) {
   const els = new Map<string, any>();
   const checks: any[] = [];
   const makeEl = () => ({
@@ -39,6 +45,7 @@ function load(pages: any[] = []) {
     checks,
     WORKER_URL: "https://example.test",
     AUTH_TOKEN: "t",
+    TEAM_MODE: team,
     closeMenu: () => {},
     openMenu: () => {},
     refreshAll: () => {},
@@ -316,5 +323,60 @@ describe("the settings entry point", () => {
     await ctx.loadPatternCount();
     expect(urls[0]).toContain("limit=1");
     expect(ctx.__els.get("patterns-section").innerHTML).toContain("214 insights");
+  });
+});
+
+/**
+ * The layer chip, on the review queue.
+ *
+ * A member opening the queue saw a list of sentences with a date and a shape,
+ * and nothing told them whether the one they were about to confirm was drawn
+ * from their own memories or from the team's. Dismissing your own half-formed
+ * thought and dismissing something the whole team can read are different acts.
+ *
+ * It is the SAME function the memories card calls (`layerChipHtml`, in
+ * `public/utils.js`), which is the requirement — not a second chip that looks
+ * like the first.
+ */
+describe("the layer chip on a pattern row", () => {
+  const shared = (over: Record<string, unknown> = {}) => ({
+    ok: true,
+    total: 1,
+    patterns: [
+      {
+        id: "p1",
+        content: "You keep circling back to the same onboarding complaint.",
+        created_at: Date.UTC(2026, 1, 8, 12),
+        workspace: "company",
+        actor_name: "Second Brain",
+        ...over,
+      },
+    ],
+  });
+
+  it("badges a shared pattern with its author on a team brain", async () => {
+    const ctx = load([shared()], { team: true });
+    await ctx.loadPatternQueue();
+    const html = ctx.__els.get("patterns-list").innerHTML;
+    expect(html).toContain("tag-chip--shared");
+    expect(html).toContain("shared · Second Brain");
+    // On the metadata line, where the date and the shape already are.
+    expect(html.indexOf("tag-chip--shared")).toBeGreaterThan(html.indexOf("pattern-when"));
+  });
+
+  it("says nothing about a personal pattern", async () => {
+    const ctx = load([shared({ workspace: "personal", actor_name: null })], { team: true });
+    await ctx.loadPatternQueue();
+    expect(ctx.__els.get("patterns-list").innerHTML).not.toContain("tag-chip--shared");
+  });
+
+  it("says nothing on a solo brain, even for a row that claims a company workspace", async () => {
+    // The guard that is NOT the data guard. A solo brain's /patterns rows carry
+    // workspace 'personal', so both guards agree in practice and either alone
+    // would look sufficient — which is exactly why the team one is asserted
+    // against a fixture the data guard would let through.
+    const ctx = load([shared()], { team: false });
+    await ctx.loadPatternQueue();
+    expect(ctx.__els.get("patterns-list").innerHTML).not.toContain("tag-chip--shared");
   });
 });

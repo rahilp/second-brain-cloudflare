@@ -434,13 +434,26 @@ export type Messages = {
     navComputer: string;
     updateLabel: string;
     updateDesc: string;
+    updateDescOther: string;
+    /**
+     * The owner's copy on a brain too old to confirm they are the owner.
+     *
+     * Says why the button is there — the brain cannot answer the question yet —
+     * rather than claiming to know who is reading it.
+     */
+    updateDescLegacy: string;
     updateButton: string;
     allSetTitle: string;
     allSetLede: string;
     /** Team setups only: replaces allSetLede, and the team card below appears. */
     allSetTeamLede: string;
     teamCardLabel: string;
+    /** The owner-admin's copy: what only they can do, and where. */
     teamCardBody: string;
+    /** A team admin can invite from the dashboard but cannot rotate AUTH_TOKEN. */
+    teamCardBodyAdmin: string;
+    /** A member can do neither, and needs to know who to ask. */
+    teamCardBodyMember: string;
     openDashboard: string;
   };
   integrations: {

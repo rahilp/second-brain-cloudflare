@@ -32,9 +32,12 @@ async function apiCapture(content, tags, source, workspace) {
   return res.json()
 }
 
-async function apiList(n = 50, workspace) {
+async function apiList(n = 50, workspace, actor) {
   const params = new URLSearchParams({ n: String(n) })
   if (workspace) params.set('workspace', workspace)
+  // Only ever set from the shared layer's author filter (js/recent.js), so a
+  // solo brain's URL stays byte-identical to what it has always sent.
+  if (actor) params.set('actor', actor)
   const res = await fetch(`${WORKER_URL}/list?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
   return res.json()
 }
@@ -49,20 +52,37 @@ async function apiShare(id, workspace) {
   return res.json()
 }
 
-/** Share/unshare with confirm + undo toast; refreshes via optional callback. */
+/**
+ * Move a memory between layers, reporting it with an undo toast.
+ *
+ * No confirmation in front of this: the act is reversible in one tap and the
+ * toast is what offers that tap. Asking first as well made two questions of
+ * one reversible decision, which is how people learn to dismiss dialogs
+ * without reading them.
+ */
 async function toggleEntryLayer(id, currentLayer, onDone) {
   const goingShared = currentLayer !== 'company'
   const target = goingShared ? 'company' : 'personal'
   const previous = currentLayer === 'company' ? 'company' : 'personal'
-  const question = goingShared ? t('team.shareConfirm') : t('team.unshareConfirm')
-  if (!confirm(question)) return
   try {
     const r = await apiShare(id, target)
     if (!r.ok) throw new Error(r.error || t('team.actionFailed'))
     showToast(goingShared ? t('team.sharedToast') : t('team.unsharedToast'), {
       action: t('team.undo'),
       onAction: async () => {
-        await apiShare(id, previous)
+        // Checked and caught, unlike the fire-and-forget this replaced. This
+        // is the one control in the dashboard whose entire job is reversing a
+        // mistake, and a refused or unreachable undo used to leave the memory
+        // exactly where the user did not want it while saying nothing at all —
+        // so their correction looked identical to their error. Reported the
+        // same way the outer failure is, through the toast.
+        try {
+          const undone = await apiShare(id, previous)
+          if (!undone.ok) throw new Error(undone.error || t('team.actionFailed'))
+        } catch (e) {
+          showToast(e.message || t('team.actionFailed'))
+          return
+        }
         if (typeof onDone === 'function') onDone()
         else if (typeof refreshAll === 'function') refreshAll()
       },
@@ -71,6 +91,6 @@ async function toggleEntryLayer(id, currentLayer, onDone) {
     else if (typeof loadRecent === 'function') loadRecent()
     else if (typeof refreshAll === 'function') refreshAll()
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+    showToast(e.message || t('team.actionFailed'))
   }
 }

@@ -154,6 +154,7 @@ async function runWrites(env: Env, writes: Write[]): Promise<number[]> {
 async function rereadSnapshots(env: Env, ids: string[]): Promise<Snapshot[] | null> {
   try {
     const { results } = await env.DB.prepare(
+      // scope-exempt: by-id: re-read of ids from this pass's own slice
       `SELECT id, tags, content FROM entries WHERE id IN (${ids.map(() => "?").join(", ")})`,
     ).bind(...ids).all() as { results: { id: string; tags: string; content: string }[] };
     return results.map(r => ({ id: r.id, tags: r.tags ?? "[]", content: r.content }));
@@ -185,6 +186,7 @@ export async function runStalenessPass(
     // The slice clause goes after the cutoff placeholder so its bind follows it.
     const sliceSql = workspaceId != null ? `\n         AND workspace_id = ?` : "";
     const { results } = await env.DB.prepare(
+      // scope-exempt: cron: nightly staleness pass, narrowed by the workspace slice in sliceSql
       `SELECT id, content, tags FROM entries
        WHERE COALESCE(updated_at, created_at) < ?
          AND ${SYSTEM_TAG_EXCLUSIONS}${sliceSql}

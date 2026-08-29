@@ -4,7 +4,7 @@ import { makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
 import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
-import { lookupActorLabels, resolveActorLabel } from "../../src/lib/actors";
+import { SYSTEM_ACTOR_LABEL, lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../../src/lib/actors";
 import type { Env } from "../../src/env";
 
 async function makeEnv() {
@@ -35,9 +35,17 @@ describe("resolveActorLabel", () => {
     expect(resolveActorLabel("usr-gone", labels)).toBe("Former member");
   });
 
-  it("returns System for system sources when source is provided", () => {
-    expect(resolveActorLabel("", labels, { source: "system" })).toBe("System");
-    expect(resolveActorLabel("usr-ada", labels, { source: "system", viewerId: "usr-ada" })).toBe("System");
+  // The product's name, not a subsystem's. "System" told a reader which part
+  // of the pipeline wrote the row, which is not a fact they can use; SYSTEM_
+  // ACTOR_LABEL is the attribution spec 4.5 asks for. Asserted against the
+  // exported constant AND against the literal, so neither can be changed
+  // without the other being looked at.
+  it("returns the product's own name for system sources when source is provided", () => {
+    expect(SYSTEM_ACTOR_LABEL).toBe("Second Brain");
+    expect(resolveActorLabel("", labels, { source: "system" })).toBe("Second Brain");
+    // Ahead of "You": a row the pipeline wrote is not authored by whoever
+    // happens to be reading it, even when their id is on it.
+    expect(resolveActorLabel("usr-ada", labels, { source: "system", viewerId: "usr-ada" })).toBe("Second Brain");
   });
 });
 
@@ -65,5 +73,64 @@ describe("lookupActorLabels", () => {
   it("deduplicates ids and ignores blanks", async () => {
     const env = await makeEnv();
     expect(await lookupActorLabels(env, ["", "", "usr-none"])).toEqual(new Map());
+  });
+});
+
+/**
+ * The filter's own guard, below either surface that calls it.
+ *
+ * A blank value is not a person. It used to fall past the `me` check into the
+ * NAME comparison, where `"".toLowerCase() === "".toLowerCase()` matched any
+ * roster member carrying an empty name — a filter silently resolving to an
+ * arbitrary colleague. Both name-write paths coerce "" to "Member" today, so
+ * the row below has to be inserted directly; the point is that the resolver
+ * must not depend on that coercion holding.
+ */
+describe("resolveActorFilter — blank input", () => {
+  const COMPANY = "ws-company-blank";
+  const NAMELESS = "usr-nameless";
+
+  async function envWithNamelessMember() {
+    const env = await makeEnv();
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'company', 'Acme', ?)`)
+        .bind(COMPANY, now),
+      env.DB.prepare(
+        `INSERT INTO users (id, name, email, role, token_hash, suspended, created_at) VALUES (?, '', NULL, 'member', ?, 0, ?)`,
+      ).bind(NAMELESS, "hash-n", now),
+      env.DB.prepare(`INSERT INTO memberships (user_id, workspace_id, created_at) VALUES (?, ?, ?)`)
+        .bind(NAMELESS, COMPANY, now),
+    ]);
+    return env;
+  }
+
+  const caller = {
+    userId: "usr-caller",
+    role: "member" as const,
+    personalWorkspaceId: "ws-caller",
+    companyWorkspaceIds: [COMPANY],
+    defaultShare: "" as const,
+  };
+
+  it("refuses whitespace rather than matching a member with no name", async () => {
+    const env = await envWithNamelessMember();
+    expect(await resolveActorFilter(env, caller, "   ")).toEqual({
+      ok: false,
+      error: "actor must be a member of your team",
+    });
+  });
+
+  it("refuses the empty string for the same reason", async () => {
+    const env = await envWithNamelessMember();
+    expect(await resolveActorFilter(env, caller, "")).toEqual({
+      ok: false,
+      error: "actor must be a member of your team",
+    });
+  });
+
+  it("still resolves me, which never reaches the roster at all", async () => {
+    const env = await envWithNamelessMember();
+    expect(await resolveActorFilter(env, caller, "  ME  ")).toEqual({ ok: true, actorId: "usr-caller" });
   });
 });

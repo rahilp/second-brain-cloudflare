@@ -46,12 +46,20 @@ export async function hashToken(token: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Bearer header first, then the ?token= query form the personal brain has always accepted. */
+/**
+ * `Authorization: Bearer <token>` and nothing else.
+ *
+ * The `?token=` query form the personal brain used to accept was removed in v3.
+ * A URL is written down by infrastructure the deployment does not control:
+ * browser history, proxy and CDN access logs, and the Referer header sent to
+ * every third-party origin a page loads. A bearer token here grants full
+ * read/write access to someone's memory, so it must not travel anywhere that
+ * copies it by default. A header is not logged by any of those.
+ */
 export function extractToken(request: Request): string | null {
   const header = request.headers.get("Authorization");
   if (header?.startsWith("Bearer ")) return header.slice("Bearer ".length).trim() || null;
-  const query = new URL(request.url).searchParams.get("token");
-  return query && query.length > 0 ? query : null;
+  return null;
 }
 
 /**
@@ -81,6 +89,58 @@ const IDENTITY_SQL =
   IDENTITY_FROM +
   ` WHERE u.token_hash = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)` +
   ` GROUP BY u.id`;
+
+/**
+ * How stale `users.last_used_at` is allowed to be. One hour.
+ *
+ * This column is informational — it answers "is this token still in use?" on the
+ * admin roster and nothing else reads it — so it is bought at the cheapest price
+ * that still answers that question. Identity resolves on EVERY request, and an
+ * unthrottled stamp would be one D1 row written per request against a plan that
+ * caps writes per day; at one write per user per hour it cannot move that budget
+ * whatever the traffic.
+ *
+ * The staleness is the accepted cost: the value can be up to an hour behind, and
+ * "last used 3 minutes ago" and "last used 40 minutes ago" are the same answer
+ * to the only question anyone is asking of it. A write can also be lost to a
+ * failed or rolled-back request, which is equally fine — the next request an
+ * hour later simply retries, so the worst case is a timestamp older than the
+ * truth, never a newer one and never a failed request.
+ *
+ * What it must NOT cost is a subrequest. See LAST_USED_UPDATE_SQL.
+ */
+export const LAST_USED_THROTTLE_MS = 3_600_000;
+
+/**
+ * The stamp, written as the second half of the identity read's batch.
+ *
+ * A D1 batch is ONE subrequest whatever it carries, so pairing this with
+ * IDENTITY_SQL makes the column free in the budget that actually binds here:
+ * Workers get 50 subrequests per invocation on the free plan, and GET /graph —
+ * the largest request in the app — already has no headroom. An informational
+ * column may not be what takes it over. (The earlier design issued this as a
+ * separate un-awaited statement, which cost one subrequest per user per hour on
+ * every endpoint and pushed /graph's measured team-brain cost up by one.)
+ *
+ * The throttle is therefore in the WHERE clause rather than in TypeScript: the
+ * statement has to be enqueued before the read comes back, so nothing has seen
+ * the stored timestamp yet at the point this is built. Evaluating it in SQL is
+ * also correct under concurrency, which the read-then-decide form was not — two
+ * simultaneous requests could both decide to write.
+ *
+ * The predicates mirror IDENTITY_SQL's exactly, so the column means what
+ * db/schema.sql says it means: the LAST SUCCESSFUL identity resolution. A token
+ * belonging to a suspended, removed, or workspace-less user resolves to nothing
+ * and is not stamped, even though the batch always carries this statement.
+ */
+const LAST_USED_UPDATE_SQL =
+  `UPDATE users SET last_used_at = ?` +
+  ` WHERE token_hash = ?` +
+  ` AND suspended = 0 AND (removed_at IS NULL OR removed_at = 0)` +
+  ` AND (last_used_at IS NULL OR ? - last_used_at > ?)` +
+  ` AND EXISTS (SELECT 1 FROM memberships mp` +
+  ` JOIN workspaces p ON p.id = mp.workspace_id AND p.kind = 'personal'` +
+  ` WHERE mp.user_id = users.id)`;
 
 /**
  * Resolve the caller's identity from their token, bootstrapping the tenancy rows
@@ -124,13 +184,15 @@ function parseCompanyWorkspaces(packed: string | null | undefined): string[] {
     .map((w) => w.id);
 }
 
-function rowToIdentity(row: {
+interface IdentityRow {
   userId: string;
   role: string;
   defaultShare: string | null;
   personalWorkspaceId: string;
   companyWorkspaces?: string | null;
-}): Identity {
+}
+
+function rowToIdentity(row: IdentityRow): Identity {
   return {
     userId: row.userId,
     role: row.role === "admin" ? "admin" : "member",
@@ -150,11 +212,34 @@ async function ensureIdentityReady(env: Env): Promise<void> {
 export async function resolveIdentityFromToken(token: string, env: Env): Promise<Identity | null> {
   if (!token) return null;
   await ensureIdentityReady(env);
-  const row = await env.DB.prepare(IDENTITY_SQL)
-    .bind(await hashToken(token))
-    .first<{ userId: string; role: string; defaultShare: string | null; personalWorkspaceId: string; companyWorkspaces: string | null }>();
-  if (!row) return null;
-  return rowToIdentity(row);
+  const tokenHash = await hashToken(token);
+  const now = Date.now();
+  try {
+    // One batch, therefore one subrequest, for the read and the throttled stamp
+    // together. The stamp rides along here and only here — resolveIdentityByUserId
+    // below resolves by user id, not by token, so it says nothing about token use.
+    const [read] = await env.DB.batch<IdentityRow>([
+      env.DB.prepare(IDENTITY_SQL).bind(tokenHash),
+      env.DB.prepare(LAST_USED_UPDATE_SQL).bind(now, tokenHash, now, LAST_USED_THROTTLE_MS),
+    ]);
+    const row = read?.results?.[0];
+    return row ? rowToIdentity(row) : null;
+  } catch (e) {
+    // Batching put the stamp in the same transaction as the read, so a failing
+    // write would otherwise take authentication down with it — a request that
+    // reads nothing would start failing because of a column nothing reads.
+    // Retry the read on its own instead, which keeps the property the un-awaited
+    // version had for free: the stamp can never fail a request.
+    //
+    // The cost is amplification during an outage. This is a single retry — no
+    // loop, no backoff — so while D1 is failing wholesale every request issues
+    // two D1 calls instead of one and then fails anyway. That is accepted: it
+    // buys the common cases, a transient SQLITE_BUSY or a breached write cap,
+    // where the second call succeeds and the caller never sees the difference.
+    console.error("identity batch failed, retrying the read alone (non-fatal):", e);
+    const row = await env.DB.prepare(IDENTITY_SQL).bind(tokenHash).first<IdentityRow>();
+    return row ? rowToIdentity(row) : null;
+  }
 }
 
 /**
@@ -201,13 +286,105 @@ export async function resolveIdentityForRequest(
 }
 
 /**
+ * Why a request failed to authenticate, for a client that has to say something
+ * useful about it. `invalid_token` is the only one a caller who is not already
+ * holding a real token can ever see — see classifyAuthFailure.
+ */
+export type AuthFailureCode = "invalid_token" | "suspended" | "removed";
+
+/**
+ * `invalid_token` keeps the exact string it has always had. Two suites assert it
+ * verbatim (test/integration/auth.test.ts, test/ui/team-panel.test.ts) and,
+ * more to the point, it is the answer every unauthenticated caller gets — it
+ * must stay as uninformative as it was.
+ */
+const AUTH_FAILURE_MESSAGE: Record<AuthFailureCode, string> = {
+  invalid_token: "Unauthorized",
+  suspended: "Your account is suspended. Ask a team admin to restore it.",
+  removed: "Your account has been removed from this team.",
+};
+
+const CLASSIFY_FAILURE_SQL = `SELECT suspended, removed_at FROM users WHERE token_hash = ?`;
+const CLASSIFY_FAILURE_BY_ID_SQL = `SELECT suspended, removed_at FROM users WHERE id = ?`;
+
+/** Removal beats suspension; a row with neither flag failed for some other reason. */
+function codeForRow(row: { suspended: number | null; removed_at: number | null } | null): AuthFailureCode {
+  if (!row) return "invalid_token";
+  // Removal is checked first: removeMember does not clear `suspended`, so a
+  // member an admin suspended and then removed carries both flags, and removal
+  // is the more final of the two facts.
+  if (Number(row.removed_at) > 0) return "removed";
+  if (row.suspended) return "suspended";
+  // Neither flag set — the identity failed for some other reason (no personal
+  // workspace membership, say). Nothing actionable to report.
+  return "invalid_token";
+}
+
+/**
+ * Distinguish "your access was revoked" from "that is not a token", WITHOUT
+ * turning the endpoint into an account-existence oracle.
+ *
+ * The whole property rests on the lookup key: this selects on `token_hash`, the
+ * SHA-256 of the token the caller actually presented. Nobody can produce a hash
+ * that collides with a member's token without holding that member's token, so a
+ * caller who guessed wrong finds no row and is told `invalid_token` — bit for
+ * bit the answer they got before this function existed. There is no id, name or
+ * email predicate here, and there must never be one: any lookup by a value an
+ * attacker can enumerate would leak exactly what this is careful not to.
+ *
+ * Runs on the failure path only. The happy path resolves through IDENTITY_SQL
+ * and never reaches here, so authenticating still costs one query.
+ */
+async function classifyAuthFailure(token: string, env: Env): Promise<AuthFailureCode> {
+  if (!token) return "invalid_token";
+  const row = await env.DB.prepare(CLASSIFY_FAILURE_SQL)
+    .bind(await hashToken(token))
+    .first<{ suspended: number | null; removed_at: number | null }>();
+  return codeForRow(row);
+}
+
+/**
+ * The same classification for the MCP OAuth-grant path, where there is no bearer
+ * token in `users` to hash — the credential is the provider's own access token
+ * and the user id arrives out of the grant.
+ *
+ * Looking a user up by id is safe HERE and nowhere else: `userId` is not
+ * caller-supplied. @cloudflare/workers-oauth-provider sets it from a grant it
+ * has already decrypted out of KV, so reaching this line means the caller
+ * already holds a valid grant for that exact user. It is never reachable from a
+ * guessed id, which is why classifyAuthFailure above must keep hashing instead.
+ */
+async function classifyAuthFailureByUserId(userId: string, env: Env): Promise<AuthFailureCode> {
+  if (!userId) return "invalid_token";
+  const row = await env.DB.prepare(CLASSIFY_FAILURE_BY_ID_SQL)
+    .bind(userId)
+    .first<{ suspended: number | null; removed_at: number | null }>();
+  return codeForRow(row);
+}
+
+/**
+ * The 401 body every auth guard in this file returns. Shared so the three
+ * surfaces (REST, MCP, and the legacy AUTH_TOKEN guard in http.ts) cannot drift
+ * into different shapes.
+ */
+function authFailureResponse(code: AuthFailureCode): Response {
+  return json({ ok: false, error: AUTH_FAILURE_MESSAGE[code], code }, 401);
+}
+
+/** Classify the request's bearer token, skipping the query when there is none. */
+async function unauthorized(request: Request, env: Env): Promise<Response> {
+  const token = extractToken(request);
+  return authFailureResponse(token ? await classifyAuthFailure(token, env) : "invalid_token");
+}
+
+/**
  * The requireAuth twin: resolves identity or returns the 401 Response to send back.
  * Used as `const auth = await requireIdentity(req, env); if (auth instanceof Response) return auth;`
  */
 export async function requireIdentity(request: Request, env: Env): Promise<Identity | Response> {
   const identity = await resolveIdentity(request, env);
   if (identity) return identity;
-  return json({ ok: false, error: "Unauthorized" }, 401);
+  return unauthorized(request, env);
 }
 
 /**
@@ -237,5 +414,17 @@ export async function requireIdentityForMcp(
 ): Promise<Identity | Response> {
   const identity = await resolveIdentityForRequest(request, env, oauthUserId);
   if (identity && !(identity instanceof Response)) return identity;
-  return json({ ok: false, error: "Unauthorized" }, 401);
+  // Bearer first, matching the resolve order above: a member signing in with the
+  // token an admin issued them is classified by hashing it, exactly as REST does.
+  const token = extractToken(request);
+  if (token) {
+    const code = await classifyAuthFailure(token, env);
+    if (code !== "invalid_token") return authFailureResponse(code);
+  }
+  // Then the grant. A browser-OAuth client's access token is the provider's own
+  // opaque form and is not in `users`, so the hash above finds nothing and this
+  // is the only thing that can tell a suspended member why their MCP client
+  // stopped working.
+  if (oauthUserId) return authFailureResponse(await classifyAuthFailureByUserId(oauthUserId, env));
+  return authFailureResponse("invalid_token");
 }

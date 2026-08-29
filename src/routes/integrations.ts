@@ -9,7 +9,9 @@ import {
 import type { IntegrationRecord } from "../integrations";
 import type { Env } from "../env";
 import { json } from "../lib/http";
+import { adminAuditEvent } from "../lib/admin-audit";
 import { requireAdmin, requireIdentity } from "../lib/identity";
+import { listRoster } from "../lib/team-admin";
 import { forgetEntry } from "../capture/lifecycle";
 import { getReadableEntry, assertCanMutateEntry } from "../lib/entry-access";
 import { makeMirrorStore, mirrorWriteContext } from "../integrations/mirror";
@@ -18,7 +20,7 @@ export async function handleIntegrationsRoutes(
   request: Request,
   url: URL,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
 ): Promise<Response | null> {
   // GET /integrations — provider list + connection status (never the token)
   if (url.pathname === "/integrations" && request.method === "GET") {
@@ -28,10 +30,35 @@ export async function handleIntegrationsRoutes(
     for (const provider of Object.values(INTEGRATION_PROVIDERS)) {
       integrations.push(integrationStatus(provider, await loadIntegration(env, provider.id)));
     }
+    // Who connected it, as a NAME. Resolved through listRoster, not
+    // lookupActorLabels: the id comes out of a KV blob rather than from an
+    // already-scoped read, and the roster is the only people-list in this
+    // codebase that is scoped to the caller's own teams. A connector who is not
+    // the caller's teammate resolves to null and the client omits the line,
+    // which is also what a solo brain gets, and what a brain whose connecting
+    // admin has since been removed gets.
+    //
+    // Resolved at read time rather than snapshotted at connect time so a rename
+    // propagates and a departure degrades to null instead of to a stale name —
+    // the same rule lookupActorLabels's soft-delete filter enforces elsewhere.
+    const ids = integrations.map((i) => i.connectedByUserId).filter(Boolean) as string[];
+    const roster = ids.length ? await listRoster(env, auth.companyWorkspaceIds) : [];
+    const nameOf = new Map(roster.map((r) => [r.userId, r.name]));
     // Read is open to every member; the write actions below are not. The flag
     // lets the dashboard render a member the connection state without also
     // rendering Connect and Disconnect buttons that can only answer 403.
-    return json({ ok: true, integrations, admin: auth.role === "admin" });
+    return json({
+      ok: true,
+      // connectedByUserId is destructured OUT: the response carries a name or
+      // null and never an id, because a member has no use for a colleague's
+      // user id and the roster's allowlist argument applies to every
+      // people-shaped field this codebase publishes.
+      integrations: integrations.map(({ connectedByUserId, ...rest }) => ({
+        ...rest,
+        connectedBy: connectedByUserId ? nameOf.get(connectedByUserId) ?? null : null,
+      })),
+      admin: auth.role === "admin",
+    });
   }
 
   // POST /integrations/:provider/(connect|sync|disconnect)
@@ -79,7 +106,13 @@ export async function handleIntegrationsRoutes(
         provider: provider.id,
         authKind: "token",
         credentials: { token },
-        config: { ...(existing?.config ?? {}), mirrorWorkspace },
+        // connectedByUserId is written on EVERY connect, reconnects included:
+        // the person who last handed the deployment a token is the person to
+        // ask about it, so it names the current connector rather than the
+        // original one. It lives in `config` beside mirrorWorkspace — the
+        // documented escape hatch, carried across reconnects by the spread, and
+        // one place to look for connection policy.
+        config: { ...(existing?.config ?? {}), mirrorWorkspace, connectedByUserId: auth.userId },
         status: "connected",
         workspaceName,
         lastSyncedAt: existing?.lastSyncedAt ?? null,
@@ -89,6 +122,21 @@ export async function handleIntegrationsRoutes(
         updatedAt: now,
       };
       await saveIntegration(env, record);
+      // The trail, not the blob. `connectedByUserId` above answers "who
+      // connected the thing that is connected NOW" and is overwritten by the
+      // next reconnect; it cannot answer "who connected it in March and who
+      // disconnected it in April". `mirrorWorkspace` is in the payload because
+      // where a connector's content lands is the visibility decision the
+      // connect makes. The token is not, and nothing that is or contains a
+      // credential ever will be — the rule member_token_rotated set.
+      adminAuditEvent(env, ctx, {
+        actorId: auth.userId,
+        event: "integration_connected",
+        // provider.id, not `provider`: the local is the registry OBJECT here,
+        // and JSON.stringify of it would put the provider's display name and
+        // category in the trail instead of the id an auditor filters on.
+        payload: { provider: provider.id, mirrorWorkspace },
+      });
       return json({ ok: true, provider: provider.id, workspaceName, mirrorWorkspace });
     }
 
@@ -139,6 +187,15 @@ export async function handleIntegrationsRoutes(
       }
     }
     await deleteIntegration(env, provider.id);
+    // A separate name rather than integration_connected with a boolean, for the
+    // reason member_suspended/member_unsuspended already gives: an auditor
+    // scanning for "when did this stop mirroring" should not have to read a
+    // payload to find out.
+    adminAuditEvent(env, ctx, {
+      actorId: auth.userId,
+      event: "integration_disconnected",
+      payload: { provider: provider.id },
+    });
     // `kept` counts what is deliberately left behind: everything, when no purge was
     // asked for, plus anything a purge was not allowed to touch.
     return json({

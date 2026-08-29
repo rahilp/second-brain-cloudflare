@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
-/** utils.js, i18n.js, state.js, toast.js and team.js, in page-load order. */
+/** utils.js, i18n.js, state.js, toast.js, confirm-sheet.js and team.js, in page-load order. */
 const SRC = [
   "public/utils.js",
   "public/js/i18n.js",
@@ -17,21 +17,45 @@ const SRC = [
   // Real toast rather than a stub: the team panel reports success and failure
   // through it, and a stub would let a broken call through silently.
   "public/js/toast.js",
+  // The shared destructive-action sheet. team.js's suspend/remove/rotate
+  // flows are built against this documented API rather than confirm().
+  "public/js/confirm-sheet.js",
   "public/js/team.js",
 ]
   .map((rel) => readFileSync(resolve(ROOT, rel), "utf8"))
   .join("\n");
 
 function makeEl() {
-  return {
+  const el: any = {
     id: "",
     style: {} as Record<string, string>,
-    classList: { add() {}, remove() {}, toggle() {} },
+    // Tracks add/remove calls so a test can tell whether the sheet was ever
+    // opened, rather than only inspecting its final state — and the live set
+    // too, because the sheet reads `contains('open')` to decide whether it is
+    // taking focus from the page or from a question it is replacing.
+    classList: {
+      calls: [] as Array<[string, string]>,
+      names: new Set<string>(),
+      add(c: string) {
+        el.classList.calls.push(["add", c]);
+        el.classList.names.add(c);
+      },
+      remove(c: string) {
+        el.classList.calls.push(["remove", c]);
+        el.classList.names.delete(c);
+      },
+      toggle(c: string, on?: boolean) {
+        if (on ?? !el.classList.names.has(c)) el.classList.add(c);
+        else el.classList.remove(c);
+      },
+      contains: (c: string) => el.classList.names.has(c),
+    },
     addEventListener() {},
     value: "",
     textContent: "",
     innerHTML: "",
     disabled: false,
+    checked: false,
     setAttribute() {},
     getAttribute: () => null,
     hasAttribute: () => false,
@@ -45,6 +69,7 @@ function makeEl() {
     querySelectorAll: () => [],
     dataset: {},
   };
+  return el;
 }
 
 const TEAM_ELEMENT_IDS = [
@@ -52,6 +77,7 @@ const TEAM_ELEMENT_IDS = [
   "tab-team",
   "team-admins-only",
   "team-body",
+  "team-member-view",
   "team-list",
   "team-token-reveal",
   "team-token-for",
@@ -66,6 +92,21 @@ const TEAM_ELEMENT_IDS = [
   "topbar-team-name",
   "team-name-input",
   "team-name-btn",
+  "confirm-dialog",
+  "confirm-title",
+  "confirm-body",
+  "confirm-accept-btn",
+  "confirm-check-row",
+  "confirm-check-label",
+  "confirm-checkbox",
+  "team-invite-copy-btn",
+  "team-invite-mail-btn",
+  "team-org-default",
+  "team-insights",
+  "team-insights-row",
+  "team-mode-row",
+  "team-mode-toggle",
+  "team-mode-hint",
 ];
 
 function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
@@ -76,10 +117,14 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     "tab-team",
     "team-admins-only",
     "team-body",
+    "team-member-view",
     "team-token-reveal",
     "team-add-error",
     "sb-team-name",
     "topbar-team-name",
+    "confirm-check-row",
+    "team-invite-mail-btn",
+    "team-insights-row",
   ]);
   for (const id of TEAM_ELEMENT_IDS) {
     const el = makeEl();
@@ -87,23 +132,40 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     if (SHIPS_HIDDEN.has(id)) el.style.display = "none";
     elements.set(id, el);
   }
+  // Elements toast.js creates on demand (id "app-toast") are NOT pre-registered,
+  // so getElementById must return null for them the first time — a fallback
+  // dummy element here would silently swallow the toast's real DOM write and
+  // this test group exists specifically to observe that write.
+  const appended: any[] = [];
+  const copied: string[] = [];
   const doc = {
     documentElement: { lang: "en" },
     querySelector: () => makeEl(),
     querySelectorAll: () => [],
-    getElementById: (id?: string) => elements.get(id ?? "") ?? makeEl(),
+    getElementById: (id?: string) => elements.get(id ?? "") ?? null,
     createElement: () => makeEl(),
     addEventListener() {},
     removeEventListener() {},
-    body: { style: {}, appendChild() {} },
+    body: { style: {}, appendChild: (el: any) => { appended.push(el); } },
   };
   const ctx: any = {
     console,
     document: doc,
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    navigator: { language: "en-US" },
+    navigator: {
+      language: "en-US",
+      clipboard: {
+        writeText: (s: string) => {
+          copied.push(s);
+        },
+      },
+    },
     fetch: fetchImpl,
-    confirm: () => true,
+    // team.js's suspend/remove/rotate flows must never reach for the
+    // browser's native dialog — the sheet from confirm-sheet.js replaces it.
+    confirm: () => {
+      throw new Error("confirm() must not be used");
+    },
     alert: () => {},
     setTimeout,
     clearTimeout,
@@ -111,6 +173,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     exports: undefined,
   };
   ctx.window = ctx;
+  ctx.location = { href: "" };
   vm.createContext(ctx);
   vm.runInContext(SRC, ctx);
   // The page connects before anything team-related can run. These are top-level
@@ -118,7 +181,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
   // set as sandbox properties.
   vm.runInContext(`WORKER_URL = "http://localhost"; AUTH_TOKEN = "tok"; var TEAM_MODE = true`, ctx);
   ctx.initI18n("en");
-  return { ctx, els: elements };
+  return { ctx, els: elements, appended, copied };
 }
 
 const ADMIN_OK = {
@@ -138,6 +201,16 @@ function jsonFetch(routes: Array<{ match: (url: string, init?: any) => boolean; 
     throw new Error(`unexpected fetch ${url}`);
   };
 }
+
+/**
+ * Let every pending microtask settle.
+ *
+ * renderTeam() starts its config loaders without awaiting them. A test that
+ * acts before they land is racing them, and an assertion made inside that
+ * window can pass on a value a loader was about to write anyway — which is how
+ * a reload assertion ends up true whether or not the reload happened.
+ */
+const drain = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("team panel", () => {
   it("exposes every inline handler the markup calls", () => {
@@ -171,6 +244,48 @@ describe("team panel", () => {
     // Only Bob is actionable — no Rotate/Suspend on your own row.
     expect(html.match(/rotateTeamToken\('u/g)?.length).toBe(1);
     expect(html).not.toContain("rotateTeamToken('u1')");
+  });
+
+  describe("last used", () => {
+    /** Renders the roster with these members and hands back the markup. */
+    async function roster(members: unknown[]) {
+      const { ctx, els } = setup(
+        jsonFetch([{
+          match: (u) => u.endsWith("/team/members"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ ok: true, you: "u1", members }) }),
+        }]),
+      );
+      await ctx.loadTeam();
+      return els.get("team-list").innerHTML as string;
+    }
+
+    const member = (over: Record<string, unknown> = {}) => ({
+      userId: "u2", name: "Bob", email: "bob@example.com", role: "member",
+      suspended: false, privateEntries: 1, ...over,
+    });
+
+    it("reports how long ago a member's token last resolved", async () => {
+      const html = await roster([member({ lastUsedAt: Date.now() - 3 * 3600_000 })]);
+      expect(html).toContain("Last used 3h ago");
+    });
+
+    it("says Never used for a member who has not authenticated since the column shipped", async () => {
+      expect(await roster([member({ lastUsedAt: null })])).toContain("Never used");
+    });
+
+    it("says Never used rather than a bogus date for a zero or absent timestamp", async () => {
+      // 0 is what an accidental COALESCE would produce, and undefined is what an
+      // older Worker sends. Neither may render as 1 January 1970.
+      expect(await roster([member({ lastUsedAt: 0 })])).toContain("Never used");
+      const absent = await roster([member()]);
+      expect(absent).toContain("Never used");
+      expect(absent).not.toMatch(/1970/);
+    });
+
+    it("keeps it beside the private-entry count rather than replacing it", async () => {
+      const html = await roster([member({ lastUsedAt: Date.now() - 90_000 })]);
+      expect(html).toContain("1 private entry · Last used 2m ago");
+    });
   });
 
   it("hides the nav and shows the quiet notice on 403", async () => {
@@ -221,6 +336,73 @@ describe("team panel", () => {
     expect(els.get("team-add-name").value).toBe("");
   });
 
+  /** Adds Bob (email optional) and returns the harness so a test can act on the reveal. */
+  function addBob(email: string) {
+    const harness = setup(
+      jsonFetch([
+        {
+          match: (u, i) => u.endsWith("/team/members") && i?.method === "POST",
+          reply: () => ({
+            ok: true,
+            status: 201,
+            json: async () => ({ ok: true, member: { userId: "u2", name: "Bob", role: "member" }, token: "one-time-secret" }),
+          }),
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    harness.els.get("team-add-name").value = "Bob";
+    harness.els.get("team-add-email").value = email;
+    return harness;
+  }
+
+  it("copying the invite message writes Bob's name, the worker URL and the one-time token", async () => {
+    const { ctx, copied } = addBob("bob@example.com");
+    await ctx.submitNewMember();
+    ctx.copyInviteMessage();
+    expect(copied).toHaveLength(1);
+    expect(copied[0]).toContain("Bob");
+    expect(copied[0]).toContain("http://localhost");
+    expect(copied[0]).toContain("one-time-secret");
+    expect(copied[0]).toContain("stays personal");
+  });
+
+  it("shows the mail button only when the new member has an email", async () => {
+    const withEmail = addBob("bob@example.com");
+    await withEmail.ctx.submitNewMember();
+    expect(withEmail.els.get("team-invite-mail-btn").style.display).toBe("");
+
+    const withoutEmail = addBob("");
+    await withoutEmail.ctx.submitNewMember();
+    expect(withoutEmail.els.get("team-invite-mail-btn").style.display).toBe("none");
+  });
+
+  it("emailing the invite opens a mailto: link addressed to the new member with the invite body", async () => {
+    const { ctx } = addBob("bob@example.com");
+    await ctx.submitNewMember();
+    ctx.emailInvite();
+    expect(ctx.window.location.href).toMatch(/^mailto:bob%40example\.com\?subject=/);
+    const url = new URL(ctx.window.location.href.replace(/^mailto:/, "http://x?"));
+    expect(url.searchParams.get("body")).toBe(ctx.inviteMessage());
+  });
+
+  it("dismissing the token reveal drops the token, so copying afterwards writes nothing", async () => {
+    const { ctx, copied } = addBob("bob@example.com");
+    await ctx.submitNewMember();
+    ctx.closeTeamTokenReveal();
+    ctx.copyInviteMessage();
+    expect(copied).toHaveLength(0);
+  });
+
+  it("the invite message is translated in Italian — impossible when the admin wrote it by hand", async () => {
+    const { ctx, copied } = addBob("bob@example.com");
+    ctx.initI18n("it");
+    await ctx.submitNewMember();
+    ctx.copyInviteMessage();
+    expect(copied[0]).toContain("Second Brain condiviso");
+    expect(copied[0]).toContain("Incolla questo token");
+  });
+
   it("surfaces a duplicate email instead of a token", async () => {
     const { ctx, els } = setup(
       jsonFetch([
@@ -253,7 +435,588 @@ describe("team panel", () => {
     );
     await ctx.loadTeam(); // populate teamMembers so the action can find the row
     await ctx.setTeamSuspended("u2", true);
+    await ctx.runConfirmAction();
     expect(bodies).toEqual([{ id: "u2", suspended: true }]);
+  });
+
+  it("suspending fills the sheet body with the member's name and waits for confirmation", async () => {
+    const bodies: any[] = [];
+    const { ctx, els } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/suspend"),
+          reply: (_u, i) => {
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true, id: "u2", suspended: true }) };
+          },
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamSuspended("u2", true);
+    expect(els.get("confirm-body").textContent).toContain("Bob");
+    expect(bodies).toEqual([]); // no POST until the sheet is confirmed
+    await ctx.runConfirmAction();
+    expect(bodies).toEqual([{ id: "u2", suspended: true }]);
+  });
+
+  it("restoring posts immediately, opens no sheet, and reports success via toast", async () => {
+    const bodies: any[] = [];
+    const { ctx, els, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/suspend"),
+          reply: (_u, i) => {
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true, id: "u2", suspended: false }) };
+          },
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamSuspended("u2", false);
+    expect(bodies).toEqual([{ id: "u2", suspended: false }]);
+    expect(els.get("confirm-dialog").classList.calls).not.toContainEqual(["add", "open"]);
+    expect(appended[appended.length - 1].innerHTML).toContain("Access restored");
+  });
+
+  it("removing a member puts the private-entry count into the sheet body", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([{ match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) }]),
+    );
+    await ctx.loadTeam();
+    await ctx.removeTeamMember("u2");
+    expect(els.get("confirm-body").textContent).toContain("Bob");
+    expect(els.get("confirm-body").textContent).toContain("1");
+  });
+
+  it("rotating a member's token in Italian shows the Italian sheet title — impossible with the native confirm()", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([{ match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) }]),
+    );
+    ctx.initI18n("it");
+    await ctx.loadTeam();
+    await ctx.rotateTeamToken("u2");
+    expect(els.get("confirm-title").textContent).toBe("Reimpostare il token di questa persona?");
+  });
+
+  it("a failing action reports through the toast, never alert", async () => {
+    const { ctx, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/suspend"),
+          reply: () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: "boom" }) }),
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam();
+    await ctx.setTeamSuspended("u2", true);
+    await ctx.runConfirmAction();
+    expect(appended[appended.length - 1].innerHTML).toContain("boom");
+  });
+
+  /**
+   * A native confirm() is modal — it structurally cannot be double-submitted.
+   * The sheet is not, so a double-click (or two calls landing back to back)
+   * can fire two POSTs whose responses race. The guard lives in
+   * runConfirmAction (confirm-sheet.js), not in team.js, but this asserts the
+   * OUTCOME the member actually cares about: only one request ever goes out,
+   * regardless of which layer enforces that.
+   */
+  it("a second confirm while a token rotation is in flight issues no second POST", async () => {
+    let tokenCalls = 0;
+    let resolveToken: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveToken = resolve;
+    });
+    const { ctx, els } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/token"),
+          reply: () => {
+            tokenCalls++;
+            return pending;
+          },
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.rotateTeamToken("u2");
+    const first = ctx.runConfirmAction();
+    const second = ctx.runConfirmAction(); // fired before the first POST resolves
+    // The caller's own progress copy, shown for the duration of the request.
+    expect(els.get("confirm-accept-btn").textContent).toBe("Resetting…");
+    resolveToken({ ok: true, status: 200, json: async () => ({ ok: true, id: "u2", token: "rotated-secret" }) });
+    await Promise.all([first, second]);
+    expect(tokenCalls).toBe(1);
+  });
+
+  it("a second confirm while a removal is in flight issues no second POST", async () => {
+    let removeCalls = 0;
+    let resolveRemove: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveRemove = resolve;
+    });
+    const { ctx } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/remove"),
+          reply: () => {
+            removeCalls++;
+            return pending;
+          },
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.removeTeamMember("u2");
+    const first = ctx.runConfirmAction();
+    const second = ctx.runConfirmAction();
+    resolveRemove({ ok: true, status: 200, json: async () => ({ ok: true, id: "u2" }) });
+    await Promise.all([first, second]);
+    expect(removeCalls).toBe(1);
+  });
+
+  it("a failing remove reports through the toast, never alert", async () => {
+    const { ctx, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/remove"),
+          reply: () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: "remove-boom" }) }),
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam();
+    await ctx.removeTeamMember("u2");
+    await ctx.runConfirmAction();
+    expect(appended[appended.length - 1].innerHTML).toContain("remove-boom");
+  });
+
+  it("a failing capture-default change reports through the toast (never alert) and reloads the roster", async () => {
+    let membersCalls = 0;
+    const { ctx, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/default-share"),
+          reply: () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: "share-boom" }) }),
+        },
+        {
+          match: (u) => u.endsWith("/team/members"),
+          reply: () => {
+            membersCalls++;
+            return { ok: true, status: 200, json: async () => ADMIN_OK };
+          },
+        },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam(); // membersCalls === 1
+    await ctx.setMemberDefaultShare("u2", "company");
+    expect(appended[appended.length - 1].innerHTML).toContain("share-boom");
+    expect(membersCalls).toBe(2); // reloaded after the failure
+  });
+
+  it("loads the org-wide capture default alongside the roster", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "company" } }) }),
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    // renderTeam() kicks this off without awaiting it (it is a secondary
+    // fetch, not part of the roster response) — await it directly rather
+    // than racing loadTeam()'s own promise.
+    await ctx.loadTeamOrgDefault();
+    expect(els.get("team-org-default").value).toBe("company");
+  });
+
+  it("a failing org-default change reports through the toast (never alert) and reloads the previous value", async () => {
+    let getCalls = 0;
+    const { ctx, els, appended } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: () => ({ ok: false, status: 500, json: async () => ({}) }),
+        },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => {
+            getCalls++;
+            // Deliberately neither key's fallback: "personal"/"off" are what a
+            // read that never looked at the body would produce, so a stored
+            // value equal to one of them cannot tell the reload apart from it.
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "company", TEAM_INSIGHTS: "on" } }),
+            };
+          },
+        },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam();
+    await drain(); // renderTeam()'s unawaited loaders land BEFORE the drag below
+    // A browser writes <select>.value before onchange fires; the fake DOM does
+    // not, so the test does it. Without this drag the assertion below would be
+    // asserting the value the load already left there — true whether or not the
+    // reload ran.
+    els.get("team-org-default").value = "personal";
+    await ctx.setTeamOrgDefault("personal");
+    // "company" is the stored value AND not this select's fallback, so this
+    // holds only if the reload actually applied the response body.
+    expect(els.get("team-org-default").value).toBe("company"); // reloaded after failure
+    expect(els.get("team-insights").value).toBe("on"); // the sibling row keeps its own stored value
+    expect(getCalls).toBe(2); // the render's read, then a fresh one after the refusal
+    expect(appended[appended.length - 1].innerHTML).toContain("did not work");
+  });
+
+  // team-insights shares loadTeamConfigSelect/setTeamConfigValue with
+  // team-org-default above — the extraction this task exists to make. These
+  // cover team-insights on all four axes, and the org-default case right
+  // after them is the non-regression check that the shared helpers did not
+  // change the org-default control's behaviour.
+
+  it("narrows a team-insights config value to one of its two options, including an unexpected one", async () => {
+    async function insightsValueFor(config: Record<string, unknown>) {
+      const { ctx, els } = setup(
+        jsonFetch([
+          { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+          { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config }) }) },
+        ]),
+      );
+      await ctx.loadTeam();
+      await ctx.loadTeamInsights();
+      return els.get("team-insights").value;
+    }
+    expect(await insightsValueFor({ TEAM_INSIGHTS: "on" })).toBe("on");
+    expect(await insightsValueFor({ TEAM_INSIGHTS: "off" })).toBe("off");
+    expect(await insightsValueFor({})).toBe("off"); // absent
+    expect(await insightsValueFor({ TEAM_INSIGHTS: "YES" })).toBe("off"); // unexpected value
+  });
+
+  it("writing team-insights PATCHes /config once with exactly that one key", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let patchCalls = 0;
+    const { ctx } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: (_u: string, i: any) => {
+            patchCalls++;
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+          },
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamInsights("on");
+    expect(patchCalls).toBe(1);
+    expect(Object.keys(bodies[0])).toEqual(["TEAM_INSIGHTS"]);
+    expect(bodies[0]).toEqual({ TEAM_INSIGHTS: "on" });
+  });
+
+  it("a failing team-insights change reports through the toast (never alert) and reloads the server's value", async () => {
+    let getCalls = 0;
+    const { ctx, els, appended } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: () => ({ ok: false, status: 400, json: async () => ({}) }),
+        },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => {
+            getCalls++;
+            return {
+              ok: true,
+              status: 200,
+              // Neither value is its select's fallback ("off"/"personal"), so
+              // requesting the config and then ignoring the body cannot
+              // satisfy the assertions below.
+              json: async () => ({ config: { TEAM_INSIGHTS: "on", TEAM_DEFAULT_WORKSPACE: "company" } }),
+            };
+          },
+        },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    await ctx.loadTeam();
+    await drain(); // renderTeam()'s unawaited loaders land BEFORE the drag below
+    // The drag: a browser writes <select>.value before onchange fires, and the
+    // stored value is deliberately the OTHER one, so only a reload that really
+    // read the server can produce the expectation below.
+    els.get("team-insights").value = "off";
+    await ctx.setTeamInsights("off");
+    expect(els.get("team-insights").value).toBe("on"); // the server's value, not the drag
+    expect(els.get("team-org-default").value).toBe("company"); // reloaded into the right control
+    expect(getCalls).toBe(2); // the render's read, then a fresh one after the refusal
+    expect(appended[appended.length - 1].innerHTML).toContain("did not work");
+  });
+
+  it("narrows a team-org-default config value to one of its two options, whatever the server has", async () => {
+    async function orgDefaultValueFor(config: Record<string, unknown>) {
+      const { ctx, els } = setup(
+        jsonFetch([
+          { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+          { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config }) }) },
+        ]),
+      );
+      await ctx.loadTeam();
+      await ctx.loadTeamOrgDefault();
+      return els.get("team-org-default").value;
+    }
+    // Config values are free text in KV, and a <select> holding something that
+    // is not one of its <option>s renders BLANK — which reads as "unset" for a
+    // setting that is set. So every input class has to land on a real option,
+    // not just the two the UI itself writes.
+    const OPTIONS = ["company", "personal"];
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ TEAM_DEFAULT_WORKSPACE: "company" }, "company"],
+      [{ TEAM_DEFAULT_WORKSPACE: "personal" }, "personal"],
+      [{}, "personal"], // key absent
+      [{ TEAM_DEFAULT_WORKSPACE: "COMPANY" }, "personal"], // unexpected string
+      [{ TEAM_DEFAULT_WORKSPACE: "" }, "personal"], // empty string
+      [{ TEAM_DEFAULT_WORKSPACE: null }, "personal"],
+      [{ TEAM_DEFAULT_WORKSPACE: 42 }, "personal"], // KV round-trips whatever was PUT
+    ];
+    for (const [config, expected] of cases) {
+      const value = await orgDefaultValueFor(config);
+      expect(OPTIONS, `${JSON.stringify(config)} must land on a real <option>`).toContain(value);
+      expect(value, JSON.stringify(config)).toBe(expected);
+    }
+  });
+
+  it("renderTeam loads both config selects itself, over one shared GET /config", async () => {
+    let getCalls = 0;
+    const { ctx, els } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => {
+            getCalls++;
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "company", TEAM_INSIGHTS: "on" } }),
+            };
+          },
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await drain();
+    // Nothing here calls a loader by hand: rendering the screen is what has to
+    // fill these in, or a stored setting silently shows as its default.
+    expect(els.get("team-org-default").value).toBe("company");
+    expect(els.get("team-insights").value).toBe("on");
+    // Two rows, two keys, one request — the loaders share the read in flight
+    // rather than each paying for its own round trip on every render.
+    expect(getCalls).toBe(1);
+  });
+
+  it("a refused GET /config leaves both selects on their defaults rather than blank", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          // A 500 whose body still parses as a config: the status is the only
+          // thing saying not to trust it, so a read that ignored the status
+          // would render these values as though they were settings.
+          match: (u) => u.endsWith("/config"),
+          reply: () => ({
+            ok: false,
+            status: 500,
+            json: async () => ({ config: { TEAM_DEFAULT_WORKSPACE: "company", TEAM_INSIGHTS: "on" } }),
+          }),
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await drain();
+    expect(els.get("team-org-default").value).toBe("personal");
+    expect(els.get("team-insights").value).toBe("off");
+  });
+
+  it("does not remember a rejected config read: a later read goes back to the server and can succeed", async () => {
+    // The in-flight handle has to be dropped on BOTH settle paths. Dropped only
+    // when the read resolves, the first refusal would stay attached to it and
+    // every later read would replay that one rejection — the rows would sit on
+    // their fallbacks until a page reload, including the reload a refused write
+    // does to put a control back.
+    let getCalls = 0;
+    const { ctx, els } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u) => u.endsWith("/config"),
+          reply: () => {
+            getCalls++;
+            // Refused once, then answered: the second read only sees this body
+            // if it was a real second request rather than the first read's
+            // rejection handed out again.
+            if (getCalls === 1) return { ok: false, status: 500, json: async () => ({}) };
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ config: { TEAM_INSIGHTS: "on", TEAM_DEFAULT_WORKSPACE: "company" } }),
+            };
+          },
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await drain(); // the render's shared read rejects and both rows fall back
+    expect(els.get("team-insights").value).toBe("off");
+    expect(els.get("team-org-default").value).toBe("personal");
+    expect(getCalls).toBe(1);
+    // A later, entirely separate read. Nothing of the failed one may survive it.
+    await ctx.loadTeamInsights();
+    expect(getCalls).toBe(2);
+    expect(els.get("team-insights").value).toBe("on");
+  });
+
+  it("setTeamOrgDefault still PATCHes exactly its one key after sharing the helper with team-insights", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const { ctx } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: (_u: string, i: any) => {
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+          },
+        },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamOrgDefault("company");
+    expect(bodies).toEqual([{ TEAM_DEFAULT_WORKSPACE: "company" }]);
+  });
+
+  it("translates the team-insights label in Italian", async () => {
+    const { ctx } = setup(async () => ({ ok: true, status: 200, json: async () => ADMIN_OK }));
+    ctx.initI18n("it");
+    expect(ctx.t("team.insightsLabel")).toBe("Approfondimenti settimanali del team");
+  });
+
+  // ── The row itself is team-only, not just the setting behind it ──────────
+  //
+  // #team-body OPENS ON A SOLO BRAIN. src/lib/tenancy.ts hashes this
+  // deployment's AUTH_TOKEN into a users row with role 'admin', so GET
+  // /team/members answers 200 for the owner and renderTeam() reveals the whole
+  // panel — "changes nothing on a solo brain, in either branch" below pins
+  // exactly that, deliberately. Being inside #team-body is therefore NOT a gate,
+  // and anything this phase adds to the panel needs its own, or it is new UI on
+  // a brain the phase promised to leave alone. "Weekly team insights … puts what
+  // it finds in everyone's review queue" describes an everyone a solo brain does
+  // not have.
+  //
+  // Both producers of the gate are pinned here, because either alone survives
+  // the other's deletion: the inline display:none that decides what is on screen
+  // BEFORE any render, and the assignment in maybeRevealTeamInsights that
+  // decides it after.
+  const adminAndConfig = (config: Record<string, unknown>, seen?: string[]) =>
+    jsonFetch([
+      {
+        match: (u) => u.endsWith("/team/members"),
+        reply: (u: string) => {
+          seen?.push(u);
+          return { ok: true, status: 200, json: async () => ADMIN_OK };
+        },
+      },
+      {
+        match: (u) => u.endsWith("/config"),
+        reply: (u: string) => {
+          seen?.push(u);
+          return { ok: true, status: 200, json: async () => ({ config }) };
+        },
+      },
+    ]);
+
+  it("ships hidden in the markup, so a solo owner cannot see it before a render decides", () => {
+    const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
+    const open = html.match(/<div id="team-insights-row"[^>]*>/)?.[0] ?? "";
+    expect(open, "#team-insights-row must exist and ship hidden").toContain("display: none");
+    // The control AND the sentence explaining it are both inside the wrapper.
+    // The hint is the half that names the team out loud, so a wrapper that
+    // covered only the <select> would still say "everyone's review queue" to
+    // someone whose brain has no everyone.
+    const region = html.slice(html.indexOf('id="team-insights-row"'), html.indexOf('id="team-list"'));
+    expect(region).toContain('id="team-insights"');
+    expect(region).toContain('data-i18n="team.insightsHint"');
+  });
+
+  it("reveals the row and reads its value on a team brain", async () => {
+    const { ctx, els } = setup(adminAndConfig({ TEAM_INSIGHTS: "on" }));
+    await ctx.loadTeam();
+    await drain();
+    expect(els.get("team-insights-row").style.display).toBe("");
+    expect(els.get("team-insights").value).toBe("on");
+  });
+
+  it("stays hidden on a solo brain, and the panel still makes exactly one /config read", async () => {
+    const seen: string[] = [];
+    const { ctx, els } = setup(adminAndConfig({ TEAM_INSIGHTS: "on" }, seen));
+    vm.runInContext("TEAM_MODE = false", ctx);
+    await ctx.loadTeam();
+    await drain();
+    expect(els.get("team-insights-row").style.display).toBe("none");
+    // The one read is the org-default row's, which predates this phase. The
+    // insights row adds no second one: it does not read at all when hidden,
+    // and readTeamConfig would coalesce it with the first if it did. Counted
+    // rather than argued, because "hidden" and "free" are different claims and
+    // a hidden element that still fetches is still a regression.
+    expect(seen.filter((u) => u.endsWith("/config"))).toHaveLength(1);
+    expect(els.get("team-insights").value).toBe("");
+  });
+
+  it("re-states both branches on every render, which is what closes the ordering hazard", async () => {
+    // TEAM_MODE is assigned in ONE place — maybeRevealHomeLayer (js/home.js),
+    // off GET /health — and js/auth.js fires loadTeam() ALONGSIDE that request
+    // rather than after it. So renderTeam() genuinely can run first and read a
+    // false flag on a team brain. That is not a stuck reveal, and this is the
+    // proof rather than the assumption: the panel cannot be looked at without a
+    // switchTab('team'), switchTab('team') re-runs loadTeam → renderTeam, and
+    // the row's visibility is re-derived from the flag every time.
+    const { ctx, els } = setup(adminAndConfig({ TEAM_INSIGHTS: "on" }));
+    vm.runInContext("TEAM_MODE = false", ctx);
+    await ctx.loadTeam(); // the early render, before /health has answered
+    await drain();
+    expect(els.get("team-insights-row").style.display).toBe("none");
+    vm.runInContext("TEAM_MODE = true", ctx);
+    await ctx.loadTeam(); // the next visit to the Team tab
+    await drain();
+    expect(els.get("team-insights-row").style.display).toBe("");
+    expect(els.get("team-insights").value).toBe("on");
   });
 
   it("dismissed token reveal clears the plaintext token", async () => {
@@ -268,6 +1031,7 @@ describe("team panel", () => {
     );
     await ctx.loadTeam(); // populate teamMembers so the action can find the row
     await ctx.rotateTeamToken("u2");
+    await ctx.runConfirmAction();
     expect(els.get("team-token-reveal").style.display).toBe("");
     ctx.closeTeamTokenReveal();
     expect(els.get("team-token-reveal").style.display).toBe("none");
@@ -371,5 +1135,593 @@ describe("team name", () => {
     els.get("team-name-input").value = "   ";
     await ctx.submitTeamName();
     expect(called).toBe(false);
+  });
+});
+
+
+/**
+ * The member half of the Team screen.
+ *
+ * A member is not an admin, but they ARE on a team, and until now the screen
+ * told them only that they were not allowed to look at it. These drive
+ * loadTeam() with the fetch shape a member actually gets: 403 from
+ * /team/members, 200 from the identity-scoped /team/roster.
+ *
+ * The negative assertions are the point of this group. /team/roster returns
+ * exactly userId, name and role — test/integration/team-roster.test.ts pins
+ * `Object.keys(row).sort()` so the endpoint cannot widen by accident — and this
+ * is the other half of that guarantee: the UI must not render an equivalent of
+ * anything the endpoint withholds, even if the endpoint one day starts sending
+ * it.
+ */
+describe("team member view", () => {
+  const ROSTER_OK = {
+    ok: true,
+    admin: false,
+    you: "u2",
+    teams: [{ id: "ws-co", name: "Acme Engineering", memberCount: 3 }],
+    members: [
+      { userId: "u1", name: "Ada", role: "admin" },
+      { userId: "u2", name: "Bob", role: "member" },
+      { userId: "u3", name: "Cara", role: "member" },
+    ],
+  };
+
+  /**
+   * What a WIDENED /team/roster would send. Every extra field carries a
+   * sentinel value found nowhere else in the markup, so if the view ever
+   * starts echoing whatever the endpoint happens to return, these fail.
+   */
+  const ROSTER_WIDENED = {
+    ...ROSTER_OK,
+    members: ROSTER_OK.members.map((m) => ({
+      ...m,
+      email: `leak-${m.userId}@example.invalid`,
+      privateEntries: 4242,
+      lastUsedAt: Date.now() - 3 * 3600_000,
+      suspended: true,
+      createdAt: 1234567890123,
+      personalWorkspaceId: `ws-leak-${m.userId}`,
+      defaultShare: "company",
+    })),
+  };
+
+  /** GET /team/me as Task 9 extended it. `email` is the caller's own and the
+   *  server hands it over freely — the Team screen still has no reason to print
+   *  it, and the negative test uses it as one more sentinel. */
+  const ME = (over: Record<string, unknown> = {}) => ({
+    ok: true,
+    profile: {
+      userId: "u2",
+      name: "Bob",
+      email: "bob@example.com",
+      role: "member",
+      defaultShare: "personal",
+      orgDefault: "company",
+      effectiveDefault: "personal",
+      ...over,
+    },
+  });
+
+  /** A signed-in member: the admin probe refuses, the roster answers. */
+  function memberSetup(opts: { roster?: unknown; me?: unknown; rosterStatus?: number } = {}) {
+    const seen: string[] = [];
+    const status = opts.rosterStatus ?? 200;
+    const harness = setup(async (url: string) => {
+      seen.push(url);
+      if (url.endsWith("/team/members")) {
+        return { ok: false, status: 403, json: async () => ({ ok: false, error: "Forbidden" }) };
+      }
+      if (url.endsWith("/team/roster")) {
+        return { ok: status < 400, status, json: async () => opts.roster ?? ROSTER_OK };
+      }
+      if (url.endsWith("/team/me")) return { ok: true, status: 200, json: async () => opts.me ?? ME() };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    return { ...harness, seen };
+  }
+
+  /** An admin (or a solo brain's owner, who is the bootstrap admin). */
+  function adminSetup() {
+    const seen: string[] = [];
+    const harness = setup(async (url: string) => {
+      seen.push(url);
+      if (url.endsWith("/team/members")) return { ok: true, status: 200, json: async () => ADMIN_OK };
+      if (url.endsWith("/config")) return { ok: true, status: 200, json: async () => ({ config: {} }) };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    return { ...harness, seen };
+  }
+
+  it("records the probe's answer, which is what stands the activity feed down", async () => {
+    // js/activity.js declines to request the admin-only GET /team/activity once
+    // this says false — otherwise a member pays for a 403 on every Team-tab
+    // visit. `teamIsAdmin` is a top-level `let`, so it is read out of the
+    // context rather than off the sandbox.
+    const before = memberSetup();
+    expect(vm.runInContext("teamIsAdmin", before.ctx)).toBe(null);
+    await before.ctx.loadTeam();
+    expect(vm.runInContext("teamIsAdmin", before.ctx)).toBe(false);
+
+    const asAdmin = adminSetup();
+    await asAdmin.ctx.loadTeam();
+    expect(vm.runInContext("teamIsAdmin", asAdmin.ctx)).toBe(true);
+
+    // Neither probe answered: unknown, not "no". An unanswered probe hiding an
+    // admin's own activity log is the worse of the two failures by far.
+    const offline = setup(async () => {
+      throw new Error("offline");
+    });
+    await offline.ctx.loadTeam();
+    expect(vm.runInContext("teamIsAdmin", offline.ctx)).toBe(null);
+  });
+
+  it("calls an admin an admin even when the roster probe is the one that answers", async () => {
+    // /team/members failed for some reason other than permission, and
+    // /team/roster says this caller IS an admin. The member view stands down —
+    // and so does the not-an-admin gate.
+    const { ctx } = memberSetup({ roster: { ...ROSTER_OK, admin: true } });
+    await ctx.loadTeam();
+    expect(vm.runInContext("teamIsAdmin", ctx)).toBe(true);
+  });
+
+  it("renders the team name and everyone on it, with the caller's own row marked", async () => {
+    const { ctx, els } = memberSetup();
+    await ctx.loadTeam();
+    expect(els.get("team-member-view").style.display).toBe("");
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain("Acme Engineering");
+    for (const name of ["Ada", "Bob", "Cara"]) expect(html, `${name} should be listed`).toContain(name);
+    expect(html).toContain("Admin");
+    expect(html).toContain("Member");
+    // "you" marks exactly one row, and it is the caller's (you === "u2" === Bob).
+    const rows = html.split('class="team-row"');
+    expect(rows.filter((r) => r.includes(">you<"))).toHaveLength(1);
+    expect(rows.find((r) => r.includes("Bob"))).toContain(">you<");
+    expect(rows.find((r) => r.includes("Ada"))).not.toContain(">you<");
+    // t() returns the KEY PATH for a key that is missing from the catalog, so a
+    // typo would ship as literal "team.somethingWrong" rather than failing.
+    expect(html).not.toMatch(/(team|home|common)\.[a-zA-Z]/);
+  });
+
+  it("shows a member nothing /team/roster withholds, even if /team/roster starts sending it", async () => {
+    const { ctx, els } = memberSetup({ roster: ROSTER_WIDENED });
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    // Positive anchor first. Without it every negative below would also hold
+    // on a blank screen, which is exactly the state this task started from.
+    expect(html).toContain("Acme Engineering");
+    for (const name of ["Ada", "Bob", "Cara"]) expect(html).toContain(name);
+    // Every field the endpoint deliberately omits, asserted by sentinel.
+    expect(html).not.toContain("@example.invalid"); // email
+    expect(html).not.toContain("bob@example.com"); // the caller's own, from /team/me
+    expect(html).not.toContain("4242"); // privateEntries
+    expect(html).not.toContain("private entr"); // …and its rendered form
+    expect(html).not.toContain("Last used"); // lastUsedAt
+    expect(html).not.toContain("Never used");
+    expect(html).not.toMatch(/1970/);
+    expect(html).not.toContain("suspended"); // suspension state
+    expect(html).not.toContain("1234567890123"); // createdAt
+    expect(html).not.toContain("ws-leak"); // personalWorkspaceId
+    // No control the server would refuse: adding, removing, suspending,
+    // rotating a token, renaming the team and changing anyone's capture
+    // default are all behind requireAdmin.
+    for (const fn of [
+      "rotateTeamToken",
+      "setTeamSuspended",
+      "removeTeamMember",
+      "setMemberDefaultShare",
+      "submitNewMember",
+      "submitTeamName",
+      "setTeamOrgDefault",
+      "setTeamInsights",
+    ]) {
+      expect(html, `${fn} must not be reachable from the member view`).not.toContain(fn);
+    }
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("onclick");
+    // The one interactive element the member view carries: their own
+    // capture-default control. Both id and handler are pinned so this stays a
+    // positive anchor for that one exception rather than a blank check that
+    // would also quietly permit an admin control landing here later.
+    expect(html.match(/<select/g)).toHaveLength(1);
+    expect(html.match(/onchange="/g)).toHaveLength(1);
+    expect(html).toContain('<select class="team-select" id="team-my-default" onchange="setMyDefaultShare(this.value)">');
+    // And the admin panel itself stays shut.
+    expect(els.get("team-body").style.display).toBe("none");
+  });
+
+  it("reads the capture default from effectiveDefault, not from the org default", async () => {
+    // The member's own override DISAGREES with the org default — precisely the
+    // case a client-side reimplementation of the precedence rule gets wrong.
+    const { ctx, els } = memberSetup({
+      me: ME({ defaultShare: "personal", orgDefault: "company", effectiveDefault: "personal" }),
+    });
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain("Auto → Personal (your setting)");
+    expect(html).not.toContain("Shared");
+    // Same key the composer would read for this profile: POST
+    // /team/me/default-share (below) makes the member its owner, so there is
+    // no separate Team-screen phrasing left to disagree with the composer.
+    expect(html).toContain(ctx.t("home.autoPersonalYours"));
+  });
+
+  it("says Shared when the member overrides a personal org default the other way", async () => {
+    const { ctx, els } = memberSetup({
+      me: ME({ defaultShare: "company", orgDefault: "personal", effectiveDefault: "company" }),
+    });
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain(ctx.t("home.autoSharedYours"));
+    // The resolved sentence says Shared, not Personal — "Personal (private)"
+    // legitimately appears as one of the control's three options below it.
+    expect(html).not.toContain("Auto → Personal");
+  });
+
+  it("attributes the default to the org when the member has no override of their own", async () => {
+    const { ctx, els } = memberSetup({
+      me: ME({ defaultShare: "", orgDefault: "company", effectiveDefault: "company" }),
+    });
+    await ctx.loadTeam();
+    expect(els.get("team-member-view").innerHTML).toContain(ctx.t("home.autoSharedOrg"));
+  });
+
+  it("gives a member the Team nav entry, which used to be admins-only", async () => {
+    const { ctx, els } = memberSetup();
+    await ctx.loadTeam();
+    expect(els.get("sb-tab-team").style.display).toBe("");
+    expect(els.get("tab-team").style.display).toBe("");
+    expect(els.get("team-admins-only").style.display).toBe("none");
+  });
+
+  it("an admin still gets the full panel and never fetches the member roster", async () => {
+    const { ctx, els, seen } = adminSetup();
+    await ctx.loadTeam();
+    expect(seen.some((u) => u.includes("/team/roster"))).toBe(false);
+    expect(seen.some((u) => u.endsWith("/team/me"))).toBe(false);
+    expect(els.get("team-body").style.display).toBe("");
+    expect(els.get("team-member-view").style.display).toBe("none");
+  });
+
+  it("keeps the quiet notice for a caller neither endpoint will answer", async () => {
+    // 401 (signed out) and 404 (a Worker older than /team/roster) both land
+    // here. The nav stays hidden, so this is a terminal state rather than a
+    // destination — nobody navigates to it.
+    for (const rosterStatus of [401, 404]) {
+      const { ctx, els } = memberSetup({ rosterStatus });
+      await ctx.loadTeam();
+      expect(els.get("team-member-view").style.display, `roster ${rosterStatus}`).toBe("none");
+      expect(els.get("team-member-view").innerHTML).toBe("");
+      expect(els.get("team-admins-only").style.display).toBe("");
+      expect(els.get("tab-team").style.display).toBe("none");
+    }
+  });
+
+  it("changes nothing on a solo brain, in either branch", async () => {
+    // A solo install's owner IS the bootstrap admin, so /team/members answers
+    // 200 and the admin branch runs exactly as it always did: no roster fetch,
+    // no member view, nav revealed as before.
+    const admin = adminSetup();
+    vm.runInContext("TEAM_MODE = false", admin.ctx);
+    await admin.ctx.loadTeam();
+    expect(admin.seen.some((u) => u.includes("/team/roster"))).toBe(false);
+    expect(admin.els.get("team-body").style.display).toBe("");
+    expect(admin.els.get("team-member-view").style.display).toBe("none");
+    expect(admin.els.get("tab-team").style.display).toBe("");
+
+    // The other branch: a brain that is not a team and refuses both probes
+    // keeps the notice, with no roster and no nav entry.
+    const denied = memberSetup({ rosterStatus: 403 });
+    vm.runInContext("TEAM_MODE = false", denied.ctx);
+    await denied.ctx.loadTeam();
+    expect(denied.els.get("team-member-view").innerHTML).toBe("");
+    expect(denied.els.get("team-member-view").style.display).toBe("none");
+    expect(denied.els.get("team-admins-only").style.display).toBe("");
+    expect(denied.els.get("tab-team").style.display).toBe("none");
+  });
+
+  it("translates the member view into Italian", async () => {
+    const { ctx, els } = memberSetup();
+    ctx.initI18n("it");
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain("Amministratore");
+    expect(html).toContain(ctx.t("home.autoPersonalYours"));
+    // Both catalogs, not just English: a key present in en and missing from it
+    // renders as its own key path here rather than failing loudly.
+    expect(html).not.toMatch(/(team|home|common)\.[a-zA-Z]/);
+  });
+
+  it("renders the member's own capture-default control, seeded from GET /team/me", async () => {
+    const { ctx, els } = memberSetup({
+      me: ME({ defaultShare: "company", orgDefault: "personal", effectiveDefault: "company" }),
+    });
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain('id="team-my-default"');
+    const companyOption = html.match(/<option value="company"[^>]*>/)?.[0] ?? "";
+    expect(companyOption).toContain(" selected");
+  });
+
+  /** The option values inside the FIRST <select> in a chunk of markup — a
+   *  member's view has exactly one; an admin's roster has one per row, and
+   *  every row's is identical, so the first stands for all of them. */
+  function firstSelectOptionValues(html: string): string[] {
+    const select = html.match(/<select[^>]*>([\s\S]*?)<\/select>/);
+    if (!select) return [];
+    return [...select[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
+  }
+
+  it("derives both capture-default selects' options from one shared list, not two copies that merely agree today", async () => {
+    // Both call sites (teamMemberRow for the admin, renderTeamMember for the
+    // member) build their <option>s from team.js's TEAM_SHARE_VALUES via the
+    // shared teamShareSelect() helper. Reading the source directly is what
+    // makes this a test of ONE list rather than a coincidence between two —
+    // if a future edit forked the helper again and gave only one call site a
+    // fourth option, this comparison would catch it because the two selects
+    // would stop agreeing with the same source list.
+    const admin = adminSetup();
+    await admin.ctx.loadTeam();
+    const adminValues = firstSelectOptionValues(admin.els.get("team-list").innerHTML as string);
+
+    const member = memberSetup();
+    await member.ctx.loadTeam();
+    const memberValues = firstSelectOptionValues(member.els.get("team-member-view").innerHTML as string);
+
+    const sourceValues = vm.runInContext("TEAM_SHARE_VALUES", admin.ctx);
+    expect(sourceValues.length).toBeGreaterThan(0);
+    expect(adminValues).toEqual(sourceValues);
+    expect(memberValues).toEqual(sourceValues);
+  });
+
+  /** The <label class="team-capture-label" title="..."> that wraps a capture-default
+   *  <select>: its title attribute and its own text (before the nested <span> of the
+   *  select itself) are what a user actually sees/reads on hover. */
+  function firstCaptureLabel(html: string): { title: string; label: string } {
+    const m = html.match(/<label class="team-capture-label" title="([^"]*)">\s*([^<]*)/);
+    return { title: m?.[1] ?? "", label: (m?.[2] ?? "").trim() };
+  }
+
+  it("labels each capture-default control with its own text, not a shared or swapped one", async () => {
+    // teamShareSelect() is one implementation shared by two call sites (Phase 3's whole
+    // point), but "one implementation" is not "one label": teamMemberRow (admin) and
+    // renderTeamMember (member) each pass their OWN title/label strings into it, and
+    // those two strings are legitimately different — the member reads "New captures:"
+    // (team.myDefaultLabel) about their own row, the admin reads "Captures:"
+    // (team.defaultShareLabel) about someone else's. The options-values test above
+    // only proves the two controls share one source list; it forks cleanly if either
+    // caller's label/title is pointed at the wrong key, because nothing else in the
+    // suite reads this attribute or this text. This test pins each caller's label and
+    // title to its own expected string, deliberately not asserting the two match.
+    const admin = adminSetup();
+    await admin.ctx.loadTeam();
+    const adminLabel = firstCaptureLabel(admin.els.get("team-list").innerHTML as string);
+    expect(adminLabel.label).toBe(admin.ctx.t("team.defaultShareLabel"));
+    expect(adminLabel.title).toBe(admin.ctx.t("team.defaultShareTitle"));
+
+    const member = memberSetup();
+    await member.ctx.loadTeam();
+    const memberLabel = firstCaptureLabel(member.els.get("team-member-view").innerHTML as string);
+    expect(memberLabel.label).toBe(member.ctx.t("team.myDefaultLabel"));
+    expect(memberLabel.title).toBe(member.ctx.t("team.myDefaultLabel"));
+  });
+
+  /** A member view wired for POST /team/me/default-share, exercising setMyDefaultShare. */
+  function memberSetupWithDefaultShare(
+    opts: { me?: unknown; defaultShareReply?: () => any } = {},
+  ) {
+    const bodies: any[] = [];
+    const harness = setup(async (url: string, init?: any) => {
+      if (url.endsWith("/team/members")) {
+        return { ok: false, status: 403, json: async () => ({ ok: false, error: "Forbidden" }) };
+      }
+      if (url.endsWith("/team/roster")) {
+        return { ok: true, status: 200, json: async () => ROSTER_OK };
+      }
+      if (url.endsWith("/team/me/default-share")) {
+        bodies.push(JSON.parse(init?.body ?? "{}"));
+        return (
+          opts.defaultShareReply?.() ?? { ok: true, status: 200, json: async () => ({ ok: true }) }
+        );
+      }
+      if (url.endsWith("/team/me")) return { ok: true, status: 200, json: async () => opts.me ?? ME() };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    return { ...harness, bodies };
+  }
+
+  it("posts the member's own default-share change with no id, unlike the admin's", async () => {
+    const { ctx, bodies } = memberSetupWithDefaultShare();
+    await ctx.loadTeam();
+    await ctx.setMyDefaultShare("personal");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toEqual({ default: "personal" });
+    expect(bodies[0]).not.toHaveProperty("id");
+  });
+
+  it("re-renders with the server's resolved default and toasts success", async () => {
+    const { ctx, els, appended } = memberSetupWithDefaultShare({
+      defaultShareReply: () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          default: "personal",
+          defaultShare: "personal",
+          orgDefault: "company",
+          effectiveDefault: "personal",
+        }),
+      }),
+    });
+    await ctx.loadTeam();
+    await ctx.setMyDefaultShare("personal");
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain(ctx.t("home.autoPersonalYours"));
+    expect(appended[appended.length - 1].innerHTML).toContain("Capture default updated");
+  });
+
+  it("reports a failed change through the toast and re-renders with the original value selected", async () => {
+    const { ctx, els, appended } = memberSetupWithDefaultShare({
+      me: ME({ defaultShare: "personal", orgDefault: "company", effectiveDefault: "personal" }),
+      defaultShareReply: () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: "nope" }) }),
+    });
+    await ctx.loadTeam();
+    await ctx.setMyDefaultShare("company");
+    expect(appended[appended.length - 1].innerHTML).toContain("nope");
+    const html = els.get("team-member-view").innerHTML as string;
+    const personalOption = html.match(/<option value="personal"[^>]*>/)?.[0] ?? "";
+    expect(personalOption).toContain(" selected");
+  });
+
+  it("translates the capture-default hint into Italian", async () => {
+    const { ctx, els } = memberSetup();
+    ctx.initI18n("it");
+    await ctx.loadTeam();
+    const html = els.get("team-member-view").innerHTML as string;
+    expect(html).toContain(
+      "Dove finiscono le tue acquisizioni quando non scegli un livello. Puoi comunque decidere per ogni singolo ricordo.",
+    );
+  });
+});
+
+/**
+ * The team-mode switch.
+ *
+ * This is the ONE team control a solo owner must see. Every other team surface
+ * on this screen — the weekly-insights row, the layer pickers, the sharing
+ * actions — is gated on TEAM_MODE, and this one deliberately is not, because
+ * it is how a solo owner turns the feature on in the first place. A gate here
+ * would make the control unreachable exactly when it is needed.
+ */
+describe("team mode switch", () => {
+  /** Renders the admin panel with this roster and this /health answer. */
+  async function panel(members: unknown[], teamMode: boolean) {
+    const h = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ ok: true, you: "u1", members }) }),
+        },
+        { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config: {} }) }) },
+      ]),
+    );
+    vm.runInContext(`TEAM_MODE = ${teamMode}`, h.ctx);
+    await h.ctx.loadTeam();
+    await drain();
+    return h;
+  }
+
+  const OWNER = { userId: "u1", name: "Ada", email: "ada@example.com", role: "admin", suspended: false, privateEntries: 3 };
+  const COLLEAGUE = { userId: "u2", name: "Bob", email: "bob@example.com", role: "member", suspended: false, privateEntries: 1 };
+
+  it("ships visible, unlike every other team-gated row on this screen", () => {
+    const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
+    // The insights row is the control: it ships hidden and is revealed only on
+    // a team brain. Asserting both in one place is what makes the exception a
+    // stated decision rather than an omission.
+    expect(html).toMatch(/id="team-insights-row" style="display: none"/);
+    const at = html.indexOf('id="team-mode-row"');
+    // Explicitly, because slice(-1) on a missing id would leave the assertion
+    // below inspecting one character and passing on a row that is not there.
+    expect(at, "#team-mode-row is not in the markup").toBeGreaterThan(-1);
+    expect(html.slice(at, html.indexOf(">", at))).not.toContain("display: none");
+  });
+
+  it("renders the EFFECTIVE state: two active members show it on and locked", async () => {
+    const { els } = await panel([OWNER, COLLEAGUE], true);
+    const input = els.get("team-mode-toggle");
+    // Seeded false by makeEl(), so `true` here can only come from the render.
+    expect(input.checked).toBe(true);
+    expect(input.disabled).toBe(true);
+    const hint = els.get("team-mode-hint").textContent as string;
+    expect(hint).toContain("2");
+    expect(hint).toMatch(/people/i);
+  });
+
+  it("stays locked on even if /health has not said team yet — the server would refuse the write", async () => {
+    // The drift case, and the ordering case: TEAM_MODE is assigned off GET
+    // /health, which renderTeam does not wait for. Real membership is the thing
+    // PATCH /config refuses on, so it decides the lock.
+    const { els } = await panel([OWNER, COLLEAGUE], false);
+    expect(els.get("team-mode-toggle").checked).toBe(true);
+    expect(els.get("team-mode-toggle").disabled).toBe(true);
+  });
+
+  it("a solo owner gets it in BOTH branches: off and free, or on and still free", async () => {
+    const off = await panel([OWNER], false);
+    expect(off.els.get("team-mode-row").style.display).not.toBe("none");
+    expect(off.els.get("team-mode-toggle").checked).toBe(false);
+    expect(off.els.get("team-mode-toggle").disabled).toBe(false);
+    // The copy that says what turning it on actually does.
+    expect(off.els.get("team-mode-hint").textContent).toMatch(/shared/i);
+    expect(off.els.get("team-mode-hint").textContent).toMatch(/private/i);
+
+    // Same solo roster, switch already on: still visible, still toggleable —
+    // nobody is on the team to lock it.
+    const on = await panel([OWNER], true);
+    expect(on.els.get("team-mode-row").style.display).not.toBe("none");
+    expect(on.els.get("team-mode-toggle").checked).toBe(true);
+    expect(on.els.get("team-mode-toggle").disabled).toBe(false);
+  });
+
+  it("writing PATCHes /config once with exactly that one key, in both directions", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let patchCalls = 0;
+    const { ctx } = setup(
+      jsonFetch([
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: (_u: string, i: any) => {
+            patchCalls++;
+            bodies.push(JSON.parse(i.body));
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+          },
+        },
+        { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config: {} }) }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamMode(true);
+    await ctx.setTeamMode(false);
+    expect(patchCalls).toBe(2);
+    expect(Object.keys(bodies[0])).toEqual(["TEAM_MODE"]);
+    expect(bodies[0]).toEqual({ TEAM_MODE: "on" });
+    expect(bodies[1]).toEqual({ TEAM_MODE: "off" });
+  });
+
+  it("a refused write shows the server's own reason and puts the switch back", async () => {
+    const REFUSAL = "Team mode cannot be turned off while 4 people are still on the team.";
+    const { ctx, els, appended } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ ok: true, you: "u1", members: [OWNER] }) }),
+        },
+        {
+          match: (u, i) => u.endsWith("/config") && i?.method === "PATCH",
+          reply: () => ({ ok: false, status: 400, json: async () => ({ ok: false, error: REFUSAL }) }),
+        },
+        { match: (u) => u.endsWith("/config"), reply: () => ({ ok: true, status: 200, json: async () => ({ config: {} }) }) },
+      ]),
+    );
+    ctx.alert = () => {
+      throw new Error("alert() must not be used");
+    };
+    // Solo roster but the flag is ON: a colleague was added in another tab, so
+    // the server refuses a write this client thought was allowed. Seeding the
+    // flag TRUE is what makes the restore observable — the drag below sets the
+    // checkbox to the OTHER value.
+    vm.runInContext("TEAM_MODE = true", ctx);
+    await ctx.loadTeam();
+    await drain();
+    expect(els.get("team-mode-toggle").checked).toBe(true);
+    // A browser flips a checkbox before onchange fires; the fake DOM does not.
+    els.get("team-mode-toggle").checked = false;
+    await ctx.setTeamMode(false);
+    expect(appended[appended.length - 1].innerHTML).toContain("4 people");
+    expect(els.get("team-mode-toggle").checked).toBe(true); // put back, not left where the drag left it
   });
 });

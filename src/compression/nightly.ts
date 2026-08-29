@@ -76,6 +76,7 @@ export async function runNightlyCompression(
   // The slice clause goes last in the WHERE so its placeholder binds after the
   // eligibility cutoff.
   const sliceSql = workspaceId != null ? `\n      AND entries.workspace_id = ?` : "";
+  // scope-exempt: cron: nightly compression, narrowed by the workspace slice in sliceSql
   const { results } = await env.DB.prepare(`
     SELECT value as tag, COUNT(*) as count
     FROM entries, json_each(entries.tags)

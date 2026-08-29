@@ -142,14 +142,13 @@ async function bootstrap(env: Env): Promise<TenantRoots> {
     env.DB.prepare(`UPDATE edges SET workspace_id = ? WHERE workspace_id = ''`).bind(owner.personalWorkspaceId),
   );
 
-  // batch() costs one subrequest for the whole set. The sequential fallback is
-  // for environments without it (minimal test doubles); production D1 always
-  // has it, so the fallback never runs there.
-  if (typeof (env.DB as { batch?: unknown }).batch === "function") {
-    await env.DB.batch(statements);
-  } else {
-    for (const statement of statements) await statement.run();
-  }
+  // One subrequest for the whole set, however many statements it carries — the
+  // reason every write path in src/ batches. Called unconditionally: batch() is
+  // non-optional on D1Database, and miniflare and wrangler dev both implement
+  // it, so a `typeof env.DB.batch === "function"` guard here would only tell the
+  // next reader it is optional and invite a second fallback somewhere it
+  // matters.
+  await env.DB.batch(statements);
   return {
     companyWorkspaceId: companyId,
     ownerUserId: owner.userId,

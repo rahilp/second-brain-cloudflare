@@ -93,6 +93,12 @@ export const DIGEST_MAX_TOKENS = 400;
 export const VECTORIZE_FIX_HINT =
   "run `npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine`, or grant the build token Vectorize Edit and redeploy";
 
+// Durable marker written once, by src/recall/search.ts and src/capture/duplicate.ts,
+// the first time this isolate's workspace-filter latch (src/vectorize/scope.ts)
+// trips to unsupported. GET /health reads it back so the signal survives isolate
+// churn — the in-memory latch alone would look healthy again on every cold start.
+export const VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY = "vectorize:workspace-filter-unsupported";
+
 export const VECTORIZE_TOP_K_MULTIPLIER = 3;
 // getByIds batch size for tag-scoped recall — Vectorize rejects more than 20 IDs
 // per call (VECTOR_GET_ERROR, code 40007)

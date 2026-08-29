@@ -148,6 +148,13 @@ describe("integrationStatus", () => {
       lastSyncError: null,
       itemCount: 0,
       category: "knowledge",
+      // Provenance, additive: every key above keeps its name and value. A
+      // provider nobody has connected has no actor and no connect time, and
+      // reads as the personal mirror layer because that is what the write path
+      // would do with an absent config.
+      mirrorWorkspace: "personal",
+      connectedByUserId: null,
+      connectedAt: null,
     });
   });
 

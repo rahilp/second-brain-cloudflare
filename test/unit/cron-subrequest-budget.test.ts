@@ -22,7 +22,8 @@ import { D1Mock } from "../helpers/d1-mock";
 import type { Env } from "../../src/env";
 import { INTEGRATION_SYNC_CRON } from "../../src/integrations/mirror";
 import { INTEGRATION_PROVIDERS } from "../../src/integrations";
-import { INSIGHT_ACCRUAL_CRON, INSIGHT_WEEKLY_CRON } from "../../src/insight/schedule";
+import { INSIGHT_ACCRUAL_CRON, INSIGHT_TEAM_WEEKLY_CRON, INSIGHT_WEEKLY_CRON } from "../../src/insight/schedule";
+import { CONFIG_KEY } from "../../src/config";
 import { ACCRUAL_CURSOR_KEY } from "../../src/insight/candidates";
 
 const FREE_PLAN_SUBREQUESTS = 50;
@@ -495,6 +496,34 @@ describe("nightly cron D1 subrequest cost", () => {
       // "routed nowhere" apart from "routed correctly to a job with nothing
       // pending."
       expect(prepared.some(s => s.includes("FROM insight_candidates"))).toBe(true);
+    });
+
+    // The fifth trigger (spec 4.5). Its gating, its solo-brain behaviour and
+    // what it writes are covered end to end in
+    // test/integration/team-insight-schedule.test.ts; what belongs HERE is the
+    // same fact this describe asserts about the other four — that the cron is
+    // routed at all, and that routing it did not also re-run maintenance.
+    // Every trigger added to wrangler.jsonc needs a case in both places.
+    it("does not run the maintenance jobs on the team insight schedule", async () => {
+      const db = makeTestDb();
+      const old = Date.now() - STALENESS_AGE_MS - 86400000;
+      db.entries.push({
+        id: "job", content: "Bob works at Example Inc", tags: "[]",
+        source: "api", created_at: old, updated_at: old, vector_ids: "[]",
+      });
+      const kv = makeMemoryKV();
+      // The branch is off by default, and an off branch returns before it
+      // touches D1 — which would leave "routed nowhere" and "routed correctly"
+      // indistinguishable here. On, the company-workspace read is its first
+      // statement and therefore the positive signal.
+      await kv.put(CONFIG_KEY, JSON.stringify({ TEAM_INSIGHTS: "on" }));
+      const { env, prepared } = countingEnv(db, { OAUTH_KV: kv });
+
+      await runCron(env, INSIGHT_TEAM_WEEKLY_CRON);
+
+      const tags: string[] = JSON.parse(db.entries.find(e => e.id === "job")!.tags);
+      expect(tags).not.toContain("stale:as-of");
+      expect(prepared.some(s => s.includes("FROM workspaces WHERE kind = 'company'"))).toBe(true);
     });
   });
 });

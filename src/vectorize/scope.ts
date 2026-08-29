@@ -42,12 +42,45 @@ type Queryable = {
  */
 let workspaceFiltersSupported: boolean | null = null;
 
+// Counts every unfiltered query this isolate has served — not just the one
+// that discovered the rejection — so the health signal reflects ongoing
+// result-quality exposure, not a one-time event.
+let degradedQueryCount = 0;
+
+// Separate from workspaceFiltersSupported so the "fire onDegrade once" check
+// is a plain boolean read-then-set with no re-derivation from the latch — two
+// concurrent in-flight queries can both reach the catch block before either
+// has written the latch (no `await` sits between reading and setting this
+// flag, so the check-and-set itself cannot interleave).
+//
+// It means "the degradation has been REPORTED", not "the degradation has been
+// discovered" — the latch above is what records discovery. The two are not the
+// same event: not every caller can report. A system pass has no request to hang
+// a waitUntil off and so supplies no handler, and if its discovery set this flag
+// it would write no marker AND silence every later recall and capture that could
+// have written one. So this is set only by a caller that actually had somewhere
+// to report to.
+let degradeNotified = false;
+
+/** Current filter support state for this isolate. Read by GET /health. */
+export function vectorizeFilterState(): { supported: boolean | null; degradedQueries: number } {
+  return { supported: workspaceFiltersSupported, degradedQueries: degradedQueryCount };
+}
+
+/** Test-only: clears the latch and counter, mirroring resetDatabaseInit's role. */
+export function resetVectorizeFilterState(): void {
+  workspaceFiltersSupported = null;
+  degradedQueryCount = 0;
+  degradeNotified = false;
+}
+
 export async function queryVectorizeScoped<M = unknown>(
   vectorize: Queryable,
   values: number[],
-  opts: { topK: number; filter: VectorizeWorkspaceFilter["filter"] },
+  opts: { topK: number; filter: VectorizeWorkspaceFilter["filter"]; onDegrade?: () => void },
 ): Promise<{ matches: M[]; degraded: boolean }> {
   const unfiltered = async (): Promise<{ matches: M[]; degraded: boolean }> => {
+    degradedQueryCount++;
     const result = await vectorize.query(values, {
       topK: opts.topK,
       returnMetadata: "all",
@@ -56,7 +89,23 @@ export async function queryVectorizeScoped<M = unknown>(
     return { matches: (result?.matches ?? []) as M[], degraded: true };
   };
 
-  if (workspaceFiltersSupported === false) return unfiltered();
+  // Reports the degradation to the first caller that can actually record it,
+  // whenever that caller arrives — which is not necessarily the one that
+  // discovered it. Sync read-then-set, so the interleaving argument above still
+  // holds.
+  const notifyOnce = (): void => {
+    if (degradeNotified || !opts.onDegrade) return;
+    degradeNotified = true;
+    opts.onDegrade();
+  };
+
+  // Already known to be unsupported. The filtered query is not re-attempted, so
+  // this is the only place a later handler-bearing caller can be asked to record
+  // what an earlier handler-less one found.
+  if (workspaceFiltersSupported === false) {
+    notifyOnce();
+    return unfiltered();
+  }
   try {
     const result = await vectorize.query(values, {
       topK: opts.topK,
@@ -70,6 +119,10 @@ export async function queryVectorizeScoped<M = unknown>(
     if (!/filter/i.test(String(e))) throw e;
     console.error("Vectorize rejected the workspace filter (falling back to unfiltered queries for this isolate):", e);
     workspaceFiltersSupported = false;
+    // Fire the durable-marker callback only once per isolate, so a deployment
+    // pays for this discovery exactly once — but on the first caller that can
+    // report it rather than the first that hits it.
+    notifyOnce();
     return unfiltered();
   }
 }

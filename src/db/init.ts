@@ -105,6 +105,24 @@ const SCHEMA_OBJECTS: Record<string, string> = {
   memberships: `CREATE TABLE IF NOT EXISTS memberships (user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', created_at INTEGER NOT NULL, PRIMARY KEY (user_id, workspace_id))`,
   entry_events: `CREATE TABLE IF NOT EXISTS entry_events (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, actor_id TEXT NOT NULL DEFAULT '', event TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)`,
   idx_entry_events_entry: `CREATE INDEX IF NOT EXISTS idx_entry_events_entry ON entry_events(entry_id, created_at DESC)`,
+  // The compliance feed (GET /team/activity) reads this table the other way
+  // round: the whole trail ordered by created_at, with no entry_id to give the
+  // index above a leading column to seek on. Without this, SQLite scans
+  // entry_events and builds a temp b-tree over all of it to return fifty rows —
+  // measured at 200k events on real SQLite, 40ms and a full sort against 3ms
+  // and a last-term sort. entry_events is the busiest table in the schema
+  // (a row per capture, edit, append, delete and status change), so this is the
+  // one audit table where the scan actually grows. admin_events has carried the
+  // same index since it shipped; this is the pair completing.
+  //
+  // In SCHEMA_OBJECTS rather than POST_COLUMN_OBJECTS deliberately: created_at
+  // is in entry_events' original CREATE, so it is present on every brain that
+  // has the table at all and there is no ALTER to sequence behind.
+  idx_entry_events_created: `CREATE INDEX IF NOT EXISTS idx_entry_events_created ON entry_events(created_at DESC)`,
+  // Immutable administration audit trail. Same contract as entry_events:
+  // application code only ever INSERTs here. Consumed by Phase 4.2.
+  admin_events: `CREATE TABLE IF NOT EXISTS admin_events (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL DEFAULT '', target_user_id TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT '', event TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)`,
+  idx_admin_events_created: `CREATE INDEX IF NOT EXISTS idx_admin_events_created ON admin_events(created_at DESC)`,
   // Single-row table driving the nightly round-robin over workspaces.
   maintenance_cursor: `CREATE TABLE IF NOT EXISTS maintenance_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), workspace_id TEXT NOT NULL DEFAULT '', advanced_at INTEGER NOT NULL DEFAULT 0)`,
 };
@@ -160,6 +178,38 @@ const USERS_COLUMNS: Record<string, string> = {
   // Soft offboarding timestamp. Identity and actor-label lookups ignore rows
   // where this is set; company entries keep actor_id as history.
   removed_at: `ALTER TABLE users ADD COLUMN removed_at INTEGER`,
+  // When this member's token last resolved an identity, throttled to at most one
+  // write per user per hour (see LAST_USED_THROTTLE_MS in src/lib/identity.ts).
+  // Nullable and deliberately NOT backfilled, for the same reason as updated_at
+  // above: there is no value to backfill it TO. "Never seen since the column
+  // shipped" and "seen at some unknown time before it shipped" are the same fact
+  // to every reader, and inventing a timestamp would cost one row written per
+  // user to make the roster say something untrue. NULL renders as "Never used".
+  last_used_at: `ALTER TABLE users ADD COLUMN last_used_at INTEGER`,
+};
+
+/**
+ * Columns added to `admin_events` after the table shipped.
+ *
+ * The trail shipped as (id, actor_id, event, payload, created_at) and gained its two
+ * subject columns a release later, so a brain that wrote a single administration event
+ * before that release has the narrow table and never gets the wide one from the
+ * `CREATE TABLE IF NOT EXISTS` above. Nothing surfaces that on its own: adminAuditEvent
+ * (src/lib/admin-audit.ts) binds all seven columns under ctx.waitUntil and ends in
+ * .catch(console.error) by contract — an audit write must never fail the administration
+ * action it records — so on such a brain every INSERT fails silently and the trail simply
+ * stops. The two parity tests cannot see it either; they compare db/schema.sql with this
+ * file, and those agree. test/unit/schema-upgrade-completeness.test.ts is the guard that
+ * can: it asks what an EXISTING database ends up with, per table.
+ *
+ * '' rather than NULL matches the writer, which sends '' for an event with no target
+ * user (team_renamed) or no workspace (member_created), and matches what the ALTER
+ * itself writes into the rows already in the trail — so an old row and a new one with
+ * no subject read identically. No backfill: '' is already the right value everywhere.
+ */
+const ADMIN_EVENTS_COLUMNS: Record<string, string> = {
+  target_user_id: `ALTER TABLE admin_events ADD COLUMN target_user_id TEXT NOT NULL DEFAULT ''`,
+  workspace_id: `ALTER TABLE admin_events ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`,
 };
 
 /**
@@ -202,7 +252,8 @@ const PROBE_SQL =
   `SELECT type AS kind, name FROM sqlite_master WHERE type IN ('table','index') ` +
   `UNION ALL SELECT 'column' AS kind, name FROM pragma_table_info('entries')` +
   `UNION ALL SELECT 'edge_column' AS kind, name FROM pragma_table_info('edges')` +
-  `UNION ALL SELECT 'user_column' AS kind, name FROM pragma_table_info('users')`;
+  `UNION ALL SELECT 'user_column' AS kind, name FROM pragma_table_info('users')` +
+  `UNION ALL SELECT 'admin_event_column' AS kind, name FROM pragma_table_info('admin_events')`;
 
 type ObjectKind = "table" | "index";
 /**
@@ -211,7 +262,7 @@ type ObjectKind = "table" | "index";
  * the name alone would let a user table called `idx_entries_source` stand in for the index,
  * which resolves init successfully and silently never creates it.
  */
-type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string>; edgeColumns: Set<string>; userColumns: Set<string> };
+type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string>; edgeColumns: Set<string>; userColumns: Set<string>; adminEventColumns: Set<string> };
 
 /** Which kind of object a CREATE statement makes, so the probe can be asked about it. */
 const kindOf = (ddl: string): ObjectKind => (ddl.startsWith("CREATE TABLE") ? "table" : "index");
@@ -248,14 +299,16 @@ async function probeSchema(env: Env): Promise<ExistingSchema | null> {
   const columns = new Set<string>();
   const edgeColumns = new Set<string>();
   const userColumns = new Set<string>();
+  const adminEventColumns = new Set<string>();
   for (const row of rows as { kind?: unknown; name?: unknown }[]) {
     if (typeof row?.name !== "string") continue;
     if (row.kind === "column") columns.add(row.name);
     else if (row.kind === "edge_column") edgeColumns.add(row.name);
     else if (row.kind === "user_column") userColumns.add(row.name);
+    else if (row.kind === "admin_event_column") adminEventColumns.add(row.name);
     else if (row.kind === "table" || row.kind === "index") objects.set(row.name, row.kind);
   }
-  return { objects, columns, edgeColumns, userColumns };
+  return { objects, columns, edgeColumns, userColumns, adminEventColumns };
 }
 
 /**
@@ -306,6 +359,14 @@ async function applySchema(env: Env): Promise<void> {
   }
   for (const [column, ddl] of Object.entries(USERS_COLUMNS)) {
     if (existing?.userColumns.has(column)) continue;
+    try {
+      await env.DB.exec(ddl);
+    } catch (e) {
+      if (!isDuplicateColumn(e)) throw e;
+    }
+  }
+  for (const [column, ddl] of Object.entries(ADMIN_EVENTS_COLUMNS)) {
+    if (existing?.adminEventColumns.has(column)) continue;
     try {
       await env.DB.exec(ddl);
     } catch (e) {

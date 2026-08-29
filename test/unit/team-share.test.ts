@@ -171,4 +171,173 @@ describe("share semantics", () => {
     expect(event?.entry_id).toBe(id!);
     expect(event?.actor_id).toBe(roots.ownerUserId);
   });
+
+  it("moves the D1 row even when vector_ids is malformed, and returns an empty vectorIds rather than throwing", async () => {
+    const { env } = await makeEnv();
+    const roots = await ensureTenantBootstrap(env);
+    const owner = {
+      userId: roots.ownerUserId,
+      role: "admin" as const,
+      personalWorkspaceId: roots.ownerPersonalWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
+      defaultShare: "" as const,
+    };
+    // Unreachable via captureEntry (vector_ids is NOT NULL DEFAULT '[]' and
+    // always written as a JSON array) — this simulates a corrupted row
+    // directly, the case the try/catch around the parse exists for.
+    await env.DB.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id) VALUES (?, ?, '[]', 'api', ?, 'not-json', ?, ?)`
+    ).bind("bad-vec-entry", "entry with a corrupted vector_ids column", Date.now(), owner.personalWorkspaceId, owner.userId).run();
+
+    const result = await moveEntry("bad-vec-entry", "company", env, owner);
+    expect(result.status).toBe("shared");
+    if (result.status === "shared") expect(result.vectorIds).toEqual([]);
+
+    const row = await env.DB.prepare(`SELECT workspace_id FROM entries WHERE id = ?`).bind("bad-vec-entry").first<{ workspace_id: string }>();
+    expect(row?.workspace_id).toBe(roots.companyWorkspaceId);
+  });
+});
+
+/**
+ * Task 15a. `edges.workspace_id` is denormalized from the entry, so a share has
+ * to carry every edge the entry is an endpoint of — and `edgeInsertStatement`
+ * REORDERS a symmetric pair lexically, so which endpoint column the moved entry
+ * occupies is decided by its id, not by who linked what.
+ *
+ * Re-stamping `WHERE source_id = ?` alone therefore moved an X<->Y `relates_to`
+ * edge only when `X < Y`. On the other half of the ids the entry moved to the
+ * company layer and its edge stayed behind in the sharer's personal workspace,
+ * pointing at a row that is no longer there.
+ *
+ * Both orderings are asserted below, from ids chosen for their sort order rather
+ * than generated — a test that happened to draw `X < Y` passes against the
+ * unfixed code and proves nothing.
+ */
+describe("a share carries every edge the entry is an endpoint of", () => {
+  async function ownerBrain() {
+    const { env, ctx } = await makeEnv();
+    const roots = await ensureTenantBootstrap(env);
+    const owner = {
+      userId: roots.ownerUserId,
+      role: "admin" as const,
+      personalWorkspaceId: roots.ownerPersonalWorkspaceId,
+      companyWorkspaceIds: [roots.companyWorkspaceId],
+      defaultShare: "" as const,
+    };
+    const put = async (id: string, content: string) => {
+      await env.DB.prepare(
+        `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id)
+         VALUES (?, ?, '[]', 'api', ?, ?, '[]', ?, ?)`,
+      ).bind(id, content, Date.now(), Date.now(), owner.personalWorkspaceId, owner.userId).run();
+    };
+    const edgeRow = async (edgeId: string) => await env.DB
+      .prepare(`SELECT source_id, target_id, workspace_id FROM edges WHERE id = ?`)
+      .bind(edgeId)
+      .first<{ source_id: string; target_id: string; workspace_id: string }>();
+    return { env, ctx, roots, owner, put, edgeRow };
+  }
+
+  // The half that already worked. Kept so the fix is shown to be a widening of
+  // the re-stamp and not a swap of one broken half for the other.
+  it("follows a symmetric edge when the shared entry sorts FIRST", async () => {
+    const { env, roots, owner, put, edgeRow } = await ownerBrain();
+    await put("aaa-shared", "Owner: the pricing decision");
+    await put("zzz-other", "Owner: the note that explains it");
+    // Stored exactly as edgeInsertStatement would: min(id) in source_id.
+    await env.DB.prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+       VALUES ('sym-first', 'aaa-shared', 'zzz-other', 'relates_to', 0.5, 'explicit', '{}', 1, 1, ?)`,
+    ).bind(owner.personalWorkspaceId).run();
+
+    expect((await moveEntry("aaa-shared", "company", env, owner)).status).toBe("shared");
+
+    expect(await edgeRow("sym-first")).toEqual({
+      source_id: "aaa-shared",
+      target_id: "zzz-other",
+      workspace_id: roots.companyWorkspaceId,
+    });
+  });
+
+  it("follows a symmetric edge when the shared entry sorts SECOND", async () => {
+    const { env, roots, owner, put, edgeRow } = await ownerBrain();
+    await put("aaa-other", "Owner: the note that explains it");
+    await put("zzz-shared", "Owner: the pricing decision");
+    // The same link, the same two entries — only the ids sort the other way, so
+    // the lexical reorder puts the entry being shared in target_id.
+    await env.DB.prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+       VALUES ('sym-second', 'aaa-other', 'zzz-shared', 'relates_to', 0.5, 'explicit', '{}', 1, 1, ?)`,
+    ).bind(owner.personalWorkspaceId).run();
+
+    expect((await moveEntry("zzz-shared", "company", env, owner)).status).toBe("shared");
+
+    // Endpoints untouched: only the layer changed.
+    expect(await edgeRow("sym-second")).toEqual({
+      source_id: "aaa-other",
+      target_id: "zzz-shared",
+      workspace_id: roots.companyWorkspaceId,
+    });
+  });
+
+  it("keeps an asymmetric edge pointing the way it was written", async () => {
+    // `supersedes` is directed, so edgeInsertStatement never reorders it and the
+    // shared entry can legitimately be the TARGET. Direction is meaning here —
+    // "the draft supersedes the decision" is not the claim — so the fix must
+    // change workspace_id and nothing else.
+    const { env, roots, owner, put, edgeRow } = await ownerBrain();
+    await put("zzz-superseder", "Owner: the corrected fact");
+    await put("aaa-shared", "Owner: the fact it corrected");
+    await env.DB.prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+       VALUES ('asym', 'zzz-superseder', 'aaa-shared', 'supersedes', 1.0, 'system', '{}', 1, 1, ?)`,
+    ).bind(owner.personalWorkspaceId).run();
+
+    expect((await moveEntry("aaa-shared", "company", env, owner)).status).toBe("shared");
+
+    expect(await edgeRow("asym")).toEqual({
+      source_id: "zzz-superseder",
+      target_id: "aaa-shared",
+      workspace_id: roots.companyWorkspaceId,
+    });
+  });
+
+  it("leaves an edge the entry is not an endpoint of alone", async () => {
+    // The re-stamp widened from source_id to either endpoint, not to the table.
+    const { env, owner, put, edgeRow } = await ownerBrain();
+    await put("zzz-shared", "Owner: the pricing decision");
+    await put("aaa-one", "Owner: unrelated one");
+    await put("bbb-two", "Owner: unrelated two");
+    await env.DB.prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+       VALUES ('bystander', 'aaa-one', 'bbb-two', 'relates_to', 0.5, 'explicit', '{}', 1, 1, ?)`,
+    ).bind(owner.personalWorkspaceId).run();
+
+    await moveEntry("zzz-shared", "company", env, owner);
+
+    expect((await edgeRow("bystander"))?.workspace_id).toBe(owner.personalWorkspaceId);
+  });
+
+  it("returns the edge to the personal layer when the entry is un-shared again", async () => {
+    // The round trip, which is where a half-fixed re-stamp would show up as an
+    // edge stranded in the company layer after the entry came back. Both
+    // endpoints' columns are asserted, so the un-share is shown not to have
+    // rewritten them either.
+    const { env, roots, owner, put, edgeRow } = await ownerBrain();
+    await put("zzz-solo", "Solo: the decision");
+    await put("aaa-solo", "Solo: the reason");
+    await env.DB.prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, workspace_id)
+       VALUES ('solo', 'aaa-solo', 'zzz-solo', 'relates_to', 0.5, 'explicit', '{}', 1, 1, ?)`,
+    ).bind(owner.personalWorkspaceId).run();
+
+    await moveEntry("zzz-solo", "company", env, owner);
+    expect((await edgeRow("solo"))?.workspace_id).toBe(roots.companyWorkspaceId);
+
+    await moveEntry("zzz-solo", "personal", env, owner);
+    expect(await edgeRow("solo")).toEqual({
+      source_id: "aaa-solo",
+      target_id: "zzz-solo",
+      workspace_id: owner.personalWorkspaceId,
+    });
+  });
 });

@@ -4,12 +4,13 @@ import {
   KEYWORD_MAX_TOKENS,
   VECTORIZE_GET_BY_IDS_BATCH,
   VECTORIZE_TOP_K_MULTIPLIER,
+  VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY,
 } from "../constants";
 import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
 import type { Identity } from "../lib/identity";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
-import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhere } from "../lib/scope";
 import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -199,6 +200,7 @@ export async function recallEntries(
     // caused in compressTag — but `?tag=%` silently defeats the filter entirely and
     // returns the whole brain, which is not a recoverable-looking answer either.
     const tagScopeSql = scope ? ` AND ${scope.clause}` : "";
+    // scope-checked: the caller's clause IS applied — tagScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), which is the pre-v3 whole-corpus tag scan
     const { results: tagRows } = await env.DB.prepare(
       `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}${tagScopeSql}`
     ).bind(tagLikePattern(tag), ...(scope?.bindings ?? [])).all();
@@ -235,11 +237,19 @@ export async function recallEntries(
     // unfiltered if Vectorize rejects the filter; hydration below is scoped at
     // the SQL layer either way, so correctness never rides on this.
     const wsFilter = identity ? workspaceFilter(identity, internal.workspaceFilter)?.filter : undefined;
+    // env-free code (src/vectorize/scope.ts) cannot reach KV itself, so the
+    // caller hands it this callback. It fires at most once per isolate — see
+    // queryVectorizeScoped's own transition guard — so it cannot move
+    // recall-free-tier-budget, which never rejects a filter.
+    const onDegrade = () => ctx.waitUntil(
+      env.OAUTH_KV.put(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY, String(Date.now()))
+        .catch((e: unknown) => console.error("Vectorize filter-degradation marker write failed (non-fatal):", e)),
+    );
     const denseQuery = async (): Promise<{ matches: VectorizeMatch[] }> => {
       try {
         if (wsFilter) {
           const { matches } = await queryVectorizeScoped<VectorizeMatch>(
-            env.VECTORIZE, values, { topK: vectorizeTopK, filter: wsFilter },
+            env.VECTORIZE, values, { topK: vectorizeTopK, filter: wsFilter, onDegrade },
           );
           return { matches };
         }
@@ -264,7 +274,7 @@ export async function recallEntries(
       try {
         if (wsFilter) {
           const { matches } = await queryVectorizeScoped<VectorizeMatch>(
-            env.VECTORIZE, values, { topK: 50, filter: wsFilter },
+            env.VECTORIZE, values, { topK: 50, filter: wsFilter, onDegrade },
           );
           results = { matches };
         } else {
@@ -312,6 +322,7 @@ export async function recallEntries(
   for (let i = 0; i < candidateIds.length; i += rcBatchSize) {
     const batch = candidateIds.slice(i, i + rcBatchSize);
     const rcPlaceholders = batch.map(() => "?").join(", ");
+    // scope-checked: the caller's clause IS applied — rcScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results: rows } = await env.DB.prepare(
       `SELECT ${candidateSignalProjection} FROM entries WHERE id IN (${rcPlaceholders})${rcScopeSql}`
     ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: CandidateSignalRow[] };
@@ -407,6 +418,7 @@ export async function recallEntries(
     const batch = allParentIds.slice(i, i + idBatchSize);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
+      // scope-checked: the caller's clause IS applied — d1Filters is built from scope.clause above and appended here; the lexer cannot see into a JS-assembled fragment
       `SELECT id, content, tags, source, created_at, updated_at, workspace_id, actor_id FROM entries WHERE id IN (${placeholders})${d1Filters}`
     ).bind(...batch, ...filterBindings).all() as { results: Record<string, any>[] };
     d1Rows.push(...results);
@@ -417,10 +429,6 @@ export async function recallEntries(
   // ids: personal and company map to themselves, anything else ('' legacy rows,
   // system insights) reads as "system". Clients use this to offer share/unshare
   // and to badge results.
-  const layerOf = (wid: unknown): "personal" | "company" | "system" =>
-    wid === identity?.personalWorkspaceId ? "personal"
-    : identity && isCompanyWorkspace(identity, wid) ? "company"
-    : "system";
   const candidateSignalById = new Map(rcRows.map(row => [row.id, row]));
   markStage("finalHydration");
 
@@ -439,7 +447,7 @@ export async function recallEntries(
       source: row.source as string,
       isUpdate: !!meta?.isUpdate,
       hop: 0,
-      workspace: layerOf(row.workspace_id),
+      workspace: layerOf(identity, row.workspace_id),
       staleAsOf: hasStaleAsOf(JSON.parse(row.tags ?? "[]")),
     }];
   }).sort((a, b) => b.score - a.score);
@@ -499,7 +507,7 @@ export async function recallEntries(
         source: row.source as string,
         isUpdate: false,
         hop: e.hop,
-        workspace: layerOf(row.workspace_id),
+        workspace: layerOf(identity, row.workspace_id),
         staleAsOf: hasStaleAsOf(JSON.parse(row.tags ?? "[]")),
         viaProvenance: e.viaProvenance,
         viaType: e.viaType,
@@ -571,7 +579,7 @@ export async function recallEntries(
         source: row.source as string,
         isUpdate: false,
         hop: 0,
-        workspace: layerOf((row as Record<string, unknown>).workspace_id),
+        workspace: layerOf(identity, (row as Record<string, unknown>).workspace_id),
         staleAsOf: hasStaleAsOf(rowTags),
       };
       matchById.set(match.id, match);

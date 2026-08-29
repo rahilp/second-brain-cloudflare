@@ -20,9 +20,12 @@ function showToast(message, opts = {}) {
   el.classList.add('visible')
   const btn = el.querySelector('.app-toast-action')
   if (btn && onAction) {
+    // Returned, not dropped: the action can be async and can fail, and its
+    // caller — or a test — needs something to wait on. A promise is truthy, so
+    // this does not suppress the click the way returning false would.
     btn.onclick = () => {
       el.classList.remove('visible')
-      onAction()
+      return onAction()
     }
   }
   toastTimer = setTimeout(() => el.classList.remove('visible'), duration)

@@ -135,6 +135,7 @@ export async function estimate(
   env: Env,
 ): Promise<{ entries: number; chunks: number }> {
   const row = (await env.DB.prepare(
+    // scope-exempt: one-time re-embed migration: admin-triggered, deployment-wide, returns counts only
     `SELECT COUNT(*) AS entries,
             COALESCE(SUM(MAX(1, (LENGTH(content) + ${
               CHUNK_STRIDE - 1
@@ -168,7 +169,8 @@ function pageSql(hasCursor: boolean): string {
   const after = hasCursor
     ? `AND (created_at > ? OR (created_at = ? AND id > ?))`
     : "";
-  return `SELECT id, content, tags, source, created_at
+  // scope-exempt: one-time re-embed migration: admin-triggered and deployment-wide; the rows it selects go to the embedder, and only counts reach the response
+  return `SELECT id, content, tags, source, created_at, workspace_id, actor_id
             FROM entries
            WHERE ${NOT_DEPRECATED} ${after}
            ORDER BY created_at ASC, id ASC
@@ -182,7 +184,9 @@ async function countRemaining(
 ): Promise<number> {
   const sql =
     cursorCreatedAt === null
+      // scope-exempt: one-time re-embed migration: count only
       ? `SELECT COUNT(*) AS count FROM entries WHERE ${NOT_DEPRECATED}`
+      // scope-exempt: one-time re-embed migration: count only
       : `SELECT COUNT(*) AS count FROM entries WHERE ${NOT_DEPRECATED}
            AND (created_at > ? OR (created_at = ? AND id > ?))`;
   const stmt =
@@ -288,6 +292,9 @@ export async function runBatch(
     chunkBudget -= cost;
 
     try {
+      // Cron path, no request identity: the context comes from the row being
+      // repaired, not the caller, so a re-embed can never relocate an entry
+      // between workspaces.
       await storeEntry(
         env,
         row.id as string,
@@ -296,6 +303,7 @@ export async function runBatch(
         row.source as string,
         row.created_at as number,
         config,
+        { workspaceId: row.workspace_id as string, actorId: row.actor_id as string },
       );
       processed++;
       // Only advance past entries that actually succeeded. A failed entry stays

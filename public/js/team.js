@@ -9,11 +9,27 @@
 
 let teamMembers = []
 let teamYouId = null
+/**
+ * The probe's answer to "is whoever holds this bearer token an admin?" — true,
+ * false, or null while it has not been asked. Nothing on this screen branches
+ * on it (the screen's three states come from which fetch succeeded); it exists
+ * so js/activity.js can decline to request an admin-only feed on a member's
+ * behalf. Null is deliberately not false: an unanswered probe must not be able
+ * to hide an admin's own activity log.
+ */
+let teamIsAdmin = null
+/** GET /team/roster's members — names and roles only. The member view's list. */
+let teamRoster = []
+/** GET /team/roster's teams, same shape as teamWorkspaces but for a member. */
+let teamRosterTeams = []
+/** { defaultShare, orgDefault, effectiveDefault } from GET /team/me, or null. */
+let teamMyDefault = null
 /** The caller's teams, oldest first — [0] is the one "share with the team" means. */
 let teamWorkspaces = []
-// The plaintext token the server hands back exactly once. Dropped the moment
-// the reveal is dismissed — after that, rotation is the only way back.
-let lastTeamToken = ''
+// The plaintext token the server hands back exactly once, plus who it is for.
+// The token is dropped the moment the reveal is dismissed — after that,
+// rotation is the only way back.
+let lastTeamInvite = { name: '', email: '', token: '' }
 
 /**
  * The team's name, for everyone.
@@ -88,9 +104,15 @@ function setTeamNavVisible(visible) {
 }
 
 /**
- * Fetch the roster and decide, from how that goes, whether this user ever
- * sees the Team tab. Runs at connect time and again on every visit to the
+ * Fetch the roster and decide, from how that goes, which of the screen's three
+ * states this user gets. Runs at connect time and again on every visit to the
  * screen, because suspensions and rotations can happen while the window sits.
+ *
+ * The admin probe stays first and stays exactly as it was: an admin makes ONE
+ * request and /team/members is both their answer and their data. Only a caller
+ * it refuses pays for a second call, and /team/roster is the endpoint that can
+ * tell the three refusals apart — 403-because-not-an-admin has a screen now,
+ * 401 and unreachable still do not.
  */
 async function loadTeam() {
   if (!WORKER_URL || !AUTH_TOKEN) return
@@ -103,21 +125,161 @@ async function loadTeam() {
     if (!data.ok || !Array.isArray(data.members)) throw new Error(t('common.invalidResponse'))
     teamMembers = data.members
     teamYouId = data.you ?? null
+    // 200 from an endpoint behind requireAdmin IS the answer.
+    teamIsAdmin = true
     setTeamNavVisible(true)
     renderTeam()
   } catch {
-    // 401 (signed out), 403 (not an admin) and unreachable servers all land
-    // here, and all mean the same thing: quietly stand down.
+    await loadTeamMemberView()
+  }
+}
+
+/**
+ * The member's half of the screen.
+ *
+ * /team/roster is identity-scoped (requireIdentity, not requireAdmin), so a
+ * signed-in member gets 200 here after the admin probe gave them 403. Anything
+ * else — 401 from a token that no longer resolves, 404 from a Worker older than
+ * this endpoint, a network failure — leaves the screen where it was: hidden nav,
+ * quiet notice, nothing claimed.
+ *
+ * `admin` in the response is the caller's OWN role, so it needs no third probe
+ * to be trusted. Reaching here having been told yes means /team/members failed
+ * for some reason other than permission, and a member view is the wrong answer
+ * for an admin — so that stands down too.
+ */
+async function loadTeamMemberView() {
+  try {
+    const res = await fetch(`${WORKER_URL}/team/roster`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    if (!data.ok || !Array.isArray(data.members)) throw new Error(t('common.invalidResponse'))
+    // The caller's OWN role, from an identity-scoped endpoint, so it is the
+    // answer either way — including on the path that stands this view down.
+    teamIsAdmin = !!data.admin
+    if (data.admin) throw new Error('admin')
+    teamRoster = data.members
+    teamRosterTeams = Array.isArray(data.teams) ? data.teams : []
+    teamYouId = data.you ?? null
+    await loadMyCaptureDefault()
+    setTeamNavVisible(true)
+    renderTeamMember()
+  } catch {
     setTeamNavVisible(false)
     renderTeamAdminsOnly()
   }
 }
 
+/**
+ * Where this member's next capture lands, straight from the server.
+ *
+ * The same GET /team/me the composer hint reads (js/home.js), fetched again
+ * rather than shared: the composer's copy is loaded on a /health reveal that
+ * this screen does not wait for, and a Team screen showing a policy from
+ * whenever the window was opened is worse than one round trip.
+ *
+ * A failure leaves it null and the readout is omitted entirely — a guessed
+ * default is the one thing this section must never show.
+ */
+async function loadMyCaptureDefault() {
+  try {
+    const res = await fetch(`${WORKER_URL}/team/me`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    const p = (await res.json()).profile || {}
+    teamMyDefault = { defaultShare: p.defaultShare, orgDefault: p.orgDefault, effectiveDefault: p.effectiveDefault }
+  } catch {
+    teamMyDefault = null
+  }
+}
+
+/** One row of the member-facing roster: a name, a role, and — for the caller's
+ *  own row — the same "you" chip the admin panel uses. Deliberately NOT built
+ *  on teamMemberRow/teamMemberLabel: those fall back to an email and carry
+ *  counts, timestamps and actions, none of which /team/roster returns and none
+ *  of which a member may see. */
+function teamRosterRow(m) {
+  const isSelf = teamYouId != null && m.userId === teamYouId
+  const chips = [
+    `<span class="tag-chip">${escHtml(teamRoleLabel(m.role))}</span>`,
+    isSelf ? `<span class="tag-chip">${escHtml(t('team.you'))}</span>` : '',
+  ].join('')
+  return `
+    <div class="team-row">
+      <div style="min-width: 0">
+        <div class="team-name">${escHtml(m.name || m.userId)} ${chips}</div>
+      </div>
+    </div>`
+}
+
+/**
+ * All three states are set every time, never just the one being revealed: the
+ * screen is re-rendered on every visit, and an admin demoted to member (or the
+ * reverse) while the window sits would otherwise be left looking at the panel
+ * their new role no longer entitles them to.
+ */
+function renderTeamMember() {
+  const notice = document.getElementById('team-admins-only')
+  const body = document.getElementById('team-body')
+  const view = document.getElementById('team-member-view')
+  if (notice) notice.style.display = 'none'
+  if (body) body.style.display = 'none'
+  if (!view) return
+  view.style.display = ''
+  const teamName = (teamRosterTeams[0]?.name || '').trim()
+  // Verbatim from effectiveDefault — see captureDefaultKey in utils.js, which
+  // the composer hint reads too so the two can never say different things.
+  // POST /team/me/default-share (below, setMyDefaultShare) makes the member
+  // the owner of this value on both screens, so this is the same key the
+  // composer would read for the same profile — no per-screen wording.
+  const defaultKey = captureDefaultKey(teamMyDefault)
+  view.innerHTML = `
+    <div style="display: flex; flex-direction: column; gap: 24px;">
+      ${teamName ? `<div>
+        <div class="digest-section-label">${escHtml(t('team.nameLabel'))}</div>
+        <div class="team-table"><div class="team-row">
+          <div class="team-name">${escHtml(teamName)}</div>
+        </div></div>
+      </div>` : ''}
+      ${defaultKey ? `<div>
+        <div class="digest-section-label">${escHtml(t('team.yourCaptureTitle'))}</div>
+        <div class="team-table"><div class="team-row">
+          <div style="min-width: 0">
+            <div class="team-name">${escHtml(t(defaultKey))}</div>
+            <div class="team-sub">${escHtml(t('team.yourCaptureHint'))}</div>
+          </div>
+          ${teamShareSelect({
+            id: 'team-my-default',
+            onchange: 'setMyDefaultShare(this.value)',
+            selected: teamMyDefault.defaultShare,
+            title: t('team.myDefaultLabel'),
+            label: t('team.myDefaultLabel'),
+          })}
+        </div></div>
+      </div>` : ''}
+      <div>
+        <div class="digest-section-label">${escHtml(t('team.membersLabel'))}</div>
+        <div class="team-table">${teamRoster.map(teamRosterRow).join('')}</div>
+        <p class="digest-note" style="margin: 8px 2px 0;">${escHtml(t('team.rosterHint'))}</p>
+      </div>
+    </div>`
+}
+
 function renderTeamAdminsOnly() {
   const notice = document.getElementById('team-admins-only')
   const body = document.getElementById('team-body')
+  const view = document.getElementById('team-member-view')
   if (notice) notice.style.display = ''
   if (body) body.style.display = 'none'
+  // Both branches, every render: a member whose token stops resolving while the
+  // window sits must not keep their colleagues' names on screen.
+  if (view) {
+    view.style.display = 'none'
+    view.innerHTML = ''
+  }
 }
 
 function teamRoleLabel(role) {
@@ -154,7 +316,14 @@ function teamMemberRow(m) {
     m.suspended ? `<span class="tag-chip">${escHtml(t('team.suspendedChip'))}</span>` : '',
   ]
     .join('')
-  const subline = [m.email, tPlural('team.privateEntries', Number(m.privateEntries) || 0)]
+  // Whether a token is still in use is the question an admin is actually asking
+  // before they rotate or suspend one. Up to an hour stale by design, so the
+  // relative form is the honest one — an exact clock time would claim a
+  // precision the throttled write does not have.
+  const lastUsed = Number(m.lastUsedAt) > 0
+    ? t('team.lastUsed', { when: relativeTime(m.lastUsedAt) })
+    : t('team.lastUsedNever')
+  const subline = [m.email, tPlural('team.privateEntries', Number(m.privateEntries) || 0), lastUsed]
     .filter(Boolean)
     .map(escHtml)
     .join(' · ')
@@ -164,16 +333,12 @@ function teamMemberRow(m) {
         <div class="team-name">${escHtml(teamMemberLabel(m))} ${chips}</div>
         ${subline ? `<div class="team-sub">${subline}</div>` : ''}
       </div>
-      <label class="team-capture-label" title="${escAttr(t('team.defaultShareTitle'))}">
-        ${escHtml(t('team.defaultShareLabel'))}
-        <span class="team-select-wrap">
-          <select class="team-select" onchange="setMemberDefaultShare('${escAttr(m.userId)}', this.value)">
-            ${['personal', 'company', 'inherit']
-              .map((v) => `<option value="${v}"${(m.defaultShare || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
-              .join('')}
-          </select><i class="ti ti-chevron-down"></i>
-        </span>
-      </label>
+      ${teamShareSelect({
+        onchange: `setMemberDefaultShare('${escAttr(m.userId)}', this.value)`,
+        selected: m.defaultShare,
+        title: t('team.defaultShareTitle'),
+        label: t('team.defaultShareLabel'),
+      })}
       <div class="team-actions">${actions.join('')}</div>
     </div>`
 }
@@ -181,7 +346,14 @@ function teamMemberRow(m) {
 function renderTeam() {
   const notice = document.getElementById('team-admins-only')
   const body = document.getElementById('team-body')
+  const view = document.getElementById('team-member-view')
   if (notice) notice.style.display = 'none'
+  // Both branches: the member view and the admin panel are alternatives, and a
+  // member promoted to admin mid-session renders this one next.
+  if (view) {
+    view.style.display = 'none'
+    view.innerHTML = ''
+  }
   if (!body) return
   body.style.display = ''
   const list = document.getElementById('team-list')
@@ -196,7 +368,129 @@ function renderTeam() {
         ${teamMembers.map(teamMemberRow).join('')}
       </div>`
   }
+  renderTeamMode()
   loadTeamOrgDefault()
+  maybeRevealTeamInsights()
+}
+
+/**
+ * The team-mode switch, both branches, on every render of the panel.
+ *
+ * Unlike maybeRevealTeamInsights() below, this one never hides. It is the one
+ * team control a SOLO owner must see, because it is how they turn the feature
+ * on at all — gating it on TEAM_MODE would make it unreachable in exactly the
+ * state it exists for. Every other team surface stays gated; this is the
+ * stated exception.
+ *
+ * WHAT IT SHOWS is the EFFECTIVE state, never the stored key. TEAM_MODE is GET
+ * /health's `team`, which is where the server has already resolved "auto"
+ * against the headcount — so a brain storing "auto" with two members arrives
+ * here as `true` and renders on. The panel makes no extra /config read for
+ * this row: the raw value is not what the reader is asking about, and fetching
+ * it would invite rendering the wrong one.
+ *
+ * WHEN IT LOCKS is decided by real membership rather than by the flag.
+ * teamMembers comes from GET /team/members, which already excludes tombstoned
+ * rows, so `> 1` is the same headcount PATCH /config refuses the write on —
+ * and reading it here rather than TEAM_MODE covers the ordering hole
+ * maybeRevealTeamInsights documents: TEAM_MODE is assigned off a /health probe
+ * this render does not wait for, and a switch that renders unlocked for one
+ * round trip is a switch someone can press and have refused. Do not show a
+ * control that silently refuses.
+ */
+function renderTeamMode() {
+  const forced = teamMembers.length > 1
+  const input = document.getElementById('team-mode-toggle')
+  if (input) {
+    input.checked = forced || TEAM_MODE
+    input.disabled = forced
+  }
+  const hint = document.getElementById('team-mode-hint')
+  // Both branches. The free one says what turning it on actually does, because
+  // this reads as irreversible even though it is not; the locked one says how
+  // many people are keeping it on, because "you cannot" without "here is why"
+  // is where a support ticket comes from.
+  if (hint) {
+    hint.textContent = forced
+      ? t('team.modeLocked', { n: formatNumberUI(teamMembers.length) })
+      : t('team.modeHint')
+  }
+}
+
+/**
+ * Write the switch, then let the SERVER say what the brain now is.
+ *
+ * The re-probe is checkVectorize() (js/nav.js) rather than an assignment to
+ * TEAM_MODE here. That function is the one place GET /health's answer is
+ * applied — composer target, memories layer filter, recall layer filter, team
+ * name — so routing through it is what makes the reveal immediate and
+ * reload-free without team.js growing a second, drifting copy of "what /health
+ * means". It is reached defensively because this module is also loaded on its
+ * own by test harnesses that do not carry nav.js.
+ *
+ * Never writes "auto": the switch exists to record intent, and "auto" is the
+ * absence of one.
+ *
+ * renderTeamMode() runs on BOTH paths — success re-renders against the freshly
+ * probed flag, failure puts the control back where the truth is, rather than
+ * leaving it wherever the browser's own checkbox flip left it.
+ */
+async function setTeamMode(on) {
+  try {
+    const res = await fetch(`${WORKER_URL}/config`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ TEAM_MODE: on ? 'on' : 'off' }),
+    })
+    let data = {}
+    try {
+      data = await res.json()
+    } catch {}
+    // The server's own message, not a generic one: the refusal names how many
+    // people are still on the team, which is the only thing that tells the
+    // admin what to do next.
+    if (!res.ok) throw new Error(data.error || t('team.actionFailed'))
+    if (typeof checkVectorize === 'function') await checkVectorize()
+    showToast(on ? t('team.modeOnSaved') : t('team.modeOffSaved'))
+  } catch (e) {
+    showToast(e.message || t('team.actionFailed'))
+  }
+  renderTeamMode()
+}
+
+/**
+ * The weekly-team-insights row, both branches, on every render of the panel.
+ *
+ * This panel is NOT a team-only surface and that is the whole reason this
+ * function exists. src/lib/tenancy.ts hashes the deployment's AUTH_TOKEN into a
+ * users row with role 'admin', so on a solo brain GET /team/members answers 200
+ * for the owner and renderTeam() reveals #team-body just as it does for a team
+ * admin — which is how a solo owner invites their first colleague. Membership of
+ * that panel therefore gates nothing, and a setting whose own copy says "puts
+ * what it finds in everyone's review queue" needs TEAM_MODE, the one flag that
+ * does.
+ *
+ * Both branches, never a one-way reveal, for the reason renderTeamName states:
+ * a brain that stops being a team has to lose this row rather than merely never
+ * gain it.
+ *
+ * A solo brain does not read the value either. Hidden is not the same claim as
+ * free, and a control nobody can see that still fetches is still a request the
+ * v2 dashboard never made. The panel's one GET /config is loadTeamOrgDefault's,
+ * exactly as it was before this row existed.
+ *
+ * ORDERING: TEAM_MODE is assigned in maybeRevealHomeLayer (js/home.js) off GET
+ * /health, and js/auth.js fires loadTeam() alongside that request rather than
+ * after it, so renderTeam CAN read a false flag on a team brain. It cannot stick
+ * that way: the panel is unreachable without a switchTab('team'), which re-runs
+ * loadTeam → renderTeam → here. Reading early fails CLOSED, which is the
+ * direction that costs a team admin one tab visit and a solo owner nothing.
+ */
+function maybeRevealTeamInsights() {
+  const row = document.getElementById('team-insights-row')
+  if (row) row.style.display = TEAM_MODE ? '' : 'none'
+  if (!TEAM_MODE) return Promise.resolve()
+  return loadTeamInsights()
 }
 
 async function postTeam(path, body) {
@@ -224,8 +518,8 @@ function showTeamError(message) {
  * the point is to sit there until it has been copied, and a modal invites
  * dismissing it by accident.
  */
-function showTeamToken(token, name) {
-  lastTeamToken = token
+function showTeamToken(token, name, email) {
+  lastTeamInvite = { name, email: email || '', token }
   const wrap = document.getElementById('team-token-reveal')
   if (!wrap) return
   const sub = document.getElementById('team-token-for')
@@ -234,6 +528,9 @@ function showTeamToken(token, name) {
   if (val) val.textContent = token
   const copyBtn = document.getElementById('team-copy-btn')
   if (copyBtn) copyBtn.textContent = t('team.copy')
+  const mailBtn = document.getElementById('team-invite-mail-btn')
+  // Both branches: a member added without an email has no address to mail.
+  if (mailBtn) mailBtn.style.display = lastTeamInvite.email ? '' : 'none'
   wrap.style.display = ''
   if (wrap.scrollIntoView) wrap.scrollIntoView({ block: 'nearest' })
 }
@@ -243,18 +540,56 @@ function closeTeamTokenReveal() {
   if (wrap) wrap.style.display = 'none'
   const val = document.getElementById('team-token-value')
   if (val) val.textContent = ''
-  lastTeamToken = ''
+  lastTeamInvite.token = ''
 }
 
 function copyTeamToken() {
-  if (!lastTeamToken || !navigator.clipboard) return
-  navigator.clipboard.writeText(lastTeamToken)
+  if (!lastTeamInvite.token || !navigator.clipboard) return
+  navigator.clipboard.writeText(lastTeamInvite.token)
   const btn = document.getElementById('team-copy-btn')
   if (!btn) return
   btn.textContent = t('team.copied')
   setTimeout(() => {
     btn.textContent = t('team.copy')
   }, 1500)
+}
+
+/** The covering note an admin would otherwise have to compose by hand, every time. */
+function inviteMessage() {
+  return t('invite.body', { name: lastTeamInvite.name, url: WORKER_URL, token: lastTeamInvite.token })
+}
+
+function copyInviteMessage() {
+  if (!lastTeamInvite.token || !navigator.clipboard) return
+  navigator.clipboard.writeText(inviteMessage())
+  const btn = document.getElementById('team-invite-copy-btn')
+  if (!btn) return
+  btn.textContent = t('invite.copied')
+  setTimeout(() => {
+    btn.textContent = t('invite.copy')
+  }, 1500)
+}
+
+/**
+ * The one-time token rides in this URL's `body` parameter. A plain mailto:
+ * handoff to the OS mail client is not a navigation and leaves no history
+ * entry, but a user with a WEBMAIL protocol handler registered (e.g. Gmail
+ * via registerProtocolHandler) gets this rewritten by the browser into a real
+ * navigation — `https://mail.google.com/…?url=mailto%3A…` — which lands the
+ * token in browser history and in that webmail provider's request logs.
+ *
+ * Kept anyway: the admin has already chosen to send a credential by email,
+ * which is an insecure channel regardless — the token sits in the
+ * recipient's inbox and the sender's Sent folder no matter what this
+ * function does. The webmail-handler path adds history and a provider log
+ * on top of a risk the admin already accepted; stripping the token from the
+ * email would leave an invite nobody can act on, which defeats the feature.
+ * `copyInviteMessage()` (clipboard, no URL, no navigation) is the
+ * lower-exposure option and is the button placed first/primary in the row.
+ */
+function emailInvite() {
+  if (!lastTeamInvite.token) return
+  window.location.href = `mailto:${encodeURIComponent(lastTeamInvite.email)}?subject=${encodeURIComponent(t('invite.subject'))}&body=${encodeURIComponent(inviteMessage())}`
 }
 
 async function submitNewMember() {
@@ -278,7 +613,7 @@ async function submitNewMember() {
     const r = await postTeam('/team/members', { name, ...(email ? { email } : {}), role })
     if (r.status === 409) throw new Error(t('team.duplicateEmail'))
     if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    showTeamToken(r.data.token, r.data.member?.name || name)
+    showTeamToken(r.data.token, r.data.member?.name || name, email)
     if (nameEl) nameEl.value = ''
     if (emailEl) emailEl.value = ''
     if (roleEl) roleEl.value = 'member'
@@ -296,50 +631,95 @@ async function submitNewMember() {
 async function rotateTeamToken(id) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  if (!confirm(t('team.rotateConfirm', { name: teamMemberLabel(m) }))) return
-  try {
-    const r = await postTeam('/team/members/token', { id })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    showTeamToken(r.data.token, teamMemberLabel(m))
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
-  }
+  openDangerConfirm({
+    title: t('team.rotateTitle'),
+    body: t('team.rotateConfirm', { name: teamMemberLabel(m) }),
+    confirmLabel: t('team.rotateToken'),
+    // Progress copy is this action's to own — runConfirmAction disables the
+    // button for the duration, but has no idea what to say while it waits.
+    onConfirm: async (_checked, done) => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.rotating')
+      try {
+        const r = await postTeam('/team/members/token', { id })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        showTeamToken(r.data.token, teamMemberLabel(m), m.email)
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      // `done`, not `closeConfirm()`: this POST can resolve long after the
+      // user dismissed this sheet and asked something else, and by then "what
+      // is on screen" belongs to another caller. `done` closes this question
+      // and is inert once this question has been superseded.
+      done()
+    },
+  })
 }
 
+/**
+ * Suspending someone else's access is destructive enough to gate on the
+ * sheet; restoring it is not. Restore is instantly reversible by the Suspend
+ * button sitting right beside it, and a confirmation dialog in front of an
+ * undoable act only trains people to dismiss dialogs without reading them.
+ */
 async function setTeamSuspended(id, suspended) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  const question = suspended ? t('team.suspendConfirm', { name: teamMemberLabel(m) }) : t('team.restoreConfirm', { name: teamMemberLabel(m) })
-  if (!confirm(question)) return
-  try {
-    const r = await postTeam('/team/members/suspend', { id, suspended })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    await loadTeam()
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+  if (!suspended) {
+    try {
+      const r = await postTeam('/team/members/suspend', { id, suspended })
+      if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+      await loadTeam()
+      showToast(t('team.restoredToast'))
+    } catch (e) {
+      showToast(e.message || t('team.actionFailed'))
+    }
+    return
   }
+  openDangerConfirm({
+    title: t('team.suspendTitle'),
+    body: t('team.suspendConfirm', { name: teamMemberLabel(m) }),
+    confirmLabel: t('team.suspend'),
+    onConfirm: async (_checked, done) => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.suspending')
+      try {
+        const r = await postTeam('/team/members/suspend', { id, suspended })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        await loadTeam()
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      done()
+    },
+  })
 }
 
 /**
  * Hard offboarding. The server refuses self-removal and last-admin removal;
- * the confirm here carries the destructive detail — the member's PRIVATE
+ * the sheet body carries the destructive detail — the member's PRIVATE
  * memories die with the account, shared ones stay.
  */
 async function removeTeamMember(id) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
-  const question = t('team.removeConfirm', {
-    name: teamMemberLabel(m),
-    n: Number(m.privateEntries) || 0,
+  openDangerConfirm({
+    title: t('team.removeTitle'),
+    body: t('team.removeConfirm', { name: teamMemberLabel(m), n: Number(m.privateEntries) || 0 }),
+    confirmLabel: t('team.remove'),
+    onConfirm: async (_checked, done) => {
+      const btn = document.getElementById('confirm-accept-btn')
+      if (btn) btn.textContent = t('team.removing')
+      try {
+        const r = await postTeam('/team/members/remove', { id })
+        if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+        await loadTeam()
+      } catch (e) {
+        showToast(e.message || t('team.actionFailed'))
+      }
+      done()
+    },
   })
-  if (!confirm(question)) return
-  try {
-    const r = await postTeam('/team/members/remove', { id })
-    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-    await loadTeam()
-  } catch (e) {
-    alert(e.message || t('team.actionFailed'))
-  }
 }
 
 // ── Capture-visibility defaults ───────────────────────────────────────────
@@ -352,6 +732,38 @@ function teamDefaultShareLabel(value) {
   return value === 'company' ? t('team.shareCompany') : value === 'personal' ? t('team.sharePersonal') : t('team.shareInherit')
 }
 
+/** The three values every capture-default control offers, in display order. */
+const TEAM_SHARE_VALUES = ['personal', 'company', 'inherit']
+
+/**
+ * The capture-default control itself: an admin picks it for a member's row
+ * (teamMemberRow), and a member now picks it for their own (renderTeamMember).
+ * "The member's control is the admin's control, byte for byte" only holds if
+ * there is exactly one control to change — two copies of the same markup can
+ * still drift the moment someone adds a fourth option to one and not the
+ * other. This is that one place.
+ *
+ * `title`/`label` are already-resolved strings, not i18n keys: each caller
+ * translates with its own literal key before reaching here. Threading the
+ * KEY through instead and translating it in here would read as the same
+ * amount of sharing, but it turns a lookup the i18n suite's call-site
+ * checker can verify into an opaque forwarded variable it cannot — trading a
+ * caught typo for a silently-broken translation.
+ */
+function teamShareSelect({ id, onchange, selected, title, label }) {
+  const idAttr = id ? ` id="${escAttr(id)}"` : ''
+  return `<label class="team-capture-label" title="${escAttr(title)}">
+        ${escHtml(label)}
+        <span class="team-select-wrap">
+          <select class="team-select"${idAttr} onchange="${onchange}">
+            ${TEAM_SHARE_VALUES
+              .map((v) => `<option value="${v}"${(selected || 'inherit') === v ? ' selected' : ''}>${escHtml(teamDefaultShareLabel(v))}</option>`)
+              .join('')}
+          </select><i class="ti ti-chevron-down"></i>
+        </span>
+      </label>`
+}
+
 async function setMemberDefaultShare(id, value) {
   const m = teamMembers.find((x) => x.userId === id)
   if (!m) return
@@ -361,35 +773,118 @@ async function setMemberDefaultShare(id, value) {
     m.defaultShare = value === 'inherit' ? '' : value
     renderTeam()
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
+    showToast(e.message || t('team.actionFailed'))
     await loadTeam()
   }
 }
 
-async function loadTeamOrgDefault() {
-  const sel = document.getElementById('team-org-default')
-  if (!sel) return
+/**
+ * The member's own copy of setMemberDefaultShare: same endpoint shape, but
+ * writing the caller's own row rather than one an admin picked — POST
+ * /team/me/default-share carries no `id`.
+ *
+ * The failure path is lighter on purpose, not by oversight: neither function
+ * mutates its in-memory copy until the response confirms success, so a bare
+ * re-render is always safe here. setMemberDefaultShare still reloads the
+ * whole roster on failure, matching the other admin mutations (remove,
+ * suspend) that touch state shared across the team; this one only ever
+ * touches the caller's own already-in-hand profile, so there is nothing a
+ * reload would refresh that a re-render does not already have.
+ */
+async function setMyDefaultShare(value) {
   try {
-    const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
-    if (!res.ok) throw new Error(String(res.status))
-    const data = await res.json()
-    sel.value = data?.config?.TEAM_DEFAULT_WORKSPACE === 'company' ? 'company' : 'personal'
-  } catch {
-    sel.value = 'personal'
+    const r = await postTeam('/team/me/default-share', { default: value })
+    if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
+    teamMyDefault = {
+      defaultShare: r.data.defaultShare,
+      orgDefault: r.data.orgDefault,
+      effectiveDefault: r.data.effectiveDefault,
+    }
+    renderTeamMember()
+    showToast(t('team.myDefaultSaved'))
+    // The composer's copy of this profile was loaded on a /health reveal
+    // this screen does not wait for, so without this the hint under the
+    // layer dropdown keeps describing the policy the member just changed.
+    if (typeof loadCaptureDefault === 'function') loadCaptureDefault()
+  } catch (e) {
+    showToast(e.message || t('team.actionFailed'))
+    renderTeamMember()
   }
 }
 
-async function setTeamOrgDefault(value) {
+/**
+ * The one in-flight GET /config, shared by every select reading from it.
+ *
+ * renderTeam() starts one loader per settings row and each wants the same blob,
+ * so without this the screen issues N identical requests to render N rows. The
+ * handle lives only while the request is in flight and is dropped the moment it
+ * settles, so this coalesces concurrent readers and never serves a cached body:
+ * a later read — the reload after a refused write, say — always goes to the
+ * server. Rejections propagate to every sharer, which is what each one's own
+ * catch arm already handles.
+ */
+let teamConfigRead = null
+
+function readTeamConfig() {
+  if (!teamConfigRead) {
+    teamConfigRead = (async () => {
+      const res = await fetch(`${WORKER_URL}/config`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+      if (!res.ok) throw new Error(String(res.status))
+      return await res.json()
+    })().finally(() => {
+      teamConfigRead = null
+    })
+  }
+  return teamConfigRead
+}
+
+/**
+ * Read one config key into one <select>.
+ *
+ * `narrow` maps whatever the server has to one of the option values, because
+ * config values are free text in KV and a <select> whose value is not one of
+ * its options renders blank — which reads as "unset" for a setting that is
+ * very much set.
+ */
+async function loadTeamConfigSelect(selectId, key, narrow) {
+  const sel = document.getElementById(selectId)
+  if (!sel) return
+  try {
+    const data = await readTeamConfig()
+    sel.value = narrow(data?.config?.[key])
+  } catch {
+    sel.value = narrow(undefined)
+  }
+}
+
+/** Write one config key, and put the control back if the server refused. */
+async function setTeamConfigValue(selectId, key, value, narrow) {
   try {
     // PATCH /config is a sparse key→value patch for the whole settings blob.
     const res = await fetch(`${WORKER_URL}/config`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ TEAM_DEFAULT_WORKSPACE: value }),
+      body: JSON.stringify({ [key]: value }),
     })
     if (!res.ok) throw new Error(t('team.actionFailed'))
   } catch (e) {
-    alert(e.message || t('team.actionFailed'))
-    await loadTeamOrgDefault()
+    showToast(e.message || t('team.actionFailed'))
+    await loadTeamConfigSelect(selectId, key, narrow)
   }
+}
+
+async function loadTeamOrgDefault() {
+  await loadTeamConfigSelect('team-org-default', 'TEAM_DEFAULT_WORKSPACE', (v) => (v === 'company' ? 'company' : 'personal'))
+}
+
+async function setTeamOrgDefault(value) {
+  await setTeamConfigValue('team-org-default', 'TEAM_DEFAULT_WORKSPACE', value, (v) => (v === 'company' ? 'company' : 'personal'))
+}
+
+async function loadTeamInsights() {
+  await loadTeamConfigSelect('team-insights', 'TEAM_INSIGHTS', (v) => (v === 'on' ? 'on' : 'off'))
+}
+
+async function setTeamInsights(value) {
+  await setTeamConfigValue('team-insights', 'TEAM_INSIGHTS', value, (v) => (v === 'on' ? 'on' : 'off'))
 }
