@@ -1296,6 +1296,55 @@
         margin-top: 8px;
       }
 
+      /* ── The memory is the hero ───────────────────────────────────────────
+         Measured before this block: a card was 158px tall and its content was
+         46px of that — the memory occupied 29% of its own card, and five of
+         them fitted on a phone holding 2,394. The other 112px was chrome:
+         three stacked bands (a meta line, a tag row forced onto its own line by
+         `flex: 1 0 100%`, and a 44px action row) all competing at the same
+         visual weight.
+
+         The bands collapse into ONE quiet line — source, time, tags and the
+         actions share a row and truncate rather than stack — and the content
+         keeps everything that buys back. */
+      #recent-list .card-footer {
+        margin-top: 8px;
+        gap: 10px;
+        flex-wrap: nowrap;
+      }
+
+      /* Reading order on the line: where it came from and when, then what it is
+         about, then what you can do to it. Provenance first because it is the
+         thing that orients you in a list of 2,394. */
+      #recent-list .card-meta {
+        margin-bottom: 0;
+        flex-shrink: 0;
+        order: 0;
+      }
+
+      /* `flex: 1 0 100%` is what pushed the tags onto a line of their own. They
+         share the meta line now and scroll within it, as they already did. */
+      #recent-list .card-tags {
+        order: 1;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      #recent-list .card-actions {
+        order: 2;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+
+      /* 44px was well past the 32px this project holds itself to, and it set the
+         height of the whole line: three of these were the tallest thing in the
+         footer on every card in the list. */
+      #recent-list .card-action-btn {
+        min-height: 32px;
+        padding-top: 0;
+        padding-bottom: 0;
+      }
+
       #recent-list .card-action-btn {
         padding: 4px 6px;
         font-size: 10.5px;

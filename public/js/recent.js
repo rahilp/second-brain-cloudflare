@@ -543,9 +543,15 @@ function makeRecentCard(entry) {
   const pending = !vectorized && Date.now() - (entry.created_at || 0) < vectorizeGraceMs
   const vec = vectorized ? 'on' : pending ? 'pending' : 'off'
 
+  // Only the states worth acting on. "Indexed fine" was a checkmark on nearly
+  // every card, which is the same thing as no signal at all — and it is the
+  // reasoning this file already applies to the layer chip a few lines below:
+  // a badge on every row is not a badge. The two that mean something — this
+  // memory will not come back in recall, and this one is still being indexed —
+  // now stand out because they are the only ones there.
   const vecChip =
     vec === 'on'
-      ? `<span class="tag-chip vec-chip vec-chip--on" title="${escAttr(t('memories.vecOnTitle'))}"><i class="ti ti-circle-check"></i></span>`
+      ? ''
       : vec === 'pending'
         ? `<span class="tag-chip vec-chip vec-chip--pending" title="${escAttr(t('memories.vecPendingTitle'))}"><i class="ti ti-clock"></i></span>`
         : `<span class="tag-chip vec-chip vec-chip--off" title="${escAttr(t('memories.vecOffTitle'))}">${escHtml(t('memories.vecNotIndexed'))}</span>`
