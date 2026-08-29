@@ -104,11 +104,16 @@ describe("TEAM_MODE drives GET /health's team flag", () => {
     expect(await teamFlag()).toBe(true);
   });
 
-  it('"off" makes a real team read as solo', async () => {
-    await createMember(env, { name: "Bob", email: "bob@example.com" });
-    expect(await teamFlag()).toBe(true);
+  it('"off" makes a SOLO brain read as solo, and cannot do more than that', async () => {
     await setTeamMode("off");
     expect(await teamFlag()).toBe(false);
+
+    // The floor: real membership overrides the recorded intent, so a stored
+    // "off" cannot survive the arrival of a team. test/integration/
+    // team-mode-floor.test.ts is where that rule is pinned in full; this is the
+    // one line of it that belongs next to the other two values.
+    await createMember(env, { name: "Bob", email: "bob@example.com" });
+    expect(await teamFlag()).toBe(true);
   });
 
   it('"auto" infers from active membership, in both directions', async () => {

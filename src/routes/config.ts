@@ -59,6 +59,15 @@ export async function handleConfigRoutes(
     // and layer picker, while the company workspace still exists and every
     // member still holds a token that reads it. One source of truth or none.
     //
+    // TWO MECHANISMS, DELIBERATELY, and this is the one that EXPLAINS. The one
+    // that ENFORCES is the floor in isTeamBrain() (src/lib/team-admin.ts),
+    // where real membership overrides a stored "off" so the invariant holds by
+    // construction — which is what actually closes the hole this check cannot
+    // see, "acquire members while it is already off". Keeping the refusal as
+    // well is not redundancy: without it the admin's write would appear to
+    // succeed and then be silently ignored, and a control that quietly does
+    // nothing is worse than one that says why it will not.
+    //
     // HERE, not inside writeOverrides, and not as an INVARIANT. writeOverrides
     // is the generic write path — per-key type and range checks, plus pure
     // synchronous invariants over the config object itself — and this rule is

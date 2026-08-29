@@ -90,8 +90,12 @@ export const DEFAULTS = {
   //
   //   "auto" infers from active membership (more than one non-tombstoned user),
   //   "on"   is a team before anyone is invited, which inference cannot express,
-  //   "off"  is solo, and is refused while more than one person is still on the
-  //          team (see PATCH /config in src/routes/config.ts).
+  //   "off"  is solo, and only takes effect while the owner really is alone —
+  //          real membership is a FLOOR on it, so a brain that acquires
+  //          colleagues while this says "off" is still a team. Two mechanisms
+  //          hold that: the floor in isTeamBrain() enforces it, and PATCH
+  //          /config refuses the write outright while more than one person is
+  //          on the team (src/routes/config.ts).
   //
   // The default is "auto" and that is NOT a cosmetic choice. DEFAULTS is static
   // and reaches every brain that never overrode the key, so a default of "off"

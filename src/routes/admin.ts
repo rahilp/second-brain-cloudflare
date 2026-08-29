@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { resolveConfig } from "../config";
+import { readOverrides, resetOverride, resolveConfig } from "../config";
 import { SB_VERSION } from "../env";
 import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "../compression/eligibility";
 import { intParam, json } from "../lib/http";
@@ -104,6 +104,35 @@ export async function handleAdminRoutes(
         event: "member_created",
         payload: { role: member.role, hasEmail: !!member.email },
       });
+      // A stored TEAM_MODE "off" is now a lie, and this is where it stops
+      // being one. Inviting someone is an unambiguous statement that this is a
+      // team, and the "off" can only be a leftover from the solo era — PATCH
+      // /config refuses to write it once a second person is here.
+      //
+      // This changes NO behaviour: the floor in isTeamBrain() already makes the
+      // effective flag true. It exists so the blob a human or a support script
+      // reads next says what the brain actually is.
+      //
+      // CLEARED, not set to "on". "on" would replace one recorded intent with
+      // another the owner never stated, and would outlive the team — remove
+      // everybody and the brain stays pinned to team mode, needing a second
+      // manual write to undo. Clearing hands the key back to "auto", which is
+      // right at every future headcount, one included.
+      //
+      // A KV read on a rare admin action, and a write only in the state that
+      // needs correcting: a brain that never overrode the key gains nothing.
+      //
+      // Swallowed, because the member and their token already exist and the
+      // token is shown exactly once. A KV blip must not turn a successful
+      // invitation into a 500 that loses the secret — and the floor has already
+      // made the effective flag right without this write.
+      //
+      // One line, deliberately: test/unit/config-threading-complete.test.ts
+      // reads a bare tunable name outside a property access as a module-scope
+      // config read, and the guarded call has to sit beside the guard for that
+      // to stay true.
+      const overrides = await readOverrides(env);
+      if (overrides.TEAM_MODE === "off") await resetOverride(env, "TEAM_MODE").catch(() => {});
       // The token is returned exactly once — only its hash is stored.
       return json({ ok: true, member, token }, 201);
     } catch (e) {

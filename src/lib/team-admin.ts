@@ -82,29 +82,67 @@ export async function countActiveMembers(env: Env): Promise<number> {
 }
 
 /**
- * Is this brain a team? The single answer, published by GET /health as `team`.
- *
- * TEAM_MODE is read HERE and nowhere else. The dashboard branches on `team`,
- * not on the key, so "how the flag is decided" stays one function rather than a
- * rule every consumer has to re-derive:
+ * The whole decision, as a pure function of the recorded intent and the live
+ * headcount. Exported so a test can drive a fake server from the SAME rule the
+ * Worker uses, rather than from a second copy of it that can drift.
  *
  *   "on"   — a team before anyone is invited. Inference cannot express intent,
  *            which is the whole reason the key exists.
- *   "off"  — solo. PATCH /config refuses this while more than one person is
- *            still on the team, so it cannot contradict a live shared layer.
+ *   "off"  — solo, but ONLY while the owner really is alone. See the floor
+ *            below.
  *   "auto" — infer from active membership. The default, and anything
  *            unrecognised (a hand-edited KV blob) lands here too: inference is
  *            the safe direction, since it describes what is actually there.
  *
- * "on" and "off" are recorded intent and need no headcount, so only "auto" pays
- * for the D1 query — which is exactly the one query /health issued before this
- * key existed.
+ * THE FLOOR. "off" cannot suppress team mode while more than one person is on
+ * the team, because that state is a product that lies: the dashboard drops the
+ * sharing controls, the layer pickers and the shared-layer filter, while
+ * colleagues hold working tokens and the company workspace still holds shared
+ * memories — a member can share into a layer their own admin's UI does not
+ * render. Every individual step into that state is legal ("off" while alone is
+ * correct; inviting someone is correct), so it is reachable purely by ordering.
+ *
+ * Real membership therefore OVERRIDES the recorded intent rather than merely
+ * being checked against it at write time, which makes the invariant hold by
+ * construction: no ordering, no config written by an older release, no
+ * hand-edited KV blob and no future path that creates a member without going
+ * through POST /team/members can defeat it.
+ *
+ * "off" and "auto" consequently agree at every headcount today. They are still
+ * written as two branches because they are two different statements — "I said
+ * solo, and reality has not contradicted me" versus "I said nothing, ask
+ * reality" — and their agreement is a fact about this floor, not a definition.
+ * Collapsing them would make a future change to one silently change the other.
+ */
+export function resolveTeamFlag(mode: string, activeMembers: number): boolean {
+  if (mode === "on") return true;
+  if (mode === "off") return activeMembers > 1;
+  return activeMembers > 1;
+}
+
+/**
+ * Is this brain a team? The single answer, published by GET /health as `team`.
+ *
+ * TEAM_MODE is read HERE and nowhere else. The dashboard branches on `team`,
+ * not on the key, so "how the flag is decided" stays one function rather than a
+ * rule every consumer has to re-derive.
+ *
+ * TWO MECHANISMS, DELIBERATELY. This floor ENFORCES the invariant — it cannot
+ * be got around. The guardrail in PATCH /config (src/routes/config.ts) EXPLAINS
+ * it — it refuses the write at the moment of the mistake with a message naming
+ * how many people are still there. Neither replaces the other: a floor alone
+ * would silently ignore a write the admin believed had taken effect, and a
+ * write-time check alone is exactly what this bug got past.
+ *
+ * "on" is recorded intent and needs no headcount, so it short-circuits before
+ * the query. "off" now pays for the same single D1 count "auto" pays for —
+ * that count IS the floor. On a solo brain nothing changed: the shipped default
+ * is "auto", which issued exactly this one query before the key existed.
  */
 export async function isTeamBrain(env: Env): Promise<boolean> {
   const config = await resolveConfig(env);
   if (config.TEAM_MODE === "on") return true;
-  if (config.TEAM_MODE === "off") return false;
-  return (await countActiveMembers(env)) > 1;
+  return resolveTeamFlag(config.TEAM_MODE, await countActiveMembers(env));
 }
 
 export async function listMembers(env: Env): Promise<TeamMember[]> {
