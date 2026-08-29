@@ -42,12 +42,37 @@ type Queryable = {
  */
 let workspaceFiltersSupported: boolean | null = null;
 
+// Counts every unfiltered query this isolate has served — not just the one
+// that discovered the rejection — so the health signal reflects ongoing
+// result-quality exposure, not a one-time event.
+let degradedQueryCount = 0;
+
+// Separate from workspaceFiltersSupported so the "fire onDegrade once" check
+// is a plain boolean read-then-set with no re-derivation from the latch — two
+// concurrent in-flight queries can both reach the catch block before either
+// has written the latch (no `await` sits between reading and setting this
+// flag, so the check-and-set itself cannot interleave).
+let degradeNotified = false;
+
+/** Current filter support state for this isolate. Read by GET /health. */
+export function vectorizeFilterState(): { supported: boolean | null; degradedQueries: number } {
+  return { supported: workspaceFiltersSupported, degradedQueries: degradedQueryCount };
+}
+
+/** Test-only: clears the latch and counter, mirroring resetDatabaseInit's role. */
+export function resetVectorizeFilterState(): void {
+  workspaceFiltersSupported = null;
+  degradedQueryCount = 0;
+  degradeNotified = false;
+}
+
 export async function queryVectorizeScoped<M = unknown>(
   vectorize: Queryable,
   values: number[],
-  opts: { topK: number; filter: VectorizeWorkspaceFilter["filter"] },
+  opts: { topK: number; filter: VectorizeWorkspaceFilter["filter"]; onDegrade?: () => void },
 ): Promise<{ matches: M[]; degraded: boolean }> {
   const unfiltered = async (): Promise<{ matches: M[]; degraded: boolean }> => {
+    degradedQueryCount++;
     const result = await vectorize.query(values, {
       topK: opts.topK,
       returnMetadata: "all",
@@ -70,6 +95,13 @@ export async function queryVectorizeScoped<M = unknown>(
     if (!/filter/i.test(String(e))) throw e;
     console.error("Vectorize rejected the workspace filter (falling back to unfiltered queries for this isolate):", e);
     workspaceFiltersSupported = false;
+    // Fire the durable-marker callback only once per isolate, on the first
+    // transition into degraded mode, so a deployment pays for this discovery
+    // exactly once.
+    if (!degradeNotified) {
+      degradeNotified = true;
+      opts.onDegrade?.();
+    }
     return unfiltered();
   }
 }

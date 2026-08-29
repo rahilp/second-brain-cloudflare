@@ -3,7 +3,7 @@ import { resolveConfig } from "../config";
 import { SB_VERSION } from "../env";
 import { COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, isTopicTagSql } from "../compression/eligibility";
 import { intParam, json } from "../lib/http";
-import { D1_MAX_BOUND_PARAMS } from "../constants";
+import { D1_MAX_BOUND_PARAMS, VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY } from "../constants";
 import { requireAdmin, requireIdentity, type Identity } from "../lib/identity";
 import { primaryCompanyWorkspaceId, scopeWhere } from "../lib/scope";
 import { graceMs } from "../lib/ai";
@@ -15,6 +15,7 @@ import { STALE_REVIEW_SQL } from "../memory/stale";
 import { getStatus, withStatus } from "../memory/status";
 import { withKind } from "../memory/kind";
 import { checkVectorizeHealth } from "../vectorize/health";
+import { vectorizeFilterState } from "../vectorize/scope";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { reasonOverPair, restatesRecent } from "../insight/reason";
 import { MAX_INSIGHTS_PER_RUN, RECENT_INSIGHT_WINDOW, rawInsightText } from "../insight/weekly";
@@ -308,7 +309,27 @@ export async function handleAdminRoutes(
     // but until a second member is invited the toggle is noise for a solo
     // owner, so the flag reads actual membership, not provisioning.
     const members = await env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
-    return json({ ok: vectorize.ok, version: SB_VERSION, vectorize, team: (members?.n ?? 0) > 1 });
+    // Result-quality signal, not correctness: every hydration below this is
+    // scoped at the SQL layer regardless, so a degraded filter never leaks
+    // another workspace's data — it just lets foreign candidates crowd out
+    // the caller's own in the vector index's own topK before SQL filters
+    // them back out. `latchedAt` reads the durable KV marker rather than
+    // trusting the in-memory latch alone, so the signal survives isolate
+    // churn between deploys.
+    const { supported, degradedQueries } = vectorizeFilterState();
+    // A KV blip must not turn this route's other, independently-available
+    // signals (vectorize.ok, team) into a 500 — /health previously depended
+    // on describe() and one D1 count only. `.catch(() => null)` degrades
+    // latchedAt to "unknown" instead, exactly like a marker that was never
+    // written.
+    const latchedAtRaw = await env.OAUTH_KV.get(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY).catch(() => null);
+    const latchedAt = latchedAtRaw ? Number(latchedAtRaw) : null;
+    return json({
+      ok: vectorize.ok,
+      version: SB_VERSION,
+      vectorize: { ...vectorize, workspaceFilter: { supported, degradedQueries, latchedAt } },
+      team: (members?.n ?? 0) > 1,
+    });
   }
 
   // GET /patterns — the whole review queue, paged.

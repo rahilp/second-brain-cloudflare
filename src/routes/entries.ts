@@ -8,7 +8,7 @@ import { isCompanyWorkspace, scopeWhere } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
-import { moveEntry, type ShareTarget } from "../capture/share";
+import { moveEntry, restampVectorWorkspace, type ShareTarget } from "../capture/share";
 import { auditEvent } from "../lib/audit";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
 import { getTagVocabulary } from "../tags/vocabulary";
@@ -266,6 +266,10 @@ export async function handleEntriesRoutes(
       event: result.status,
       payload: { workspaceId: result.workspaceId },
     });
+    // After the audit event, before the response: the D1 move and the audit
+    // row are both already committed, so a Vectorize outage here can only
+    // cost this cosmetic ranking follow-up, never the state change itself.
+    ctx.waitUntil(restampVectorWorkspace(env, result.vectorIds, result.workspaceId));
     return json({ ok: true, id, status: result.status, workspaceId: result.workspaceId });
   }
 

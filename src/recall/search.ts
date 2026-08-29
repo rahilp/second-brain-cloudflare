@@ -4,6 +4,7 @@ import {
   KEYWORD_MAX_TOKENS,
   VECTORIZE_GET_BY_IDS_BATCH,
   VECTORIZE_TOP_K_MULTIPLIER,
+  VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY,
 } from "../constants";
 import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
@@ -235,11 +236,19 @@ export async function recallEntries(
     // unfiltered if Vectorize rejects the filter; hydration below is scoped at
     // the SQL layer either way, so correctness never rides on this.
     const wsFilter = identity ? workspaceFilter(identity, internal.workspaceFilter)?.filter : undefined;
+    // env-free code (src/vectorize/scope.ts) cannot reach KV itself, so the
+    // caller hands it this callback. It fires at most once per isolate — see
+    // queryVectorizeScoped's own transition guard — so it cannot move
+    // recall-free-tier-budget, which never rejects a filter.
+    const onDegrade = () => ctx.waitUntil(
+      env.OAUTH_KV.put(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY, String(Date.now()))
+        .catch((e: unknown) => console.error("Vectorize filter-degradation marker write failed (non-fatal):", e)),
+    );
     const denseQuery = async (): Promise<{ matches: VectorizeMatch[] }> => {
       try {
         if (wsFilter) {
           const { matches } = await queryVectorizeScoped<VectorizeMatch>(
-            env.VECTORIZE, values, { topK: vectorizeTopK, filter: wsFilter },
+            env.VECTORIZE, values, { topK: vectorizeTopK, filter: wsFilter, onDegrade },
           );
           return { matches };
         }
@@ -264,7 +273,7 @@ export async function recallEntries(
       try {
         if (wsFilter) {
           const { matches } = await queryVectorizeScoped<VectorizeMatch>(
-            env.VECTORIZE, values, { topK: 50, filter: wsFilter },
+            env.VECTORIZE, values, { topK: 50, filter: wsFilter, onDegrade },
           );
           results = { matches };
         } else {

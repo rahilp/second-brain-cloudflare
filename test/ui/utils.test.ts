@@ -26,7 +26,7 @@ i18nCtx.initI18n("en");
 (globalThis as any).localeTag = i18nCtx.localeTag;
 (globalThis as any).getLocale = i18nCtx.getLocale;
 
-const { parseRecallResult, escHtml, escAttr, toDateStr, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner } = require("../../public/utils.js");
+const { parseRecallResult, escHtml, escAttr, toDateStr, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip } = require("../../public/utils.js");
 
 // Minimal fake document so the banner DOM glue can be tested in the node
 // environment without jsdom. appendChild registers the element by id so a later
@@ -370,6 +370,80 @@ describe("syncVectorizeBanner", () => {
     const res = syncVectorizeBanner(doc, null);
     expect(res).toBeNull();
     expect(doc.getElementById("vectorize-banner")).toBeNull();
+    expect(doc.body.style.paddingTop).toBe("");
+  });
+});
+
+describe("workspaceFilterChip", () => {
+  it("returns null when supported is true (filtering healthy)", () => {
+    expect(workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: true, degradedQueries: 0, latchedAt: null } } })).toBeNull();
+  });
+
+  it("returns null when supported is null (fresh isolate, never queried)", () => {
+    expect(workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: null, degradedQueries: 0, latchedAt: null } } })).toBeNull();
+  });
+
+  it("returns null when health, vectorize, or workspaceFilter is absent (no false alarm)", () => {
+    expect(workspaceFilterChip(null)).toBeNull();
+    expect(workspaceFilterChip(undefined)).toBeNull();
+    expect(workspaceFilterChip({})).toBeNull();
+    expect(workspaceFilterChip({ vectorize: {} })).toBeNull();
+  });
+
+  it("returns a chip with a title when supported is false (degraded) on a TEAM brain", () => {
+    const chip = workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } });
+    expect(chip).not.toBeNull();
+    expect(chip.title).toBeTruthy();
+    // Never implies data leakage — every hydration stays scoped at the SQL
+    // layer regardless of filter support.
+    expect(chip.title.toLowerCase()).not.toContain("leak");
+  });
+
+  it("returns null when supported is false but the brain is SOLO (team: false) — no layer UI exists to explain", () => {
+    expect(workspaceFilterChip({ team: false, vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } })).toBeNull();
+  });
+
+  it("returns null when supported is false and `team` is absent entirely (same as false)", () => {
+    expect(workspaceFilterChip({ vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } })).toBeNull();
+  });
+});
+
+describe("syncWorkspaceFilterChip", () => {
+  it("mounts the chip when given one, and does nothing (no element) when null", () => {
+    const doc = makeFakeDoc();
+    const chip = workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: false, degradedQueries: 1, latchedAt: null } } });
+    const el = syncWorkspaceFilterChip(doc, chip, 0);
+    expect(el).not.toBeNull();
+    expect(doc.getElementById("vectorize-filter-chip")).toBe(el);
+    expect(el.textContent).toBeTruthy();
+
+    const doc2 = makeFakeDoc();
+    const notDegraded = workspaceFilterChip({ vectorize: { workspaceFilter: { supported: true, degradedQueries: 0, latchedAt: null } } });
+    const el2 = syncWorkspaceFilterChip(doc2, notDegraded, 0);
+    expect(el2).toBeNull();
+    expect(doc2.getElementById("vectorize-filter-chip")).toBeNull();
+
+    const doc3 = makeFakeDoc();
+    const nullState = workspaceFilterChip({ vectorize: { workspaceFilter: { supported: null, degradedQueries: 0, latchedAt: null } } });
+    const el3 = syncWorkspaceFilterChip(doc3, nullState, 0);
+    expect(el3).toBeNull();
+    expect(doc3.getElementById("vectorize-filter-chip")).toBeNull();
+  });
+
+  it("stacks below whatever offsetTop it is given, so it never overlaps the vectorize banner", () => {
+    const doc = makeFakeDoc();
+    const chip = { title: "degraded" };
+    const el = syncWorkspaceFilterChip(doc, chip, 24);
+    expect(el.style.top).toBe("24px");
+  });
+
+  it("removes the chip and clears the body offset when chip is null", () => {
+    const doc = makeFakeDoc();
+    syncWorkspaceFilterChip(doc, { title: "degraded" }, 0);
+    expect(doc.getElementById("vectorize-filter-chip")).not.toBeNull();
+    const res = syncWorkspaceFilterChip(doc, null, 0);
+    expect(res).toBeNull();
+    expect(doc.getElementById("vectorize-filter-chip")).toBeNull();
     expect(doc.body.style.paddingTop).toBe("");
   });
 });

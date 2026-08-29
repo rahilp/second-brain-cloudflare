@@ -156,7 +156,10 @@ async function checkVectorize() {
   try {
     const res = await fetch(`${WORKER_URL}/health`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
     const data = await res.json()
-    renderVectorizeBanner(vectorizeHealthBanner(data))
+    const bannerEl = renderVectorizeBanner(vectorizeHealthBanner(data))
+    // Stacked directly under the vectorize banner (0 when it is absent) so
+    // the two never overlap — see syncWorkspaceFilterChip in utils.js.
+    renderWorkspaceFilterChip(workspaceFilterChip(data), bannerEl ? bannerEl.offsetHeight : 0)
     // The composer's layer toggle and the memories filters only exist when
     // this brain actually has members — solo brains keep the quiet UI.
     maybeRevealHomeLayer(data)
@@ -171,7 +174,15 @@ async function checkVectorize() {
 // Thin wrapper over the unit-tested syncVectorizeBanner in utils.js, which
 // owns the mount/update/remove + body-offset logic against the real document.
 function renderVectorizeBanner(banner) {
-  syncVectorizeBanner(document, banner)
+  return syncVectorizeBanner(document, banner)
+}
+
+// Thin wrapper over the unit-tested syncWorkspaceFilterChip in utils.js. See
+// workspaceFilterChip's own comment: this reports degraded ranking quality
+// (foreign candidates can consume result slots before SQL filters them back
+// out), never data leakage — every hydration stays scoped at the SQL layer.
+function renderWorkspaceFilterChip(chip, offsetTop) {
+  syncWorkspaceFilterChip(document, chip, offsetTop)
 }
 
 // Row overflow menus close on any outside click or Escape — they are transient

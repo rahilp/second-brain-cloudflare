@@ -6,7 +6,7 @@ import { VECTORIZE_FIX_HINT } from "../constants";
 import { buildEntryFilterQuery, captureEntry } from "../capture/entry";
 import { appendToEntry, updateEntryContent } from "../capture/store";
 import { applyStatus, forgetEntry } from "../capture/lifecycle";
-import { moveEntry } from "../capture/share";
+import { moveEntry, restampVectorWorkspace } from "../capture/share";
 import { auditEvent } from "../lib/audit";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { createEdge, deleteEdge, edgeLabel, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
@@ -397,6 +397,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       if (result.status === "forbidden") return { content: [{ type: "text", text: `Only the entry's author or an admin can un-share ${id}.` }] };
       if (result.status === "no_change") return { content: [{ type: "text", text: `Entry ${id} is already in the ${workspace ?? "company"} workspace.` }] };
       auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: result.status, payload: { workspaceId: result.workspaceId } });
+      // After the audit event, before the response — see moveEntry's own
+      // comment: the D1 move is already committed, so a Vectorize outage
+      // here costs only this cosmetic ranking follow-up.
+      ctx.waitUntil(restampVectorWorkspace(env, result.vectorIds, result.workspaceId));
       return { content: [{ type: "text", text: `Entry ${id} ${result.status} — now in the ${workspace ?? "company"} workspace.` }] };
     }
   );

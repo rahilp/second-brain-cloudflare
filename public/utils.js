@@ -366,6 +366,58 @@ function syncVectorizeBanner(doc, banner) {
   return el;
 }
 
+/* Build the dashboard warning chip contents when this isolate has degraded to
+ * unfiltered Vectorize queries (src/vectorize/scope.ts's per-isolate latch).
+ * Returns null when filtering is supported or unknown (health absent, the
+ * field absent, or `supported` is `true`/`null`), so a fresh isolate or a
+ * transient fetch failure never raises a false alarm — and also returns null
+ * when `health.team` is false, since the message names "layers", a concept a
+ * solo (non-team) brain has no UI for at all.
+ *
+ * This is a RESULT-QUALITY signal, not a correctness one: every hydration is
+ * already scoped at the SQL layer regardless of whether the Vectorize filter
+ * itself is applied, so this must never be read as "data may be leaking
+ * across workspaces" — it only means ranking quality is degraded because
+ * foreign candidates can crowd out the caller's own before SQL filters them
+ * back out. */
+function workspaceFilterChip(health) {
+  if (!health || !health.vectorize || !health.vectorize.workspaceFilter) return null;
+  if (health.vectorize.workspaceFilter.supported !== false) return null;
+  // Team vocabulary ("results are ranked across all layers") on a brain with
+  // no layer UI at all would be a lie the solo owner cannot act on — every
+  // other layer affordance in checkVectorize (nav.js) is gated on `team`, and
+  // this one must be too, or a solo brain whose index rejects the filter gets
+  // a permanent banner about a concept (layers) it does not have.
+  if (!health.team) return null;
+  return { title: t('nav.vectorizeFilterDegraded') };
+}
+
+/* Mount, update, or remove the workspace-filter chip against an injected
+ * document. Styled the same way as the vectorize banner (syncVectorizeBanner)
+ * and stacked directly under it — `offsetTop` is the height of whatever sits
+ * above the chip (normally the banner's own offsetHeight, or 0 when there is
+ * no banner) — so the two never overlap. Returns the element, or null when
+ * removed. */
+function syncWorkspaceFilterChip(doc, chip, offsetTop) {
+  offsetTop = offsetTop || 0;
+  let el = doc.getElementById('vectorize-filter-chip');
+  if (!chip) {
+    if (el) el.remove();
+    doc.body.style.paddingTop = offsetTop ? offsetTop + 'px' : '';
+    return null;
+  }
+  if (!el) {
+    el = doc.createElement('div');
+    el.id = 'vectorize-filter-chip';
+    el.style.cssText = 'position:fixed;left:0;right:0;z-index:9998;background:#7c2d12;color:#fff;padding:8px 16px;font-size:12px;line-height:1.4;box-shadow:0 1px 4px rgba(0,0,0,0.25)';
+    doc.body.appendChild(el);
+  }
+  el.style.top = offsetTop + 'px';
+  el.textContent = chip.title;
+  doc.body.style.paddingTop = (offsetTop + (el.offsetHeight || 0)) + 'px';
+  return el;
+}
+
 /* ---- System tags ----------------------------------------------------------------------
  *
  * Which tags are the brain's own bookkeeping, and which are the person's words.
@@ -721,5 +773,5 @@ function packGraphCircles(radii, gap) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles };
+  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles };
 }
