@@ -15,7 +15,6 @@ coverage/
 # The two files below are meant to be tracked.
 docs/*
 !docs/dashboard-architecture.md
-!docs/local-testing.md
 .claude/
 .cursor/
 .dev.vars

@@ -69,7 +69,7 @@ describe("the committed tree", () => {
  * Nothing that holds a person's memories can be committed.
  *
  * `wrangler d1 export` writes every entry in the brain, in plaintext, to
- * wherever `--output` points. docs/local-testing.md sends it to /tmp, but the
+ * wherever `--output` points. Local runs can send it to /tmp, but the
  * repository root is one mistyped flag away, and a dump is exactly the kind of
  * large untracked file that rides along in a `git add -A` and is never noticed.
  * A local D1 is the same content as SQLite.
