@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "seed:stale-dev": "node scripts/seed-stale-dev.mjs",
     "cf-typegen": "wrangler types",
     "typecheck": "wrangler types && tsc --noEmit"
   },
