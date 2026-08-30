@@ -221,6 +221,11 @@ export class TeamAdminError extends Error {
   }
 }
 
+function changedRows(result: D1Result<unknown>): number {
+  const meta = result.meta as Record<string, number>;
+  return meta.changes ?? meta.rows_written ?? 0;
+}
+
 export async function createMember(
   env: Env,
   input: { name?: string; email?: string | null; role?: "admin" | "member" },
@@ -267,10 +272,7 @@ export async function rotateMemberToken(env: Env, userId: string): Promise<strin
   const { token, tokenHash } = await generateToken();
   const result = await env.DB.prepare(`UPDATE users SET token_hash = ? WHERE id = ?`)
     .bind(tokenHash, userId).run();
-  // D1 reports meta.changes; the real-SQLite test facade reports rows_written.
-  const changed = (result.meta as Record<string, number>).changes
-    ?? (result.meta as Record<string, number>).rows_written ?? 0;
-  if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
+  if (!changedRows(result)) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
   return token;
 }
 
@@ -278,23 +280,38 @@ export async function setMemberSuspended(env: Env, actorId: string, userId: stri
   if (userId === actorId && suspended) {
     throw new TeamAdminError(400, "You cannot suspend your own account");
   }
-  if (suspended) {
-    // Guardrail against locking the deployment out: at least one active admin
-    // must remain after this suspension.
-    const admins = await env.DB.prepare(
-      `SELECT id FROM users WHERE role = 'admin' AND suspended = 0 AND (removed_at IS NULL OR removed_at = 0) AND id != ?`,
-    ).bind(userId).all<{ id: string }>();
-    const target = await env.DB.prepare(`SELECT role FROM users WHERE id = ?`).bind(userId).first<{ role: string }>();
-    if (!target) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
-    if (target.role === "admin" && !(admins.results ?? []).length) {
-      throw new TeamAdminError(400, "Cannot suspend the last active admin");
-    }
+  const value = suspended ? 1 : 0;
+  // Keep the last-admin check inside the write. Concurrent updates are
+  // serialized by D1, so the second writer sees the first writer's result.
+  const result = await env.DB.prepare(
+    `UPDATE users AS target
+        SET suspended = ?
+      WHERE target.id = ?
+        AND (target.removed_at IS NULL OR target.removed_at = 0)
+        AND (
+          ? = 0
+          OR target.role != 'admin'
+          OR EXISTS (
+            SELECT 1 FROM users AS other
+             WHERE other.id != target.id
+               AND other.role = 'admin'
+               AND other.suspended = 0
+               AND (other.removed_at IS NULL OR other.removed_at = 0)
+          )
+        )`,
+  ).bind(value, userId, value).run();
+  if (changedRows(result)) return;
+
+  const target = await env.DB.prepare(
+    `SELECT role, removed_at FROM users WHERE id = ?`,
+  ).bind(userId).first<{ role: string; removed_at: number | null }>();
+  if (!target || Number(target.removed_at) > 0) {
+    throw new TeamAdminError(404, `No member found with ID: ${userId}`);
   }
-  const result = await env.DB.prepare(`UPDATE users SET suspended = ? WHERE id = ?`)
-    .bind(suspended ? 1 : 0, userId).run();
-  const changed = (result.meta as Record<string, number>).changes
-    ?? (result.meta as Record<string, number>).rows_written ?? 0;
-  if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
+  if (suspended && target.role === "admin") {
+    throw new TeamAdminError(400, "Cannot suspend the last active admin");
+  }
+  throw new TeamAdminError(409, "Member state changed concurrently; try again");
 }
 
 /**
@@ -310,9 +327,7 @@ export async function setMemberDefaultShare(
   const stored = value === "inherit" ? "" : value;
   const result = await env.DB.prepare(`UPDATE users SET default_share = ? WHERE id = ?`)
     .bind(stored, userId).run();
-  const changed = (result.meta as Record<string, number>).changes
-    ?? (result.meta as Record<string, number>).rows_written ?? 0;
-  if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
+  if (!changedRows(result)) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
 }
 
 /**
@@ -334,23 +349,49 @@ export async function removeMember(
   if (userId === actorId) {
     throw new TeamAdminError(400, "You cannot remove your own account");
   }
-  const target = await env.DB.prepare(
-    `SELECT role FROM users WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
-  ).bind(userId).first<{ role: string }>();
+  let target = await env.DB.prepare(
+    `SELECT role, removed_at FROM users WHERE id = ?`,
+  ).bind(userId).first<{ role: string; removed_at: number | null }>();
   if (!target) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
-  if (target.role === "admin") {
-    const otherAdmins = await env.DB.prepare(
-      `SELECT id FROM users WHERE role = 'admin' AND suspended = 0 AND (removed_at IS NULL OR removed_at = 0) AND id != ?`,
-    ).bind(userId).all<{ id: string }>();
-    if (!(otherAdmins.results ?? []).length) {
-      throw new TeamAdminError(400, "Cannot remove the last active admin");
+
+  if (!Number(target.removed_at)) {
+    // Claim removal before cleanup. This atomic transition protects the admin
+    // invariant; the idempotent cleanup below can be retried after a failure.
+    const claimed = await env.DB.prepare(
+      `UPDATE users AS target
+          SET removed_at = ?
+        WHERE target.id = ?
+          AND target.id != ?
+          AND (target.removed_at IS NULL OR target.removed_at = 0)
+          AND (
+            target.role != 'admin'
+            OR EXISTS (
+              SELECT 1 FROM users AS other
+               WHERE other.id != target.id
+                 AND other.role = 'admin'
+                 AND other.suspended = 0
+                 AND (other.removed_at IS NULL OR other.removed_at = 0)
+            )
+          )`,
+    ).bind(Date.now(), userId, actorId).run();
+    if (!changedRows(claimed)) {
+      target = await env.DB.prepare(
+        `SELECT role, removed_at FROM users WHERE id = ?`,
+      ).bind(userId).first<{ role: string; removed_at: number | null }>();
+      if (!target) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
+      if (!Number(target.removed_at) && target.role === "admin") {
+        throw new TeamAdminError(400, "Cannot remove the last active admin");
+      }
+      if (!Number(target.removed_at)) {
+        throw new TeamAdminError(409, "Member state changed concurrently; try again");
+      }
     }
   }
 
   const personal = await env.DB.prepare(
     `SELECT w.id AS wid FROM memberships m JOIN workspaces w ON w.id = m.workspace_id AND w.kind = 'personal' WHERE m.user_id = ?`,
   ).bind(userId).first<{ wid: string }>();
-  if (!personal) throw new TeamAdminError(404, "Member has no personal workspace");
+  if (!personal) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
 
   // Collect the doomed rows' vectors first: D1 rows go in one batch, the
   // Vectorize delete is the caller's (it may be absent entirely).
@@ -366,7 +407,6 @@ export async function removeMember(
   ).bind(personal.wid).all<{ n: number }>();
   const removedEntries = counts?.[0]?.n ?? 0;
 
-  const now = Date.now();
   await env.DB.batch([
     // Edges before entries: the edge delete resolves endpoints through the
     // entries table, so it has to run while the rows still exist.
@@ -377,7 +417,6 @@ export async function removeMember(
     env.DB.prepare(`DELETE FROM entries WHERE workspace_id = ?`).bind(personal.wid),
     env.DB.prepare(`DELETE FROM memberships WHERE user_id = ?`).bind(userId),
     env.DB.prepare(`DELETE FROM workspaces WHERE id = ?`).bind(personal.wid),
-    env.DB.prepare(`UPDATE users SET removed_at = ? WHERE id = ?`).bind(now, userId),
   ]);
 
   return { removedEntries, vectorIds };
@@ -410,9 +449,7 @@ export async function setMemberProfile(
   const result = await env.DB.prepare(
     `UPDATE users SET ${sets.join(", ")} WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
   ).bind(...bindings).run();
-  const changed = (result.meta as Record<string, number>).changes
-    ?? (result.meta as Record<string, number>).rows_written ?? 0;
-  if (!changed) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
+  if (!changedRows(result)) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
 }
 
 /** One company workspace, as members and admins both see it. */

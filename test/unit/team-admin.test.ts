@@ -17,6 +17,16 @@ async function makeEnv() {
   return { env, roots };
 }
 
+async function activeAdminIds(env: Env): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM users
+      WHERE role = 'admin' AND suspended = 0
+        AND (removed_at IS NULL OR removed_at = 0)
+      ORDER BY id`,
+  ).all<{ id: string }>();
+  return (results ?? []).map((row) => row.id);
+}
+
 describe("team member administration", () => {
   it("creates a member with a personal workspace and both memberships", async () => {
     const { env, roots } = await makeEnv();
@@ -71,6 +81,35 @@ describe("team member administration", () => {
     await setMemberSuspended(env, member.userId, roots.ownerUserId, true);
     // ...but now Ada is the last active admin and cannot be suspended.
     await expect(setMemberSuspended(env, "x", member.userId, true)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("atomically preserves one active admin when two admins suspend each other", async () => {
+    const { env, roots } = await makeEnv();
+    const { member: ada } = await createMember(env, { name: "Ada", role: "admin" });
+
+    const results = await Promise.allSettled([
+      setMemberSuspended(env, ada.userId, roots.ownerUserId, true),
+      setMemberSuspended(env, roots.ownerUserId, ada.userId, true),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({
+      reason: { status: 400, message: "Cannot suspend the last active admin" },
+    });
+    expect(await activeAdminIds(env)).toHaveLength(1);
+  });
+
+  it("allows concurrent suspension of ordinary members", async () => {
+    const { env, roots } = await makeEnv();
+    const { member: ada } = await createMember(env, { name: "Ada" });
+    const { member: bob } = await createMember(env, { name: "Bob" });
+
+    await expect(Promise.all([
+      setMemberSuspended(env, roots.ownerUserId, ada.userId, true),
+      setMemberSuspended(env, roots.ownerUserId, bob.userId, true),
+    ])).resolves.toEqual([undefined, undefined]);
+    expect(await activeAdminIds(env)).toEqual([roots.ownerUserId]);
   });
 
   it("suspension keeps rows but blocks identity resolution", async () => {
@@ -133,6 +172,90 @@ describe("team member administration", () => {
       // suspension by design) so Ada becomes the only active admin.
       await env.DB.prepare(`UPDATE users SET suspended = 1 WHERE id = ?`).bind(roots.ownerUserId).run();
       await expect(removeMember(env, roots.ownerUserId, member.userId)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("atomically preserves one active admin when two admins remove each other", async () => {
+      const { env, roots } = await makeEnv();
+      const { member: ada } = await createMember(env, { name: "Ada", role: "admin" });
+
+      const results = await Promise.allSettled([
+        removeMember(env, ada.userId, roots.ownerUserId),
+        removeMember(env, roots.ownerUserId, ada.userId),
+      ]);
+
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+      expect(results.find((result) => result.status === "rejected")).toMatchObject({
+        reason: { status: 400, message: "Cannot remove the last active admin" },
+      });
+      expect(await activeAdminIds(env)).toHaveLength(1);
+    });
+
+    it("preserves one active admin when suspension races removal", async () => {
+      const { env, roots } = await makeEnv();
+      const { member: ada } = await createMember(env, { name: "Ada", role: "admin" });
+
+      const results = await Promise.allSettled([
+        setMemberSuspended(env, ada.userId, roots.ownerUserId, true),
+        removeMember(env, roots.ownerUserId, ada.userId),
+      ]);
+
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+      expect(await activeAdminIds(env)).toHaveLength(1);
+    });
+
+    it("resumes cleanup after the account was claimed but its cleanup batch failed", async () => {
+      const { env, roots } = await makeEnv();
+      const { member, token } = await createMember(env, { name: "Ada" });
+      await env.DB.prepare(
+        `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id)
+         VALUES ('retry-private', 'private', '[]', 'api', 1, '["retry-vector"]', ?, ?)`,
+      ).bind(member.personalWorkspaceId, member.userId).run();
+
+      const originalBatch = env.DB.batch.bind(env.DB);
+      let failCleanup = true;
+      env.DB.batch = (async (statements: D1PreparedStatement[]) => {
+        if (failCleanup) {
+          failCleanup = false;
+          throw new Error("injected cleanup failure");
+        }
+        return originalBatch(statements);
+      }) as Env["DB"]["batch"];
+
+      await expect(removeMember(env, roots.ownerUserId, member.userId)).rejects.toThrow("injected cleanup failure");
+
+      const claimed = await env.DB.prepare(
+        `SELECT removed_at FROM users WHERE id = ?`,
+      ).bind(member.userId).first<{ removed_at: number | null }>();
+      expect(Number(claimed?.removed_at)).toBeGreaterThan(0);
+      expect(await env.DB.prepare(
+        `SELECT id FROM workspaces WHERE id = ?`,
+      ).bind(member.personalWorkspaceId).first()).not.toBeNull();
+
+      const { resolveIdentityFromToken } = await import("../../src/lib/identity");
+      expect(await resolveIdentityFromToken(token, env)).toBeNull();
+
+      const retried = await removeMember(env, roots.ownerUserId, member.userId);
+      expect(retried).toEqual({ removedEntries: 1, vectorIds: ["retry-vector"] });
+      expect(await env.DB.prepare(
+        `SELECT id FROM workspaces WHERE id = ?`,
+      ).bind(member.personalWorkspaceId).first()).toBeNull();
+      expect(await env.DB.prepare(
+        `SELECT id FROM entries WHERE id = 'retry-private'`,
+      ).first()).toBeNull();
+    });
+
+    it("removes ordinary members concurrently without weakening the admin invariant", async () => {
+      const { env, roots } = await makeEnv();
+      const { member: ada } = await createMember(env, { name: "Ada" });
+      const { member: bob } = await createMember(env, { name: "Bob" });
+
+      await expect(Promise.all([
+        removeMember(env, roots.ownerUserId, ada.userId),
+        removeMember(env, roots.ownerUserId, bob.userId),
+      ])).resolves.toHaveLength(2);
+      expect(await activeAdminIds(env)).toEqual([roots.ownerUserId]);
     });
   });
 });
