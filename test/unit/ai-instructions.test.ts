@@ -17,10 +17,12 @@ function availabilitySection(text: string) {
 describe("AI instruction files (#223 lazy MCP contract)", () => {
   const claude = readInstructions("CLAUDE_INSTRUCTIONS.md");
   const codex = readInstructions("CODEX_INSTRUCTIONS.md");
+  const cursor = readInstructions("CURSOR_INSTRUCTIONS.md");
 
   for (const [label, text] of [
     ["CLAUDE", claude],
     ["CODEX", codex],
+    ["CURSOR", cursor],
   ] as const) {
     describe(label, () => {
       const section = () => availabilitySection(text);
@@ -47,7 +49,7 @@ describe("AI instruction files (#223 lazy MCP contract)", () => {
     });
   }
 
-  it("keeps CLAUDE and CODEX availability guidance aligned on core rules", () => {
+  it("keeps CLAUDE, CODEX, and CURSOR availability guidance aligned on core rules", () => {
     const coreRules = [
       /Never conclude the tools are unavailable from the tool list alone/i,
       /Verify by actually calling recall/i,
@@ -56,6 +58,7 @@ describe("AI instruction files (#223 lazy MCP contract)", () => {
     for (const rule of coreRules) {
       expect(claude).toMatch(rule);
       expect(codex).toMatch(rule);
+      expect(cursor).toMatch(rule);
     }
   });
 });

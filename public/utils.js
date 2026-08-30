@@ -517,6 +517,7 @@ const GRAPH_AXIS_TAGS = new Set([
   'context',
   'claude-response',
   'codex-response',
+  'cursor-response',
 ])
 
 /* Group graph nodes into topic clusters. Mutates each node, setting:

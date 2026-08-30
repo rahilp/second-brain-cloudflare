@@ -1,0 +1,42 @@
+---
+description: Always recall at session start and remember important context via Second Brain (MCP or brain CLI)
+alwaysApply: true
+---
+
+# Second Brain — mandatory recall and remember
+
+You have a personal Second Brain. Use it every session — not Cursor's built-in memory.
+
+## How to reach it
+
+1. **MCP first** — if `remember`, `recall`, `get`, `list_recent`, `append`, `update`, `forget`, `link`, `connections`, or `share` are in your tool list, use them.
+2. **CLI fallback** — if MCP tools are missing but `brain` is configured (`~/.config/second-brain/config.json` exists), run via shell:
+   - `brain recall "<intent-framed query>"`
+   - `brain remember "<condensed summary>" --tags work,project-name`
+3. **Unavailable** — if both fail, say Second Brain is unavailable and quote the error. Never skip silently or use built-in memory instead.
+
+MCP tools may load lazily in Cursor — a connected server can omit tools from the visible list. **Verify with a real `recall` call** before treating Second Brain as down.
+
+## Mandatory — no exceptions
+
+**Start of every conversation:** call `recall` (or `brain recall`) with an intent-framed query — not bare keywords. Frame as: *"User wants to X about Y — what should I know?"*
+
+**During and after work:** call `remember` (or `brain remember`) silently whenever:
+- The user shares personal context, work decisions, tasks, preferences, or plans
+- You recommend, decide, design, or conclude something they may need again
+
+Store condensed summaries, not full transcripts. Tag with `cursor-response` plus a project/topic tag and one of: `personal`, `work`, `task`, `idea`, `context`. Set source to `cursor` on MCP calls.
+
+**Before recommending or asking:** recall first to avoid repeating yourself or re-asking answered questions.
+
+**Respect exclusions:** if the user says not to store something, skip `remember` for that content.
+
+## Tool quick reference
+
+- `recall` — semantic search; use `hops:1–2` when tracing why/how or following relationships
+- `remember` — new memory; optional `volatility`: `durable` | `state` | `volatile`
+- `append` / `update` — change existing entry (get ID from recall or list_recent first)
+- `link` / `connections` — relationship graph
+- `share` — move between personal and company layer on team brains (`workspace`: `personal` | `company`)
+
+Full guidance: copy [CURSOR_INSTRUCTIONS.md](https://github.com/rahilp/second-brain-cloudflare/blob/main/AI_Instructions/CURSOR_INSTRUCTIONS.md) into `~/.cursor/CURSOR_INSTRUCTIONS.md`, or open it from a clone of this repository.

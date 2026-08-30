@@ -40,7 +40,7 @@ const BOOKKEEPING_TAGS = new Set([
  * decide whether a pair is cross-topic.
  */
 export const AXIS_TAGS: ReadonlySet<string> = new Set([
-  "personal", "work", "task", "idea", "context", "claude-response", "codex-response",
+  "personal", "work", "task", "idea", "context", "claude-response", "codex-response", "cursor-response",
 ]);
 
 /**

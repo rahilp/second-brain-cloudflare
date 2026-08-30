@@ -16,7 +16,9 @@ coverage/
 docs/*
 !docs/dashboard-architecture.md
 .claude/
-.cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/second-brain-memory.mdc
 .dev.vars
 .env
 worker-configuration.d.ts

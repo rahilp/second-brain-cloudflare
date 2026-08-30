@@ -188,6 +188,7 @@ See [GitHub Releases](releases) for release notes and previous versions.
 - [Setup Guide](wiki/Setup-Guide): Desktop, one-click, and manual deployment
 - [Team Setup](wiki/Team-Setup): Team mode, member access, sharing rules, capture defaults, and offboarding
 - [Connect to AI Clients](wiki/Connect-to-AI-Clients): ChatGPT, Claude, Claude Code, Codex, Cursor, and other MCP clients
+- [Cursor Instructions](wiki/Cursor-Instructions): MCP setup and Cursor Rules for automatic recall and remember
 - [Capture from Anywhere](wiki/Capture-from-Anywhere): CLI, browser extension, bookmarklet, iOS Shortcuts, and Notion
 - [Notion Integration](wiki/Notion-Integration): Connect, synchronize, and troubleshoot Notion
 - [Web UI](wiki/Web-UI): Dashboard and mobile interface
