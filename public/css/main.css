@@ -2443,7 +2443,7 @@
       /* The whole row is the label, so tapping anywhere on a pattern ticks it —
          a checkbox-sized target is the wrong size for a phone. */
 
-      /* One flagged memory, with the three ways out of the flag. Mirrors
+      /* One flagged memory, with the four ways out of the flag. Mirrors
          .pattern-row's rhythm; no checkbox, because ruling on staleness is a
          per-memory judgement rather than a bulk one. */
       .stale-row {

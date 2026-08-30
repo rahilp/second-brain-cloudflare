@@ -1,7 +1,15 @@
+function resetAppendSaveBtn() {
+  const btn = document.getElementById('append-save-btn')
+  if (!btn) return
+  btn.disabled = false
+  btn.textContent = t('memories.appendSave')
+}
+
 function openAppend(id, preview) {
   pendingAppendId = id
   document.getElementById('append-context-preview').textContent = preview + '...'
   document.getElementById('append-textarea').value = ''
+  resetAppendSaveBtn()
   document.getElementById('append-sheet').classList.add('open')
   setTimeout(() => document.getElementById('append-textarea').focus(), 100)
 }
@@ -20,6 +28,7 @@ function openAppendFromContent() {
 function closeAppend() {
   document.getElementById('append-sheet').classList.remove('open')
   pendingAppendId = null
+  resetAppendSaveBtn()
 }
 async function saveAppend() {
   const addition = document.getElementById('append-textarea').value.trim()
@@ -34,15 +43,22 @@ async function saveAppend() {
     notifyMemoryResolved(appendedId)
     refreshAll()
   } catch (e) {
-    btn.disabled = false
-    btn.textContent = t('memories.appendSave')
     showToast(t('memories.appendFailed', { message: e.message }))
+  } finally {
+    resetAppendSaveBtn()
   }
 }
 
 // The tags the sheet is currently offering to save. Held separately from the
 // entry so that removing one and then cancelling changes nothing.
 let pendingEditTags = []
+
+function resetEditSaveBtn() {
+  const btn = document.getElementById('edit-save-btn')
+  if (!btn) return
+  btn.disabled = false
+  btn.textContent = t('memories.editSave')
+}
 
 function openEdit(id, content, tags) {
   pendingEditId = id
@@ -56,6 +72,7 @@ function openEdit(id, content, tags) {
 
   const ta = document.getElementById('edit-textarea')
   ta.value = content
+  resetEditSaveBtn()
   document.getElementById('edit-sheet').classList.add('open')
   setTimeout(() => {
     ta.focus()
@@ -87,6 +104,7 @@ function closeEdit() {
   document.getElementById('edit-sheet').classList.remove('open')
   pendingEditId = null
   pendingEditTags = []
+  resetEditSaveBtn()
 }
 
 async function saveEdit() {
@@ -109,9 +127,9 @@ async function saveEdit() {
     notifyMemoryResolved(editedId)
     refreshAll()
   } catch (e) {
-    btn.disabled = false
-    btn.textContent = t('memories.editSave')
     showToast(t('memories.editFailed', { message: e.message }))
+  } finally {
+    resetEditSaveBtn()
   }
 }
 

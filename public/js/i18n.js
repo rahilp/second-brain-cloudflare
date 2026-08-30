@@ -523,10 +523,12 @@ const I18N_EN = {
   stale: {
     title: 'May be out of date',
     intro:
-      'These were true when you wrote them and carry a claim that ages. Update one to confirm it, add to it, or forget it. Editing or appending clears the flag, because the memory has just been confirmed by the act of touching it.',
+      'These were true when you wrote them and carry a claim that ages. Update one to confirm it, add to it, keep it as still true, or forget it. Editing, appending, or keeping clears the flag, because the memory has just been confirmed.',
     empty: 'Nothing looks out of date.',
     loadFailed: 'Could not load what may be out of date.',
     lastConfirmed: 'Last confirmed {date}',
+    keep: 'Keep',
+    keepFailed: 'Could not keep this memory: {message}',
     more: '{n} more',
   },
   patterns: {
@@ -1200,10 +1202,12 @@ const I18N_IT = {
   stale: {
     title: 'Potrebbe non essere aggiornato',
     intro:
-      'Erano veri quando li hai scritti e contengono un\'affermazione che invecchia. Aggiornane uno per confermarlo, aggiungi qualcosa o dimenticalo. Modificare o aggiungere azzera il contrassegno, perché toccare la memoria equivale a confermarla.',
+      'Erano veri quando li hai scritti e contengono un\'affermazione che invecchia. Aggiornane uno per confermarlo, aggiungi qualcosa, tienilo come ancora vero o dimenticalo. Modificare, aggiungere o tenere azzera il contrassegno, perché la memoria è appena stata confermata.',
     empty: 'Nulla sembra non aggiornato.',
     loadFailed: 'Impossibile caricare cosa potrebbe non essere aggiornato.',
     lastConfirmed: 'Confermato il {date}',
+    keep: 'Tieni',
+    keepFailed: 'Impossibile tenere questa memoria: {message}',
     more: 'Altri {n}',
   },
   patterns: {

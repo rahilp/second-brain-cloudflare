@@ -143,3 +143,39 @@ describe("GET /stale", () => {
     expect(new Set(ids).size).toBe(20);
   });
 });
+
+describe("POST /stale/keep", () => {
+  it("requires auth", async () => {
+    sq = await migrated();
+    const res = await worker.fetch(req("POST", "/stale/keep", { token: null, body: { id: "x" } }), envOf(sq), ctx);
+    expect(res.status).toBe(401);
+  });
+
+  it("clears stale:as-of without changing content", async () => {
+    sq = await migrated();
+    seedStale(sq, "old-1", "Our deploy target is the staging cluster");
+
+    const res = await worker.fetch(req("POST", "/stale/keep", { body: { id: "old-1" } }), envOf(sq), ctx);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+
+    const row = (await sq.db.prepare(
+      `SELECT content, tags, updated_at, staleness_checked_at FROM entries WHERE id = ?`,
+    ).bind("old-1").first()) as any;
+    expect(row.content).toBe("Our deploy target is the staging cluster");
+    expect(JSON.parse(row.tags)).not.toContain("stale:as-of");
+    expect(row.updated_at).toBeTypeOf("number");
+    expect(row.staleness_checked_at).toBeTypeOf("number");
+
+    const queue = await (await worker.fetch(req("GET", "/stale"), envOf(sq), ctx)).json() as any;
+    expect(queue.total).toBe(0);
+  });
+
+  it("refuses an entry that is not flagged", async () => {
+    sq = await migrated();
+    sq.seed({ id: "fresh", content: "Never flagged", createdAt: 1000, tags: ["work"] });
+
+    const res = await worker.fetch(req("POST", "/stale/keep", { body: { id: "fresh" } }), envOf(sq), ctx);
+    expect(res.status).toBe(400);
+  });
+});

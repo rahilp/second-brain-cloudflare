@@ -13,8 +13,9 @@ import { classifyEntry } from "../capture/classify";
 import { storeEntry } from "../capture/store";
 import { INDEXABLE_SQL } from "../capture/lifecycle";
 import { PENDING_INSIGHT_SQL } from "../memory/patterns";
-import { STALE_REVIEW_SQL } from "../memory/stale";
+import { STALE_REVIEW_SQL, hasStaleAsOf, withoutStaleAsOf } from "../memory/stale";
 import { getStatus, withStatus } from "../memory/status";
+import { assertCanEditContent, getReadableEntry } from "../lib/entry-access";
 import { withKind } from "../memory/kind";
 import { checkVectorizeHealth } from "../vectorize/health";
 import { vectorizeFilterState } from "../vectorize/scope";
@@ -917,6 +918,39 @@ export async function handleAdminRoutes(
       limit,
       offset,
     });
+  }
+
+  // POST /stale/keep — confirm a flagged memory is still true without editing it.
+  // Dashboard-only, no MCP twin: like insight review, this is a human curation
+  // act on the out-of-date queue. Clears stale:as-of and bumps updated_at so the
+  // nightly pass does not immediately re-flag the same claim.
+  if (url.pathname === "/stale/keep" && request.method === "POST") {
+    const auth = await requireIdentity(request, env);
+    if (auth instanceof Response) return auth;
+
+    let body: { id?: string };
+    try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+
+    const id = body.id.trim();
+    const row = await getReadableEntry(env, auth, id, "id, workspace_id, actor_id, tags");
+    if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+    const denied = assertCanEditContent(auth, row);
+    if (denied) return json({ ok: false, error: denied.message }, 403);
+
+    const tags: string[] = JSON.parse(row.tags ?? "[]");
+    if (!hasStaleAsOf(tags)) {
+      return json({ ok: false, error: "Entry is not flagged as out of date" }, 400);
+    }
+
+    const now = Date.now();
+    await env.DB.prepare(
+      `UPDATE entries SET tags = ?, updated_at = ?, staleness_checked_at = ? WHERE id = ?`,
+    ).bind(JSON.stringify(withoutStaleAsOf(tags)), now, now, id).run();
+
+    auditEvents(env, ctx, [{ entryId: id, actorId: auth.userId, event: "updated", payload: { stale_confirmed: true } }]);
+
+    return json({ ok: true, id });
   }
 
   // POST /patterns/resolve — confirm or dismiss a proposed insight.

@@ -184,4 +184,14 @@ describe("saving", () => {
     expect(ctx.__els.get("edit-sheet").classList.contains("open")).toBe(true);
     expect(ctx.__els.get("edit-textarea").value).toBe("Rewritten content");
   });
+
+  it("resets the save button after a successful append so the next one is not stuck saving", async () => {
+    const ctx = load();
+    ctx.openAppend("e1", "Preview");
+    ctx.__els.get("append-textarea").value = "Still true.";
+    await ctx.saveAppend();
+    const btn = ctx.__els.get("append-save-btn");
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe("Update");
+  });
 });
