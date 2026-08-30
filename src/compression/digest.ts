@@ -43,20 +43,7 @@ State of "${tag}":`;
   return digest.trim();
 }
 
-/**
- * Mark the entries a digest was built from, so they stop being eligible for compression.
- *
- * One statement per source used to be issued serially, which was roughly 88% of the whole
- * nightly cron's D1 cost — all four jobs share one invocation and therefore one subrequest
- * budget (#278). A batch is a single subrequest whatever it carries.
- *
- * batch() is atomic, and that matters more than it looks here: the digest entry has already
- * been written by this point, so a source that misses its `rolled-up` mark stays eligible
- * and gets compressed again on a later night, producing a duplicate digest. Letting one bad
- * row roll back the whole batch would turn one duplicate into a tag's worth, so a failed
- * batch falls back to per-row writes — the behaviour this replaced, at the cost it used to
- * pay, on the path that used to be the only path.
- */
+/** Mark digest sources and retry individually if the batch fails. */
 async function markSourcesRolledUp(env: Env, ids: string[], digestId: string): Promise<void> {
   if (!ids.length) return;
   const note = `\n\n[Digest: ${digestId}]`;
@@ -89,29 +76,14 @@ export async function compressTag(
   ctx: ExecutionContext,
   opts?: CompressTagOptions,
 ): Promise<{ synthesizedId: string | null; entriesUsed: number; text: string }> {
-  // Guard before resolveConfig: that is a KV read, and a system tag never compresses, so
-  // paying for it first is a wasted subrequest per skipped tag per night. The candidate
-  // query excludes these already; this is the backstop for a tag arriving another way, and
-  // GET /digest?tag= hands this function an arbitrary user string. isTopicTag rather than
-  // isReservedTag, because the bookkeeping tags are not "reserved" but are just as
-  // destructive to compress: `duplicate-candidate` has no row-level exclusion either.
+  // Reject bookkeeping tags before the configuration lookup.
   if (!isTopicTag(tag)) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
   }
   const cfg = await resolveConfig(env);
 
-  // Rollups are partitioned PER WORKSPACE before any candidate is selected. The nightly
-  // cron spans every workspace by design, but a pooled candidate query would let one
-  // member's memories be summarized into a row another member can read — so each pass
-  // below consumes only one workspace's rows, and the digest it writes inherits that
-  // workspace.
-  //
-  // Workspaces are discovered from entries rather than from workspaces table joins:
-  // only workspaces with content can produce candidates anyway. An empty discovery
-  // (no rows at all, or a pre-tenancy database where every row carries "") falls back
-  // to the legacy "" workspace, which reproduces the single-workspace behaviour of
-  // every brain that existed before v3 — including test doubles that cannot evaluate
-  // SQL.
+  // Select and summarize one workspace at a time so private memories cannot be
+  // pooled into a digest visible from another workspace.
   const scoped = Boolean(opts?.workspaceIds?.length);
   let workspaces: string[];
   if (scoped) {

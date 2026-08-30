@@ -11,12 +11,7 @@ import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { auditEvent } from "../lib/audit";
 import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/volatility";
 
-/**
- * Zod guards the MCP tools; these routes have no schema layer, so an unrecognised value
- * has to be rejected here rather than dropped. Silently ignoring it would hand a caller
- * that sent "Volatile" or "temporary" a 200 and no verdict, with nothing to tell them
- * the field did not take.
- */
+/** Validate route-only volatility input; MCP gets equivalent Zod validation. */
 /** Where this caller's writes land and who gets stamped on them. */
 async function writeContextFor(
   env: Env,

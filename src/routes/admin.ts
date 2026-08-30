@@ -44,31 +44,20 @@ export async function handleAdminRoutes(
   ctx: ExecutionContext,
 ): Promise<Response | null> {
   const cfg = await resolveConfig(env);
-  // ── Team administration (v3). Administrative routes are behind requireAdmin;
-  // the member-facing reads (/team/roster, /team/me, /team/workspaces) are
-  // behind requireIdentity and scope themselves to the caller's own identity.
-  // Which gate a route uses is stated on the route. ──────────────────────
+  // Team administration requires admin access; roster and workspace reads only
+  // require a member identity and are scoped to that identity.
   if (url.pathname === "/team/members" && request.method === "GET") {
     const auth = await requireAdmin(request, env);
     if (auth instanceof Response) return auth;
     return json({ ok: true, members: await listMembers(env), you: auth.userId });
   }
 
-  // GET /team/roster — the member-facing people list: names and roles, and no
-  // more. requireIdentity, not requireAdmin, because knowing who is on your team
-  // is what makes "share with the team" mean anything; the admin row with its
-  // emails, private-entry counts and suspension state stays on /team/members.
-  //
-  // Not audited. An audit row records an administrative ACTION taken on someone
-  // (src/lib/admin-audit.ts); reading your own team's names is neither.
+  // Member-facing roster: names and roles only. Sensitive member details remain
+  // behind the admin-only endpoint.
   if (url.pathname === "/team/roster" && request.method === "GET") {
     const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
-    // Both lists are derived from the SAME resolved ids, so the teams named here
-    // and the people listed here cannot disagree about who the caller is — and
-    // because neither read depends on the other, they are issued together rather
-    // than one after the next. This is a page-load endpoint; serially awaiting
-    // two independent D1 reads inside the object literal costs both round trips.
+    // These independent reads share the same resolved workspace list.
     const [teams, members] = await Promise.all([
       listTeamWorkspaces(env, auth.companyWorkspaceIds),
       listRoster(env, auth.companyWorkspaceIds),
@@ -105,33 +94,8 @@ export async function handleAdminRoutes(
         event: "member_created",
         payload: { role: member.role, hasEmail: !!member.email },
       });
-      // A stored TEAM_MODE "off" is now a lie, and this is where it stops
-      // being one. Inviting someone is an unambiguous statement that this is a
-      // team, and the "off" can only be a leftover from the solo era — PATCH
-      // /config refuses to write it once a second person is here.
-      //
-      // This changes NO behaviour: the floor in isTeamBrain() already makes the
-      // effective flag true. It exists so the blob a human or a support script
-      // reads next says what the brain actually is.
-      //
-      // CLEARED, not set to "on". "on" would replace one recorded intent with
-      // another the owner never stated, and would outlive the team — remove
-      // everybody and the brain stays pinned to team mode, needing a second
-      // manual write to undo. Clearing hands the key back to "auto", which is
-      // right at every future headcount, one included.
-      //
-      // A KV read on a rare admin action, and a write only in the state that
-      // needs correcting: a brain that never overrode the key gains nothing.
-      //
-      // Swallowed, because the member and their token already exist and the
-      // token is shown exactly once. A KV blip must not turn a successful
-      // invitation into a 500 that loses the secret — and the floor has already
-      // made the effective flag right without this write.
-      //
-      // One line, deliberately: test/unit/config-threading-complete.test.ts
-      // reads a bare tunable name outside a property access as a module-scope
-      // config read, and the guarded call has to sit beside the guard for that
-      // to stay true.
+      // A new member makes team mode effective. Clear a stale explicit "off"
+      // override without turning it into a permanent "on" override.
       const overrides = await readOverrides(env);
       if (overrides.TEAM_MODE === "off") await resetOverride(env, "TEAM_MODE").catch(() => {});
       // The token is returned exactly once — only its hash is stored.

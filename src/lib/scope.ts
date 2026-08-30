@@ -18,11 +18,6 @@ export interface ScopeClause {
 }
 
 /**
- * The workspaces whose rows the caller may read: their own personal workspace
- * plus the shared company workspace. Rendered as `workspace_id IN (?, ?)` so it
- * composes with existing WHERE fragments via AND.
- */
-/**
  * The write-side twin of Identity: where a new entry row lands and who gets
  * stamped as its actor. Resolved from an Identity at the route/MCP edge and
  * threaded through the domain as this plain value, so no write path reads
@@ -42,15 +37,9 @@ export interface WriteContext {
 export const OWNER_WRITE_CONTEXT: WriteContext = { workspaceId: "", actorId: "" };
 
 export function readableWorkspaces(identity: Identity): string[] {
-  // Spread, not index: a member of two teams reads both. Every consumer of this
-  // list already treats its length as variable — scopeWhere renders one
-  // placeholder per entry, and the D1 batch sizes that share a statement with it
-  // subtract `scope.bindings.length` from the 100-parameter ceiling rather than
-  // assuming two or three.
+  // A user may belong to more than one company workspace.
   const workspaces = [identity.personalWorkspaceId, ...identity.companyWorkspaceIds];
-  // The '' sentinel is the legacy/system space — pre-team rows and mixed-provenance
-  // insight output. Admins keep eyes on it so a context-less writer can never create
-  // an invisible row; members must never see it.
+  // Admins retain visibility into legacy/system rows.
   if (identity.role === "admin") workspaces.push("");
   return workspaces;
 }
@@ -100,8 +89,7 @@ export function layerOf(identity: Identity | undefined, workspaceId: unknown): "
  */
 export function scopeWorkspaces(identity: Identity, only?: "personal" | "company"): string[] {
   if (only === "personal") return [identity.personalWorkspaceId];
-  // Narrowing to "company" narrows to the caller's company layers — all of them.
-  // It can still only ever narrow, because every id comes from the identity.
+  // A layer filter can only narrow the identity-derived set.
   if (only === "company") return identity.companyWorkspaceIds;
   return readableWorkspaces(identity);
 }
@@ -139,9 +127,7 @@ export function readScopeWorkspaces(
  */
 export function scopeWrite(identity: Identity, target?: "personal" | "company", team?: string): string {
   if (target !== "company") return identity.personalWorkspaceId;
-  // A named team is honoured only if the caller is actually in it — the id comes
-  // from the request, so this is the check that keeps a request from naming a
-  // workspace its author does not belong to.
+  // Named teams are accepted only when present in the resolved identity.
   if (team && identity.companyWorkspaceIds.includes(team)) return team;
   return primaryCompanyWorkspaceId(identity) || identity.personalWorkspaceId;
 }

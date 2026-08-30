@@ -12,12 +12,7 @@ import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { recallEntries } from "../recall/search";
 import { allowanceFor, snippetOf } from "../recall/snippet";
 
-/**
- * buildEntryFilterQuery always ends `ORDER BY created_at DESC LIMIT ?`, so the
- * caller's readable-workspace clause goes in ahead of the ORDER BY and its two
- * bindings splice in ahead of LIMIT's. Without a filter there is no WHERE to
- * join onto, so the clause arrives as one instead.
- */
+/** Add the caller's workspace predicate before ORDER BY and LIMIT. */
 function scopeEntryFilterQuery(
   identity: Identity,
   q: { sql: string; bindings: unknown[] },

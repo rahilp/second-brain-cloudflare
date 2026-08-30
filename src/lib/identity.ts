@@ -2,15 +2,7 @@ import type { Env } from "../env";
 import { json } from "./http";
 import { ensureTenantBootstrap } from "./tenancy";
 
-/**
- * Who is making this request, resolved once at the edge and threaded through the
- * domain as a plain value. Domain modules receive an Identity (or the workspace ids
- * derived from one) — they never read headers or env auth state, which keeps the
- * pure/infra/domain layering of src/ARCHITECTURE.md intact.
- *
- * Readable set: the caller's personal workspace plus the shared company workspace.
- * There is no other visibility dimension in v3 — no per-entry ACLs.
- */
+/** Request identity resolved at the edge and passed into domain code. */
 export interface Identity {
   userId: string;
   role: "admin" | "member";
@@ -18,15 +10,8 @@ export interface Identity {
   /**
    * Every company workspace this user belongs to, oldest first.
    *
-   * Plural because `memberships` has always been a many-to-many join and the
-   * schema never said one: a second company workspace, or a member in two of
-   * them, is a row, not a migration. It was read as a singular through a JOIN
-   * that returns one row per membership and a `.first()` that took whichever
-   * came back — so a member of two teams would silently have been scoped to an
-   * arbitrary one. Reads union the whole list; the write path picks one
-   * deliberately (see primaryCompanyWorkspaceId).
-   *
-   * The dashboard exposes a single team today. Nothing below depends on that.
+   * Ordered oldest first. Reads include all memberships; writes choose the
+   * first workspace when no explicit team is supplied.
    */
   companyWorkspaceIds: string[];
   /**
@@ -62,17 +47,8 @@ export function extractToken(request: Request): string | null {
   return null;
 }
 
-/**
- * The company memberships are aggregated rather than joined one-to-one: the old
- * shape returned one row per company workspace and `.first()` picked one, which
- * is correct only while there is exactly one. GROUP_CONCAT keeps it a single
- * statement — no extra subrequest on a path every request takes — and each id is
- * paired with its created_at so the list can be ordered oldest-first in JS
- * (SQLite does not promise GROUP_CONCAT's order).
- *
- * The company join is LEFT: membership of a team is not what authenticates a
- * user. The personal join is what does, and it stays INNER.
- */
+// Aggregate company memberships into the single identity query. The personal
+// workspace remains an inner join because it is required for authentication.
 const COMPANY_WORKSPACES_SELECT =
   `GROUP_CONCAT(DISTINCT c.id || '@' || c.created_at) AS companyWorkspaces`;
 
@@ -90,49 +66,11 @@ const IDENTITY_SQL =
   ` WHERE u.token_hash = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)` +
   ` GROUP BY u.id`;
 
-/**
- * How stale `users.last_used_at` is allowed to be. One hour.
- *
- * This column is informational — it answers "is this token still in use?" on the
- * admin roster and nothing else reads it — so it is bought at the cheapest price
- * that still answers that question. Identity resolves on EVERY request, and an
- * unthrottled stamp would be one D1 row written per request against a plan that
- * caps writes per day; at one write per user per hour it cannot move that budget
- * whatever the traffic.
- *
- * The staleness is the accepted cost: the value can be up to an hour behind, and
- * "last used 3 minutes ago" and "last used 40 minutes ago" are the same answer
- * to the only question anyone is asking of it. A write can also be lost to a
- * failed or rolled-back request, which is equally fine — the next request an
- * hour later simply retries, so the worst case is a timestamp older than the
- * truth, never a newer one and never a failed request.
- *
- * What it must NOT cost is a subrequest. See LAST_USED_UPDATE_SQL.
- */
+/** Maximum age before the informational last-used timestamp is refreshed. */
 export const LAST_USED_THROTTLE_MS = 3_600_000;
 
-/**
- * The stamp, written as the second half of the identity read's batch.
- *
- * A D1 batch is ONE subrequest whatever it carries, so pairing this with
- * IDENTITY_SQL makes the column free in the budget that actually binds here:
- * Workers get 50 subrequests per invocation on the free plan, and GET /graph —
- * the largest request in the app — already has no headroom. An informational
- * column may not be what takes it over. (The earlier design issued this as a
- * separate un-awaited statement, which cost one subrequest per user per hour on
- * every endpoint and pushed /graph's measured team-brain cost up by one.)
- *
- * The throttle is therefore in the WHERE clause rather than in TypeScript: the
- * statement has to be enqueued before the read comes back, so nothing has seen
- * the stored timestamp yet at the point this is built. Evaluating it in SQL is
- * also correct under concurrency, which the read-then-decide form was not — two
- * simultaneous requests could both decide to write.
- *
- * The predicates mirror IDENTITY_SQL's exactly, so the column means what
- * db/schema.sql says it means: the LAST SUCCESSFUL identity resolution. A token
- * belonging to a suspended, removed, or workspace-less user resolves to nothing
- * and is not stamped, even though the batch always carries this statement.
- */
+// Keep the throttled informational write in the identity batch so it costs no
+// additional D1 subrequest. The SQL predicates mirror IDENTITY_SQL.
 const LAST_USED_UPDATE_SQL =
   `UPDATE users SET last_used_at = ?` +
   ` WHERE token_hash = ?` +
@@ -142,16 +80,7 @@ const LAST_USED_UPDATE_SQL =
   ` JOIN workspaces p ON p.id = mp.workspace_id AND p.kind = 'personal'` +
   ` WHERE mp.user_id = users.id)`;
 
-/**
- * Resolve the caller's identity from their token, bootstrapping the tenancy rows
- * on first contact with a v3 database. Returns null for anonymous/unknown callers
- * — callers decide whether that is a 401 (requireIdentity below) or tolerable.
- *
- * Awaits initializeDatabase rather than trusting ensureDbReady's fire-and-forget
- * waitUntil: identity queries hit tables that did not exist before v3, so on the
- * very first request against a freshly created database the schema must actually
- * be there, not merely scheduled. The memo makes the await free after first use.
- */
+// Resolve identity after ensuring the v3 schema and tenancy rows exist.
 const IDENTITY_BY_ID_SQL =
   `SELECT u.id AS userId, u.role AS role, u.default_share AS defaultShare,` +
   ` p.id AS personalWorkspaceId, ${COMPANY_WORKSPACES_SELECT}` +
@@ -159,14 +88,7 @@ const IDENTITY_BY_ID_SQL =
   ` WHERE u.id = ? AND u.suspended = 0 AND (u.removed_at IS NULL OR u.removed_at = 0)` +
   ` GROUP BY u.id`;
 
-/**
- * `GROUP_CONCAT(DISTINCT c.id || '@' || c.created_at)` → ids, oldest first.
- *
- * NULL when the user belongs to no company workspace (the LEFT join found
- * nothing), which is an empty list rather than an error: a member with only a
- * personal workspace is a legal state once teams are plural, and every read path
- * below already handles a shorter readable set.
- */
+/** Parse and order the packed company workspace list. */
 function parseCompanyWorkspaces(packed: string | null | undefined): string[] {
   if (!packed) return [];
   return packed
@@ -215,9 +137,7 @@ export async function resolveIdentityFromToken(token: string, env: Env): Promise
   const tokenHash = await hashToken(token);
   const now = Date.now();
   try {
-    // One batch, therefore one subrequest, for the read and the throttled stamp
-    // together. The stamp rides along here and only here — resolveIdentityByUserId
-    // below resolves by user id, not by token, so it says nothing about token use.
+    // Read and stamp together to stay within the D1 subrequest budget.
     const [read] = await env.DB.batch<IdentityRow>([
       env.DB.prepare(IDENTITY_SQL).bind(tokenHash),
       env.DB.prepare(LAST_USED_UPDATE_SQL).bind(now, tokenHash, now, LAST_USED_THROTTLE_MS),
@@ -225,17 +145,7 @@ export async function resolveIdentityFromToken(token: string, env: Env): Promise
     const row = read?.results?.[0];
     return row ? rowToIdentity(row) : null;
   } catch (e) {
-    // Batching put the stamp in the same transaction as the read, so a failing
-    // write would otherwise take authentication down with it — a request that
-    // reads nothing would start failing because of a column nothing reads.
-    // Retry the read on its own instead, which keeps the property the un-awaited
-    // version had for free: the stamp can never fail a request.
-    //
-    // The cost is amplification during an outage. This is a single retry — no
-    // loop, no backoff — so while D1 is failing wholesale every request issues
-    // two D1 calls instead of one and then fails anyway. That is accepted: it
-    // buys the common cases, a transient SQLITE_BUSY or a breached write cap,
-    // where the second call succeeds and the caller never sees the difference.
+    // A last-used write must not make authentication fail; retry the read alone.
     console.error("identity batch failed, retrying the read alone (non-fatal):", e);
     const row = await env.DB.prepare(IDENTITY_SQL).bind(tokenHash).first<IdentityRow>();
     return row ? rowToIdentity(row) : null;

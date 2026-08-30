@@ -3,27 +3,7 @@ import { resolveConfig } from "../config";
 import { hashToken } from "./identity";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 
-/**
- * Team member administration. Every function here is called from behind
- * requireAdmin (src/routes/admin.ts) — none of them re-check roles, by the same
- * convention that keeps the rest of the admin surface single-gated.
- *
- * Two exceptions, both member-facing and both scoped by the caller's own
- * identity rather than by their role: listTeamWorkspaces and listRoster take
- * the workspace ids to read as an argument, so what a caller may see is decided
- * by the identity that resolved them, not by the gate on the route.
- *
- * A third exception, and a different kind: countActiveMembers and isTeamBrain
- * below answer "is this a team, and how big is it?" — a headcount and a flag,
- * no rows and no names. GET /health is deliberately not admin-gated (every
- * member's dashboard banner reads it), so those two are open to any signed-in
- * identity.
- *
- * Tokens are generated server-side and shown exactly once: like AUTH_TOKEN,
- * only the SHA-256 lands in D1, so a leaked list of rows can never sign anyone
- * in. Suspension is soft offboarding — entries stay put so nothing is lost,
- * the identity simply stops resolving (users.suspended = 1 in IDENTITY_SQL).
- */
+/** Team membership, workspace, and offboarding operations. */
 
 export interface TeamMember {
   userId: string;
@@ -56,89 +36,23 @@ export async function generateToken(): Promise<{ token: string; tokenHash: strin
   return { token, tokenHash: await hashToken(token) };
 }
 
-/**
- * How many people are actually on this team.
- *
- * Tombstoned rows are excluded with the same predicate every other read in
- * this file uses. `removeMember` below does NOT delete the `users` row — it
- * deletes the member's entries, edges, memberships and personal workspace and
- * then writes `removed_at`, so shared memories the person wrote stay
- * attributable to a name. A bare `COUNT(*) FROM users` therefore counts people
- * who are gone, which is how a brain that ever had a second member could never
- * read as solo again.
- *
- * SUSPENDED PEOPLE ARE COUNTED, deliberately and unlike identity.ts's reads:
- * suspension locks someone out of their token, it does not take them off the
- * team. Their memberships, their personal workspace and their shared entries
- * are all still there, so a brain with one owner and one suspended colleague
- * is a team and the layer controls have to stay on screen.
- */
+/** Count active and suspended users; suspension does not remove team membership. */
 export async function countActiveMembers(env: Env): Promise<number> {
   const row = await env.DB.prepare(
-    // scope-exempt: a headcount of the deployment's own users table — it yields one number and no content, and "how many people are on this brain" is by definition not workspace-scoped
+    // scope-exempt: deployment-wide headcount, with no content exposed
     `SELECT COUNT(*) AS n FROM users WHERE removed_at IS NULL OR removed_at = 0`,
   ).first<{ n: number }>();
   return row?.n ?? 0;
 }
 
-/**
- * The whole decision, as a pure function of the recorded intent and the live
- * headcount. Exported so a test can drive a fake server from the SAME rule the
- * Worker uses, rather than from a second copy of it that can drift.
- *
- *   "on"   — a team before anyone is invited. Inference cannot express intent,
- *            which is the whole reason the key exists.
- *   "off"  — solo, but ONLY while the owner really is alone. See the floor
- *            below.
- *   "auto" — infer from active membership. The default, and anything
- *            unrecognised (a hand-edited KV blob) lands here too: inference is
- *            the safe direction, since it describes what is actually there.
- *
- * THE FLOOR. "off" cannot suppress team mode while more than one person is on
- * the team, because that state is a product that lies: the dashboard drops the
- * sharing controls, the layer pickers and the shared-layer filter, while
- * colleagues hold working tokens and the company workspace still holds shared
- * memories — a member can share into a layer their own admin's UI does not
- * render. Every individual step into that state is legal ("off" while alone is
- * correct; inviting someone is correct), so it is reachable purely by ordering.
- *
- * Real membership therefore OVERRIDES the recorded intent rather than merely
- * being checked against it at write time, which makes the invariant hold by
- * construction: no ordering, no config written by an older release, no
- * hand-edited KV blob and no future path that creates a member without going
- * through POST /team/members can defeat it.
- *
- * "off" and "auto" consequently agree at every headcount today. They are still
- * written as two branches because they are two different statements — "I said
- * solo, and reality has not contradicted me" versus "I said nothing, ask
- * reality" — and their agreement is a fact about this floor, not a definition.
- * Collapsing them would make a future change to one silently change the other.
- */
+/** Resolve team mode from the stored intent and current membership count. */
 export function resolveTeamFlag(mode: string, activeMembers: number): boolean {
   if (mode === "on") return true;
   if (mode === "off") return activeMembers > 1;
   return activeMembers > 1;
 }
 
-/**
- * Is this brain a team? The single answer, published by GET /health as `team`.
- *
- * TEAM_MODE is read HERE and nowhere else. The dashboard branches on `team`,
- * not on the key, so "how the flag is decided" stays one function rather than a
- * rule every consumer has to re-derive.
- *
- * TWO MECHANISMS, DELIBERATELY. This floor ENFORCES the invariant — it cannot
- * be got around. The guardrail in PATCH /config (src/routes/config.ts) EXPLAINS
- * it — it refuses the write at the moment of the mistake with a message naming
- * how many people are still there. Neither replaces the other: a floor alone
- * would silently ignore a write the admin believed had taken effect, and a
- * write-time check alone is exactly what this bug got past.
- *
- * "on" is recorded intent and needs no headcount, so it short-circuits before
- * the query. "off" now pays for the same single D1 count "auto" pays for —
- * that count IS the floor. On a solo brain nothing changed: the shipped default
- * is "auto", which issued exactly this one query before the key existed.
- */
+/** Return the effective team-mode flag published by GET /health. */
 export async function isTeamBrain(env: Env): Promise<boolean> {
   const config = await resolveConfig(env);
   if (config.TEAM_MODE === "on") return true;

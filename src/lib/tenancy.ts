@@ -4,16 +4,8 @@ import { hashToken } from "./identity";
 /**
  * Tenant bootstrap: makes the tenancy tables true on any database, old or new.
  *
- * Invariants (asserted by test/unit/tenancy.test.ts):
- *   1. Exactly one company workspace.
- *   2. Every user has exactly one personal workspace.
- *   3. Every user is a member of the company workspace.
- *   4. The owner user exists with role admin and holds the AUTH_TOKEN hash, so the
- *      static token every existing install already uses resolves to a real identity
- *      through the same code path as issued member tokens.
- *   5. Legacy rows (workspace_id '') belong to the owner's personal workspace once
- *      the backfill has run — a brain upgraded from v2 keeps every memory private
- *      to its owner with zero user-visible change until team members are added.
+ * Ensures the company workspace, owner identity, personal workspaces, and
+ * legacy-row backfill exist on old and new databases alike.
  *
  * Memoised per isolate keyed on the DB binding (tests use many envs against one
  * module instance — keying on nothing would let env A's memo satisfy env B).
@@ -70,9 +62,7 @@ async function ownerHasPersonalWorkspace(env: Env, userId: string): Promise<bool
 }
 
 /**
- * Get-or-create each piece independently rather than seeding everything or
- * nothing: a batch that died halfway (D1 has no transactional DDL, two isolates
- * can cold-start together) must be completed by the next run, never doubled.
+ * Each piece is idempotent so a partial cold start can be completed safely.
  */
 async function bootstrap(env: Env): Promise<TenantRoots> {
   const now = Date.now();
@@ -81,8 +71,6 @@ async function bootstrap(env: Env): Promise<TenantRoots> {
   let companyId = await findCompanyId(env);
   if (!companyId) {
     companyId = id("ws");
-    // Every value bound, none inlined: keeps the statement trivially testable
-    // against doubles that match parameters positionally.
     statements.push(
       env.DB.prepare(
         `INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, ?, ?, ?)`,
@@ -127,27 +115,20 @@ async function bootstrap(env: Env): Promise<TenantRoots> {
     owner.personalWorkspaceId = personalId;
   }
 
-  // Membership in the company workspace (invariant 3). Runs on every bootstrap
-  // pass for the owner found above — the NOT EXISTS makes it free when present.
+  // Ensure the owner belongs to the company workspace.
   statements.push(
     env.DB.prepare(
       `INSERT INTO memberships (user_id, workspace_id, created_at) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?)`,
     ).bind(owner.userId, companyId, now, owner.userId, companyId),
   );
 
-  // One-time legacy backfill: '' rows are the pre-team owner's own writes. On a
-  // re-run the WHERE matches nothing and both statements write zero rows.
+  // One-time legacy backfill for pre-team rows.
   statements.push(
     env.DB.prepare(`UPDATE entries SET workspace_id = ? WHERE workspace_id = ''`).bind(owner.personalWorkspaceId),
     env.DB.prepare(`UPDATE edges SET workspace_id = ? WHERE workspace_id = ''`).bind(owner.personalWorkspaceId),
   );
 
-  // One subrequest for the whole set, however many statements it carries — the
-  // reason every write path in src/ batches. Called unconditionally: batch() is
-  // non-optional on D1Database, and miniflare and wrangler dev both implement
-  // it, so a `typeof env.DB.batch === "function"` guard here would only tell the
-  // next reader it is optional and invite a second fallback somewhere it
-  // matters.
+  // Keep bootstrap writes in one D1 batch.
   await env.DB.batch(statements);
   return {
     companyWorkspaceId: companyId,

@@ -2,7 +2,7 @@ import type { Env } from "../env";
 import type { Identity } from "./identity";
 import { isCompanyWorkspace, scopeWhere } from "./scope";
 
-/** Columns every guard needs; callers may request more via `columns`. */
+/** Columns required by the access checks; callers may request more. */
 export interface EntryAccessRow {
   id: string;
   workspace_id: string;
@@ -17,9 +17,7 @@ export type EntryAccessDenied = { code: "forbidden"; message: string };
 const FORBIDDEN_MSG = "Only the entry's author or an admin can modify a shared company memory";
 
 /**
- * Fetch one entry row only if it lives in the caller's readable set (personal ∪
- * company, plus the legacy '' sentinel for admins). Returns null when the id is
- * absent or outside that set — same visibility semantics as share.ts.
+ * Fetch an entry only if it is readable by the caller.
  */
 export async function getReadableEntry(
   env: Env,
@@ -47,7 +45,7 @@ function companyEditDenied(identity: Identity, row: Pick<EntryAccessRow, "worksp
     && identity.role !== "admin";
 }
 
-/** Author guard for destructive / lifecycle mutators (forget, set_status, …). */
+/** Author guard for destructive and lifecycle mutations. */
 export function assertCanMutateEntry(
   identity: Identity | undefined,
   row: Pick<EntryAccessRow, "workspace_id" | "actor_id">,
