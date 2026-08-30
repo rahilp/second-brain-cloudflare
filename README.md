@@ -53,6 +53,8 @@ Second Brain can now be a team's memory without stopping being yours.
 
 The same Worker supports personal and team use; there is no separate team deployment. In the API, CLI, and MCP tools, the Shared layer is represented by the stable workspace value `company`. See the [Team Setup guide](wiki/Team-Setup) for member management, capture policies, sharing, and upgrades.
 
+**v3.0.0 scope:** each brain has **one** shared team. The API and MCP layer include optional `team` parameters and a `list_teams` tool so multi-team support can ship later without breaking changes; the dashboard and admin flows do not create or switch between multiple teams yet. See [CHANGELOG.md](CHANGELOG.md).
+
 ## How it works
 
 Second Brain runs as a Cloudflare Worker backed by D1, Vectorize, Workers AI, and KV. Every app and AI client connects to that Worker through REST or the Model Context Protocol (MCP).
@@ -72,6 +74,7 @@ If Vectorize is unavailable, captures and keyword recall continue working. Your 
 | `update` | Replace an existing memory |
 | `recall` | Find memories by meaning rather than exact wording |
 | `list_recent` | Browse recently saved memories |
+| `list_teams` | List shared teams you belong to (names and ids). In v3.0.0 this is one team; used by MCP clients for future multi-team support |
 | `get` | Read one memory by ID |
 | `forget` | Permanently delete a memory |
 | `set_status` | Mark a memory `canonical`, `draft`, or `deprecated` |
@@ -80,7 +83,9 @@ If Vectorize is unavailable, captures and keyword recall continue working. Your 
 | `connections` | List the memories connected to a memory |
 | `share` | Move a memory between the Personal and Shared layers |
 
-On a team brain, memory tools accept a `workspace` of `personal` or `company` when you want to choose a layer explicitly. `company` is the wire value for the Shared team layer. Without one, captures use the member and team defaults, while recall searches everything that person is allowed to see.
+On a team brain, memory tools accept a `workspace` of `personal` or `company` when you want to choose a layer explicitly. `company` is the wire value for the Shared team layer. Without `workspace`, captures use the member and team defaults, while recall searches everything that person is allowed to see.
+
+Optional `team` (workspace id) and MCP `list_teams` / `GET /team/workspaces` are wired for a future multi-team release. **In v3.0.0 you can omit them** — each brain has one shared team and the primary team is used automatically.
 
 CLI example:
 

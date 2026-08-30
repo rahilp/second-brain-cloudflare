@@ -4,7 +4,7 @@ import { initializeDatabase } from "../db/init";
 import { json } from "../lib/http";
 import { requireIdentity } from "../lib/identity";
 import { assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
-import { layerOf, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhere, readTeamParam } from "../lib/scope";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
 import { forgetEntry } from "../capture/lifecycle";
 import { applyStatus } from "../capture/lifecycle";
@@ -247,16 +247,18 @@ export async function handleEntriesRoutes(
     const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
 
-    let body: { id?: string; workspace?: string };
+    let body: { id?: string; workspace?: string; team?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
     if (body.workspace !== undefined && body.workspace !== "personal" && body.workspace !== "company") {
       return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
     }
     const target = (body.workspace ?? "company") as ShareTarget;
+    const teamRead = readTeamParam(body.team, auth, target);
+    if (teamRead.error) return json({ ok: false, error: teamRead.error }, 400);
 
     const id = body.id.trim();
-    const result = await moveEntry(id, target, env, auth);
+    const result = await moveEntry(id, target, env, auth, teamRead.teamId);
 
     if (result.status === "not_found") {
       return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);

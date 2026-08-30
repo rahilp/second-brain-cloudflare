@@ -9,10 +9,11 @@ You have a personal Second Brain. Use it every session — not Cursor's built-in
 
 ## How to reach it
 
-1. **MCP first** — if `remember`, `recall`, `get`, `list_recent`, `append`, `update`, `forget`, `link`, `connections`, or `share` are in your tool list, use them.
+1. **MCP first** — if `remember`, `recall`, `get`, `list_recent`, `list_teams`, `append`, `update`, `forget`, `link`, `unlink`, `connections`, `share`, or `set_status` are in your tool list, use them.
 2. **CLI fallback** — if MCP tools are missing but `brain` is configured (`~/.config/second-brain/config.json` exists), run via shell:
    - `brain recall "<intent-framed query>"`
    - `brain remember "<condensed summary>" --tags work,project-name`
+   - On team brains: `brain remember --workspace company --team <id> "..."` / `brain recall --workspace company --team <id> "..."`
 3. **Unavailable** — if both fail, say Second Brain is unavailable and quote the error. Never skip silently or use built-in memory instead.
 
 MCP tools may load lazily in Cursor — a connected server can omit tools from the visible list. **Verify with a real `recall` call** before treating Second Brain as down.
@@ -33,10 +34,19 @@ Store condensed summaries, not full transcripts. Tag with `cursor-response` plus
 
 ## Tool quick reference
 
-- `recall` — semantic search; use `hops:1–2` when tracing why/how or following relationships
-- `remember` — new memory; optional `volatility`: `durable` | `state` | `volatile`
+- `list_teams` — list shared teams (names + ids); call before company writes when the user hasn't named a team
+- `recall` — semantic search; use `hops:1–2` when tracing why/how; optional `workspace` and `team`
+- `remember` — new memory; optional `workspace`, `team`, and `volatility`: `durable` | `state` | `volatile`
 - `append` / `update` — change existing entry (get ID from recall or list_recent first)
-- `link` / `connections` — relationship graph
-- `share` — move between personal and company layer on team brains (`workspace`: `personal` | `company`)
+- `link` / `unlink` / `connections` — relationship graph
+- `share` — move between personal and company layer (`workspace`: `personal` | `company`; optional `team` id from list_teams)
+- `set_status` — mark `canonical`, `draft`, or `deprecated`
+
+## Team workspaces
+
+- **personal** = private to author; **company** = shared with the team
+- **v3.0.0:** one shared team per brain — omit `team` unless `list_teams` returns more than one
+- User says "share with the team" → `workspace: company`
+- `team` on remember, share, recall, list_recent when multi-team is enabled later; not on id-based tools (get, append, update, etc.)
 
 Full guidance: copy [CURSOR_INSTRUCTIONS.md](https://github.com/rahilp/second-brain-cloudflare/blob/main/AI_Instructions/CURSOR_INSTRUCTIONS.md) into `~/.cursor/CURSOR_INSTRUCTIONS.md`, or open it from a clone of this repository.

@@ -87,6 +87,8 @@ export interface RecallInternalOptions {
    * identity, so this cannot name a workspace the caller does not belong to.
    */
   workspaceFilter?: "personal" | "company";
+  /** Narrows reads to one company team workspace (validated at the route edge). */
+  teamId?: string;
 }
 
 export interface KeywordRow {

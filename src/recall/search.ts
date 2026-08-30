@@ -10,7 +10,7 @@ import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
 import type { Identity } from "../lib/identity";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
-import { layerOf, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhere, scopeWhereForRead } from "../lib/scope";
 import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -165,8 +165,11 @@ export async function recallEntries(
   let semanticUnavailable = false;
   // One clause, computed once: every entries read below ANDs it in when an
   // Identity rides along, and appends nothing — byte for byte — when one does
-  // not. workspaceFilter narrows the same clause to a single layer.
-  const scope = internal.identity ? scopeWhere(internal.identity, internal.workspaceFilter) : null;
+  // not. workspaceFilter and teamId narrow the same clause further.
+  const readScope = internal.identity
+    ? { layer: internal.workspaceFilter, teamId: internal.teamId }
+    : undefined;
+  const scope = readScope ? scopeWhereForRead(internal.identity!, readScope) : null;
   const identity = internal.identity;
 
   let semanticQuery = query;
@@ -177,7 +180,7 @@ export async function recallEntries(
     semanticQuery = parsed.cleanQuery;
   }
   const bounds = { after, before };
-  const distilled = await distillToRareTerms(semanticQuery, env, cfg, bounds, identity, internal.workspaceFilter);
+  const distilled = await distillToRareTerms(semanticQuery, env, cfg, bounds, identity, internal.workspaceFilter, internal.teamId);
   const profile = buildQueryProfile(semanticQuery, distilled);
   const embeddingQueryMode = internal.embeddingQueryMode ?? DEFAULT_EMBEDDING_QUERY_MODE;
   const embedQuery = embeddingInput(profile, embeddingQueryMode);
@@ -188,7 +191,7 @@ export async function recallEntries(
   const tokens = profile.lexicalTokens;
   const [values, queryTags] = await Promise.all([
     embed(embedQuery, env, cfg),
-    inferQueryTags(lexicalQuery, env, cfg, ctx, identity, internal.workspaceFilter),
+    inferQueryTags(lexicalQuery, env, cfg, ctx, identity, internal.workspaceFilter, internal.teamId),
   ]);
   markStage("querySignals");
 
@@ -236,7 +239,7 @@ export async function recallEntries(
     // candidates out of the result slots. queryVectorizeScoped retries
     // unfiltered if Vectorize rejects the filter; hydration below is scoped at
     // the SQL layer either way, so correctness never rides on this.
-    const wsFilter = identity ? workspaceFilter(identity, internal.workspaceFilter)?.filter : undefined;
+    const wsFilter = identity ? workspaceFilter(identity, internal.workspaceFilter, internal.teamId)?.filter : undefined;
     // env-free code (src/vectorize/scope.ts) cannot reach KV itself, so the
     // caller hands it this callback. It fires at most once per isolate — see
     // queryVectorizeScoped's own transition guard — so it cannot move
@@ -380,7 +383,7 @@ export async function recallEntries(
 
   let expanded: GraphNeighbor[] = [];
   if (hops > 0) {
-    expanded = await expandGraph(graphSeedIds, { hops, only: internal.workspaceFilter }, env, cfg, identity);
+    expanded = await expandGraph(graphSeedIds, { hops, only: internal.workspaceFilter, teamId: internal.teamId }, env, cfg, identity);
   }
   markStage("graphExpansion");
   if (internal.diagnostics && hops > 0) internal.diagnostics.expandedIds = expanded.map(x => x.id);

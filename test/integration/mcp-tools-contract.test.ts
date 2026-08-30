@@ -22,6 +22,7 @@ const EXPECTED_TOOLS = [
   "remember",
   "recall",
   "list_recent",
+  "list_teams",
   "get",
   "append",
   "update",

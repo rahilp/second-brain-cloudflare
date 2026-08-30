@@ -3,10 +3,10 @@ import { resolveConfig } from "../config";
 import { LLM_MODEL, VECTORIZE_FIX_HINT } from "../constants";
 import { buildEntryFilterQuery } from "../capture/entry";
 import { compressTag } from "../compression/digest";
-import { CORS_HEADERS, intParam, json, readWorkspaceParam } from "../lib/http";
+import { CORS_HEADERS, intParam, json, readWorkspaceParam, readTeamQueryParam } from "../lib/http";
 import { requireIdentity, type Identity } from "../lib/identity";
 import { assertCanMutateEntry } from "../lib/entry-access";
-import { layerOf, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhereForRead, readScopeWorkspaces } from "../lib/scope";
 import { lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../lib/actors";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { recallEntries } from "../recall/search";
@@ -21,9 +21,10 @@ import { allowanceFor, snippetOf } from "../recall/snippet";
 function scopeEntryFilterQuery(
   identity: Identity,
   q: { sql: string; bindings: unknown[] },
-  only?: "personal" | "company",
+  layer?: "personal" | "company",
+  teamId?: string,
 ): { sql: string; bindings: unknown[] } {
-  const scope = scopeWhere(identity, only);
+  const scope = scopeWhereForRead(identity, { layer, teamId });
   const sql = q.sql.includes("WHERE")
     ? q.sql.replace(" ORDER BY", ` AND ${scope.clause} ORDER BY`)
     : q.sql.replace(" ORDER BY", ` WHERE ${scope.clause} ORDER BY`);
@@ -52,6 +53,8 @@ export async function handleRecallRoutes(
     if (before instanceof Response) return before;
     const workspace = readWorkspaceParam(url);
     if (workspace instanceof Response) return workspace;
+    const team = readTeamQueryParam(url, identity, workspace);
+    if (team instanceof Response) return team;
     // Who wrote it, as a filter. Resolved here rather than in the builder
     // because resolution needs the caller's identity: the value that reaches
     // SQL is always a user id from the caller's own roster, so `?actor=` can
@@ -64,7 +67,7 @@ export async function handleRecallRoutes(
       actor = resolved.actorId;
     }
 
-    const { sql, bindings } = scopeEntryFilterQuery(identity, buildEntryFilterQuery({ n, tag, after, before, actor }), workspace);
+    const { sql, bindings } = scopeEntryFilterQuery(identity, buildEntryFilterQuery({ n, tag, after, before, actor }), workspace, team);
     const { results } = await env.DB.prepare(sql).bind(...bindings).all();
     const rows = results as Record<string, unknown>[];
     // Each row reports its layer so the dashboard can badge cards and offer
@@ -128,12 +131,14 @@ export async function handleRecallRoutes(
     if (hops instanceof Response) return hops;
     const workspace = readWorkspaceParam(url);
     if (workspace instanceof Response) return workspace;
+    const team = readTeamQueryParam(url, identity, workspace);
+    if (team instanceof Response) return team;
     // Long memories are shortened by default so API/CLI consumers get a bounded
     // payload. Renderers that show the whole memory (the dashboard) pass full=1.
     const full = ["1", "true", "yes"].includes((url.searchParams.get("full") ?? "").toLowerCase());
 
     const cfg = await resolveConfig(env);
-    const { matches, insight, semanticUnavailable, queryUsed, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx, cfg, { identity, workspaceFilter: workspace });
+    const { matches, insight, semanticUnavailable, queryUsed, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx, cfg, { identity, workspaceFilter: workspace, teamId: team });
 
     if (!matches.length) {
       return json({
@@ -232,10 +237,17 @@ Be specific and complete. Concision means leaving out filler, never leaving out 
   if (url.pathname === "/digest" && request.method === "GET") {
     const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;
+    const identity = auth;
     const tag = url.searchParams.get("tag")?.trim();
     if (!tag) return json({ ok: false, error: "tag parameter is required" }, 400);
+    const workspaceFilter = readWorkspaceParam(url);
+    if (workspaceFilter instanceof Response) return workspaceFilter;
+    const team = readTeamQueryParam(url, identity, workspaceFilter);
+    if (team instanceof Response) return team;
 
-    const result = await compressTag(tag, env, ctx);
+    const result = await compressTag(tag, env, ctx, {
+      workspaceIds: readScopeWorkspaces(identity, { layer: workspaceFilter, teamId: team }),
+    });
 
     if (!result.synthesizedId) {
       return json({ tag, error: "Could not create digest — tag may have fewer than 20 entries or was recently compressed", source_count: result.entriesUsed });

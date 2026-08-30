@@ -159,3 +159,6 @@ Write-Host "    personalization / custom-instruction settings are account-level 
 Write-Host "    public write API - paste AI_Instructions/CHATGPT_INSTRUCTIONS.md into ChatGPT's"
 Write-Host "    Settings -> Personalization -> Custom Instructions, and a similar block into"
 Write-Host "    claude.ai's profile preferences, by hand."
+Write-Host "  - Team Edition (v3.0.0): re-run this script after upgrades to refresh AI_Instructions/*.md."
+Write-Host "    v3.0.0 ships one shared team per brain; optional team/list_teams params are API plumbing"
+Write-Host "    for a future multi-team release. See CHANGELOG.md."

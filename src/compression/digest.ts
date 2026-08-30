@@ -78,10 +78,16 @@ async function markSourcesRolledUp(env: Env, ids: string[], digestId: string): P
   }
 }
 
+export interface CompressTagOptions {
+  /** When set, roll up only these workspaces and scope the 24h cooldown per workspace. */
+  workspaceIds?: string[];
+}
+
 export async function compressTag(
   tag: string,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  opts?: CompressTagOptions,
 ): Promise<{ synthesizedId: string | null; entriesUsed: number; text: string }> {
   // Guard before resolveConfig: that is a KV read, and a system tag never compresses, so
   // paying for it first is a wasted subrequest per skipped tag per night. The candidate
@@ -106,31 +112,49 @@ export async function compressTag(
   // to the legacy "" workspace, which reproduces the single-workspace behaviour of
   // every brain that existed before v3 — including test doubles that cannot evaluate
   // SQL.
-  const { results: workspaceRows } = await env.DB.prepare(
-    // scope-exempt: cron: workspace discovery for the partitioned rollup below; returns workspace ids, never a row's content
-    `SELECT DISTINCT workspace_id FROM entries`
-  ).all();
-  const workspaces = (workspaceRows as { workspace_id?: string }[]).map(r => r.workspace_id ?? "");
-  if (!workspaces.length) workspaces.push("");
+  const scoped = Boolean(opts?.workspaceIds?.length);
+  let workspaces: string[];
+  if (scoped) {
+    workspaces = opts!.workspaceIds!;
+  } else {
+    const { results: workspaceRows } = await env.DB.prepare(
+      // scope-exempt: cron: workspace discovery for the partitioned rollup below; returns workspace ids, never a row's content
+      `SELECT DISTINCT workspace_id FROM entries`
+    ).all();
+    workspaces = (workspaceRows as { workspace_id?: string }[]).map(r => r.workspace_id ?? "");
+    if (!workspaces.length) workspaces.push("");
+  }
 
   let synthesizedId: string | null = null;
   let entriesUsed = 0;
   let text = "";
 
   for (const workspaceId of workspaces) {
-    // The 24h cooldown stays corpus-wide on purpose: it gates repetition, not visibility,
-    // so checking it across workspaces can only ever postpone a digest by a day — it
-    // never moves one user's content into another user's row. Where two workspaces carry
-    // the same popular tag, the first pass rolls up its own rows and the guard defers the
-    // rest to tomorrow's run, whose candidate query no longer sees the rolled-up rows.
-    // scope-exempt: cron: the 24h repetition cooldown is corpus-wide on purpose, but note it COUPLES tenants — a digest of a shared tag name in one workspace suppresses the same tag's digest in another for a day. No content crosses; the coupling is the cost of one global cooldown
-    const recentSynth = await env.DB.prepare(`
-      SELECT id FROM entries
-      WHERE tags LIKE '%"synthesized"%'
-        AND tags LIKE ? ${TAG_LIKE_ESCAPE}
-        AND created_at > ?
-      LIMIT 1
-    `).bind(tagLikePattern(tag), Date.now() - 86400000).first();
+    // The 24h cooldown stays corpus-wide on purpose for the nightly cron: it gates
+    // repetition, not visibility, so checking it across workspaces can only ever
+    // postpone a digest by a day — it never moves one user's content into another
+    // user's row. Manual GET /digest passes workspaceIds and gets a per-workspace
+    // check instead, so one member's recent rollup does not block another's.
+    let recentSynth: { id?: string } | null;
+    if (scoped) {
+      recentSynth = await env.DB.prepare(`
+        SELECT id FROM entries
+        WHERE tags LIKE '%"synthesized"%'
+          AND tags LIKE ? ${TAG_LIKE_ESCAPE}
+          AND created_at > ?
+          AND workspace_id = ?
+        LIMIT 1
+      `).bind(tagLikePattern(tag), Date.now() - 86400000, workspaceId).first();
+    } else {
+      // scope-exempt: cron: corpus-wide 24h cooldown existence check — id only, never returned; couples tenants on tag name only, no content crosses
+      recentSynth = await env.DB.prepare(`
+        SELECT id FROM entries
+        WHERE tags LIKE '%"synthesized"%'
+          AND tags LIKE ? ${TAG_LIKE_ESCAPE}
+          AND created_at > ?
+        LIMIT 1
+      `).bind(tagLikePattern(tag), Date.now() - 86400000).first();
+    }
 
     if (recentSynth) {
       continue;

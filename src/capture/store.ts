@@ -13,6 +13,11 @@ import { tagsAfterWrite, tagsAfterAppend } from "../memory/stale";
 import { withVolatility, type Volatility } from "../memory/volatility";
 import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
 
+/** Re-embedding must stamp vectors from the row being edited, not the caller's default write target. */
+function embedContextForRow(row: { workspace_id?: unknown }, writeCtx: WriteContext): WriteContext {
+  return { workspaceId: typeof row.workspace_id === "string" ? row.workspace_id : "", actorId: writeCtx.actorId };
+}
+
 export async function storeEntry(
   env: Env,
   id: string,
@@ -159,12 +164,13 @@ export async function updateEntryContent(
   // cleanup below needs to know which vectors the entry had on the way in.
   const row = await env.DB.prepare(
     // scope-exempt: by-id: routes gate with getReadableEntry + assertCanEditContent
-    `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+    `SELECT tags, source, vector_ids, workspace_id FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
 
   if (!row) return { status: "not_found" };
 
   const source = row.source as string;
+  const embedCtx = embedContextForRow(row, writeCtx);
   const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
   const existingTags: string[] = JSON.parse(row.tags ?? "[]");
 
@@ -199,7 +205,7 @@ export async function updateEntryContent(
   // (#270), not that this embed failed.
   let newVectorIds: string[] | null;
   try {
-    newVectorIds = await reembedOrDegrade(env, id, finalContent, mergedTags, source, config, writeCtx);
+    newVectorIds = await reembedOrDegrade(env, id, finalContent, mergedTags, source, config, embedCtx);
   } catch (e) {
     console.error("Re-embed failed — entry left unchanged:", e);
     return { status: "reembed_failed" };
@@ -218,7 +224,7 @@ export async function updateEntryContent(
   // two places an unknown tag enters the corpus (#288). It sits here rather than in the
   // route because #289 made this the single update path — putting it in the caller would
   // have left the MCP tool introducing tags the cache never learned about.
-  await rememberTags(env, mergedTags, writeCtx.workspaceId);
+  await rememberTags(env, mergedTags, embedCtx.workspaceId);
 
   if (newVectorIds) {
     try {
@@ -251,6 +257,7 @@ export async function appendToEntry(
   // The appended chunk's vector must live in the ROW's workspace, not the
   // caller's default target — an append edits in place and never moves.
   const rowWorkspaceId: string = row?.workspace_id ?? "";
+  const embedCtx = embedContextForRow(row ?? {}, writeCtx);
 
   // Spelled month, like every other date this app hands to a reader or a
   // model: "8/2/2026" is two different days depending on where you live.
@@ -265,7 +272,7 @@ export async function appendToEntry(
   const refreshedTags = volatility ? withVolatility(appendedTags, volatility) : appendedTags;
 
   if (newContent.length > CHUNK_MAX_CHARS) {
-    const newVectorIds = await reembedOrDegrade(env, id, newContent, tags, source, config, writeCtx);
+    const newVectorIds = await reembedOrDegrade(env, id, newContent, tags, source, config, embedCtx);
     const now = Date.now();
 
     // Both commits below are new logical versions (rewritten body, fresh index) that

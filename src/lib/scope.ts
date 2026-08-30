@@ -111,6 +111,26 @@ export function scopeWhere(identity: Identity, only?: "personal" | "company", co
   return { clause: `${column} IN (${workspaces.map(() => "?").join(", ")})`, bindings: workspaces };
 }
 
+/** Read-side scope: optional layer and/or a single validated team workspace id. */
+export function scopeWhereForRead(
+  identity: Identity,
+  opts?: { layer?: "personal" | "company"; teamId?: string },
+  column = "workspace_id",
+): ScopeClause {
+  if (opts?.teamId) {
+    return { clause: `${column} = ?`, bindings: [opts.teamId] };
+  }
+  return scopeWhere(identity, opts?.layer, column);
+}
+
+export function readScopeWorkspaces(
+  identity: Identity,
+  opts?: { layer?: "personal" | "company"; teamId?: string },
+): string[] {
+  if (opts?.teamId) return [opts.teamId];
+  return scopeWorkspaces(identity, opts?.layer);
+}
+
 /**
  * Which workspace a write lands in. Defaults to the caller's personal workspace —
  * remembering something is private until it is explicitly shared — and only ever
@@ -145,3 +165,31 @@ export function effectiveWriteTarget(
   if (orgDefault === "company") return "company";
   return "personal";
 }
+
+/**
+ * Optional team workspace id on company-layer reads and writes.
+ * The id must be one of the caller's company workspaces — the same ids
+ * GET /team/workspaces and the MCP `list_teams` tool return.
+ */
+export function readTeamParam(
+  raw: unknown,
+  identity: Identity,
+  layer?: "personal" | "company",
+): { teamId?: string; error?: string } {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "string") return { error: "team must be a workspace id string" };
+  const teamId = raw.trim();
+  if (!teamId) return { error: "team must be a non-empty workspace id" };
+  if (layer === "personal") {
+    return { error: 'team is only valid when workspace is "company"' };
+  }
+  if (!identity.companyWorkspaceIds.includes(teamId)) {
+    return {
+      error: "team must be one of your teams — call list_teams (MCP) or GET /team/workspaces",
+    };
+  }
+  return { teamId };
+}
+
+/** @deprecated name — use readTeamParam */
+export const readTeamWriteId = readTeamParam;

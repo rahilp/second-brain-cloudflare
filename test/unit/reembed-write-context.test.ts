@@ -19,6 +19,7 @@ import type { Env } from "../../src/env";
 import { DEFAULTS } from "../../src/config";
 import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 import { captureEntry } from "../../src/capture/entry";
+import { updateEntryContent, appendToEntry } from "../../src/capture/store";
 import { runBatch, clearMigration } from "../../src/migration/embedding";
 import worker from "../../src/index";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
@@ -134,6 +135,82 @@ describe("Migration re-embed carries the row's workspace (src/migration/embeddin
     const upsertedVectors = upsert.mock.calls[0][0] as { metadata: Record<string, unknown> }[];
     expect(upsertedVectors[0].metadata.workspace_id).toBe("ws-b");
     expect(upsertedVectors[0].metadata.workspace_id).not.toBe("");
+  });
+});
+
+describe("update/append re-embed carries the row workspace, not the caller default (src/capture/store.ts)", () => {
+  let d1: SqliteD1;
+
+  beforeEach(async () => {
+    resetDatabaseInit();
+    d1 = makeSqliteD1();
+  });
+  afterEach(() => d1.close());
+
+  it("update on a company row stamps vectors with the row workspace when writeCtx is personal", async () => {
+    const upsert = vi.fn().mockResolvedValue({ mutationId: "m" });
+    const env = {
+      DB: d1.db as unknown as Env["DB"],
+      VECTORIZE: makeVectorizeMock({ upsert }),
+      AI: { run: vi.fn().mockResolvedValue({ data: [new Array(384).fill(0.1)] }) } as unknown as Ai,
+      OAUTH_KV: makeMemoryKV(),
+      AUTH_TOKEN: "test-token",
+    } as Env;
+    await initializeDatabase(env);
+    const now = Date.now() - 1000;
+    await env.DB.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id)
+       VALUES ('shared-row', 'Company fact', '[]', 'api', ?, ?, '["shared-row"]', 'ws-company', 'user-a')`,
+    ).bind(now, now).run();
+
+    const result = await updateEntryContent(
+      env,
+      "shared-row",
+      "Updated company fact",
+      DEFAULTS,
+      undefined,
+      undefined,
+      { workspaceId: "ws-personal", actorId: "user-a" },
+    );
+    expect(result.status).toBe("updated");
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const meta = (upsert.mock.calls[0][0] as { metadata: Record<string, unknown> }[])[0].metadata;
+    expect(meta.workspace_id).toBe("ws-company");
+    expect(meta.workspace_id).not.toBe("ws-personal");
+  });
+
+  it("large append on a company row stamps vectors with the row workspace", async () => {
+    const upsert = vi.fn().mockResolvedValue({ mutationId: "m" });
+    const env = {
+      DB: d1.db as unknown as Env["DB"],
+      VECTORIZE: makeVectorizeMock({ upsert }),
+      AI: { run: vi.fn().mockResolvedValue({ data: [new Array(384).fill(0.1)] }) } as unknown as Ai,
+      OAUTH_KV: makeMemoryKV(),
+      AUTH_TOKEN: "test-token",
+    } as Env;
+    await initializeDatabase(env);
+    const longBody = "x".repeat(1700);
+    const now = Date.now() - 1000;
+    await env.DB.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id)
+       VALUES ('shared-long', ?, '[]', 'api', ?, ?, '["shared-long"]', 'ws-company', 'user-a')`,
+    ).bind(longBody, now, now).run();
+
+    await appendToEntry(
+      env,
+      "shared-long",
+      longBody,
+      "additional team context",
+      [],
+      "api",
+      DEFAULTS,
+      undefined,
+      { workspaceId: "ws-personal", actorId: "user-a" },
+    );
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const meta = (upsert.mock.calls[0][0] as { metadata: Record<string, unknown> }[])[0].metadata;
+    expect(meta.workspace_id).toBe("ws-company");
   });
 });
 

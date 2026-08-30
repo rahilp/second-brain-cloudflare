@@ -42,6 +42,7 @@ export async function moveEntry(
   target: ShareTarget,
   env: Env,
   identity: Identity,
+  team?: string,
 ): Promise<ShareResult> {
   const scope = scopeWhere(identity);
   const row = await env.DB.prepare(
@@ -52,8 +53,9 @@ export async function moveEntry(
   // An un-shared entry returns to the MOVER's personal workspace when they are
   // an admin acting on someone else's row; actors always move their own back to
   // their own. scopeWrite resolves both from the identity, so this can never
-  // target a workspace the caller does not belong to.
-  const targetWorkspaceId = scopeWrite(identity, target);
+  // target a workspace the caller does not belong to. team names which company
+  // workspace when target is "company".
+  const targetWorkspaceId = scopeWrite(identity, target, target === "company" ? team : undefined);
   if (row.workspace_id === targetWorkspaceId) return { status: "no_change" };
 
   if (isCompanyWorkspace(identity, row.workspace_id) && target === "personal") {

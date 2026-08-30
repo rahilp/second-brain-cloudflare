@@ -173,6 +173,52 @@ describe("a member of two teams", () => {
     expect(contents).toContain("Team B runbook");
     expect(contents).not.toContain("Owner private");
   });
+
+  it("POST /capture with team lands in the named team, not the primary", async () => {
+    const res = await jsonOf(await call("POST", "/capture", dana.token, {
+      content: "Platform team onboarding checklist",
+      workspace: "company",
+      team: TEAM_B,
+    }));
+    expect(res.ok).toBe(true);
+    const row = await sqlite.db.prepare(`SELECT workspace_id FROM entries WHERE id = ?`).bind(res.id).first() as { workspace_id: string };
+    expect(row.workspace_id).toBe(TEAM_B);
+  });
+
+  it("POST /capture rejects a team the caller is not in", async () => {
+    const res = await call("POST", "/capture", dana.token, {
+      content: "Sneak into someone else's team",
+      workspace: "company",
+      team: "ws-not-mine",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/team/i);
+  });
+
+  it("POST /share moves into a named team workspace", async () => {
+    seed("dana-private", dana.personalWorkspaceId, dana.userId, "Dana draft: platform migration plan");
+    const res = await jsonOf(await call("POST", "/share", dana.token, {
+      id: "dana-private",
+      workspace: "company",
+      team: TEAM_B,
+    }));
+    expect(res.ok).toBe(true);
+    expect(res.workspaceId).toBe(TEAM_B);
+    const row = await sqlite.db.prepare(`SELECT workspace_id FROM entries WHERE id = ?`).bind("dana-private").first() as { workspace_id: string };
+    expect(row.workspace_id).toBe(TEAM_B);
+  });
+
+  it("POST /share can move a memory from one team workspace to another", async () => {
+    seed("team-a-note", roots.companyWorkspaceId, dana.userId, "Note that should move to Platform team");
+    const res = await jsonOf(await call("POST", "/share", dana.token, {
+      id: "team-a-note",
+      workspace: "company",
+      team: TEAM_B,
+    }));
+    expect(res.ok).toBe(true);
+    expect(res.workspaceId).toBe(TEAM_B);
+  });
 });
 
 describe("a member of one team is unaffected by the existence of another", () => {

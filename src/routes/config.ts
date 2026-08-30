@@ -4,6 +4,9 @@
  * Authenticated with the same AUTH_TOKEN as the rest of the API: the Worker
  * stores and reads config, and the desktop app is the only writer.
  *
+ * GET /config is member-readable. PATCH and DELETE require admin — these values
+ * drive deployment-wide AI, recall, compression, and team defaults.
+ *
  * The response deliberately carries three things rather than one — the
  * effective values, the sparse overrides, and the shipped defaults. A settings
  * UI needs all three to render a row as "changed from 0.6 to 0.4" and to know
@@ -13,7 +16,7 @@
  */
 import type { Env } from "../env";
 import { json } from "../lib/http";
-import { requireIdentity } from "../lib/identity";
+import { requireAdmin, requireIdentity } from "../lib/identity";
 import { countActiveMembers } from "../lib/team-admin";
 import {
   DEFAULTS,
@@ -41,7 +44,7 @@ export async function handleConfigRoutes(
 
   // PATCH /config — sparse update; the whole patch is rejected if any key fails
   if (url.pathname === "/config" && request.method === "PATCH") {
-    const auth = await requireIdentity(request, env);
+    const auth = await requireAdmin(request, env);
     if (auth instanceof Response) return auth;
 
     let patch: Record<string, unknown>;
@@ -104,7 +107,7 @@ export async function handleConfigRoutes(
 
   // DELETE /config/:key — per-setting reset, independent of every other setting
   if (url.pathname.startsWith("/config/") && request.method === "DELETE") {
-    const auth = await requireIdentity(request, env);
+    const auth = await requireAdmin(request, env);
     if (auth instanceof Response) return auth;
 
     const key = decodeURIComponent(url.pathname.slice("/config/".length));

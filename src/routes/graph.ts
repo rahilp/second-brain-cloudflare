@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { intParam, json, readWorkspaceParam } from "../lib/http";
+import { intParam, json, readWorkspaceParam, readTeamQueryParam } from "../lib/http";
 import { getReadableEntry } from "../lib/entry-access";
 import { requireIdentity } from "../lib/identity";
 import { createEdge, deleteEdge, isValidEdgeType, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
@@ -103,8 +103,10 @@ export async function handleGraphRoutes(
     // narrow the caller's readable set, never name a workspace outside it.
     const workspace = readWorkspaceParam(url);
     if (workspace instanceof Response) return workspace;
+    const team = readTeamQueryParam(url, auth, workspace);
+    if (team instanceof Response) return team;
 
-    const { nodes, edges } = await buildGraph({ seed, limit, only: workspace }, env, await resolveConfig(env), auth);
+    const { nodes, edges } = await buildGraph({ seed, limit, only: workspace, teamId: team }, env, await resolveConfig(env), auth);
     return json({ ok: true, nodes, edges });
   }
 

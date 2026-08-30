@@ -14,7 +14,8 @@ import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
 import type { Identity } from "../lib/identity";
 import { assertCanEditContent, assertCanMutateEntry, getReadableEntry } from "../lib/entry-access";
-import { layerOf, scopeWhere, scopeWrite, effectiveWriteTarget, type WriteContext } from "../lib/scope";
+import { listTeamWorkspaces } from "../lib/team-admin";
+import { layerOf, scopeWhereForRead, scopeWrite, effectiveWriteTarget, readTeamParam, primaryCompanyWorkspaceId, type WriteContext } from "../lib/scope";
 import { isManagedMirror, mirrorEditError } from "../integrations/mirror";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { STATUS_VALUES, type MemoryStatus } from "../memory/status";
@@ -105,9 +106,11 @@ const REMEMBER_DESCRIPTION =
   + "author. Company = visible to the whole team. If the user says \"share this\", \"the team should know\", "
   + "or similar, pass workspace: \"company\". If they say \"keep this private\", pass workspace: \"personal\". "
   + "With no workspace argument the member's configured default decides (personal unless their admin said "
-  + "otherwise), so when policy matters to the user, be explicit. recall marks each result 'shared' or "
+  + "otherwise), so when policy matters to the user, be explicit. On a multi-team brain, call list_teams "
+  + "first when the user wants something shared but has not named a team — present the team names and ask "
+  + "which one if there is more than one, then pass that team's id as team. recall marks each result 'shared' or "
   + "'personal', and the share tool moves an existing memory between layers at any time. "
-  + "of creating a near-duplicate. Do not create a new durable memory for a repeated no-op observation, an "
+  + "Do not create a new durable memory for a repeated no-op observation, an "
   + "unchanged status, or a restatement of something already stored.\n\n"
   + "Do store separately when the information is genuinely its own retrieval target: a distinct event, a new "
   + "decision, a reusable insight, a task, an artifact, or anything you would later want to find on its own.";
@@ -134,7 +137,35 @@ const LIST_RECENT_DESCRIPTION =
   + "or to locate an entry by time. It returns entries by recency, not by semantic relevance — when you want "
   + "memories that match a meaning, use recall. Long entries are shortened: a result ending in a [truncated …] "
   + "marker is PARTIAL, so call get(id) for its full text. "
-  + "Pass actor to list only what one person wrote — their name as shown in the header, their user id, or \"me\".";
+  + "Pass actor to list only what one person wrote — their name as shown in the header, their user id, or \"me\". "
+  + "Pass team (id from list_teams) with workspace:\"company\" to browse one team's shared layer.";
+
+const LIST_TEAMS_DESCRIPTION =
+  "List the shared teams you belong to, with display names and workspace ids. Call this before remember or "
+  + "share with workspace:\"company\" when the user has not named a team — especially when more than one team "
+  + "is returned. Present the names to the user and ask which team they mean when it matters. Use the id "
+  + "(not the display name) as the team parameter on remember, share, recall, and list_recent.";
+
+const SHARE_DESCRIPTION =
+  "Move a memory between your private workspace and a shared team workspace. MOVE semantics: one canonical row; "
+  + "edges follow it; audited. Only the entry's author or an admin can un-share. Call list_teams first when "
+  + "sharing to company and the user has not named a team. Get the entry ID from recall or list_recent first.";
+
+function formatTeamsList(
+  teams: { id: string; name: string; memberCount: number }[],
+  primaryId: string,
+): string {
+  if (!teams.length) {
+    return "You are not on any shared team workspace. Use workspace:\"personal\" for private memories.";
+  }
+  const lines = teams.map((t, i) => {
+    const primary = t.id === primaryId ? " [primary — used when team is omitted]" : "";
+    const label = t.name || "Unnamed team";
+    const members = t.memberCount === 1 ? "1 member" : `${t.memberCount} members`;
+    return `${i + 1}. ${label} (id: ${t.id}, ${members})${primary}`;
+  });
+  return `Teams you can read and write:\n\n${lines.join("\n")}\n\nUse the id as the team argument when capturing, sharing, or searching one team.`;
+}
 
 /** Which layer a raw entries row is in, from the caller's point of view. */
 const layerOfRow = (identity: Identity | undefined, row: Record<string, any>) =>
@@ -176,6 +207,27 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
     ? { workspaceId: scopeWrite(identity), actorId: identity.userId }
     : { workspaceId: "", actorId: "" };
 
+  // ── list_teams ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "list_teams",
+    {
+      description: LIST_TEAMS_DESCRIPTION,
+      inputSchema: {},
+    },
+    async () => {
+      if (!identity) {
+        return { content: [{ type: "text", text: "Team listing requires an authenticated identity." }] };
+      }
+      if (!identity.companyWorkspaceIds.length) {
+        return { content: [{ type: "text", text: formatTeamsList([], "") }] };
+      }
+      const teams = await listTeamWorkspaces(env, identity.companyWorkspaceIds);
+      return {
+        content: [{ type: "text", text: formatTeamsList(teams, primaryCompanyWorkspaceId(identity)) }],
+      };
+    },
+  );
+
   // ── remember ────────────────────────────────────────────────────────────
   server.registerTool(
     "remember",
@@ -187,9 +239,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
         volatility: volatilityParam,
         workspace: z.enum(["personal", "company"]).optional().describe("Where to store it: your private workspace (default) or the shared company layer"),
+        team: z.string().optional().describe("When workspace is company, which team workspace — id from list_teams. Omit for your primary team."),
       },
     },
-    async ({ content, tags, source, volatility, workspace }) => {
+    async ({ content, tags, source, volatility, workspace, team }) => {
       // Folded into the tag list rather than threaded through captureEntry: tags are
       // already the carrier for every other reserved namespace (kind:, status:).
       // withVolatility clears the namespace case-insensitively before appending, so a
@@ -200,14 +253,28 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       // and the injected one won.
       const baseTags = tags ?? [];
       const withVerdict = volatility ? withVolatility(baseTags, volatility as Volatility) : baseTags;
-      // Precedence: explicit workspace arg, then the member's default_share
-      // override, then the org's TEAM_DEFAULT_WORKSPACE, then personal.
       const orgDefault = (await resolveConfig(env)).TEAM_DEFAULT_WORKSPACE;
-      const target = identity ? effectiveWriteTarget(identity, workspace, orgDefault) : undefined;
-      const targetCtx = identity && target === "company"
-        ? { workspaceId: scopeWrite(identity, "company"), actorId: identity.userId }
-        : writeCtx;
+      let targetCtx = writeCtx;
+      if (identity) {
+        const resolvedTarget = effectiveWriteTarget(identity, workspace, orgDefault);
+        const teamRead = readTeamParam(team, identity, resolvedTarget);
+        if (teamRead.error) {
+          return { content: [{ type: "text", text: teamRead.error }] };
+        }
+        targetCtx = {
+          workspaceId: scopeWrite(identity, resolvedTarget, teamRead.teamId),
+          actorId: identity.userId,
+        };
+      }
       const result = await captureEntry(content, withVerdict, source ?? "claude", env, ctx, undefined, targetCtx);
+      if (identity && result.status !== "blocked") {
+        auditEvent(env, ctx, {
+          entryId: result.id,
+          actorId: identity.userId,
+          event: result.status === "stored" || result.status === "flagged" ? "created" : "updated",
+          payload: { captureStatus: result.status },
+        });
+      }
       if (result.status === "blocked") {
         return { content: [{ type: "text", text: `Duplicate detected (${(result.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${result.matchId}` }] };
       }
@@ -280,6 +347,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         };
       }
 
+      if (identity) {
+        auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: "appended" });
+      }
+
       return {
         content: [{
           type: "text",
@@ -338,6 +409,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         return { content: [{ type: "text", text: `Couldn't update entry ${id}: search re-index failed. Your memory is unchanged — please try again.` }] };
       }
 
+      if (identity && result.status === "updated") {
+        auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: "updated" });
+      }
+
       if (!result.vectorIds) {
         return {
           content: [{
@@ -371,6 +446,9 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
 
       const ok = await applyStatus(id, status as MemoryStatus, env);
       if (!ok) return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      if (identity) {
+        auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: "status_changed", payload: { status } });
+      }
       return { content: [{ type: "text", text: status === "deprecated" ? `Entry ${id} deprecated — removed from recall, kept for audit.` : `Entry ${id} marked ${status}.` }] };
     }
   );
@@ -379,15 +457,19 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
   server.registerTool(
     "share",
     {
-      description: "Move a memory between your private workspace and the company workspace. MOVE semantics: one canonical row; edges follow it; audited. Only the entry's author or an admin can un-share. Get the entry ID from recall or list_recent first.",
+      description: SHARE_DESCRIPTION,
       inputSchema: {
         id: z.string().describe("Entry ID — from recall or list_recent"),
         workspace: z.enum(["personal", "company"]).optional().describe("Target layer, company by default"),
+        team: z.string().optional().describe("When workspace is company, which team workspace — id from list_teams. Omit for your primary team."),
       },
     },
-    async ({ id, workspace }) => {
+    async ({ id, workspace, team }) => {
       if (!identity) return { content: [{ type: "text", text: "Sharing requires an authenticated team identity." }] };
-      const result = await moveEntry(id, workspace ?? "company", env, identity);
+      const target = workspace ?? "company";
+      const teamRead = readTeamParam(team, identity, target);
+      if (teamRead.error) return { content: [{ type: "text", text: teamRead.error }] };
+      const result = await moveEntry(id, target, env, identity, teamRead.teamId);
       if (result.status === "not_found") return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       if (result.status === "forbidden") return { content: [{ type: "text", text: `Only the entry's author or an admin can un-share ${id}.` }] };
       if (result.status === "no_change") return { content: [{ type: "text", text: `Entry ${id} is already in the ${workspace ?? "company"} workspace.` }] };
@@ -413,12 +495,15 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp. Useful for narrowing a recovery search to a period the conversation identified"),
         kind: z.enum([...KIND_VALUES] as [string, ...string[]]).optional().describe("Filter to episodic (events) or semantic (facts/knowledge). Useful as a recovery filter when a mixed result set buried the kind you needed"),
         hops: z.number().int().min(0).max(3).default(0).describe("Graph expansion depth: 0 = direct matches only (default); 1–2 also surfaces related memories linked in the graph. Raise it for why/how, chronology, causes, outcomes, or what came before or after; leave it at 0 when direct matches already answer the question"),
-        workspace: z.enum(["personal", "company"]).optional().describe("Restrict the search to one layer: the user's private workspace or the shared company layer. Omit to search both — the default, and right for most questions"),
+        workspace: z.enum(["personal", "company"]).optional().describe("Restrict the search to one layer: personal or the shared company layer. Omit to search both — the default, and right for most questions"),
+        team: z.string().optional().describe("When workspace is company, restrict to one team — id from list_teams"),
       },
     },
-    async ({ query, topK, tag, after, before, kind, hops, workspace }) => {
+    async ({ query, topK, tag, after, before, kind, hops, workspace, team }) => {
+      const teamRead = identity ? readTeamParam(team, identity, workspace) : {};
+      if (teamRead.error) return { content: [{ type: "text", text: teamRead.error }] };
       const cfg = await resolveConfig(env);
-      const { matches, insight, semanticUnavailable, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx, cfg, { identity, workspaceFilter: workspace });
+      const { matches, insight, semanticUnavailable, queryTokens, compoundStale } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, synthesize: false }, env, ctx, cfg, { identity, workspaceFilter: workspace, teamId: teamRead.teamId });
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
@@ -442,11 +527,14 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         tag: z.string().optional(),
         after: z.number().int().optional().describe("Only return entries after this Unix ms timestamp"),
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
-        workspace: z.enum(["personal", "company"]).optional().describe("Restrict the listing to one layer: the user's private workspace or the shared company layer. Omit to list both"),
+        workspace: z.enum(["personal", "company"]).optional().describe("Restrict the listing to one layer: personal or the shared company layer. Omit to list both"),
+        team: z.string().optional().describe("When workspace is company, restrict to one team — id from list_teams"),
         actor: z.string().optional().describe('Only entries written by one person: their display name as it appears in the header, their user id, or "me" for your own'),
       },
     },
-    async ({ n, tag, after, before, workspace, actor }) => {
+    async ({ n, tag, after, before, workspace, team, actor }) => {
+      const teamRead = identity ? readTeamParam(team, identity, workspace) : {};
+      if (teamRead.error) return { content: [{ type: "text", text: teamRead.error }] };
       // The same author filter GET /list takes, through the same resolver, so a
       // name means the same thing on both surfaces. An identity-less caller has
       // no roster to resolve a name against and no actor_id worth trusting, so
@@ -471,7 +559,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       // row is in and who wrote it — the same two facts recall reports.
       let { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before, actor: actorId });
       if (identity) {
-        const scope = scopeWhere(identity, workspace);
+        const scope = scopeWhereForRead(identity, { layer: workspace, teamId: teamRead.teamId });
         sql = sql.includes("WHERE")
           ? sql.replace(" ORDER BY", ` AND ${scope.clause} ORDER BY`)
           : sql.replace(" ORDER BY", ` WHERE ${scope.clause} ORDER BY`);
@@ -531,7 +619,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       },
     },
     async ({ id }) => {
-      const scope = identity ? scopeWhere(identity) : null;
+      const scope = identity ? scopeWhereForRead(identity) : null;
       const row = await env.DB.prepare(
         // scope-exempt: identity-less branch: production MCP always resolves an identity (src/mcp/handler.ts); this arm is unit fixtures only
         `SELECT id, content, tags, source, created_at, workspace_id, actor_id FROM entries WHERE id = ?${scope ? ` AND ${scope.clause}` : ""}`
@@ -574,6 +662,9 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       const result = await forgetEntry(id, env);
       if (result.status === "not_found") {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      }
+      if (identity) {
+        auditEvent(env, ctx, { entryId: id, actorId: identity.userId, event: "deleted", payload: { deletedVectors: result.vectorCount } });
       }
       return { content: [{ type: "text", text: `Deleted entry ${id} and ${result.vectorCount} vector(s)` }] };
     }

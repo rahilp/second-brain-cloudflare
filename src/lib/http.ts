@@ -1,9 +1,10 @@
 import type { Env } from "../env";
-import type { AuthFailureCode } from "./identity";
+import type { AuthFailureCode, Identity } from "./identity";
+import { readTeamParam } from "./scope";
 
 export const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
 };
 
@@ -26,6 +27,23 @@ export function readWorkspaceParam(url: URL): "personal" | "company" | undefined
     return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
   }
   return raw;
+}
+
+/**
+ * The ?team= filter shared by read routes. Narrows to one company workspace
+ * the caller belongs to — the same ids GET /team/workspaces and MCP list_teams
+ * return. Only valid alone or with ?workspace=company.
+ */
+export function readTeamQueryParam(
+  url: URL,
+  identity: Identity,
+  layer?: "personal" | "company",
+): string | undefined | Response {
+  const raw = url.searchParams.get("team");
+  if (raw === null) return undefined;
+  const result = readTeamParam(raw, identity, layer);
+  if (result.error) return json({ ok: false, error: result.error }, 400);
+  return result.teamId;
 }
 
 /**

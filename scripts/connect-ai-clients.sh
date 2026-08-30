@@ -155,3 +155,6 @@ echo "    personalization / custom-instruction settings are account-level and ha
 echo "    public write API — paste AI_Instructions/CHATGPT_INSTRUCTIONS.md into ChatGPT's"
 echo "    Settings → Personalization → Custom Instructions, and a similar block into"
 echo "    claude.ai's profile preferences, by hand."
+echo "  • Team Edition (v3.0.0): re-run this script after upgrades to refresh AI_Instructions/*.md."
+echo "    v3.0.0 ships one shared team per brain; optional team/list_teams params are API plumbing"
+echo "    for a future multi-team release. See CHANGELOG.md."

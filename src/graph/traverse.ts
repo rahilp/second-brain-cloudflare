@@ -3,7 +3,7 @@ import { DEFAULTS, type Config } from "../config";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { getKind } from "../memory/kind";
 import { getStatus } from "../memory/status";
-import { layerOf, scopeWhere } from "../lib/scope";
+import { layerOf, scopeWhereForRead } from "../lib/scope";
 import { resolveActorLabel } from "../lib/actors";
 import type { Identity } from "../lib/identity";
 import { edgeLabel } from "./edges";
@@ -99,8 +99,9 @@ async function readableAndDeprecatedAmong(
   env: Env,
   identity?: Identity,
   only?: "personal" | "company",
+  teamId?: string,
 ): Promise<{ readable: Set<string>; deprecated: Set<string> }> {
-  const scope = identity ? scopeWhere(identity, only) : null;
+  const scope = identity ? scopeWhereForRead(identity, { layer: only, teamId }) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
   // Scope bindings share the statement's bound-parameter budget with the ids.
   const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
@@ -141,7 +142,7 @@ async function readableAndDeprecatedAmong(
  */
 export async function expandGraph(
   seedIds: string[],
-  opts: { hops: number; fanoutCap?: number; maxNodes?: number; includeDeprecated?: boolean; only?: "personal" | "company" },
+  opts: { hops: number; fanoutCap?: number; maxNodes?: number; includeDeprecated?: boolean; only?: "personal" | "company"; teamId?: string },
   env: Env,
   config: Readonly<Config> = DEFAULTS,
   identity?: Identity,
@@ -150,7 +151,7 @@ export async function expandGraph(
   if (hops === 0 || seedIds.length === 0) return [];
   const fanoutCap = opts.fanoutCap ?? GRAPH_FANOUT_CAP;
   const maxNodes = opts.maxNodes ?? GRAPH_MAX_NODES;
-  const scope = identity ? scopeWhere(identity, opts.only) : null;
+  const scope = identity ? scopeWhereForRead(identity, { layer: opts.only, teamId: opts.teamId }) : null;
 
   const visited = new Set(seedIds);
   const out: GraphNeighbor[] = [];
@@ -197,7 +198,7 @@ export async function expandGraph(
     // and costs exactly what it did before tenancy.
     if (candidates.length && (identity || !opts.includeDeprecated)) {
       const { readable, deprecated } = await readableAndDeprecatedAmong(
-        [...new Set(candidates.map(c => c.id))], env, identity, opts.only,
+        [...new Set(candidates.map(c => c.id))], env, identity, opts.only, opts.teamId,
       );
       allowed = candidates.filter(c =>
         (!identity || readable.has(c.id))
@@ -218,9 +219,9 @@ export async function expandGraph(
   return out;
 }
 
-async function hydrateGraphEntries(ids: string[], env: Env, identity?: Identity, only?: "personal" | "company"): Promise<Map<string, Record<string, any>>> {
+async function hydrateGraphEntries(ids: string[], env: Env, identity?: Identity, only?: "personal" | "company", teamId?: string): Promise<Map<string, Record<string, any>>> {
   const map = new Map<string, Record<string, any>>();
-  const scope = identity ? scopeWhere(identity, only) : null;
+  const scope = identity ? scopeWhereForRead(identity, { layer: only, teamId }) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
   // Scope bindings share the statement's bound-parameter budget with the ids.
   const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
@@ -262,7 +263,7 @@ export async function getConnections(id: string, type: string | undefined, env: 
   return out;
 }
 
-export async function buildGraph(opts: { seed?: string; limit?: number; only?: "personal" | "company" }, env: Env, config: Readonly<Config> = DEFAULTS, identity?: Identity): Promise<GraphView> {
+export async function buildGraph(opts: { seed?: string; limit?: number; only?: "personal" | "company"; teamId?: string }, env: Env, config: Readonly<Config> = DEFAULTS, identity?: Identity): Promise<GraphView> {
   // "No cap" resolves to GRAPH_VIEW_MAX_NODES, never to Infinity. Anything that
   // is not a positive finite number — absent, 0, negative, NaN — takes that
   // branch, so a caller who reaches here past the route's own validation still
@@ -282,9 +283,9 @@ export async function buildGraph(opts: { seed?: string; limit?: number; only?: "
   // `only` narrows every one of the three scoped statements below — the edge
   // scan, the seed walk and the node hydration. Narrowing one and not the rest
   // would answer with nodes from one layer joined by edges from both.
-  const scope = identity ? scopeWhere(identity, opts.only) : null;
+  const scope = identity ? scopeWhereForRead(identity, { layer: opts.only, teamId: opts.teamId }) : null;
   if (opts.seed) {
-    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true, only: opts.only }, env, config, identity);
+    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true, only: opts.only, teamId: opts.teamId }, env, config, identity);
     nodeIds = [opts.seed, ...neighbors.map(n => n.id)].slice(0, limit);
   } else {
     const { results } = await env.DB.prepare(
@@ -323,7 +324,7 @@ export async function buildGraph(opts: { seed?: string; limit?: number; only?: "
   // Aliased, and the scope clause names the alias: once a second table is in the
   // statement, an unqualified `workspace_id` is a clause a reader (and the scope
   // checker) has to resolve by knowing which table has the column.
-  const nodeScope = identity ? scopeWhere(identity, opts.only, "e.workspace_id") : null;
+  const nodeScope = identity ? scopeWhereForRead(identity, { layer: opts.only, teamId: opts.teamId }, "e.workspace_id") : null;
   const nodeScopeSql = nodeScope ? ` AND ${nodeScope.clause}` : "";
   // Scope bindings share the statement's bound-parameter budget with the ids.
   const nodeTake = D1_MAX_BOUND_PARAMS - (nodeScope?.bindings.length ?? 0);
