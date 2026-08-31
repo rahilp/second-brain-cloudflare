@@ -7,9 +7,9 @@ import type { Identity } from "./identity";
  * clause (a cross-user leak waiting to ship) or is an internal by-id lookup whose
  * ids came from an already-scoped read.
  *
- * House rule (docs/superpowers/specs/2026-08-24-team-edition-design.md): no
- * unscoped corpus-wide query. Enforcement is this helper plus the cross-user
- * isolation suite (test/integration/team-isolation.test.ts), not lint.
+ * House rule: no unscoped corpus-wide query. Enforcement is this helper plus
+ * the cross-user isolation suite (test/integration/team-isolation.test.ts), not
+ * lint.
  */
 
 export interface ScopeClause {

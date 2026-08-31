@@ -250,7 +250,15 @@ export async function handleAdminRoutes(
         payload: { removedEntries: result.removedEntries, removedVectors: result.vectorIds.length },
       });
       if (result.vectorIds.length) {
-        await env.VECTORIZE.deleteByIds(result.vectorIds);
+        try {
+          await env.VECTORIZE.deleteByIds(result.vectorIds);
+        } catch (e) {
+          // The D1 rows and the audit row are already committed: the removal
+          // succeeded. A failed index delete only leaves dead vectors behind —
+          // the same degradation /patterns/resolve accepts — so the admin sees
+          // the truth (member removed) instead of a 500 for work that happened.
+          console.error("Vectorize deleteByIds failed during member removal (non-fatal):", e);
+        }
       }
       return json({ ok: true, id: body.id.trim(), removedEntries: result.removedEntries, removedVectors: result.vectorIds.length });
     } catch (e) {

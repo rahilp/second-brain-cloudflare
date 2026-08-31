@@ -72,8 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_insight_candidates_queue
   ON insight_candidates(status, score DESC);
 
 -- Team edition tenancy (v3). Additive like edges/insight_candidates: a single-user
--- brain never reads these tables and rollback is a no-op. See docs/superpowers/
--- specs/2026-08-24-team-edition-design.md.
+-- brain never reads these tables and rollback is a no-op.
 --
 -- The bootstrap seeds one company workspace, one owner user, one personal workspace
 -- per user, and membership rows for both. Legacy entries keep workspace_id '' until
@@ -103,6 +102,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash);
 
+-- Email uniqueness among members. createMember's check-then-INSERT guard left a
+-- two-writer race (both SELECTs miss, both INSERTs land); this index is the real
+-- constraint and the app code maps the loser to the same 409 the winner's guard
+-- produced. SQLite counts NULLs as distinct, so members without an email are
+-- unaffected. Fresh installs only: an EXISTING brain gets the same index from
+-- src/db/init.ts, which resolves any duplicates it finds before building.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
 CREATE TABLE IF NOT EXISTS memberships (
   user_id      TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
@@ -110,6 +117,11 @@ CREATE TABLE IF NOT EXISTS memberships (
   created_at   INTEGER NOT NULL,
   PRIMARY KEY (user_id, workspace_id)
 );
+
+-- listTeamWorkspaces (GET /team/roster) joins memberships on workspace_id; the
+-- composite PK above only serves user_id-first lookups. Same trade as
+-- idx_workspaces_kind: a tiny table, a cheap index, and the join stays a seek.
+CREATE INDEX IF NOT EXISTS idx_memberships_workspace ON memberships(workspace_id);
 
 -- Immutable audit trail. Application code only ever INSERTs here — no UPDATE or
 -- DELETE exists anywhere in src/, by design. Tamper evidence is absence of a way

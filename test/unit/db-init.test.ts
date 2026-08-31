@@ -33,7 +33,8 @@ const ALL_COLUMNS = MIGRATION.map(([column]) => column);
 const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue",
   // Team edition (v3). idx_entries_workspace_created is deliberately last-applied
   // (POST_COLUMN_OBJECTS): it indexes a column that arrives via ALTER.
-  "workspaces", "idx_workspaces_kind", "users", "idx_users_token_hash", "memberships", "entry_events", "idx_entry_events_entry", "idx_entry_events_created",
+  "workspaces", "idx_workspaces_kind", "users", "idx_users_token_hash", "idx_users_email",
+  "memberships", "idx_memberships_workspace", "entry_events", "idx_entry_events_entry", "idx_entry_events_created",
   "admin_events", "idx_admin_events_created", "maintenance_cursor", "idx_entries_workspace_created"];
 // Columns in the base CREATE of entries since v3 — present on every brain init touches.
 const BASE_COLUMNS = ["id", "content", "tags", "source", "created_at", "vector_ids", "workspace_id", "actor_id"];
@@ -183,7 +184,10 @@ describe("initializeDatabase updated_at migration", () => {
       // MOVED 34 -> 35 by idx_entry_events_created, the compliance feed's index.
       // One object, not one object plus an ALTER: it indexes created_at, which
       // has been in entry_events' base CREATE since the table shipped.
-      expect(migrated).toBe(35); // one-off cost of creating a brain: 20 objects + 14 ALTERs + 1 post-column index
+      // MOVED 35 -> 37 by idx_memberships_workspace and idx_users_email. The
+      // latter is one CREATE, not one CREATE plus a dedupe: a fresh brain holds
+      // no duplicates, so the repair path behind the email index never runs.
+      expect(migrated).toBe(37); // one-off cost of creating a brain: 21 objects + 14 ALTERs + 1 post-column index + the email-index CREATE
       expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
       expect(prepared).toHaveLength(3); // one probe each, and nothing else
       expect(touchesEntries(execd)).toEqual([]);
@@ -425,7 +429,8 @@ describe("initializeDatabase against real SQLite", () => {
     await initializeDatabase(envFor(d1));
 
     // MOVED 35 -> 36 by idx_entry_events_created; see the sibling pin above.
-    expect(cold).toBe(36); // one probe, then the 35 statements a new brain needs (20 objects + 14 ALTERs + 1 post-column index)
+    // MOVED 36 -> 38 by idx_memberships_workspace and idx_users_email.
+    expect(cold).toBe(38); // one probe, then the 37 statements a new brain needs (21 objects + 14 ALTERs + 1 post-column index + the email-index CREATE)
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });

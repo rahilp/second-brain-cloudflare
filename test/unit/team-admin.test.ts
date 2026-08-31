@@ -4,7 +4,7 @@ import { makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
 import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
-import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDefaultShare, setMemberSuspended, TeamAdminError } from "../../src/lib/team-admin";
+import { createMember, listMembers, removeMember, rotateMemberToken, setMemberDefaultShare, setMemberProfile, setMemberSuspended, TeamAdminError } from "../../src/lib/team-admin";
 import { hashToken } from "../../src/lib/identity";
 import type { Env } from "../../src/env";
 
@@ -48,6 +48,81 @@ describe("team member administration", () => {
     await createMember(env, { name: "A", email: "a@co.io" });
     await expect(createMember(env, { name: "B", email: "a@co.io" })).rejects.toMatchObject({
       status: 409,
+    });
+  });
+
+  it("rejects member shapes a rogue client could post", async () => {
+    const { env } = await makeEnv();
+    // createMember: name is required, bounded, and the email must look like one.
+    await expect(createMember(env, {})).rejects.toMatchObject({ status: 400 });
+    await expect(createMember(env, { name: "   " })).rejects.toMatchObject({ status: 400 });
+    await expect(createMember(env, { name: "x".repeat(61) })).rejects.toMatchObject({ status: 400 });
+    await expect(createMember(env, { name: "Ada", email: "not-an-email" })).rejects.toMatchObject({ status: 400 });
+    await expect(createMember(env, { name: "Ada", email: `${"a".repeat(250)}@x.io` })).rejects.toMatchObject({ status: 400 });
+    // setMemberProfile: same rules, with the empty-string-cleared email allowed.
+    const { member } = await createMember(env, { name: "Ada" });
+    await expect(setMemberProfile(env, member.userId, { name: "  " })).rejects.toMatchObject({ status: 400 });
+    await expect(setMemberProfile(env, member.userId, { name: "y".repeat(61) })).rejects.toMatchObject({ status: 400 });
+    await expect(setMemberProfile(env, member.userId, { email: "nope" })).rejects.toMatchObject({ status: 400 });
+    // The good path is untouched, including clearing an email with null/"".
+    await expect(setMemberProfile(env, member.userId, { name: "Ada Lovelace", email: "ada@co.io" })).resolves.toBeUndefined();
+    await expect(setMemberProfile(env, member.userId, { email: "" })).resolves.toBeUndefined();
+  });
+
+  it("idx_users_email exists and enforces what the pre-check cannot", async () => {
+    const { env } = await makeEnv();
+    // The constraint is schema, not behaviour: prove it is there, and that a raw
+    // INSERT which never ran the app-level guard still cannot double-book an
+    // address. NULL emails stay exempt, as they must — most members have none.
+    const index = await env.DB.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_users_email'`,
+    ).first();
+    expect(index).toBeTruthy();
+    await createMember(env, { name: "A", email: "a@co.io" });
+    await createMember(env, { name: "NoEmail1" });
+    await createMember(env, { name: "NoEmail2" });
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO users (id, name, email, role, token_hash, suspended, created_at)
+         VALUES ('usr-race', 'R', 'a@co.io', 'member', 'hash-race', 0, 1)`,
+      ).run(),
+    ).rejects.toThrow(/UNIQUE constraint failed/i);
+  });
+
+  it("maps a lost unique-index race to the same 409 the pre-check produces", async () => {
+    const { env } = await makeEnv();
+    await createMember(env, { name: "A", email: "a@co.io" });
+    // Simulate the race the pre-check cannot close: it runs, finds nothing, and
+    // a concurrent writer commits the same email before this batch lands. Blind
+    // the pre-check and let the index decide — the loser must read as 409, not 500.
+    const original = env.DB.prepare.bind(env.DB);
+    (env.DB as unknown as { prepare: unknown }).prepare = (sql: string) => {
+      if (sql.includes("SELECT id FROM users WHERE email = ?")) {
+        return {
+          bind: () => ({ first: async () => null }),
+          first: async () => null,
+        } as unknown as ReturnType<typeof original>;
+      }
+      return original(sql);
+    };
+    await expect(createMember(env, { name: "B", email: "a@co.io" })).rejects.toMatchObject({
+      status: 409,
+      message: "A member with that email already exists",
+    });
+  });
+
+  it("refuses to rotate a token or set a default share for a removed member", async () => {
+    const { env, roots } = await makeEnv();
+    const { member } = await createMember(env, { name: "Ada" });
+    await removeMember(env, roots.ownerUserId, member.userId);
+    // Both writes used to succeed against the tombstone — the rotated token was
+    // a credential-shaped dead end no identity could ever resolve.
+    await expect(rotateMemberToken(env, member.userId)).rejects.toMatchObject({
+      status: 404,
+      message: `No member found with ID: ${member.userId}`,
+    });
+    await expect(setMemberDefaultShare(env, member.userId, "company")).rejects.toMatchObject({
+      status: 404,
     });
   });
 

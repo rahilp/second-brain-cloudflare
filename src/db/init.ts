@@ -80,8 +80,7 @@ const SCHEMA_OBJECTS: Record<string, string> = {
   // stating the direction keeps the index and its one caller obviously paired. Bonus: the
   // nightly prune's `weight < ?` becomes a range search, 200,000 rows read down to 60,000.
   idx_edges_weight: `CREATE INDEX IF NOT EXISTS idx_edges_weight ON edges(weight DESC)`,
-  // Candidate pairs for the weekly insight pass (see docs/superpowers/specs/
-  // 2026-08-10-insight-pass-design.md). Additive, like `edges` — old code
+  // Candidate pairs for the weekly insight pass. Additive, like `edges` — old code
   // ignores it and rollback is a no-op.
   //
   // UNIQUE(a_id, b_id) with ids normalised so a_id < b_id at the call site is
@@ -95,7 +94,7 @@ const SCHEMA_OBJECTS: Record<string, string> = {
   // avoid on the graph read path.
   idx_insight_candidates_queue: `CREATE INDEX IF NOT EXISTS idx_insight_candidates_queue ON insight_candidates(status, score DESC)`,
   // Team edition tenancy (v3). Additive: single-user brains never read these and
-  // rollback is a no-op. See docs/superpowers/specs/2026-08-24-team-edition-design.md.
+  // rollback is a no-op.
   workspaces: `CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'personal', name TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)`,
   idx_workspaces_kind: `CREATE INDEX IF NOT EXISTS idx_workspaces_kind ON workspaces(kind)`,
   users: `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT, role TEXT NOT NULL DEFAULT 'member', token_hash TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
@@ -103,6 +102,9 @@ const SCHEMA_OBJECTS: Record<string, string> = {
   // gives it the index for free.
   idx_users_token_hash: `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash)`,
   memberships: `CREATE TABLE IF NOT EXISTS memberships (user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', created_at INTEGER NOT NULL, PRIMARY KEY (user_id, workspace_id))`,
+  // listTeamWorkspaces (GET /team/roster) joins memberships on workspace_id; the
+  // composite PK only serves user_id-first lookups.
+  idx_memberships_workspace: `CREATE INDEX IF NOT EXISTS idx_memberships_workspace ON memberships(workspace_id)`,
   entry_events: `CREATE TABLE IF NOT EXISTS entry_events (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, actor_id TEXT NOT NULL DEFAULT '', event TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)`,
   idx_entry_events_entry: `CREATE INDEX IF NOT EXISTS idx_entry_events_entry ON entry_events(entry_id, created_at DESC)`,
   // The compliance feed (GET /team/activity) reads this table the other way
@@ -312,6 +314,27 @@ async function probeSchema(env: Env): Promise<ExistingSchema | null> {
 }
 
 /**
+ * users.email is UNIQUE. The constraint cannot ship as an ordinary SCHEMA_OBJECTS
+ * entry: on a brain that already holds two members with the same email — the
+ * check-then-INSERT race this index closes — the CREATE itself would throw,
+ * applySchema would reject, and initializeDatabase would refuse to memoise, so
+ * EVERY request from then on would fail against a database that is otherwise
+ * fine. Instead the index is built with a repair path: create it, and only if
+ * the build trips over existing duplicates, collapse them (earliest created
+ * keeps the address — "first created wins", what the app-level guard intended)
+ * and create again. Fresh brains have no duplicates and pay one statement, once.
+ */
+const EMAIL_UNIQUE_INDEX_DDL = `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)`;
+const EMAIL_DEDUPLICATE_SQL =
+  `UPDATE users SET email = NULL ` +
+  `WHERE id IN (` +
+  `  SELECT id FROM (` +
+  `    SELECT id, ROW_NUMBER() OVER (PARTITION BY email ORDER BY created_at ASC, id ASC) AS rn` +
+  `      FROM users WHERE email IS NOT NULL` +
+  `  ) WHERE rn > 1` +
+  `)`;
+
+/**
  * The one ALTER failure that is routine rather than a fault: the column was added between
  * the probe and here. That window is small now but not closed — two isolates can cold-start
  * on the same brain at once, and D1 has no transactional DDL to serialise them — so this
@@ -320,6 +343,16 @@ async function probeSchema(env: Env): Promise<ExistingSchema | null> {
  */
 function isDuplicateColumn(e: unknown): boolean {
   return /duplicate column name/i.test(String((e as { message?: string })?.message ?? e));
+}
+
+/**
+ * The one CREATE failure that is routine rather than a fault: building a UNIQUE
+ * index over data that already violates it. Both D1 and node:sqlite surface
+ * SQLite's own message. Any other error means the schema is not in the shape
+ * the code expects and still rejects.
+ */
+function isUniqueViolation(e: unknown): boolean {
+  return /UNIQUE constraint failed/i.test(String((e as { message?: string })?.message ?? e));
 }
 
 // Rejects on any genuine failure. Nothing here may swallow errors: a resolved promise is
@@ -371,6 +404,21 @@ async function applySchema(env: Env): Promise<void> {
       await env.DB.exec(ddl);
     } catch (e) {
       if (!isDuplicateColumn(e)) throw e;
+    }
+  }
+  // users.email uniqueness — see the note above EMAIL_UNIQUE_INDEX_DDL for why
+  // this is not a plain SCHEMA_OBJECTS entry. Skipped once the index exists,
+  // which the probe reports like any other index.
+  if (existing?.objects.get("idx_users_email") !== "index") {
+    try {
+      await env.DB.exec(EMAIL_UNIQUE_INDEX_DDL);
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+      // The build tripped over duplicates a legacy brain accumulated through
+      // the app-level check-then-INSERT gap. Resolve them, then build again;
+      // a second failure here is a real fault and still rejects.
+      await env.DB.exec(EMAIL_DEDUPLICATE_SQL);
+      await env.DB.exec(EMAIL_UNIQUE_INDEX_DDL);
     }
   }
   for (const [name, ddl] of Object.entries(POST_COLUMN_OBJECTS)) {

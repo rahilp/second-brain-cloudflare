@@ -1,7 +1,7 @@
 // How a candidate pair earns its place in the weekly budget.
 //
 // Every term here answers something measured on a real brain rather than a
-// preference. See docs/superpowers/specs/2026-08-10-insight-pass-design.md.
+// preference.
 import { topicTagsOf } from "./eligibility";
 
 /** Below this two entries are not about the same thing. */

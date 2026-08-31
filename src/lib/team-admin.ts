@@ -45,10 +45,17 @@ export async function countActiveMembers(env: Env): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** Resolve team mode from the stored intent and current membership count. */
+/**
+ * Resolve team mode from the stored intent and current membership count.
+ *
+ * "off" is deliberately soft: it hits the same floor (activeMembers > 1) as an
+ * unset mode, and POST /config refuses to even store an explicit "off" while
+ * that floor holds (src/routes/config.ts). This function is the backstop for a
+ * stored "off" that predates the members it now governs — which is why there is
+ * no separate branch for it.
+ */
 export function resolveTeamFlag(mode: string, activeMembers: number): boolean {
   if (mode === "on") return true;
-  if (mode === "off") return activeMembers > 1;
   return activeMembers > 1;
 }
 
@@ -226,13 +233,48 @@ function changedRows(result: D1Result<unknown>): number {
   return meta.changes ?? meta.rows_written ?? 0;
 }
 
+/** Same cap the team-name field enforces (renameTeamWorkspace). */
+const MAX_MEMBER_NAME_LENGTH = 60;
+/** RFC 5321 caps the forward-path at 254 octets. */
+const MAX_MEMBER_EMAIL_LENGTH = 254;
+/** Deliberately loose — shape, not deliverability: something, an @, a dot. */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateMemberName(name: string): string {
+  if (!name) throw new TeamAdminError(400, "name is required");
+  if (name.length > MAX_MEMBER_NAME_LENGTH) {
+    throw new TeamAdminError(400, `Member names are limited to ${MAX_MEMBER_NAME_LENGTH} characters`);
+  }
+  return name;
+}
+
+function validateMemberEmail(email: string): string {
+  if (email.length > MAX_MEMBER_EMAIL_LENGTH) {
+    throw new TeamAdminError(400, `Email addresses are limited to ${MAX_MEMBER_EMAIL_LENGTH} characters`);
+  }
+  if (!EMAIL_SHAPE.test(email)) {
+    throw new TeamAdminError(400, "That does not look like an email address");
+  }
+  return email;
+}
+
+/**
+ * The one INSERT/UPDATE failure that is a member-visible refusal rather than a
+ * fault: idx_users_email (db/schema.sql) said no. Both D1 and node:sqlite surface
+ * SQLite's own message.
+ */
+function isUniqueEmailViolation(e: unknown): boolean {
+  return /UNIQUE constraint failed: users\.email/i.test(String((e as { message?: string })?.message ?? e));
+}
+
 export async function createMember(
   env: Env,
   input: { name?: string; email?: string | null; role?: "admin" | "member" },
 ): Promise<{ member: TeamMember; token: string }> {
-  const name = input.name?.trim() || "Member";
+  const name = validateMemberName(input.name?.trim() ?? "");
   const role = input.role === "admin" ? "admin" : "member";
   const email = input.email?.trim() || null;
+  if (email) validateMemberEmail(email);
 
   if (email) {
     const existing = await env.DB.prepare(`SELECT id FROM users WHERE email = ?`).bind(email).first();
@@ -248,14 +290,22 @@ export async function createMember(
   if (!companyId) throw new TeamAdminError(500, "Deployment is not provisioned");
 
   const { token, tokenHash } = await generateToken();
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO users (id, name, email, role, token_hash, suspended, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)`,
-    ).bind(userId, name, email, role, tokenHash, now),
-    env.DB.prepare(`INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'personal', ?, ?)`).bind(workspaceId, name, now),
-    env.DB.prepare(`INSERT INTO memberships (user_id, workspace_id, created_at) VALUES (?, ?, ?)`).bind(userId, workspaceId, now),
-    env.DB.prepare(`INSERT INTO memberships (user_id, workspace_id, created_at) VALUES (?, ?, ?)`).bind(userId, companyId.id, now),
-  ]);
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (id, name, email, role, token_hash, suspended, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)`,
+      ).bind(userId, name, email, role, tokenHash, now),
+      env.DB.prepare(`INSERT INTO workspaces (id, kind, name, created_at) VALUES (?, 'personal', ?, ?)`).bind(workspaceId, name, now),
+      env.DB.prepare(`INSERT INTO memberships (user_id, workspace_id, created_at) VALUES (?, ?, ?)`).bind(userId, workspaceId, now),
+      env.DB.prepare(`INSERT INTO memberships (user_id, workspace_id, created_at) VALUES (?, ?, ?)`).bind(userId, companyId.id, now),
+    ]);
+  } catch (e) {
+    // The pre-check above is advisory: two concurrent POSTs can both pass it.
+    // idx_users_email is the real constraint, and the race's loser surfaces here
+    // as the same 409 the winner's pre-check would have produced.
+    if (isUniqueEmailViolation(e)) throw new TeamAdminError(409, `A member with that email already exists`);
+    throw e;
+  }
 
   return {
     member: {
@@ -270,8 +320,12 @@ export async function createMember(
 /** Rotates a member's token; the previous one stops resolving immediately. */
 export async function rotateMemberToken(env: Env, userId: string): Promise<string> {
   const { token, tokenHash } = await generateToken();
-  const result = await env.DB.prepare(`UPDATE users SET token_hash = ? WHERE id = ?`)
-    .bind(tokenHash, userId).run();
+  // Removed members are 404s, like every sibling write: a token minted for a
+  // tombstoned row could never authenticate (identity excludes removed_at), and
+  // handing an admin a credential-shaped dead end invites sharing it.
+  const result = await env.DB.prepare(
+    `UPDATE users SET token_hash = ? WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
+  ).bind(tokenHash, userId).run();
   if (!changedRows(result)) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
   return token;
 }
@@ -325,8 +379,11 @@ export async function setMemberDefaultShare(
   value: "personal" | "company" | "inherit",
 ): Promise<void> {
   const stored = value === "inherit" ? "" : value;
-  const result = await env.DB.prepare(`UPDATE users SET default_share = ? WHERE id = ?`)
-    .bind(stored, userId).run();
+  // Removed members are 404s, like the sibling writes — a tombstone has no
+  // capture policy left to set.
+  const result = await env.DB.prepare(
+    `UPDATE users SET default_share = ? WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
+  ).bind(stored, userId).run();
   if (!changedRows(result)) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
 }
 
@@ -422,33 +479,44 @@ export async function removeMember(
   return { removedEntries, vectorIds };
 }
 
-/** Rename a member. At least one of name or email must be supplied. */
+/** Rename a member, or set their email. At least one of name or email must be supplied. */
 export async function setMemberProfile(
   env: Env,
   userId: string,
   input: { name?: string; email?: string | null },
 ): Promise<void> {
-  const name = input.name?.trim();
+  const name = input.name === undefined ? undefined : validateMemberName(input.name.trim());
   const email = input.email === undefined ? undefined : (input.email?.trim() || null);
+  if (email) validateMemberEmail(email);
   if (name === undefined && email === undefined) {
     throw new TeamAdminError(400, "name or email is required");
   }
   if (email) {
+    // Unlike the roster's exclusions this lookup deliberately INCLUDES removed
+    // rows, matching idx_users_email, which covers tombstones too: the loser of
+    // that race gets the friendly 409 here rather than the constraint's.
     const existing = await env.DB.prepare(
-      `SELECT id FROM users WHERE email = ? AND id != ? AND (removed_at IS NULL OR removed_at = 0)`,
+      `SELECT id FROM users WHERE email = ? AND id != ?`,
     ).bind(email, userId).first();
     if (existing) throw new TeamAdminError(409, "A member with that email already exists");
   }
 
   const sets: string[] = [];
   const bindings: (string | null)[] = [];
-  if (name !== undefined) { sets.push("name = ?"); bindings.push(name || "Member"); }
+  if (name !== undefined) { sets.push("name = ?"); bindings.push(name); }
   if (email !== undefined) { sets.push("email = ?"); bindings.push(email); }
   bindings.push(userId);
 
-  const result = await env.DB.prepare(
-    `UPDATE users SET ${sets.join(", ")} WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
-  ).bind(...bindings).run();
+  let result: D1Result<unknown>;
+  try {
+    result = await env.DB.prepare(
+      `UPDATE users SET ${sets.join(", ")} WHERE id = ? AND (removed_at IS NULL OR removed_at = 0)`,
+    ).bind(...bindings).run();
+  } catch (e) {
+    // Same story as createMember: the pre-check is advisory, the index rules.
+    if (isUniqueEmailViolation(e)) throw new TeamAdminError(409, "A member with that email already exists");
+    throw e;
+  }
   if (!changedRows(result)) throw new TeamAdminError(404, `No member found with ID: ${userId}`);
 }
 
@@ -502,6 +570,6 @@ export async function renameTeamWorkspace(env: Env, workspaceId: string, name: s
   const changed = await env.DB.prepare(
     `UPDATE workspaces SET name = ? WHERE id = ? AND kind = 'company'`,
   ).bind(trimmed, workspaceId).run();
-  if (!changed.meta?.rows_written) throw new TeamAdminError(404, "No team found with that ID");
+  if (!changedRows(changed)) throw new TeamAdminError(404, "No team found with that ID");
   return trimmed;
 }
