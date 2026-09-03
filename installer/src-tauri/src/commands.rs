@@ -1521,6 +1521,7 @@ fn brain_index_names() -> Vec<String> {
             &manifest.vectorize_name,
             choice.dimensions,
             manifest.vectorize_dimensions,
+            Some(choice.model),
         );
         if !names.contains(&name) {
             names.push(name);
@@ -2207,6 +2208,7 @@ pub async fn begin_embedding_migration(
         &manifest.vectorize_name,
         dimensions,
         manifest.vectorize_dimensions,
+        Some(&model),
     );
 
     let (worker_url, auth_token, _) = settings_target(&app)?;
@@ -2217,6 +2219,25 @@ pub async fn begin_embedding_migration(
     };
 
     if session.dry_run {
+        // What the demo brain reads NOW, before the switch — the live path reads
+        // the script binding for the same reason: afterwards the brain reports
+        // the new index as current. Derived through index_name_for, not assumed
+        // to be the shipped index: after a first demo migration the two differ,
+        // and recording the shipped name made finish_embedding_migration "free"
+        // an index that was never the leftover.
+        let current_model = crate::migration::fetch_status(&worker_url, &auth_token, locale)
+            .await?
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let current_index = crate::migration::index_name_for(
+            &manifest.vectorize_name,
+            crate::migration::dimensions_for(&current_model).unwrap_or(manifest.vectorize_dimensions),
+            manifest.vectorize_dimensions,
+            Some(&current_model),
+        );
+
         // The demo brain runs on a loopback address, which has no script or
         // subdomain to derive — `update_worker` would refuse it before doing
         // anything. The `.demo.workers.dev` stand-in exercises the same code path,
@@ -2245,8 +2266,8 @@ pub async fn begin_embedding_migration(
         // which would leave the most consequential screen untested.
         crate::migration::patch_embedding_model(&worker_url, &auth_token, &model, locale).await?;
         // In memory, never the keychain — see demo_previous_index.
-        if target_index != manifest.vectorize_name {
-            *session.demo_previous_index.lock().unwrap() = Some(manifest.vectorize_name.clone());
+        if target_index != current_index {
+            *session.demo_previous_index.lock().unwrap() = Some(current_index);
         }
         return crate::migration::reset(&worker_url, &auth_token, locale).await;
     }
@@ -2387,6 +2408,7 @@ pub async fn finish_embedding_migration(
         &manifest.vectorize_name,
         crate::migration::dimensions_for(&live_model).unwrap_or(manifest.vectorize_dimensions),
         manifest.vectorize_dimensions,
+        Some(&live_model),
     );
     if old_index == live_index {
         return Err(user_err(locale, Key::ErrorCannotDeleteLiveIndex));
