@@ -28,6 +28,14 @@ All notable changes to Second Brain are documented here. Version numbers match `
 - Desktop app: a routine "update your brain" keeps a migrated brain on its migrated search index.
 - Desktop app: a **Multilingual** reading (`@cf/baai/bge-m3`) in the embedding picker, on its own search index. The storage warning now costs a move between same-size models correctly.
 
+**Claude Code hooks (#327)**
+
+- SessionStart recall sent `?q=`; the route reads `query`. The hook printed nothing on every session start since it shipped.
+- SessionEnd parsed stdin as the transcript; Claude Code sends a `transcript_path`. Sessions were never captured. The hook now reads the JSONL transcript, keeps only human-readable turns, and captures behind a content gate.
+- Hooks now exit 1 with one stderr line on any failure; Claude Code hides stderr from exit-0 hooks.
+- `install.sh` reconciles instead of appending, refuses a malformed settings.json, sets the SessionEnd `timeout` the 1.5 s hook budget requires, and keeps credentials in `~/.config/second-brain/config.json` rather than the hook command line.
+- New: `install.sh --check` and `--uninstall`.
+
 **Upgrade**
 
 - Existing v2 memories become the owner's personal workspace. Nothing is exposed to the team automatically.
