@@ -89,7 +89,7 @@ export type Messages = {
        * confirm screen and nowhere else, because this is the last thing read
        * before an operation that cannot be undone.
        */
-      levels: { standard: LevelCopy; finer: LevelCopy; finest: LevelCopy };
+      levels: { standard: LevelCopy; finer: LevelCopy; finest: LevelCopy; multilingual: LevelCopy };
       sameAsCurrent: string;
       dirtyNote: string;
       startButton: string;

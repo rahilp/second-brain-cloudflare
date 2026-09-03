@@ -26,6 +26,7 @@ All notable changes to Second Brain are documented here. Version numbers match `
 - Recall snippets find a query term written in full-width form and cut on CJK sentence ends.
 - Team-scoped recall (`workspace=` / `team=`) narrows the keyword arm too, so a scoped recall no longer spends its candidate window on rows the scope then discards.
 - Desktop app: a routine "update your brain" keeps a migrated brain on its migrated search index.
+- Desktop app: a **Multilingual** reading (`@cf/baai/bge-m3`) in the embedding picker, on its own search index. The storage warning now costs a move between same-size models correctly.
 
 **Upgrade**
 

@@ -387,6 +387,7 @@ impl Demo {
                     &manifest.vectorize_name,
                     dimensions,
                     manifest.vectorize_dimensions,
+                    Some(&model),
                 ),
                 "dimensions": dimensions,
                 "vectorCount": self.options.chunks_at_least,
