@@ -9,7 +9,7 @@
 // consequence is that a brain full of automated report exhaust still yields some
 // junk candidates until that work lands.
 import { isReservedTag } from "../compression/eligibility";
-import { MIRRORED_SOURCES } from "../constants";
+import { MIRRORED_SOURCES, TRANSCRIPT_SOURCES } from "../constants";
 
 /** Below this an entry cannot carry an idea two memories apart. */
 export const MIN_INSIGHT_CONTENT_CHARS = 80;
@@ -74,7 +74,7 @@ export function isInsightEligible(
   entry: { content: string; tags: string[]; source: string },
 ): boolean {
   if (entry.content.trim().length < MIN_INSIGHT_CONTENT_CHARS) return false;
-  if (INTEGRATION_SOURCES.has(entry.source)) return false;
+  if (INTEGRATION_SOURCES.has(entry.source) || TRANSCRIPT_SOURCES.has(entry.source)) return false;
 
   const lower = entry.tags.map(t => t.toLowerCase());
   if (lower.some(t => MACHINE_TAGS.has(t))) return false;

@@ -38,6 +38,8 @@ All notable changes to Second Brain are documented here. Version numbers match `
 - Session capture redacts credentials from the body before sending it — your own token, `Bearer` values, `sk-`/`ghp_`/`github_pat_`/`xoxb-`/`AKIA`/`AIza` key shapes, PEM private keys and `TOKEN=`-style assignments — while leaving UUIDs, commit SHAs, paths and ordinary prose intact.
 - SessionStart caches the block it printed and re-emits it on compaction, so compaction costs no recall at all; it falls back to a live recall when there is no cache or it is over 24 h old.
 - New: `install.ps1`, a PowerShell installer for Windows machines where Claude Code runs hooks under PowerShell rather than Git Bash.
+- Worker: a Claude Code transcript is never merged into, never replaces, and never deprecates a memory written by any other source; it is stored as a duplicate-candidate or a draft instead. Transcripts are excluded from insight synthesis.
+- Worker: capturing a near-duplicate of a protected memory (importance ≥ 4 or canonical) now stores the newcomer as a duplicate-candidate. It used to report success with an id that did not exist.
 
 **Upgrade**
 
