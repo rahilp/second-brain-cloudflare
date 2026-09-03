@@ -9,11 +9,18 @@ They are independent of the MCP server. Use either, or both.
 
 | Event | Runs on | Action | Cost |
 |---|---|---|---|
-| `SessionStart` | `startup`, `clear`, `compact` | `GET /recall` for this project, prints up to 5 memories into the session | one recall (~1 s) |
+| `SessionStart` | `startup`, `clear`, `compact` | `GET /recall` for this project, prints up to 5 memories into the session | one recall (~1 s), none on compaction |
 | `SessionEnd` | every reason (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`) | `POST /capture` with the tail of the conversation | one capture (embedding + often a model call), 30 s hook timeout |
 
 `resume` and `fork` are skipped on start: those transcripts already contain the
 earlier injection. `compact` is not skipped — compaction discards it.
+
+On `startup` and `clear` the block that was printed is cached under
+`$XDG_CACHE_HOME/second-brain/session-<session_id>.txt` (`~/.cache/…` by
+default). Compaction re-prints that file verbatim and makes no request at all:
+the session id survives compaction and rotates on `/clear`, so a cached block is
+always the current session's context. With no cache, or one older than 24 h,
+compaction falls back to a live recall.
 
 ## Install, upgrade, check, uninstall
 

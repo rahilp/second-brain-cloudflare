@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -345,5 +345,35 @@ describe("session-end.redactSecrets", () => {
     const body = end.buildCaptureBody(turns, meta);
     expect(body.content.length).toBeLessThanOrEqual(2000);
     expect(body.content).not.toContain("abcd1234");
+  });
+});
+
+describe("session-start session cache", () => {
+  const block = "[Second Brain] Context recalled — …\n----- second brain notes (begin) -----\n1. a note\n----- second brain notes (end) -----\n";
+
+  it("round-trips a block for a session id", () => {
+    const dir = tmp();
+    expect(start.readSessionCache("abc-123", Date.now(), dir)).toBeNull();
+    expect(start.writeSessionCache("abc-123", block, dir)).toBe(true);
+    expect(start.readSessionCache("abc-123", Date.now(), dir)).toBe(block);
+    expect(start.readSessionCache("other-id", Date.now(), dir)).toBeNull();
+  });
+
+  it("expires after 24 h and refuses an empty id or body", () => {
+    const dir = tmp();
+    start.writeSessionCache("abc-123", block, dir);
+    const old = Date.now() / 1000 - 25 * 3600;
+    utimesSync(start.sessionCacheFile("abc-123", dir), old, old);
+    expect(start.readSessionCache("abc-123", Date.now(), dir)).toBeNull();
+    expect(start.writeSessionCache("", block, dir)).toBe(false);
+    expect(start.writeSessionCache("abc-123", "", dir)).toBe(false);
+    expect(start.readSessionCache("", Date.now(), dir)).toBeNull();
+  });
+
+  it("keeps a session id from escaping the cache directory", () => {
+    const dir = tmp();
+    const file = start.sessionCacheFile("../../etc/passwd", dir);
+    expect(file.startsWith(dir)).toBe(true);
+    expect(file).not.toContain("..");
   });
 });

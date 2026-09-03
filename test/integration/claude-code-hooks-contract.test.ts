@@ -161,6 +161,28 @@ describe("session-start.js", () => {
     expect((await runHook("session-start.js", startPayload("compact"))).stdout).toContain("Context recalled");
   });
 
+  it("re-emits the cached block on compaction and makes no request at all", async () => {
+    // The session id survives compaction, so the block printed at startup is
+    // still this session's context — printing it again costs nothing.
+    const first = await runHook("session-start.js", startPayload("startup"));
+    expect(first.code, first.stderr).toBe(0);
+    expect(first.stdout).toContain("Context recalled");
+    expect(captured.filter(c => c.url.startsWith("/recall?")).length).toBeGreaterThanOrEqual(1);
+
+    captured = [];
+    const second = await runHook("session-start.js", startPayload("compact"));
+    expect(second.code, second.stderr).toBe(0);
+    expect(second.stdout).toBe(first.stdout);
+    expect(captured).toHaveLength(0);
+  });
+
+  it("falls back to a live recall when compaction finds no cached block", async () => {
+    const r = await runHook("session-start.js", { ...startPayload("compact"), session_id: "never-seen-before" });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Context recalled");
+    expect(captured.filter(c => c.url.startsWith("/recall?")).length).toBeGreaterThanOrEqual(1);
+  });
+
   it("does nothing without credentials, and honours the opt-out", async () => {
     const r = await runHook("session-start.js", startPayload(), { SECOND_BRAIN_URL: "", SECOND_BRAIN_TOKEN: "" });
     expect(r.code).toBe(0); expect(r.stdout).toBe(""); expect(captured).toHaveLength(0);

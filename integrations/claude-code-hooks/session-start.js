@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 'use strict';
+const fs = require('node:fs');
 const {
   loadCredentials, resolveWorkspace, readStdinJson, parseProjectName, gitRemoteUrl,
-  fetchWithTimeout, fail, hintFor,
+  fetchWithTimeout, fail, hintFor, cachePath,
 } = require('./common');
 
 // resume/fork transcripts already hold the earlier injection, and Claude Code
@@ -12,6 +13,33 @@ const SKIP_SOURCES = new Set(['resume', 'fork']);
 const RECALL_TIMEOUT_MS = 15000;
 const MAX_OUTPUT_CHARS = 6000;
 const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+const SESSION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Where the block printed for a session is kept so compaction can re-emit it.
+ * The id lands in a filename, so anything that is not a plain name character is
+ * folded away; `dir` is only ever passed by tests.
+ */
+function sessionCacheFile(sessionId, dir) {
+  const safe = String(sessionId ?? '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.-]+/, '').slice(0, 96);
+  return safe ? cachePath(`session-${safe}.txt`, dir) : null;
+}
+
+function writeSessionCache(sessionId, text, dir) {
+  const file = text ? sessionCacheFile(sessionId, dir) : null;
+  if (!file) return false;
+  try { fs.writeFileSync(file, text); return true; } catch { return false; }
+}
+
+/** The block cached for this session, or null when it is missing or older than 24 h. */
+function readSessionCache(sessionId, now = Date.now(), dir) {
+  const file = sessionCacheFile(sessionId, dir);
+  if (!file) return null;
+  try {
+    if (now - fs.statSync(file).mtimeMs >= SESSION_CACHE_TTL_MS) return null;
+    return fs.readFileSync(file, 'utf8') || null;
+  } catch { return null; }
+}
 
 /** The requests to try, in order. The tag arm returns [] on a miss, so the fallback is safe. */
 function buildRecallPlan(project, workspace, now = Date.now()) {
@@ -84,6 +112,15 @@ async function main() {
   const payload = await readStdinJson();
   const source = typeof payload?.source === 'string' ? payload.source : 'startup';
   if (SKIP_SOURCES.has(source)) return;
+  const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : '';
+
+  // The session id survives compaction and rotates on /clear, so a block cached
+  // earlier in this session is still this session's context. Re-emitting it
+  // costs nothing; a second recall would cost a request and an embedding.
+  if (source === 'compact') {
+    const cached = readSessionCache(sessionId);
+    if (cached) { process.stdout.write(cached); return; }
+  }
 
   const cwd = typeof payload?.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
   const project = parseProjectName(gitRemoteUrl(cwd), cwd);
@@ -108,13 +145,19 @@ async function main() {
     const results = Array.isArray(data?.results) ? data.results : [];
     if (results.length) {
       const out = frameOutput(results, data.insight);
-      if (out) process.stdout.write(out);
+      if (out) {
+        process.stdout.write(out);
+        if (source === 'startup' || source === 'clear') writeSessionCache(sessionId, out);
+      }
       return;
     }
   }
 }
 
-module.exports = { SKIP_SOURCES, buildRecallPlan, buildRecallUrl, cleanSnippet, frameOutput, main };
+module.exports = {
+  SKIP_SOURCES, SESSION_CACHE_TTL_MS, buildRecallPlan, buildRecallUrl, cleanSnippet, frameOutput,
+  sessionCacheFile, writeSessionCache, readSessionCache, main,
+};
 
 if (require.main === module) {
   main().catch((e) => fail(`recall failed: ${e?.message ?? e}`));
