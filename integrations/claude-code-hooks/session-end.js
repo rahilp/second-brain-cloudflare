@@ -104,14 +104,23 @@ function readTranscriptTail(filePath, {
 }
 
 /**
- * Header first (recall always shows the head of a memory), then the newest
- * turns that fit. Assistant narration is clipped per line except the final
- * line, which is the summary of what happened.
+ * Header first (recall always shows the head of a memory), then the turns that
+ * fit. Assistant narration is clipped per line except the final line, which is
+ * the summary of what happened.
+ *
+ * Two turns are reserved before the budget is spent on anything else: what the
+ * person last asked, and how the session ended. Filling newest-first alone is
+ * not enough — the tail of a real agentic session is almost entirely assistant
+ * narration, so a 2000-char budget fills with progress reports and stores a
+ * memory of a conversation with no human sentence in it. Measured on a real
+ * 3.7 MB transcript: eight assistant lines, zero user turns, before this.
  */
 function formatSession(turns, meta, { maxChars = MAX_CONTENT_CHARS, assistantCap = ASSISTANT_LINE_CAP } = {}) {
   const date = (meta.timestamp || new Date().toISOString()).slice(0, 10);
   const where = meta.project ? `${meta.project}${meta.gitBranch ? '@' + meta.gitBranch : ''}` : 'unknown project';
   const header = `Claude Code session ${meta.sessionId || '?'} — ${where} — ${date} (${meta.reason || 'other'})`;
+  if (!turns.length) return header;
+
   const rendered = turns.map((t, i) => {
     const last = i === turns.length - 1;
     const text = t.role === 'assistant' && !last && t.text.length > assistantCap
@@ -119,16 +128,29 @@ function formatSession(turns, meta, { maxChars = MAX_CONTENT_CHARS, assistantCap
       : t.text;
     return `${t.role === 'user' ? 'User' : 'Assistant'}: ${text}`;
   });
+
+  const kept = new Map();
   let budget = maxChars - header.length - 2;
-  const kept = [];
-  for (let i = rendered.length - 1; i >= 0; i--) {
+  const spend = (i, text) => { budget -= text.length + (kept.size ? 2 : 0); kept.set(i, text); };
+
+  const lastUser = turns.reduce((at, t, i) => (t.role === 'user' ? i : at), -1);
+  const reserved = [...new Set([lastUser, rendered.length - 1])].filter(i => i >= 0).sort((a, b) => a - b);
+  // A fair share each, so one enormous prompt cannot crowd out the outcome.
+  reserved.forEach((i, n) => {
+    const sep = kept.size ? 2 : 0;
+    const share = Math.floor((budget - sep) / (reserved.length - n));
     const piece = rendered[i];
-    const cost = piece.length + (kept.length ? 2 : 0);
-    if (cost <= budget) { kept.unshift(piece); budget -= cost; continue; }
-    if (!kept.length && budget > 40) kept.unshift(piece.slice(0, budget - 1) + '…');
-    break;
+    if (piece.length + sep <= budget && (n === reserved.length - 1 || piece.length <= share)) spend(i, piece);
+    else if (share > 40) spend(i, piece.slice(0, share - 1) + '…');
+  });
+
+  for (let i = rendered.length - 1; i >= 0; i--) {
+    if (kept.has(i)) continue;
+    if (rendered[i].length + (kept.size ? 2 : 0) <= budget) spend(i, rendered[i]);
   }
-  return `${header}\n\n${kept.join('\n\n')}`;
+
+  const body = [...kept.keys()].sort((a, b) => a - b).map(i => kept.get(i)).join('\n\n');
+  return `${header}\n\n${body}`;
 }
 
 /**

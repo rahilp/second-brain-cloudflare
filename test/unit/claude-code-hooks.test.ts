@@ -218,6 +218,30 @@ describe("session-end.formatSession / shouldCapture / buildCaptureBody", () => {
     expect(out).toContain("turn 29");
     expect(out).not.toContain("turn 0 ");
   });
+  it("keeps the human's request even when the tail is all assistant narration", () => {
+    // The shape of a real agentic session: one prompt, then pages of progress
+    // reports. Filling the budget newest-first alone stored a memory of a
+    // conversation with no human sentence in it — measured on a real 3.7 MB
+    // transcript, which produced eight assistant lines and no user turn.
+    const turns = [
+      { role: "user", text: "Move the nightly digest off the shared cron so sync stops starving it." },
+      ...Array.from({ length: 20 }, (_, i) => ({ role: "assistant", text: `progress report ${i} ` + "x".repeat(400) })),
+    ];
+    const out = end.formatSession(turns, meta);
+    expect(out).toContain("User: Move the nightly digest off the shared cron");
+    expect(out).toContain("progress report 19");   // the outcome is kept too
+    expect(out.length).toBeLessThanOrEqual(2000);
+  });
+  it("gives the request and the outcome a fair share when the prompt is enormous", () => {
+    const turns = [
+      { role: "user", text: "P".repeat(5000) },
+      { role: "assistant", text: "O".repeat(5000) },
+    ];
+    const out = end.formatSession(turns, meta);
+    expect(out).toContain("User: " + "P".repeat(200));
+    expect(out).toContain("Assistant: " + "O".repeat(200));
+    expect(out.length).toBeLessThanOrEqual(2000);
+  });
   it("gates on one substantial human turn and enough conversation, header excluded", () => {
     expect(end.shouldCapture(end.readTranscriptTail(FIXTURE))).toBe(true);
     // A long assistant monologue after a two-letter prompt is not a session worth keeping.
