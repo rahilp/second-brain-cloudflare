@@ -170,8 +170,8 @@ export const en: Messages = {
         "Saving new memories would start failing. A coarser option, or a paid " +
         "Cloudflare plan, avoids it.",
       pickNote:
-        "Reading in more detail matches more precisely and uses more of your daily AI " +
-        "allowance. All of these run on your own Cloudflare account.",
+        "Reading in more detail matches more precisely. Each option says what it costs. " +
+        "All of these run on your own Cloudflare account.",
       /**
        * The picker shows these names and never the model id. This is the last
        * label read before a one-way operation, and the position of an opaque
@@ -195,6 +195,13 @@ export const en: Messages = {
           notice:
             "The most precise matching, and the heaviest on both your daily AI allowance " +
             "and your storage.",
+        },
+        multilingual: {
+          name: "Multilingual",
+          notice:
+            "Reads memories in over 100 languages, at a detail comparable to Finest. The three " +
+            "options above are tuned for English only. Lighter on your daily AI allowance than " +
+            "Standard; uses the same storage as Finest.",
         },
       },
       sameAsCurrent: "That's the one in use now — nothing to do.",

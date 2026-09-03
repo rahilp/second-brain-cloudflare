@@ -174,9 +174,8 @@ export const it: Messages = {
         "ricordi inizierebbe a fallire. Un'opzione meno dettagliata, o un piano " +
         "Cloudflare a pagamento, lo evita.",
       pickNote:
-        "Leggere in modo più dettagliato trova corrispondenze più precise e consuma una " +
-        "parte maggiore della tua assegnazione AI giornaliera. Girano tutte sul tuo " +
-        "account Cloudflare.",
+        "Leggere in modo più dettagliato trova corrispondenze più precise. Ogni opzione indica " +
+        "quanto costa. Girano tutte sul tuo account Cloudflare.",
       levels: {
         standard: {
           name: "Standard",
@@ -196,6 +195,13 @@ export const it: Messages = {
           notice:
             "La corrispondenza più precisa, e la più esigente sia per la tua assegnazione " +
             "AI giornaliera sia per lo spazio.",
+        },
+        multilingual: {
+          name: "Multilingue",
+          notice:
+            "Legge i ricordi in oltre 100 lingue, con un dettaglio paragonabile a Massimo " +
+            "dettaglio. Le tre opzioni sopra sono tarate solo per l'inglese. Pesa meno di " +
+            "Standard sulla tua assegnazione AI giornaliera; occupa lo stesso spazio di Massimo dettaglio.",
         },
       },
       sameAsCurrent: "È già quella in uso — non c'è nulla da fare.",
