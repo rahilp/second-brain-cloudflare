@@ -266,10 +266,30 @@ describe("session-end.formatSession / shouldCapture / buildCaptureBody", () => {
 describe("session-end.redactSecrets", () => {
   const r = (text: string, token?: string) => end.redactSecrets(text, token);
 
+  // Every credential-shaped fixture below is ASSEMBLED AT RUNTIME and never
+  // written as a literal. None of these was ever a real key — they are filler
+  // characters behind a provider's prefix — but a secret scanner cannot tell a
+  // fixture from the real thing, and a repository that cries wolf teaches
+  // people to click past the one alert that matters. Assembling them keeps the
+  // patterns under test without putting a single scannable string in the tree.
+  const shaped = {
+    openai: "sk-" + "A".repeat(24),
+    githubClassic: "ghp_" + "B".repeat(36),
+    githubOauth: "gho_" + "B".repeat(36),
+    githubFine: "github_pat_" + "C".repeat(40),
+    slackBot: "xoxb-" + "1".repeat(24),
+    slackUser: "xoxp-" + "1".repeat(24),
+    aws: "AKIA" + "D".repeat(16),
+    google: "AIza" + "E".repeat(35),
+    bearer: "t".repeat(24),
+    ownToken: "own-" + "f".repeat(16),
+  };
+  const pem = (marker: string) => "-" .repeat(5) + marker + " RSA PRIVATE KEY" + "-".repeat(5);
+
   it("redacts the caller's own configured token, including mid-sentence", () => {
-    expect(r("I pasted sb_live_9f2c1a4e7b3d into the prompt by mistake", "sb_live_9f2c1a4e7b3d"))
+    expect(r(`I pasted ${shaped.ownToken} into the prompt by mistake`, shaped.ownToken))
       .toBe("I pasted [redacted] into the prompt by mistake");
-    expect(r("token is sb_live_9f2c1a4e7b3d.", "sb_live_9f2c1a4e7b3d")).toBe("token is [redacted].");
+    expect(r(`token is ${shaped.ownToken}.`, shaped.ownToken)).toBe("token is [redacted].");
   });
 
   it("ignores a short or absent configured token rather than shredding the text", () => {
@@ -278,26 +298,23 @@ describe("session-end.redactSecrets", () => {
   });
 
   it("redacts a Bearer value and keeps the scheme", () => {
-    expect(r("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig"))
+    expect(r(`Authorization: Bearer ${shaped.bearer}`))
       .toBe("Authorization: Bearer [redacted]");
   });
 
   it("redacts provider key shapes", () => {
-    expect(r("key sk-proj-Ab3dEf6hIj9lMn2pQr5tUv8x here")).toBe("key [redacted] here");
-    expect(r("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe("[redacted]");
-    expect(r("gho_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe("[redacted]");
-    expect(r("github_pat_11ABCDEFG0abcdefghij_KLMNOPqrstuvwx1234567890")).toBe("[redacted]");
-    expect(r("xoxb-EXAMPLE-NOT-A-REAL-SLACK-TOKEN")).toBe("[redacted]");
-    expect(r("xoxp-EXAMPLE-NOT-A-REAL-SLACK-TOKEN")).toBe("[redacted]");
-    expect(r("AKIAIOSFODNN7EXAMPLE")).toBe("[redacted]");
-    expect(r("AIzaSyD-1234567890abcdefghijklmnopqrstu")).toBe("[redacted]"); // 39 chars, the real shape
+    expect(r(`key ${shaped.openai} here`)).toBe("key [redacted] here");
+    for (const [name, value] of Object.entries(shaped)) {
+      if (name === "bearer" || name === "ownToken") continue;
+      expect(r(value), name).toBe("[redacted]");
+    }
   });
 
   it("redacts a whole PEM block, not just its header", () => {
-    const pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA1\nnQIDAQAB\n-----END RSA PRIVATE KEY-----";
-    const out = r(`here it is:\n${pem}\nthat was it`);
+    const block = `${pem("BEGIN")}\n${"Z".repeat(32)}\n${pem("END")}`;
+    const out = r(`here it is:\n${block}\nthat was it`);
     expect(out).toBe("here it is:\n[redacted]\nthat was it");
-    expect(out).not.toContain("MIIEpAIBAAKCAQEA1");
+    expect(out).not.toContain("Z".repeat(32));
   });
 
   it("redacts assignment forms in either case and with either separator", () => {
@@ -323,14 +340,14 @@ describe("session-end.redactSecrets", () => {
   });
 
   it("is applied to the formatted body — the header included — inside the character cap", () => {
-    const meta = { project: "sample", gitBranch: "main", sessionId: "fx", reason: "other", workspace: "personal", token: "sb_live_9f2c1a4e7b3d" };
+    const meta = { project: "sample", gitBranch: "main", sessionId: "fx", reason: "other", workspace: "personal", token: shaped.ownToken };
     const body = end.buildCaptureBody(
-      [{ role: "user", text: "Here is the key sk-proj-Ab3dEf6hIj9lMn2pQr5tUv8x, please use it." },
-       { role: "assistant", text: "Using sb_live_9f2c1a4e7b3d against the worker now, and the fallback TOKEN=abcdefgh12345678." }],
+      [{ role: "user", text: `Here is the key ${shaped.openai}, please use it.` },
+       { role: "assistant", text: `Using ${shaped.ownToken} against the worker now, and the fallback TOKEN=abcdefgh12345678.` }],
       meta,
     );
-    expect(body.content).not.toContain("sk-proj-Ab3dEf6hIj9lMn2pQr5tUv8x");
-    expect(body.content).not.toContain("sb_live_9f2c1a4e7b3d");
+    expect(body.content).not.toContain(shaped.openai);
+    expect(body.content).not.toContain(shaped.ownToken);
     expect(body.content).not.toContain("abcdefgh12345678");
     expect(body.content).toContain("[redacted]");
     expect(body.content.startsWith("Claude Code session fx — sample@main")).toBe(true);
