@@ -181,8 +181,8 @@ export const en: Messages = {
         standard: {
           name: "Standard",
           notice:
-            "Lightest on your daily AI allowance and the quickest to rebuild. Good enough " +
-            "for most searches.",
+            "The lightest of the English options on your daily AI allowance, and the " +
+            "quickest to rebuild. Good enough for most searches.",
         },
         finer: {
           name: "Finer detail",
@@ -193,8 +193,8 @@ export const en: Messages = {
         finest: {
           name: "Finest detail",
           notice:
-            "The most precise matching, and the heaviest on both your daily AI allowance " +
-            "and your storage.",
+            "The most precise matching, and the heaviest of the English options on both " +
+            "your daily AI allowance and your storage.",
         },
         multilingual: {
           name: "Multilingual",

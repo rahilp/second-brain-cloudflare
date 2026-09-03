@@ -180,8 +180,9 @@ export const it: Messages = {
         standard: {
           name: "Standard",
           notice:
-            "È la più leggera per la tua assegnazione AI giornaliera e la più rapida da " +
-            "ricostruire. Va bene per la maggior parte delle ricerche.",
+            "Tra le opzioni in inglese è la più leggera per la tua assegnazione AI " +
+            "giornaliera e la più rapida da ricostruire. Va bene per la maggior parte " +
+            "delle ricerche.",
         },
         finer: {
           name: "Più dettagliato",
@@ -193,8 +194,8 @@ export const it: Messages = {
         finest: {
           name: "Massimo dettaglio",
           notice:
-            "La corrispondenza più precisa, e la più esigente sia per la tua assegnazione " +
-            "AI giornaliera sia per lo spazio.",
+            "La corrispondenza più precisa, e tra le opzioni in inglese la più esigente " +
+            "sia per la tua assegnazione AI giornaliera sia per lo spazio.",
         },
         multilingual: {
           name: "Multilingue",
