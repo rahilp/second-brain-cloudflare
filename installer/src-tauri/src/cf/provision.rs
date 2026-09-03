@@ -238,6 +238,12 @@ pub fn binding_field<'a>(
 pub struct VectorizeTarget<'a> {
     pub name: &'a str,
     pub dimensions: u32,
+    /// Keep whatever index the deployed script is already bound to, when that
+    /// index exists. A routine update passes `true`: a brain moved to another
+    /// reading by an embedding migration must not be pointed back at the
+    /// shipped index by the next "update your brain". A migration passes
+    /// `false` — it is the one deploy whose job is to change the binding.
+    pub keep_live_index: bool,
 }
 
 impl<'a> VectorizeTarget<'a> {
@@ -247,6 +253,7 @@ impl<'a> VectorizeTarget<'a> {
         Self {
             name: &manifest.vectorize_name,
             dimensions: manifest.vectorize_dimensions,
+            keep_live_index: true,
         }
     }
 }
@@ -513,7 +520,7 @@ pub async fn update_worker<B: Backend>(
 
     // Memory — reuse the database + key-value namespace already bound to the
     // deployed script; fall back to find-or-create only if a binding is absent.
-    let (d1_id, kv_id) = step!(Step::Memory, async {
+    let (d1_id, kv_id, live_index) = step!(Step::Memory, async {
         let bindings = backend.get_script_bindings(script).await?;
         let d1_id = match binding_field(&bindings, "d1", "database_id") {
             Some(id) => id.to_string(),
@@ -529,32 +536,36 @@ pub async fn update_worker<B: Backend>(
                 None => backend.create_kv(KV_TITLE).await?,
             },
         };
-        Ok::<_, ProvisionError>((d1_id, kv_id))
+        let live_index = binding_field(&bindings, "vectorize", "index_name").map(str::to_string);
+        Ok::<_, ProvisionError>((d1_id, kv_id, live_index))
     });
 
-    // Recall — make sure the index this deploy is about to bind exists.
-    //
-    // Deliberately the *target*, not the manifest's index. A migration (#248)
-    // redeploys against a differently sized index, and checking the manifest here
-    // would recreate the index being abandoned while never creating the one the
-    // binding points at.
-    step!(Step::Recall, async {
+    // Recall — the index this deploy binds. A migrated brain keeps its index
+    // across routine updates (`keep_live_index`), provided that index still
+    // exists; otherwise the caller's target is created when missing and bound.
+    // The target is deliberately not the manifest's index: a migration (#248)
+    // redeploys against a differently sized index, and checking the manifest
+    // would recreate the index being abandoned.
+    let index_name: String = step!(Step::Recall, async {
+        if vectorize.keep_live_index {
+            if let Some(live) = live_index.as_deref() {
+                if live != vectorize.name && backend.vectorize_exists(live).await? {
+                    return Ok::<_, ProvisionError>(live.to_string());
+                }
+            }
+        }
         if !backend.vectorize_exists(vectorize.name).await? {
             backend
-                .create_vectorize(
-                    vectorize.name,
-                    vectorize.dimensions,
-                    &manifest.vectorize_metric,
-                )
+                .create_vectorize(vectorize.name, vectorize.dimensions, &manifest.vectorize_metric)
                 .await?;
         }
-        Ok::<_, ProvisionError>(())
+        Ok(vectorize.name.to_string())
     });
 
     // Finish — upload the newer assets + Worker (password preserved), then verify.
     step!(Step::Finish, async {
         let assets_jwt = backend.upload_assets(script).await?;
-        let metadata = build_update_metadata(manifest, &d1_id, &kv_id, &assets_jwt, vectorize.name);
+        let metadata = build_update_metadata(manifest, &d1_id, &kv_id, &assets_jwt, &index_name);
         backend.deploy_worker(script, &metadata).await?;
         backend.set_cron(script, &manifest.cron).await?;
         backend.enable_script_subdomain(script).await?;
@@ -718,6 +729,10 @@ mod tests {
         existing_d1: Option<String>,
         existing_kv: Option<String>,
         existing_vectorize: bool,
+        /// Index names to report as absent even when `existing_vectorize` is
+        /// true, so a test can bind a script to an index that has since been
+        /// deleted.
+        missing_vectorize: Vec<String>,
         subdomain_rejections: Mutex<u32>,
         health_failures: Mutex<u32>,
         /// Probes to answer with a 401 before anything else, standing in for a
@@ -801,8 +816,8 @@ mod tests {
             self.log(format!("create_kv:{title}"));
             Ok("kv-id-new".into())
         }
-        async fn vectorize_exists(&self, _name: &str) -> Result<bool, CfApiError> {
-            Ok(self.existing_vectorize)
+        async fn vectorize_exists(&self, name: &str) -> Result<bool, CfApiError> {
+            Ok(self.existing_vectorize && !self.missing_vectorize.iter().any(|n| n == name))
         }
         async fn delete_vectorize(&self, name: &str) -> Result<(), CfApiError> {
             self.log(format!("delete_vectorize:{name}"));
@@ -1155,6 +1170,99 @@ mod tests {
         assert_eq!(meta["keep_bindings"], serde_json::json!(["secret_text", "secret_key"]));
     }
 
+    /// A brain moved to another reading by an embedding migration must stay
+    /// there across "update your brain". Before this, a routine update passed
+    /// the shipped index and keep_bindings preserved only secrets, so every
+    /// migrated brain was silently rebound to the 384-dimension index while KV
+    /// still named the migrated model.
+    #[tokio::test]
+    async fn update_keeps_a_migrated_index_bound() {
+        let fake = Fake {
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "real-d1-id" }),
+                serde_json::json!({ "type": "kv_namespace", "name": "OAUTH_KV", "namespace_id": "real-kv-id" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors-1024" }),
+            ],
+            existing_vectorize: true,
+            ..Default::default()
+        };
+        update_worker(
+            &&fake,
+            &test_manifest(),
+            "https://second-brain.acme.workers.dev",
+            "stored-token",
+            VectorizeTarget::shipped(&test_manifest()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        let meta = fake.last_deploy_metadata.lock().unwrap().clone().unwrap();
+        let bindings = meta["bindings"].as_array().unwrap();
+        let vectorize = bindings.iter().find(|b| b["type"] == "vectorize").unwrap();
+        assert_eq!(vectorize["index_name"], "second-brain-vectors-1024");
+        assert!(!fake.entries().iter().any(|l| l.starts_with("create_vectorize")));
+    }
+
+    /// The bound index can be gone (finish_embedding_migration deleted it and a
+    /// redeploy was rolled back). Then the shipped index is the only safe
+    /// target: recreating the suffixed name at the shipped size would produce
+    /// an index whose name promises one dimension count and holds another.
+    #[tokio::test]
+    async fn update_falls_back_to_the_shipped_index_when_the_bound_one_is_gone() {
+        let fake = Fake {
+            script_bindings: vec![
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors-1024" }),
+            ],
+            existing_vectorize: true,
+            missing_vectorize: vec!["second-brain-vectors-1024".into()],
+            ..Default::default()
+        };
+        update_worker(
+            &&fake,
+            &test_manifest(),
+            "https://second-brain.acme.workers.dev",
+            "stored-token",
+            VectorizeTarget::shipped(&test_manifest()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        let meta = fake.last_deploy_metadata.lock().unwrap().clone().unwrap();
+        let bindings = meta["bindings"].as_array().unwrap();
+        let vectorize = bindings.iter().find(|b| b["type"] == "vectorize").unwrap();
+        assert_eq!(vectorize["index_name"], "second-brain-vectors");
+    }
+
+    /// A migration is the one deploy whose job is to change the binding.
+    #[tokio::test]
+    async fn a_migration_deploy_moves_the_binding_off_the_live_index() {
+        let fake = Fake {
+            script_bindings: vec![
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors" }),
+            ],
+            existing_vectorize: false,
+            ..Default::default()
+        };
+        update_worker(
+            &&fake,
+            &test_manifest(),
+            "https://second-brain.acme.workers.dev",
+            "stored-token",
+            VectorizeTarget { name: "second-brain-vectors-768", dimensions: 768, keep_live_index: false },
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        let meta = fake.last_deploy_metadata.lock().unwrap().clone().unwrap();
+        let bindings = meta["bindings"].as_array().unwrap();
+        let vectorize = bindings.iter().find(|b| b["type"] == "vectorize").unwrap();
+        assert_eq!(vectorize["index_name"], "second-brain-vectors-768");
+        assert!(fake.entries().contains(&"create_vectorize:second-brain-vectors-768:768:cosine".to_string()));
+    }
+
     /// The inversion guard's other half. An update polls with the password the
     /// app already had, so a refusal means the redeploy dropped the secret and
     /// waiting cannot help — it fails on the first refusal, and names the
@@ -1277,7 +1385,7 @@ mod tests {
             &test_manifest(),
             "https://second-brain.acme.workers.dev",
             "tok",
-            VectorizeTarget { name: "second-brain-vectors-768", dimensions: 768 },
+            VectorizeTarget { name: "second-brain-vectors-768", dimensions: 768, keep_live_index: false },
             |_| {},
         )
         .await

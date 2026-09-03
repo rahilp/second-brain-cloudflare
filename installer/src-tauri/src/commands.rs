@@ -2231,7 +2231,7 @@ pub async fn begin_embedding_migration(
             // dry-run branch: the health poll is authenticated, and a demo
             // rotation has already moved this.
             &auth_token,
-            provision::VectorizeTarget { name: &target_index, dimensions },
+            provision::VectorizeTarget { name: &target_index, dimensions, keep_live_index: false },
             progress,
         )
         .await
@@ -2280,7 +2280,7 @@ pub async fn begin_embedding_migration(
         manifest,
         &worker_url,
         &auth_token,
-        provision::VectorizeTarget { name: &target_index, dimensions },
+        provision::VectorizeTarget { name: &target_index, dimensions, keep_live_index: false },
         progress,
     )
     .await
