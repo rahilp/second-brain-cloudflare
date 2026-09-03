@@ -175,6 +175,7 @@ A successful response looks like `{"ok":true,"id":"..."}`.
 - **Notes:** [Second Brain Sync for Obsidian](https://community.obsidian.md/plugins/second-brain-sync) and Notion
 - **Calendar and email:** Google, Outlook, iCloud, and Gmail integrations
 - **iPhone and iPad:** Voice, text, and share-sheet shortcuts in [`integrations/ios-shortcuts/`](integrations/ios-shortcuts/)
+- **Claude Code:** session hooks that recall project context on start and save the conversation on exit — [`integrations/claude-code-hooks/`](integrations/claude-code-hooks/)
 - **Dashboard:** Capture, recall, browse, graph, share, back up, and restore from the built-in web interface
 
 See [Capture from Anywhere](wiki/Capture-from-Anywhere) for setup and usage instructions.
