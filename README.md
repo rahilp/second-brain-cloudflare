@@ -63,7 +63,7 @@ Second Brain runs as a Cloudflare Worker backed by D1, Vectorize, Workers AI, an
 2. **Organize:** Second Brain classifies it, checks for duplicates and contradictions, creates relationships, and indexes it for semantic search.
 3. **Recall:** Ask in natural language. Second Brain retrieves relevant memories, follows useful connections, and returns source-backed context to the tool you are using.
 
-If Vectorize is unavailable, captures and keyword recall continue working. Your memories remain usable while semantic indexing is restored.
+If Vectorize is unavailable, captures and keyword recall continue working. Your memories remain usable while semantic indexing is restored. Keyword recall works for Japanese, Chinese, and other scripts written without spaces, and for full-width text. The shipped embedding models read English best; the desktop app's Settings can switch a brain to a multilingual reading.
 
 ### Memory tools
 
