@@ -23,6 +23,8 @@ import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/vo
 import { recallEntries } from "../recall/search";
 import { renderRecallText, memoryHeader } from "../recall/render";
 import { RECALL_OUTPUT_BUDGET, SNIPPET_MAX_CHARS, snippetOf, truncationNote } from "../recall/snippet";
+import { buildPromptCapsule } from "../prompt-capsule/build";
+import { PROMPT_CAPSULE_MCP_SCHEMA } from "../prompt-capsule/types";
 
 // Asking the calling model for this is the whole point: it has already read the content
 // in order to decide to store it, so the judgment is free, and it is a far better
@@ -480,6 +482,60 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       ctx.waitUntil(restampVectorWorkspace(env, result.vectorIds, result.workspaceId));
       return { content: [{ type: "text", text: `Entry ${id} ${result.status} — now in the ${workspace ?? "company"} workspace.` }] };
     }
+  );
+
+  // ── prompt capsule ─────────────────────────────────────────────────────
+  server.registerTool(
+    "get_prompt_capsule",
+    {
+      description: "Return one deterministic Prompt Capsule and its strong ETag. This read-only tool is for gateways that construct stable prompt prefixes; use recall for query-specific context.",
+      inputSchema: {
+        kind: z.enum(["core", "project"]).describe("Capsule kind"),
+        project_id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional()
+          .describe("Required for project; omitted for core"),
+        workspace: z.enum(["personal", "company"]).default("personal")
+          .describe("Read exactly one private or shared workspace layer"),
+        team: z.string().max(128).optional()
+          .describe("Company workspace id from list_teams; required when company membership is ambiguous"),
+      },
+    },
+    async ({ kind, project_id, workspace, team }) => {
+      if (!identity) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: JSON.stringify({
+            ok: false,
+            schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            error: "Prompt Capsule retrieval requires an authenticated identity.",
+          }) }],
+        };
+      }
+
+      const built = await buildPromptCapsule(env, identity, {
+        kind,
+        projectId: project_id,
+        workspace,
+        team,
+      });
+      if (!built.ok) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: JSON.stringify({
+            schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            ...built.body,
+          }) }],
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          ok: true,
+          schema: PROMPT_CAPSULE_MCP_SCHEMA,
+          etag: built.etag,
+          capsule: built.payload,
+        }, null, 2) }],
+      };
+    },
   );
 
   // ── recall ───────────────────────────────────────────────────────────────

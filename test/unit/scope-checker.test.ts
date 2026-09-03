@@ -1107,11 +1107,16 @@ describe("the checker over the real source tree", () => {
   // because the workspace list is now bounded by WEEKLY_CANDIDATE_LIMIT rather
   // than by the slice, which is the fix, and the lexer's opinion of it followed.
   //
+  // MOVED queries 90 -> 91 by src/prompt-capsule/build.ts. The new Prompt
+  // Capsule candidate read contains `${scope.clause}` directly in predicate
+  // position, so the checker passes it on its merits: it needs no exception or
+  // scope-checked licence. All three licence counts therefore remain fixed.
+  //
   // As the tool printed it:
-  //   ✔ scope check: 99 queries, 53 documented exceptions, 7 scope-checked
+  //   ✔ scope check: 100 queries, 53 documented exceptions, 7 scope-checked
   //     (clause assembled in JS), 1 scope-outer-join (clause governs a column,
   //     not the row set)
-  it("reports exactly 99 queries, 53 exceptions, 7 scope-checked and 1 outer-join", () => {
+  it("reports exactly 100 queries, 53 exceptions, 7 scope-checked and 1 outer-join", () => {
     const run = spawnSync("node", [resolve(ROOT, "scripts/check-scope.mjs")], {
       cwd: ROOT,
       encoding: "utf8",
@@ -1126,7 +1131,7 @@ describe("the checker over the real source tree", () => {
       { queries, exempt, checked, outerJoin },
       "check:scope counts moved. If that was deliberate, say so out loud and " +
         "update this expectation in the same commit.",
-    ).toEqual({ queries: 99, exempt: 53, checked: 7, outerJoin: 1 });
+    ).toEqual({ queries: 100, exempt: 53, checked: 7, outerJoin: 1 });
   });
 
   it("is wired into package.json and CI, or nothing runs it", () => {

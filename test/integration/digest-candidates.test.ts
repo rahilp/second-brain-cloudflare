@@ -19,6 +19,7 @@ import {
 } from "../../src/compression/eligibility";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { tagLikePattern, TAG_LIKE_ESCAPE } from "../../src/memory/tag-sql";
+import { CAPSULE_SLOT_TAG_PREFIX, CAPSULE_TAG_PREFIX } from "../../src/tags/system";
 
 let sqlite: SqliteD1 | null = null;
 
@@ -54,7 +55,15 @@ describe("digest-candidate query", () => {
       for (let i = 0; i < 11; i++) {
         s.seed({
           id: `e-${i}`, content: `memory ${i}`, createdAt: 1,
-          tags: ["work", "kind:semantic", "status:canonical", "volatility:state", "stale:as-of"],
+          tags: [
+            "work",
+            "kind:semantic",
+            "status:canonical",
+            "volatility:state",
+            "stale:as-of",
+            `${CAPSULE_TAG_PREFIX}core`,
+            `${CAPSULE_SLOT_TAG_PREFIX}identity`,
+          ],
         });
       }
     });
@@ -89,7 +98,14 @@ describe("digest-candidate query", () => {
   // row-level filters are `entries.tags NOT LIKE '%"synthesized"%'`, which already ignores
   // case, so such a row is dropped whole before any tag value is considered.
   it("reserves the namespace whatever its case", async () => {
-    const reserved = ["Status:Active", "Kind:Personal", "Volatility:High", "Stale:As-Of"];
+    const reserved = [
+      "Status:Active",
+      "Kind:Personal",
+      "Volatility:High",
+      "Stale:As-Of",
+      "Capsule:Core",
+      "Capsule-Slot:Identity",
+    ];
     const tags = await candidateTags(s => {
       for (let i = 0; i < 11; i++) {
         s.seed({ id: `e-${i}`, content: "m", createdAt: 1, tags: ["holiday-plans", ...reserved] });
@@ -103,11 +119,16 @@ describe("digest-candidate query", () => {
   it("reserves the namespace rather than the bare word", async () => {
     const tags = await candidateTags(s => {
       for (let i = 0; i < 11; i++) {
-        s.seed({ id: `e-${i}`, content: "m", createdAt: 1, tags: ["volatility", "stale", "status", "kind"] });
+        s.seed({
+          id: `e-${i}`,
+          content: "m",
+          createdAt: 1,
+          tags: ["volatility", "stale", "status", "kind", "capsule", "capsule-slot"],
+        });
       }
     });
 
-    expect(tags.sort()).toEqual(["kind", "stale", "status", "volatility"]);
+    expect(tags.sort()).toEqual(["capsule", "capsule-slot", "kind", "stale", "status", "volatility"]);
   });
 });
 

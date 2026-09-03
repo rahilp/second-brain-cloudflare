@@ -15,8 +15,19 @@
 // deliberately absent here: hiding a junk tag costs nothing, but treating it as
 // unowned would let an edit silently delete a tag that is genuinely stored.
 
+/** Prompt Capsule bookkeeping prefixes shared by selection and pipeline guards. */
+export const CAPSULE_TAG_PREFIX = "capsule:";
+export const CAPSULE_SLOT_TAG_PREFIX = "capsule-slot:";
+
 /** Namespaces the Worker writes and owns; `prefix:value` shaped. */
-const RESERVED_TAG_PREFIXES = ["kind:", "status:", "volatility:", "stale:"];
+const RESERVED_TAG_PREFIXES = [
+  "kind:",
+  "status:",
+  "volatility:",
+  "stale:",
+  CAPSULE_TAG_PREFIX,
+  CAPSULE_SLOT_TAG_PREFIX,
+];
 
 /**
  * Bare markers the Worker writes: compression, pattern mining, dedupe, and the

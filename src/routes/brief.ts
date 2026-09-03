@@ -133,6 +133,7 @@ export async function handleBriefRoutes(
        WHERE entries.created_at >= ?
          AND value NOT LIKE 'kind:%' AND value NOT LIKE 'status:%'
          AND value NOT LIKE 'volatility:%' AND value NOT LIKE 'stale:%'
+         AND value NOT LIKE 'capsule:%' AND value NOT LIKE 'capsule-slot:%'
          AND value NOT IN ('auto-pattern', 'auto-insight', 'synthesized', 'rolled-up', 'duplicate-candidate')
          AND value NOT GLOB '[0-9]*'
          AND ${scope.clause}

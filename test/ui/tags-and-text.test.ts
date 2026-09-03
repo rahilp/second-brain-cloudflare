@@ -33,7 +33,14 @@ describe("isSystemTag / humanTags", () => {
   });
 
   it("hides every reserved namespace the Worker writes", () => {
-    for (const t of ["kind:episodic", "status:canonical", "volatility:volatile", "stale:as-of"]) {
+    for (const t of [
+      "kind:episodic",
+      "status:canonical",
+      "volatility:volatile",
+      "stale:as-of",
+      "capsule:core",
+      "capsule-slot:constraints",
+    ]) {
       expect(isSystemTag(t), t).toBe(true);
     }
   });
@@ -74,6 +81,8 @@ describe("isSystemTag / humanTags", () => {
   it("is case-insensitive, because tags arrive from many clients", () => {
     expect(isSystemTag("Kind:Semantic")).toBe(true);
     expect(isSystemTag("STATUS:DEPRECATED")).toBe(true);
+    expect(isSystemTag("Capsule:Project:p-123")).toBe(true);
+    expect(isSystemTag("CAPSULE-SLOT:CURRENT-STATE")).toBe(true);
   });
 });
 

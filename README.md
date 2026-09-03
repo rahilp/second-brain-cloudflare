@@ -75,6 +75,7 @@ If Vectorize is unavailable, captures and keyword recall continue working. Your 
 | `recall` | Find memories by meaning rather than exact wording |
 | `list_recent` | Browse recently saved memories |
 | `list_teams` | List shared teams you belong to (names and ids). In v3.0.0 this is one team; used by MCP clients for future multi-team support |
+| `get_prompt_capsule` | Read a deterministic core or project context projection for a gateway-controlled prompt prefix |
 | `get` | Read one memory by ID |
 | `forget` | Permanently delete a memory |
 | `set_status` | Mark a memory `canonical`, `draft`, or `deprecated` |
@@ -93,6 +94,33 @@ CLI example:
 brain remember --workspace company "We ship on Thursdays"
 brain recall --workspace company "when do we ship?"
 ```
+
+### Prompt Capsules
+
+Prompt Capsules are deterministic, read-only projections for gateways and
+custom agents that can place stable context before a changing user request.
+They complement query-specific `recall`; they do not inject every memory into
+every prompt.
+
+A Capsule entry is an ordinary canonical memory with one target tag and one
+slot tag. Core entries use `capsule:core`; project entries use
+`capsule:project:<opaque-project-id>`. Slots are emitted in this fixed order:
+
+- Core: `identity`, `preferences`, `constraints`, `principles`
+- Project: `current-state`, `decisions`, `open-questions`
+
+Tag the slot as `capsule-slot:<slot>` and keep at most one canonical entry per
+slot. Draft and deprecated entries are ignored. Ambiguous or malformed
+canonical definitions fail closed.
+
+Authenticated clients can use `GET|HEAD /prompt-capsules/core`,
+`GET|HEAD /prompt-capsules/projects/<opaque-project-id>`, or the
+`get_prompt_capsule` MCP tool. Responses include a strong `ETag`, a SHA-256 of
+the exact prompt-ready `text`, and whole-slot omission metadata for the
+12,000-character budget. Timestamps, entry ids, and ETags are excluded from
+`text`, so unrelated changes do not alter the reusable prefix. Provider cache
+keys, breakpoints, token budgets, and cache-hit measurement remain the
+gateway's responsibility.
 
 ## Get started
 
