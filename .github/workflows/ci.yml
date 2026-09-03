@@ -92,5 +92,15 @@ jobs:
       - name: Bundle Worker (required by build.rs)
         working-directory: installer
         run: npm run bundle-worker
-      - name: Check desktop app compiles
-        run: cargo check --manifest-path installer/src-tauri/Cargo.toml
+      # installer/src is excluded from the root tsconfig, and `tsc --noEmit`
+      # otherwise runs only inside `npm run build` on an installer-v* tag. The
+      # i18n catalogs are typed against a closed interface; this is what makes
+      # a missing key a failure on the PR rather than at release time.
+      - name: Typecheck desktop UI
+        working-directory: installer
+        run: npx tsc --noEmit
+      # `cargo check` proved the crate compiles; the Rust tests pin index
+      # naming, storage estimates, and binding preservation, and ran only on
+      # release tags before this.
+      - name: Test desktop app
+        run: cargo test --manifest-path installer/src-tauri/Cargo.toml
