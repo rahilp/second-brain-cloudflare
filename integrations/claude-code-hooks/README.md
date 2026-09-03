@@ -31,6 +31,15 @@ bash install.sh --check                                     # prove the hooks re
 bash install.sh --uninstall                                 # remove only our entries
 ```
 
+PowerShell, for Windows without Git Bash — same behaviour, same guarantees:
+
+```powershell
+.\install.ps1 -WorkerUrl https://your-worker.workers.dev -Token your-token
+.\install.ps1            # reuse existing credentials, or prompt
+.\install.ps1 -Check
+.\install.ps1 -Uninstall
+```
+
 Re-running is safe: the installer replaces its own entries in
 `~/.claude/settings.json` and preserves everything else. It refuses to write a
 settings file that is not valid JSON rather than overwriting it.
@@ -144,6 +153,12 @@ capture, not the conversation.
 ## Windows
 
 The hooks run under Git Bash if it is installed; without it Claude Code falls
-back to PowerShell, where `install.sh` will not run. Install Git for Windows, or
-wait for the PowerShell installer (follow-up work). The hook scripts themselves
-are plain Node and work either way once they are in `settings.json`.
+back to PowerShell, where `install.sh` will not run. Use `install.ps1` there —
+it writes the same credentials file and the same `settings.json` entries, and
+Node does the JSON editing in both installers so the two cannot drift. The hook
+scripts themselves are plain Node and work either way once they are in
+`settings.json`.
+
+The credentials file is written with mode 600, which NTFS ignores; on Windows it
+is protected by the permissions of your user profile directory like any other
+file under `%USERPROFILE%`.

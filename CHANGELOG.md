@@ -37,6 +37,7 @@ All notable changes to Second Brain are documented here. Version numbers match `
 - New: `install.sh --check` and `--uninstall`.
 - Session capture redacts credentials from the body before sending it — your own token, `Bearer` values, `sk-`/`ghp_`/`github_pat_`/`xoxb-`/`AKIA`/`AIza` key shapes, PEM private keys and `TOKEN=`-style assignments — while leaving UUIDs, commit SHAs, paths and ordinary prose intact.
 - SessionStart caches the block it printed and re-emits it on compaction, so compaction costs no recall at all; it falls back to a live recall when there is no cache or it is over 24 h old.
+- New: `install.ps1`, a PowerShell installer for Windows machines where Claude Code runs hooks under PowerShell rather than Git Bash.
 
 **Upgrade**
 
