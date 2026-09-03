@@ -2231,12 +2231,6 @@ pub async fn begin_embedding_migration(
             .and_then(|m| m.as_str())
             .unwrap_or_default()
             .to_string();
-        let current_index = crate::migration::index_name_for(
-            &manifest.vectorize_name,
-            crate::migration::dimensions_for(&current_model).unwrap_or(manifest.vectorize_dimensions),
-            manifest.vectorize_dimensions,
-            Some(&current_model),
-        );
 
         // The demo brain runs on a loopback address, which has no script or
         // subdomain to derive — `update_worker` would refuse it before doing
@@ -2266,8 +2260,13 @@ pub async fn begin_embedding_migration(
         // which would leave the most consequential screen untested.
         crate::migration::patch_embedding_model(&worker_url, &auth_token, &model, locale).await?;
         // In memory, never the keychain — see demo_previous_index.
-        if target_index != current_index {
-            *session.demo_previous_index.lock().unwrap() = Some(current_index);
+        if let Some(previous) = previous_index_to_record(
+            &manifest.vectorize_name,
+            &current_model,
+            manifest.vectorize_dimensions,
+            &target_index,
+        ) {
+            *session.demo_previous_index.lock().unwrap() = Some(previous);
         }
         return crate::migration::reset(&worker_url, &auth_token, locale).await;
     }
@@ -2327,6 +2326,34 @@ pub async fn begin_embedding_migration(
     crate::migration::reset(&worker_url, &auth_token, locale)
         .await
         .map_err(half_switched)
+}
+
+/// Which index to record as freeable after a migration deploy, given the
+/// brain's model immediately before the switch.
+///
+/// Split out of `begin_embedding_migration`'s dry-run branch so it can be
+/// tested: a Tauri `AppHandle` cannot be constructed in a unit test, and the
+/// case this exists to guard — a second migration, where "current" is no
+/// longer the shipped index — is only observable by calling the thing that
+/// does the derivation. `previous_index_for` is split for the same reason.
+///
+/// `current_model` must be derived through `index_name_for`, not assumed to
+/// be the shipped model: after a first migration the two differ, and
+/// recording the shipped name would make `finish_embedding_migration` free an
+/// index that was never the leftover.
+fn previous_index_to_record(
+    base: &str,
+    current_model: &str,
+    shipped_dimensions: u32,
+    target_index: &str,
+) -> Option<String> {
+    let current_index = crate::migration::index_name_for(
+        base,
+        crate::migration::dimensions_for(current_model).unwrap_or(shipped_dimensions),
+        shipped_dimensions,
+        Some(current_model),
+    );
+    (target_index != current_index).then_some(current_index)
 }
 
 /// Abandons an unfinished rebuild so the next one starts from the beginning.
@@ -2603,7 +2630,7 @@ mod tests {
         dashboard_credentials, fetch_connection_role, for_log, normalize_worker_url,
         role_probe_from_body, update_prompt_is_offerable,
         password_opens_brain, ConnectionRoleProbe,
-        previous_index_for, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
+        previous_index_for, previous_index_to_record, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
         rotation_address, rotation_block, rotation_failure, rotation_target, RotateError,
         SetupSession, LOG_DETAIL_MAX,
     };
@@ -2792,6 +2819,64 @@ mod tests {
         assert_never_reads_the_keychain("an unconnected demo session", || {
             let _ = dashboard_credentials(&fresh, Locale::En);
         });
+    }
+
+    // ── Which index a migration leaves behind (#? two-hop dry-run) ───────────
+
+    /// The ordinary case: a first migration off the shipped model. The index
+    /// to free is the shipped name, exactly as before this function existed —
+    /// no regression for the common path.
+    #[test]
+    fn first_migration_frees_the_shipped_index() {
+        assert_eq!(
+            previous_index_to_record(
+                "second-brain-vectors",
+                "@cf/baai/bge-small-en-v1.5",
+                384,
+                "second-brain-vectors-1024",
+            ),
+            Some("second-brain-vectors".to_string())
+        );
+    }
+
+    /// The case this function exists for: a SECOND migration, where "current"
+    /// is no longer the shipped model. The brain already moved shipped → 1024
+    /// once, and is now moving 1024 → m3. The index to free is the 1024 index
+    /// the brain is actually on right now — not the shipped 384 index, which
+    /// was already freed (or never existed on this brain) a migration ago.
+    /// Recording the shipped name here is the exact bug this split-out
+    /// function is a regression test against.
+    #[test]
+    fn second_migration_frees_the_current_index_not_the_shipped_one() {
+        assert_eq!(
+            previous_index_to_record(
+                "second-brain-vectors",
+                "@cf/baai/bge-large-en-v1.5",
+                384,
+                &crate::migration::index_name_for(
+                    "second-brain-vectors",
+                    1024,
+                    384,
+                    Some(crate::migration::BGE_M3_MODEL),
+                ),
+            ),
+            Some("second-brain-vectors-1024".to_string())
+        );
+    }
+
+    /// Migrating to the index already in use — e.g. re-selecting the current
+    /// model, or two models that share an index — frees nothing.
+    #[test]
+    fn same_index_has_nothing_to_free() {
+        assert_eq!(
+            previous_index_to_record(
+                "second-brain-vectors",
+                "@cf/baai/bge-large-en-v1.5",
+                384,
+                "second-brain-vectors-1024",
+            ),
+            None
+        );
     }
 
     // ── Changing the password (#235) ─────────────────────────────────────────
