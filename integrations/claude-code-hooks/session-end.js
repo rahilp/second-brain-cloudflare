@@ -15,6 +15,47 @@ const ASSISTANT_LINE_CAP = 300;
 const MIN_USER_TURN_CHARS = 40;
 const MIN_BODY_CHARS = 200;
 
+const REDACTED = '[redacted]';
+
+/**
+ * High-confidence secret shapes only. What reaches this point is human and
+ * assistant prose (tool output is already dropped), so the realistic exposure is
+ * a pasted credential or one the assistant echoed back — not a config file.
+ * Over-redaction destroys the memory, so nothing here matches a UUID, a git SHA,
+ * a file path or an English sentence: every pattern needs either a provider's
+ * own prefix or an explicit `secret-ish name =` label in front of it.
+ */
+const SECRET_PATTERNS = [
+  // The whole PEM block, not just the marker line: the key is the payload.
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+  /\bsk-[A-Za-z0-9_-]{16,}/g,                       // OpenAI / Anthropic
+  /\bgh[posur]_[A-Za-z0-9]{20,}/g,                  // GitHub classic and OAuth
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g,                // GitHub fine-grained
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,                // Slack
+  /\bAKIA[0-9A-Z]{16}\b/g,                          // AWS access key id
+  /\bAIza[0-9A-Za-z_-]{35,}/g,                      // Google API key
+];
+
+// `Bearer <token>` and `NAME=<value>` keep their prefix so the sentence still reads.
+const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g;
+const ASSIGNMENT_PATTERN =
+  /\b([A-Za-z0-9_.-]*(?:auth[_-]?token|access[_-]?token|api[_-]?key|apikey|token|secret|password|passwd))(\s*[:=]\s*)(["'`]?)([^\s"'`,;]{8,})\3/gi;
+
+/**
+ * Replace credentials in `text` with `[redacted]`. `token` is the caller's own
+ * configured token: the one secret we know exactly, so it goes wherever it
+ * appears, including mid-sentence.
+ */
+function redactSecrets(text, token) {
+  let out = String(text ?? '');
+  if (typeof token === 'string' && token.trim().length >= 8) {
+    out = out.split(token.trim()).join(REDACTED);
+  }
+  for (const re of SECRET_PATTERNS) out = out.replace(re, REDACTED);
+  out = out.replace(BEARER_PATTERN, `Bearer ${REDACTED}`);
+  return out.replace(ASSIGNMENT_PATTERN, (_m, name, sep, quote) => `${name}${sep}${quote}${REDACTED}${quote}`);
+}
+
 /** Text the harness injects into user turns. Compared against the trimmed start of the turn. */
 const NOISE_PREFIXES = [
   '<task-notification>', '<task-id', '<command-name>', '<command-message>',
@@ -164,8 +205,17 @@ function shouldCapture(turns) {
     && conversationChars >= MIN_BODY_CHARS;
 }
 
+/**
+ * Redaction runs on the formatted body, after formatSession, for two reasons:
+ * the header is part of what gets stored (a branch name is user-controlled), and
+ * formatSession's budget arithmetic stays exactly as PR A verified it. The order
+ * costs one thing — `[redacted]` can be longer than what it replaced — so the
+ * cap is re-applied here. That trim is the last step, so no secret can slip back
+ * in behind it.
+ */
 function buildCaptureBody(turns, meta) {
-  const content = formatSession(turns, meta);
+  let content = redactSecrets(formatSession(turns, meta), meta.token);
+  if (content.length > MAX_CONTENT_CHARS) content = content.slice(0, MAX_CONTENT_CHARS - 1) + '…';
   return {
     content,
     source: 'claude-code',
@@ -200,6 +250,7 @@ async function main() {
     timestamp: last.timestamp,
     reason: typeof payload?.reason === 'string' ? payload.reason : 'other',
     workspace: resolveWorkspace(),
+    token: creds.token, // redacted out of the body if the conversation quoted it
   };
   const body = buildCaptureBody(turns, meta);
   if (!shouldCapture(turns)) return;
@@ -227,7 +278,8 @@ async function main() {
 }
 
 module.exports = {
-  NOISE_PREFIXES, textOf, turnFromLine, readTranscriptTail, formatSession, shouldCapture, buildCaptureBody, main,
+  NOISE_PREFIXES, textOf, turnFromLine, readTranscriptTail, formatSession, shouldCapture,
+  redactSecrets, buildCaptureBody, main,
 };
 
 if (require.main === module) {

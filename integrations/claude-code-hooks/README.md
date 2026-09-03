@@ -68,6 +68,16 @@ Capture:
 }
 ```
 
+Before it is sent, the formatted body — header included — is scanned for
+credentials, and each one is replaced with `[redacted]`: your own configured
+token wherever it appears, `Bearer <token>` values, provider key shapes (`sk-`,
+`ghp_`/`gho_`, `github_pat_`, `xoxb-`/`xoxp-`, AWS `AKIA…`, Google `AIza…`),
+whole PEM private-key blocks, and `TOKEN=`/`SECRET=`/`PASSWORD=`/`API_KEY=`
+style assignments. Only those shapes: a UUID, a commit SHA, a file path and
+ordinary prose are left exactly as they were, because a memory redacted into
+uselessness is worse than no memory. Tool output — where secrets usually live —
+never reaches the body in the first place.
+
 The transcript is read backwards from the end until three human turns are in
 hand (1 MB ceiling), and only human-readable turns survive: `tool_use`,
 `tool_result` and `thinking` blocks, sidechain (subagent) lines, `isMeta` lines,
