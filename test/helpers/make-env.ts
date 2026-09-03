@@ -17,7 +17,10 @@ export function makeVectorizeMock(overrides: Partial<VectorizeIndex> = {}): Vect
 export function makeAIMock(): Ai {
   return {
     run: vi.fn().mockImplementation(async (model: string) => {
-      if (model === "@cf/baai/bge-small-en-v1.5")
+      // Every bge-* model here is an embedding call (bge-small is the
+      // shipped default; bge-base/large/m3 are config-selectable) — anything
+      // else is assumed to be an LLM chat completion, below.
+      if (model.startsWith("@cf/baai/bge"))
         return { data: [new Array(384).fill(0.1)] };
       return new ReadableStream({
         start(c) {
