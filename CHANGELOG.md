@@ -19,6 +19,10 @@ All notable changes to Second Brain are documented here. Version numbers match `
 - Identity-scoped reads and writes; digest and config admin boundaries; MCP audit events.
 - Multi-team write ambiguity resolved: optional `team` workspace id on capture, share, recall, list, graph, and digest.
 
+**Recall in any language (#326)**
+
+- Desktop app: a **Multilingual** reading (`@cf/baai/bge-m3`) in the embedding picker, on its own search index. The storage warning now costs a move between same-size models correctly.
+
 **Upgrade**
 
 - Existing v2 memories become the owner's personal workspace. Nothing is exposed to the team automatically.
