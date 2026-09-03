@@ -95,9 +95,10 @@ function hintFor(status) {
   return '';
 }
 
-function cachePath(name) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
-  return path.join(CACHE_DIR, name);
+/** `dir` is only ever passed by tests, so nothing writes to the real cache during a run. */
+function cachePath(name, dir = CACHE_DIR) {
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, name);
 }
 
 /** Worker major version from GET /health, cached per origin for 24 h. null when unknown. */
@@ -132,5 +133,5 @@ function noticeOncePerDay(key, message, now = Date.now()) {
 module.exports = {
   CONFIG_PATH, CACHE_DIR, HEALTH_TTL_MS,
   loadCredentials, resolveWorkspace, readStdinJson, parseProjectName, gitRemoteUrl,
-  fetchWithTimeout, fail, hintFor, workerMajorVersion, noticeOncePerDay,
+  fetchWithTimeout, fail, hintFor, cachePath, workerMajorVersion, noticeOncePerDay,
 };

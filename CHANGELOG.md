@@ -35,6 +35,9 @@ All notable changes to Second Brain are documented here. Version numbers match `
 - Hooks now exit 1 with one stderr line on any failure; Claude Code hides stderr from exit-0 hooks.
 - `install.sh` reconciles instead of appending, refuses a malformed settings.json, sets the SessionEnd `timeout` the 1.5 s hook budget requires, and keeps credentials in `~/.config/second-brain/config.json` rather than the hook command line.
 - New: `install.sh --check` and `--uninstall`.
+- Session capture redacts credentials from the body before sending it — your own token, `Bearer` values, `sk-`/`ghp_`/`github_pat_`/`xoxb-`/`AKIA`/`AIza` key shapes, PEM private keys and `TOKEN=`-style assignments — while leaving UUIDs, commit SHAs, paths and ordinary prose intact.
+- SessionStart caches the block it printed and re-emits it on compaction, so compaction costs no recall at all; it falls back to a live recall when there is no cache or it is over 24 h old.
+- New: `install.ps1`, a PowerShell installer for Windows machines where Claude Code runs hooks under PowerShell rather than Git Bash.
 
 **Upgrade**
 

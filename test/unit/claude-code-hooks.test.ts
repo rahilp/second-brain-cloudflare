@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -260,5 +260,138 @@ describe("session-end.formatSession / shouldCapture / buildCaptureBody", () => {
     const turns = end.readTranscriptTail(FIXTURE);
     expect(end.buildCaptureBody(turns, meta)).toMatchObject({ source: "claude-code", tags: ["sample"], workspace: "personal" });
     expect(end.buildCaptureBody(turns, { ...meta, project: null }).tags).toEqual([]);
+  });
+});
+
+describe("session-end.redactSecrets", () => {
+  const r = (text: string, token?: string) => end.redactSecrets(text, token);
+
+  it("redacts the caller's own configured token, including mid-sentence", () => {
+    expect(r("I pasted sb_live_9f2c1a4e7b3d into the prompt by mistake", "sb_live_9f2c1a4e7b3d"))
+      .toBe("I pasted [redacted] into the prompt by mistake");
+    expect(r("token is sb_live_9f2c1a4e7b3d.", "sb_live_9f2c1a4e7b3d")).toBe("token is [redacted].");
+  });
+
+  it("ignores a short or absent configured token rather than shredding the text", () => {
+    expect(r("the abc of it", "abc")).toBe("the abc of it");
+    expect(r("nothing to do here")).toBe("nothing to do here");
+  });
+
+  it("redacts a Bearer value and keeps the scheme", () => {
+    expect(r("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig"))
+      .toBe("Authorization: Bearer [redacted]");
+  });
+
+  it("redacts provider key shapes", () => {
+    expect(r("key sk-proj-Ab3dEf6hIj9lMn2pQr5tUv8x here")).toBe("key [redacted] here");
+    expect(r("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe("[redacted]");
+    expect(r("gho_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe("[redacted]");
+    expect(r("github_pat_11ABCDEFG0abcdefghij_KLMNOPqrstuvwx1234567890")).toBe("[redacted]");
+    expect(r("xoxb-EXAMPLE-NOT-A-REAL-SLACK-TOKEN")).toBe("[redacted]");
+    expect(r("xoxp-EXAMPLE-NOT-A-REAL-SLACK-TOKEN")).toBe("[redacted]");
+    expect(r("AKIAIOSFODNN7EXAMPLE")).toBe("[redacted]");
+    expect(r("AIzaSyD-1234567890abcdefghijklmnopqrstu")).toBe("[redacted]"); // 39 chars, the real shape
+  });
+
+  it("redacts a whole PEM block, not just its header", () => {
+    const pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA1\nnQIDAQAB\n-----END RSA PRIVATE KEY-----";
+    const out = r(`here it is:\n${pem}\nthat was it`);
+    expect(out).toBe("here it is:\n[redacted]\nthat was it");
+    expect(out).not.toContain("MIIEpAIBAAKCAQEA1");
+  });
+
+  it("redacts assignment forms in either case and with either separator", () => {
+    expect(r("TOKEN=hunter2-abcdefgh")).toBe("TOKEN=[redacted]");
+    expect(r("SECRET=s3cr3t-value-here")).toBe("SECRET=[redacted]");
+    expect(r('PASSWORD="correct-horse-battery"')).toBe('PASSWORD="[redacted]"');
+    expect(r("API_KEY: abcdef1234567890")).toBe("API_KEY: [redacted]");
+    expect(r("AUTH_TOKEN = abcdef1234567890")).toBe("AUTH_TOKEN = [redacted]");
+    expect(r("api_key='abcdef1234567890'")).toBe("api_key='[redacted]'");
+    expect(r("password: abcdef1234567890")).toBe("password: [redacted]");
+  });
+
+  it("leaves ordinary text alone — a UUID, a git SHA, a path, prose", () => {
+    const keep = [
+      "550e8400-e29b-41d4-a716-446655440000",
+      "9f2c1a4e7b3d5f8a1c4e7b9d2f5a8c1e4b7d9f2a",
+      "/home/u/.config/second-brain/config.json",
+      "We decided to move the digest off the shared cron; the token: it expired, needs rotating.",
+      "Bearer tokens are explained in the README.",
+      "sk-learn is not a secret, and neither is the word secret.",
+    ];
+    for (const line of keep) expect(r(line), line).toBe(line);
+  });
+
+  it("is applied to the formatted body — the header included — inside the character cap", () => {
+    const meta = { project: "sample", gitBranch: "main", sessionId: "fx", reason: "other", workspace: "personal", token: "sb_live_9f2c1a4e7b3d" };
+    const body = end.buildCaptureBody(
+      [{ role: "user", text: "Here is the key sk-proj-Ab3dEf6hIj9lMn2pQr5tUv8x, please use it." },
+       { role: "assistant", text: "Using sb_live_9f2c1a4e7b3d against the worker now, and the fallback TOKEN=abcdefgh12345678." }],
+      meta,
+    );
+    expect(body.content).not.toContain("sk-proj-Ab3dEf6hIj9lMn2pQr5tUv8x");
+    expect(body.content).not.toContain("sb_live_9f2c1a4e7b3d");
+    expect(body.content).not.toContain("abcdefgh12345678");
+    expect(body.content).toContain("[redacted]");
+    expect(body.content.startsWith("Claude Code session fx — sample@main")).toBe(true);
+  });
+
+  it("keeps a value that names a secret rather than being one", () => {
+    // These sessions are mostly talk about code. Blanking the right-hand side of
+    // `apiKey = process.env.OPENAI_API_KEY` would erase the line the memory is
+    // being kept for, and there is no credential in it.
+    for (const line of [
+      "const apiKey = process.env.OPENAI_API_KEY",
+      'token = os.environ["GITHUB_TOKEN"]',
+      "api_key: import.meta.env.VITE_KEY",
+      "AUTH_TOKEN=${{ secrets.AUTH_TOKEN }}",
+      "secret = <your-token-here>",
+    ]) {
+      expect(r(line), line).toBe(line);
+    }
+    // The literal forms still go.
+    expect(r("AUTH_TOKEN=s3cr3tvalue123456")).toContain("[redacted]");
+    expect(r('api_key = "zzzz1111yyyy2222"')).toContain("[redacted]");
+  });
+
+  it("holds the 2000-char cap even when redaction lengthens the body", () => {
+    // Each `TOKEN=abcd1234` (15) becomes `TOKEN=[redacted]` (16): redaction grows
+    // this body, so the cap has to be re-applied after it, not before.
+    const turns = Array.from({ length: 12 }, () => ({ role: "user", text: Array.from({ length: 12 }, () => "TOKEN=abcd1234").join(" ") }));
+    const meta = { project: "sample", gitBranch: "main", sessionId: "fx", reason: "other", workspace: "personal" };
+    expect(end.formatSession(turns, meta).length).toBeGreaterThan(1900);
+    const body = end.buildCaptureBody(turns, meta);
+    expect(body.content.length).toBeLessThanOrEqual(2000);
+    expect(body.content).not.toContain("abcd1234");
+  });
+});
+
+describe("session-start session cache", () => {
+  const block = "[Second Brain] Context recalled — …\n----- second brain notes (begin) -----\n1. a note\n----- second brain notes (end) -----\n";
+
+  it("round-trips a block for a session id", () => {
+    const dir = tmp();
+    expect(start.readSessionCache("abc-123", Date.now(), dir)).toBeNull();
+    expect(start.writeSessionCache("abc-123", block, dir)).toBe(true);
+    expect(start.readSessionCache("abc-123", Date.now(), dir)).toBe(block);
+    expect(start.readSessionCache("other-id", Date.now(), dir)).toBeNull();
+  });
+
+  it("expires after 24 h and refuses an empty id or body", () => {
+    const dir = tmp();
+    start.writeSessionCache("abc-123", block, dir);
+    const old = Date.now() / 1000 - 25 * 3600;
+    utimesSync(start.sessionCacheFile("abc-123", dir), old, old);
+    expect(start.readSessionCache("abc-123", Date.now(), dir)).toBeNull();
+    expect(start.writeSessionCache("", block, dir)).toBe(false);
+    expect(start.writeSessionCache("abc-123", "", dir)).toBe(false);
+    expect(start.readSessionCache("", Date.now(), dir)).toBeNull();
+  });
+
+  it("keeps a session id from escaping the cache directory", () => {
+    const dir = tmp();
+    const file = start.sessionCacheFile("../../etc/passwd", dir);
+    expect(file.startsWith(dir)).toBe(true);
+    expect(file).not.toContain("..");
   });
 });

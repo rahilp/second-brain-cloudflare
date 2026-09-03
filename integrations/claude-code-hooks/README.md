@@ -9,11 +9,18 @@ They are independent of the MCP server. Use either, or both.
 
 | Event | Runs on | Action | Cost |
 |---|---|---|---|
-| `SessionStart` | `startup`, `clear`, `compact` | `GET /recall` for this project, prints up to 5 memories into the session | one recall (~1 s) |
+| `SessionStart` | `startup`, `clear`, `compact` | `GET /recall` for this project, prints up to 5 memories into the session | one recall (~1 s), none on compaction |
 | `SessionEnd` | every reason (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`) | `POST /capture` with the tail of the conversation | one capture (embedding + often a model call), 30 s hook timeout |
 
 `resume` and `fork` are skipped on start: those transcripts already contain the
 earlier injection. `compact` is not skipped — compaction discards it.
+
+On `startup` and `clear` the block that was printed is cached under
+`$XDG_CACHE_HOME/second-brain/session-<session_id>.txt` (`~/.cache/…` by
+default). Compaction re-prints that file verbatim and makes no request at all:
+the session id survives compaction and rotates on `/clear`, so a cached block is
+always the current session's context. With no cache, or one older than 24 h,
+compaction falls back to a live recall.
 
 ## Install, upgrade, check, uninstall
 
@@ -22,6 +29,15 @@ bash install.sh https://your-worker.workers.dev your-token   # install or upgrad
 bash install.sh                                             # reuse existing credentials, or prompt
 bash install.sh --check                                     # prove the hooks reach the Worker
 bash install.sh --uninstall                                 # remove only our entries
+```
+
+PowerShell, for Windows without Git Bash — same behaviour, same guarantees:
+
+```powershell
+.\install.ps1 -WorkerUrl https://your-worker.workers.dev -Token your-token
+.\install.ps1            # reuse existing credentials, or prompt
+.\install.ps1 -Check
+.\install.ps1 -Uninstall
 ```
 
 Re-running is safe: the installer replaces its own entries in
@@ -67,6 +83,16 @@ Capture:
   "workspace": "personal"
 }
 ```
+
+Before it is sent, the formatted body — header included — is scanned for
+credentials, and each one is replaced with `[redacted]`: your own configured
+token wherever it appears, `Bearer <token>` values, provider key shapes (`sk-`,
+`ghp_`/`gho_`, `github_pat_`, `xoxb-`/`xoxp-`, AWS `AKIA…`, Google `AIza…`),
+whole PEM private-key blocks, and `TOKEN=`/`SECRET=`/`PASSWORD=`/`API_KEY=`
+style assignments. Only those shapes: a UUID, a commit SHA, a file path and
+ordinary prose are left exactly as they were, because a memory redacted into
+uselessness is worse than no memory. Tool output — where secrets usually live —
+never reaches the body in the first place.
 
 The transcript is read backwards from the end until three human turns are in
 hand (1 MB ceiling), and only human-readable turns survive: `tool_use`,
@@ -127,6 +153,12 @@ capture, not the conversation.
 ## Windows
 
 The hooks run under Git Bash if it is installed; without it Claude Code falls
-back to PowerShell, where `install.sh` will not run. Install Git for Windows, or
-wait for the PowerShell installer (follow-up work). The hook scripts themselves
-are plain Node and work either way once they are in `settings.json`.
+back to PowerShell, where `install.sh` will not run. Use `install.ps1` there —
+it writes the same credentials file and the same `settings.json` entries, and
+Node does the JSON editing in both installers so the two cannot drift. The hook
+scripts themselves are plain Node and work either way once they are in
+`settings.json`.
+
+The credentials file is written with mode 600, which NTFS ignores; on Windows it
+is protected by the permissions of your user profile directory like any other
+file under `%USERPROFILE%`.
