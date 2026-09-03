@@ -28,6 +28,11 @@ All notable changes to Second Brain are documented here. Version numbers match `
 - Desktop app: a routine "update your brain" keeps a migrated brain on its migrated search index.
 - Desktop app: a **Multilingual** reading (`@cf/baai/bge-m3`) in the embedding picker, on its own search index. The storage warning now costs a move between same-size models correctly.
 
+**Claude Code hooks (#327)**
+
+- Worker: a Claude Code transcript is never merged into, never replaces, and never deprecates a memory written by any other source; it is stored as a duplicate-candidate or a draft instead. Transcripts are excluded from insight synthesis.
+- Worker: capturing a near-duplicate of a protected memory (importance ≥ 4 or canonical) now stores the newcomer as a duplicate-candidate. It used to report success with an id that did not exist.
+
 **Upgrade**
 
 - Existing v2 memories become the owner's personal workspace. Nothing is exposed to the team automatically.
