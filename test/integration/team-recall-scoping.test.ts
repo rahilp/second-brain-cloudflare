@@ -149,6 +149,28 @@ describe("recallEntries with an Identity", () => {
     expect(ids).not.toContain("t-foreign");
   });
 
+  it("narrows the keyword arm to the requested layer or team, like every other read", async () => {
+    seedTriangle(sqlite);
+    const { ctx } = makeCtx();
+    const keywordSql = () => sqlite.issued.find(s => s.includes("ORDER BY created_at DESC LIMIT"));
+
+    // Layer filter: only the personal workspace is bound.
+    await recallEntries({ query: "alpha", topK: 10, synthesize: false }, env, ctx, undefined,
+      { identity: memberOf("ws-a"), workspaceFilter: "personal" });
+    expect(keywordSql()).toBe(
+      `SELECT id, content, tags, source, created_at FROM entries WHERE content LIKE ? AND workspace_id IN (?) ORDER BY created_at DESC LIMIT ?`,
+    );
+
+    // Team filter: exactly one workspace id, and the result set is that team's row.
+    sqlite.issued.length = 0;
+    const res = await recallEntries({ query: "alpha", topK: 10, synthesize: false }, env, ctx, undefined,
+      { identity: memberOf("ws-a"), teamId: "ws-co" });
+    expect(keywordSql()).toBe(
+      `SELECT id, content, tags, source, created_at FROM entries WHERE content LIKE ? AND workspace_id = ? ORDER BY created_at DESC LIMIT ?`,
+    );
+    expect(res.matches.map(m => m.id)).toEqual(["co"]);
+  });
+
   it("computes DF over the caller's readable corpus only", async () => {
     // "zeta" is rare inside ws-a but floods ws-b. Corpus-wide, 11/15 rows say
     // zeta — past the saturation cut, so distill drops it from the query.
