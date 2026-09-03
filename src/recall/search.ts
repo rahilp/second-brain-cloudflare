@@ -10,7 +10,7 @@ import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
 import type { Identity } from "../lib/identity";
 import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
-import { layerOf, scopeWhere, scopeWhereForRead } from "../lib/scope";
+import { layerOf, scopeWhereForRead } from "../lib/scope";
 import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
@@ -40,6 +40,8 @@ async function keywordSearch(
   limit: number,
   bounds: Readonly<TimeBounds> = {},
   identity?: Identity,
+  only?: "personal" | "company",
+  teamId?: string,
 ): Promise<KeywordRow[]> {
   if (!tokens.length) return [];
   // Capped here rather than at distillation's uncapped exits because this is
@@ -61,7 +63,7 @@ async function keywordSearch(
   }
   // Scoped before ORDER BY so LIMIT ranks only readable rows, not readable rows
   // plus strangers' rows truncated by the window.
-  const scope = identity ? scopeWhere(identity) : null;
+  const scope = identity ? scopeWhereForRead(identity, { layer: only, teamId }) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
   const tokenWhere = timeWhere ? `(${where})` : where;
   const { results } = await env.DB.prepare(
@@ -265,7 +267,7 @@ export async function recallEntries(
     };
     const [denseResults, kwRows] = await Promise.all([
       denseQuery(),
-      keywordSearch(profile.retrievalTokens, env, cfg.KEYWORD_CANDIDATE_LIMIT, bounds, identity),
+      keywordSearch(profile.retrievalTokens, env, cfg.KEYWORD_CANDIDATE_LIMIT, bounds, identity, internal.workspaceFilter, internal.teamId),
     ]);
     results = denseResults;
     keywordRows = kwRows;
