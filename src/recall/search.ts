@@ -15,7 +15,6 @@ import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { parseTimePhrase } from "../text/temporal";
-import { tokenizeQuery } from "../text/tokenize";
 import { distillToRareTerms, inferQueryTags, type DistilledQuery, type TimeBounds } from "./distill";
 import { synthesizeInsight } from "./insight";
 import { hasStaleAsOf } from "../memory/stale";
@@ -91,6 +90,10 @@ function fuseDenseAndKeyword(
 
   const kwLower = keywordRows.map(r => ({ row: r, lc: r.content.toLowerCase() }));
 
+  // Matched against lowercased content, so lowercased here too. Canonical
+  // tokens already are; raw-surface probes (#326) arrive as typed.
+  const needle = new Map(tokens.map(t => [t, t.toLowerCase()]));
+
   // IDF from the corpus-wide frequencies distillToRareTerms already computed,
   // when they cover every token; otherwise the old estimate from the fetched
   // rows. All-or-nothing rather than per-token, because the two denominators
@@ -103,7 +106,7 @@ function fuseDenseAndKeyword(
     idf = t => Math.log(1 + total / ((df.get(t) ?? 0) + 1));
   } else {
     const kwN = kwLower.length || 1;
-    const kwDf = new Map(tokens.map(t => [t, kwLower.reduce((n, x) => n + (x.lc.includes(t) ? 1 : 0), 0)]));
+    const kwDf = new Map(tokens.map(t => [t, kwLower.reduce((n, x) => n + (x.lc.includes(needle.get(t)!) ? 1 : 0), 0)]));
     idf = t => Math.log(1 + kwN / ((kwDf.get(t) ?? 0) + 1));
   }
 
@@ -111,9 +114,9 @@ function fuseDenseAndKeyword(
   // word ("cat" in "concatenate") it earns a configured fraction. Lookarounds
   // rather than \b so identifier-shaped tokens ("#149", "v1.9") keep matching —
   // \b treats their punctuation as the boundary itself.
-  const boundary = new Map(tokens.map(t => [t, new RegExp(`(?<![\\w])${escapeRegExp(t)}(?![\\w])`)]));
+  const boundary = new Map(tokens.map(t => [t, new RegExp(`(?<![\\w])${escapeRegExp(needle.get(t)!)}(?![\\w])`)]));
   const tokenWeight = (lc: string, t: string) => {
-    if (!lc.includes(t)) return 0;
+    if (!lc.includes(needle.get(t)!)) return 0;
     return boundary.get(t)!.test(lc) ? idf(t) : idf(t) * substringWeight;
   };
 
@@ -187,7 +190,15 @@ export async function recallEntries(
   const embeddingQueryMode = internal.embeddingQueryMode ?? DEFAULT_EMBEDDING_QUERY_MODE;
   const embedQuery = embeddingInput(profile, embeddingQueryMode);
   const lexicalQuery = profile.lexicalQuery;
-  internal.diagnostics && (internal.diagnostics.embeddingMode = embeddingQueryMode);
+  if (internal.diagnostics) {
+    internal.diagnostics.embeddingMode = embeddingQueryMode;
+    // #326 visibility: an empty keywordIds used to be indistinguishable from
+    // "the lexical arm never ran".
+    internal.diagnostics.retrievalTokenCount = profile.retrievalTokens.length;
+    internal.diagnostics.lexicalArmSkipped = profile.retrievalTokens.length === 0;
+    internal.diagnostics.corpusIdfUsed = !!distilled.df && !!distilled.total
+      && profile.lexicalTokens.every(t => distilled.df!.has(t));
+  }
   markStage("setup");
 
   const tokens = profile.lexicalTokens;

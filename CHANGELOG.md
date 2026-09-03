@@ -19,6 +19,14 @@ All notable changes to Second Brain are documented here. Version numbers match `
 - Identity-scoped reads and writes; digest and config admin boundaries; MCP audit events.
 - Multi-team write ambiguity resolved: optional `team` workspace id on capture, share, recall, list, graph, and digest.
 
+**Recall in any language (#326)**
+
+- Hybrid recall's keyword arm now understands Japanese, Chinese, and other scripts written without spaces, plus full-width and half-width compatibility forms. Such queries previously fell back to semantic search alone without saying so.
+- Mixed queries such as `Cloudflare 認証方式` keep both halves for ranking and for the embedding.
+- Recall snippets find a query term written in full-width form and cut on CJK sentence ends.
+- Team-scoped recall (`workspace=` / `team=`) narrows the keyword arm too, so a scoped recall no longer spends its candidate window on rows the scope then discards.
+- Desktop app: a routine "update your brain" keeps a migrated brain on its migrated search index.
+
 **Upgrade**
 
 - Existing v2 memories become the owner's personal workspace. Nothing is exposed to the team automatically.

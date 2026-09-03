@@ -118,4 +118,26 @@ describe("distillToRareTerms", () => {
     expect(out.df).toBeNull();
     expect(out.total).toBeNull();
   });
+
+  // ── #326: one vocabulary for distill and the keyword arm ────────────────────
+
+  it("counts CJK words as their own terms so corpus IDF covers what the keyword arm binds", async () => {
+    // One whitespace word carries four terms. Before #326 the word normalized to
+    // "" and the scan never ran; the mixed query lost its CJK half entirely.
+    const order = ["cloudflare", "認証", "方式", "変更", "理由"];
+    const env = envWith(100, { cloudflare: 5, 認証: 20, 方式: 40, 変更: 60, 理由: 3 }, order);
+    const out = await distillToRareTerms("Cloudflare 認証方式を変更した理由", env);
+    expect([...out.df!.keys()]).toEqual(order);
+    // The surface text is what gets embedded: the CJK run survives whole.
+    expect(out.query).toBe("Cloudflare 認証方式を変更した理由");
+  });
+
+  it("scans a single CJK word when it carries more than one term", async () => {
+    const order = ["認証", "方式", "変更", "理由"];
+    const env = envWith(100, { 認証: 2, 方式: 4, 変更: 6, 理由: 8 }, order);
+    const out = await distillToRareTerms("認証方式を変更した理由", env);
+    expect(out.df?.get("方式")).toBe(4);
+    expect(out.total).toBe(100);
+    expect(out.query).toBe("認証方式を変更した理由");
+  });
 });

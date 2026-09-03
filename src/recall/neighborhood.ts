@@ -63,10 +63,16 @@ export function queryCoverage(
   tokens: string[],
   corpus: Pick<DistilledQuery, "df" | "total">,
 ): CoverageDetail {
-  const normalizedTokens = [...new Set(tokens.map(t => t.toLowerCase()).filter(Boolean))];
-  if (!normalizedTokens.length) return { score: 0, exactHighIdf: false };
+  const dedupedTokens = [...new Set(tokens.filter(Boolean))];
+  if (!dedupedTokens.length) return { score: 0, exactHighIdf: false };
 
-  const hasCorpusIdf = !!corpus.df && !!corpus.total && normalizedTokens.every(t => corpus.df!.has(t));
+  // Matched against lowercased content, so lowercased here too. corpus.df is
+  // keyed by the ORIGINAL token casing (raw-surface probes, #326, are never
+  // lowercased by the tokenizer), so df lookups must use the original token —
+  // mirrors the needle pattern in fuseDenseAndKeyword (search.ts).
+  const needle = new Map(dedupedTokens.map(t => [t, t.toLowerCase()]));
+
+  const hasCorpusIdf = !!corpus.df && !!corpus.total && dedupedTokens.every(t => corpus.df!.has(t));
   const weightOf = (token: string) => hasCorpusIdf
     ? Math.log(1 + corpus.total! / ((corpus.df!.get(token) ?? 0) + 1))
     : 1;
@@ -75,16 +81,17 @@ export function queryCoverage(
   let total = 0;
   let exactHighIdf = false;
 
-  for (const token of normalizedTokens) {
-    const weight = weightOf(token);
+  for (const t of dedupedTokens) {
+    const weight = weightOf(t);
     total += weight;
-    const isExactMatch = new RegExp(`(?<![\\w])${escapeRegExp(token)}(?![\\w])`).test(lower);
+    const lc = needle.get(t)!;
+    const isExactMatch = new RegExp(`(?<![\\w])${escapeRegExp(lc)}(?![\\w])`).test(lower);
     if (isExactMatch) {
       matched += weight;
       exactHighIdf ||= !!corpus.df
         && !!corpus.total
-        && (corpus.df.get(token) ?? Number.POSITIVE_INFINITY) <= corpus.total * 0.1;
-    } else if (lower.includes(token)) {
+        && (corpus.df.get(t) ?? Number.POSITIVE_INFINITY) <= corpus.total * 0.1;
+    } else if (lower.includes(lc)) {
       matched += weight * SUBSTRING_WEIGHT;
     }
   }

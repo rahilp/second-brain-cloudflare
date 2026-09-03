@@ -139,3 +139,22 @@ export const KEYWORD_STOPWORDS = new Set([
   "i", "me", "my", "we", "you", "it", "this", "that", "these", "those", "with", "about", "from", "at", "as", "by",
   "do", "did", "does", "what", "when", "where", "who", "whom", "how", "why", "which",
 ]);
+
+// Function words for the scripts Intl.Segmenter splits without spaces (#326).
+// KEYWORD_STOPWORDS never matches them, and without this a Japanese question
+// spends its keyword slots on auxiliaries and particles (した, ている, ため)
+// that occur in nearly every note. One-character particles (は, を, の) need no
+// entry: they fall to KEYWORD_MIN_TOKEN_LEN. Segmenter mis-splits of the most
+// common request forms (教えて → 教え|て, ください → くだ|さい) are listed so
+// they do not surface as content words.
+export const CJK_STOPWORDS = new Set([
+  // Japanese
+  "した", "して", "する", "します", "しました", "され", "された", "される", "です", "でした", "ます", "ません",
+  "ない", "なく", "ある", "あり", "いる", "いた", "ている", "ていた", "なる", "なった", "できる",
+  "こと", "もの", "これ", "それ", "あれ", "この", "その", "あの", "ここ", "そこ", "どこ",
+  "ため", "から", "まで", "など", "より", "また", "でも", "けど", "ので", "のに", "について", "という",
+  "ください", "くだ", "さい", "教えて", "教え", "なぜ", "どう", "どの", "いつ", "だれ", "なに", "ような", "ように",
+  // Chinese
+  "什么", "怎么", "为什么", "没有", "可以", "一个", "我们", "你们", "他们", "这个", "那个", "这些", "那些",
+  "因为", "所以", "但是", "如果", "已经", "还是", "或者", "以及", "关于",
+]);
