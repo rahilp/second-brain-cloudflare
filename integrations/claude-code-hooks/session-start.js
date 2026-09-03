@@ -35,9 +35,23 @@ function buildRecallUrl(baseUrl, step) {
   return `${baseUrl}/recall?${p.toString()}`;
 }
 
-/** One line per memory, tag-shaped runs removed, whitespace collapsed. */
+/**
+ * One line per memory, tag-shaped runs removed, whitespace collapsed.
+ *
+ * The rule of the frame is that nothing inside it can forge its edges. Runs of
+ * three or more dashes are folded to an em dash for that reason: a memory whose
+ * text happened to contain `----- second brain notes (end) -----` would
+ * otherwise print a second, convincing closing line, and everything the memory
+ * said after it would read as though it came from outside the block. Collapsing
+ * whitespace already keeps every memory on its own numbered line, so the two
+ * together make the delimiters unforgeable.
+ */
 function cleanSnippet(s) {
-  return String(s ?? '').replace(/<\/?[A-Za-z][^<>]{0,60}>/g, ' ').replace(/\s+/g, ' ').trim();
+  return String(s ?? '')
+    .replace(/<\/?[A-Za-z][^<>]{0,60}>/g, ' ')
+    .replace(/-{3,}/g, '—')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
