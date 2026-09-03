@@ -288,4 +288,24 @@ describe("query coverage details", () => {
       exactHighIdf: false,
     });
   });
+
+  it("looks up corpus df by the original token casing, not lowercased (#326 raw-surface probe)", () => {
+    // Full-width compatibility form; toLowerCase() maps it to its own
+    // full-width lowercase script, NOT ASCII "terraform" and NOT the
+    // original raw-uppercase form the tokenizer emits into distilled.df.
+    const raw = "Ｔｅｒｒａｆｏｒｍ";
+    expect(raw.toLowerCase()).not.toBe("terraform");
+    expect(raw.toLowerCase()).not.toBe(raw);
+
+    // df is keyed by the RAW token, exactly as distillToRareTerms emits it.
+    const corpus = { df: new Map([[raw, 5]]), total: 100 };
+
+    const result = queryCoverage(`We standardized on ${raw} for infra`, [raw], corpus);
+
+    expect(result.score).toBe(1);
+    // Only reachable if the df lookup used the raw (original-case) token: a
+    // lowercased lookup misses the map entirely, corpus-wide IDF is
+    // discarded, and exactHighIdf can never become true.
+    expect(result.exactHighIdf).toBe(true);
+  });
 });
