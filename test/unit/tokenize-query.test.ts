@@ -21,4 +21,9 @@ describe("tokenizeQuery()", () => {
   it("returns an empty array when the query is all stopwords", () => {
     expect(tokenizeQuery("what is the")).toEqual([]);
   });
+
+  it("pins the pre-#326 pipeline for ASCII input, identifiers included", () => {
+    expect(tokenizeQuery("2026-09-02 user@example.com src/recall/search.ts #149 --no-cache key=value @cf/baai/bge-m3"))
+      .toEqual(["2026-09-02", "user@example.com", "src/recall/search.ts", "#149", "no-cache", "key=value", "cf/baai/bge-m3"]);
+  });
 });
