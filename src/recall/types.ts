@@ -55,6 +55,11 @@ export interface RecallDiagnostics {
   rejections?: { id: string; reason: string }[];
   operations?: RecallOperationDiagnostics;
   stageMs?: Partial<Record<RecallStage, number>>;
+  /** #326 visibility: how many tokens reached keywordSearch, and whether it was skipped for want of any. */
+  retrievalTokenCount?: number;
+  lexicalArmSkipped?: boolean;
+  /** Whether fusion could use corpus-wide DF for every lexical token (false = fetch-window estimate). */
+  corpusIdfUsed?: boolean;
 }
 
 export type RecallStage = "setup" | "querySignals" | "candidateGeneration" | "candidateHydration"
