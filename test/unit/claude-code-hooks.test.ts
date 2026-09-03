@@ -336,6 +336,24 @@ describe("session-end.redactSecrets", () => {
     expect(body.content.startsWith("Claude Code session fx — sample@main")).toBe(true);
   });
 
+  it("keeps a value that names a secret rather than being one", () => {
+    // These sessions are mostly talk about code. Blanking the right-hand side of
+    // `apiKey = process.env.OPENAI_API_KEY` would erase the line the memory is
+    // being kept for, and there is no credential in it.
+    for (const line of [
+      "const apiKey = process.env.OPENAI_API_KEY",
+      'token = os.environ["GITHUB_TOKEN"]',
+      "api_key: import.meta.env.VITE_KEY",
+      "AUTH_TOKEN=${{ secrets.AUTH_TOKEN }}",
+      "secret = <your-token-here>",
+    ]) {
+      expect(r(line), line).toBe(line);
+    }
+    // The literal forms still go.
+    expect(r("AUTH_TOKEN=s3cr3tvalue123456")).toContain("[redacted]");
+    expect(r('api_key = "zzzz1111yyyy2222"')).toContain("[redacted]");
+  });
+
   it("holds the 2000-char cap even when redaction lengthens the body", () => {
     // Each `TOKEN=abcd1234` (15) becomes `TOKEN=[redacted]` (16): redaction grows
     // this body, so the cap has to be re-applied after it, not before.

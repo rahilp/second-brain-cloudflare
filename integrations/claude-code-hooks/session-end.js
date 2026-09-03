@@ -41,6 +41,11 @@ const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g;
 const ASSIGNMENT_PATTERN =
   /\b([A-Za-z0-9_.-]*(?:auth[_-]?token|access[_-]?token|api[_-]?key|apikey|token|secret|password|passwd))(\s*[:=]\s*)(["'`]?)([^\s"'`,;]{8,})\3/gi;
 
+// A name= whose value NAMES a secret rather than being one. Sessions are mostly
+// talk about code, so `apiKey = process.env.OPENAI_API_KEY` is the common case
+// and redacting it would blank the line the memory exists to keep.
+const CODE_REFERENCE = /^(?:process\.env\b|os\.environ\b|import\.meta\.env\b|env\.|Deno\.env\b|\$|<|\{)/;
+
 /**
  * Replace credentials in `text` with `[redacted]`. `token` is the caller's own
  * configured token: the one secret we know exactly, so it goes wherever it
@@ -53,7 +58,8 @@ function redactSecrets(text, token) {
   }
   for (const re of SECRET_PATTERNS) out = out.replace(re, REDACTED);
   out = out.replace(BEARER_PATTERN, `Bearer ${REDACTED}`);
-  return out.replace(ASSIGNMENT_PATTERN, (_m, name, sep, quote) => `${name}${sep}${quote}${REDACTED}${quote}`);
+  return out.replace(ASSIGNMENT_PATTERN, (m, name, sep, quote, value) =>
+    CODE_REFERENCE.test(value) ? m : `${name}${sep}${quote}${REDACTED}${quote}`);
 }
 
 /** Text the harness injects into user turns. Compared against the trimmed start of the turn. */
