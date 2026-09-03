@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { isInsightEligible, topicTagsOf, isAssistantAuthored, ASSISTANT_TAGS, AXIS_TAGS } from "../../src/insight/eligibility";
-import { MIRRORED_SOURCES } from "../../src/constants";
+import { MIRRORED_SOURCES, TRANSCRIPT_SOURCES } from "../../src/constants";
 
 const entry = (over: Partial<{ content: string; tags: string[]; source: string }> = {}) => ({
   content: "A decision about the pricing model, written out at some length so it clears the floor.",
@@ -41,6 +41,12 @@ describe("isInsightEligible()", () => {
 
   it("rejects entries too short to carry an idea", () => {
     expect(isInsightEligible(entry({ content: "Shipped v2." }))).toBe(false);
+  });
+
+  it("rejects every transcript source", () => {
+    for (const source of TRANSCRIPT_SOURCES) {
+      expect(isInsightEligible(entry({ source })), `${source} should be ineligible`).toBe(false);
+    }
   });
 });
 

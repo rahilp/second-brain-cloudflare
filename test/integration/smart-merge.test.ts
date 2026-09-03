@@ -384,9 +384,14 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
     const canonical = db.entries.find((e: any) => e.id === "canonical-id");
     expect(canonical?.content).toBe("Canonical source of truth");
 
-    // No new entry was inserted — the early-return guard returns a synthetic ID
-    // without persisting to DB (mirrors importance guard behaviour)
-    expect(db.entries).toHaveLength(1);
+    // The newcomer is STORED as a duplicate-candidate rather than dropped. This
+    // guard used to return a synthetic id without inserting anything, so the
+    // route reported success for a row that did not exist (#327).
+    expect(db.entries).toHaveLength(2);
+    const stored = db.entries.find((e: any) => e.id === data.id);
+    expect(stored, "the id in the response must name a real row").toBeDefined();
+    expect(stored.content).toBe("Replacement attempt");
+    expect(JSON.parse(stored.tags)).toContain("duplicate-candidate");
   });
 
   // ── Classification on smart-merge path ───────────────────────────────────────

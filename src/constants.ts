@@ -64,6 +64,18 @@ export const MIRRORED_SOURCES: ReadonlySet<string> = new Set([
   "email-gmail", "email-icloud",
   "notion", "git-hook", "obsidian",
 ]);
+
+// Sources that record a conversation rather than a thought — a client pasting
+// in the tail of a session. A transcript restates whatever was said, including
+// memories the same session stored deliberately, so it will score as a near
+// duplicate or a contradiction of them. It must never be the thing that
+// rewrites or deprecates a memory another source wrote. Same-source collisions
+// (a resumed session superseding its own earlier capture) are still allowed.
+//
+// Not MIRRORED_SOURCES: those index the first chunk only because the record
+// leads with signal and trails with boilerplate; a transcript is the inverse.
+export const TRANSCRIPT_SOURCES: ReadonlySet<string> = new Set(["claude-code"]);
+
 // ── Embedding migration (#248) ───────────────────────────────────────────────
 // Budgeted in chunks rather than entries because storeEntry fires one model call
 // per chunk, all concurrently: 25 single-chunk entries is already ~75 binding

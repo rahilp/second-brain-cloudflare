@@ -165,4 +165,47 @@ describe("POST /capture", () => {
     const tags = JSON.parse(db.entries[0].tags);
     expect(tags).toContain("duplicate-candidate");
   });
+
+  // The id in a `warning: "similar"` reply has to be a row a client can then
+  // fetch. Against a protected near-duplicate the route used to answer with a
+  // freshly minted UUID it had never inserted, so this GET 404'd (#327).
+  it("the id returned with warning=similar is fetchable — no phantom store against a protected memory", async () => {
+    db.entries.push({
+      id: "protected", content: "We decided to use Vectorize for semantic search.", tags: '["work"]',
+      source: "api", created_at: Date.now(), vector_ids: '["protected-vec"]', recall_count: 0, importance_score: 5,
+    });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [{ id: "protected", score: 0.88, metadata: { parentId: "protected" } }] }),
+      }),
+      AI: {
+        run: vi.fn().mockImplementation(async (model: string) => {
+          if (model.startsWith("@cf/baai/bge")) return { data: [new Array(384).fill(0.1)] };
+          return new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode(`data: {"response":${JSON.stringify('{"action":"merge","target_id":"protected","merged_content":"merged"}')}}\n\n`));
+              c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+              c.close();
+            },
+          });
+        }),
+      } as unknown as Ai,
+    });
+
+    const { ctx, drain } = makeCtx();
+    const res = await worker.fetch(req("POST", "/capture", { body: { content: "Vectorize is what we picked for semantic search." } }), env, ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.warning).toBe("similar");
+    await drain();
+
+    const fetched = await worker.fetch(req("GET", `/entry?id=${data.id}`), env, ctx);
+    expect(fetched.status).toBe(200);
+    const entry = await fetched.json() as any;
+    expect(entry.entry.id).toBe(data.id);
+    expect(entry.entry.tags).toContain("duplicate-candidate");
+    // The protected memory itself was left exactly as it was.
+    expect(db.entries.find(e => e.id === "protected")!.content).toBe("We decided to use Vectorize for semantic search.");
+  });
 });

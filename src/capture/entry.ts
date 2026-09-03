@@ -12,6 +12,7 @@ import { getVolatility, withVolatility } from "../memory/volatility";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { rememberTags } from "../tags/vocabulary";
 import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
+import { TRANSCRIPT_SOURCES } from "../constants";
 
 export function buildEntryFilterQuery(params: {
   n: number;
@@ -101,40 +102,48 @@ export async function captureEntry(
       const oldVectorIds: string[] = JSON.parse(targetRow.vector_ids ?? "[]");
 
       const targetStatus = getStatus(existingTags);
-      if ((targetRow.importance_score as number) >= 4 || targetStatus === "canonical") {
-        return { status: "flagged", id: crypto.randomUUID(), matchId: targetId, score: dup.score };
-      }
+      // A protected target is left alone and the newcomer is STORED below as a
+      // duplicate-candidate. This branch used to `return` a random id here
+      // without inserting anything, so the route reported success for a row
+      // that did not exist (#327 review). The third clause is the transcript
+      // rule from TRANSCRIPT_SOURCES.
+      const protectedTarget =
+        (targetRow.importance_score as number) >= 4
+        || targetStatus === "canonical"
+        || (TRANSCRIPT_SOURCES.has(source) && existingSource !== source);
 
-      let newVectorIds: string[] | null = null;
-      try {
-        newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg, writeCtx);
-      } catch (e) {
-        console.error("Merge re-embed failed — keeping both, target untouched:", e);
-      }
-
-      if (newVectorIds) {
-        // The rest of the incoming tag list is deliberately discarded on a merge, which
-        // predates this and is left alone — but the volatility verdict cannot be, because
-        // it is the one value the tool schema tells the caller wins permanently. Dropping
-        // it here reported "merged" on a write that silently threw the judgment away, and
-        // the merge bumps updated_at, so the nightly pass would not revisit the entry for
-        // 90 days to re-derive anything. The caller judged the content being merged in, so
-        // its verdict describes the combined body more recently than the target's does.
-        const incomingVerdict = getVolatility(t);
-        const stripped = tagsAfterWrite(existingTags);
-        const refreshedTags = incomingVerdict ? withVolatility(stripped, incomingVerdict) : stripped;
-        const now = Date.now();
-        await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
-          .bind(newContent, JSON.stringify(refreshedTags), now, targetId).run();
+      if (!protectedTarget) {
+        let newVectorIds: string[] | null = null;
         try {
-          await deleteStaleVectors(env, oldVectorIds, newVectorIds);
-        } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
+          newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg, writeCtx);
+        } catch (e) {
+          console.error("Merge re-embed failed — keeping both, target untouched:", e);
+        }
 
-        scheduleClassifyAndTag(targetId, newContent, env, ctx, cfg);
+        if (newVectorIds) {
+          // The rest of the incoming tag list is deliberately discarded on a merge, which
+          // predates this and is left alone — but the volatility verdict cannot be, because
+          // it is the one value the tool schema tells the caller wins permanently. Dropping
+          // it here reported "merged" on a write that silently threw the judgment away, and
+          // the merge bumps updated_at, so the nightly pass would not revisit the entry for
+          // 90 days to re-derive anything. The caller judged the content being merged in, so
+          // its verdict describes the combined body more recently than the target's does.
+          const incomingVerdict = getVolatility(t);
+          const stripped = tagsAfterWrite(existingTags);
+          const refreshedTags = incomingVerdict ? withVolatility(stripped, incomingVerdict) : stripped;
+          const now = Date.now();
+          await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id = ?`)
+            .bind(newContent, JSON.stringify(refreshedTags), now, targetId).run();
+          try {
+            await deleteStaleVectors(env, oldVectorIds, newVectorIds);
+          } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
 
-        return mergeAction.action === "merge"
-          ? { status: "merged", id: targetId }
-          : { status: "replaced", id: targetId };
+          scheduleClassifyAndTag(targetId, newContent, env, ctx, cfg);
+
+          return mergeAction.action === "merge"
+            ? { status: "merged", id: targetId }
+            : { status: "replaced", id: targetId };
+        }
       }
     }
   }
@@ -166,11 +175,19 @@ export async function captureEntry(
     const conflictId = contradiction.conflicting_id;
     const conflictRow = await env.DB.prepare(
       // scope-exempt: by-id: the conflict id is one of the ids checkDuplicateAndContradiction hydrated under `AND workspace_id = ?` against this same writeCtx.workspaceId, and it only returns ids it hydrated — so this row is already known to be in the workspace being written to
-      `SELECT tags FROM entries WHERE id = ?`
+      `SELECT tags, source FROM entries WHERE id = ?`
     ).bind(conflictId).first() as Record<string, any> | null;
     const conflictStatus = conflictRow ? getStatus(JSON.parse(conflictRow.tags ?? "[]")) : null;
+    const conflictSource = conflictRow ? String(conflictRow.source ?? "") : "";
+    // Canonical memories were always protected here. A transcript gets the same
+    // treatment against any memory of another source: the newcomer becomes a
+    // draft and nothing is deprecated, because "we decided X… actually Y" in a
+    // session log is not evidence that the memory of X is wrong.
+    const protectConflict =
+      conflictStatus === "canonical"
+      || (TRANSCRIPT_SOURCES.has(source) && conflictSource !== source);
 
-    if (conflictStatus === "canonical") {
+    if (protectConflict) {
       const draftTags = finalTags.filter(t => t !== "contradiction-resolved");
       await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`)
         .bind(JSON.stringify(withStatus(draftTags, "draft")), id).run();
