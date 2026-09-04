@@ -15,9 +15,57 @@ import { initializeDatabase } from "../db/init";
 import { captureEntry } from "../capture/entry";
 import { reasonOverPair, restatesRecent } from "./reason";
 import { PENDING_INSIGHT_SQL, WRITTEN_INSIGHT_SQL } from "../memory/patterns";
-import { edgeInsertStatement } from "../graph/edges";
+import { edgeInsertStatement, kindsAllowEdge } from "../graph/edges";
+import { getKind } from "../memory/kind";
+import type { TypedRelationship } from "./reason";
 import { isEligiblePair, parseTags } from "./candidates";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
+
+/**
+ * Weight for an edge the reasoning model proposed.
+ *
+ * Below an explicit link (1.0) and above ordinary vector inference (<=0.85):
+ * a model that read both memories in full is better evidence than cosine
+ * similarity, and worse evidence than a person saying so.
+ */
+const INSIGHT_EDGE_WEIGHT = 0.75;
+
+/**
+ * The typed edge a relationship verdict describes, or null when it may not be
+ * drawn at all.
+ *
+ * Direction for `follows` comes from `created_at` and never from the model:
+ * the prompt does not show it timestamps, so it cannot know which memory came
+ * first, and the candidate row's own a_id/b_id ordering is lexicographic on a
+ * UUID. Taking the ordering from the ids would produce a `follows` chain
+ * pointing whichever way the random ids happened to sort.
+ *
+ * `caused_by` and `decided` keep the model's answer, because for those the
+ * direction is a claim about meaning rather than about time.
+ */
+function typedEdgeFor(
+  candidate: CandidateRow,
+  relationship: TypedRelationship,
+  workspaceId: string,
+): { sourceId: string; targetId: string; type: TypedRelationship["type"]; workspaceId: string } | null {
+  const aKind = getKind(parseTags(candidate.a_tags));
+  const bKind = getKind(parseTags(candidate.b_tags));
+
+  const sourceIsA = relationship.type === "follows"
+    ? candidate.a_created_at > candidate.b_created_at
+    : relationship.source === "A";
+
+  const [sourceId, targetId] = sourceIsA
+    ? [candidate.a_id, candidate.b_id]
+    : [candidate.b_id, candidate.a_id];
+  const [sourceKind, targetKind] = sourceIsA ? [aKind, bKind] : [bKind, aKind];
+
+  // The same gate POST /link and capture-time inference use. An unclassified
+  // memory is refused for a kind-constrained type rather than assumed to fit.
+  if (!kindsAllowEdge(relationship.type, sourceKind, targetKind)) return null;
+
+  return { sourceId, targetId, type: relationship.type, workspaceId };
+}
 
 /** Pairs considered per run. Each costs one model call. */
 export const WEEKLY_CANDIDATE_LIMIT = 10;
@@ -71,6 +119,8 @@ interface CandidateRow {
   b_content: string;
   a_tags: string;
   b_tags: string;
+  a_created_at: number;
+  b_created_at: number;
   a_workspace_id: string;
   b_workspace_id: string;
 }
@@ -194,6 +244,7 @@ export async function runWeeklyInsights(
         // scope-exempt: cron: no caller to scope to. Both workspaces are projected, and the loop below compares them BEFORE the pair reaches the model: a candidate whose two entries sit in different workspaces is skipped and settled, never reasoned over and never written anywhere. Accrual refuses to pair across workspaces (candidates.ts), so that only fires for pre-tenancy candidate rows. sliceClause is optionally present and is a list of workspace IDS read from the `workspaces` table (companyWorkspaceIds, below), never from a request — it narrows this cron's slate, it does not scope it to a caller, and there is no caller to scope to on either invocation
         `SELECT c.id, c.score, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
                 a.tags AS a_tags, b.tags AS b_tags,
+                a.created_at AS a_created_at, b.created_at AS b_created_at,
                 a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id
          FROM insight_candidates c
          JOIN entries a ON a.id = c.a_id
@@ -322,6 +373,9 @@ export async function runWeeklyInsights(
     // keeps the whole batch's statements prepared together — which is what
     // lets it join the status updates as a single subrequest.
     const drawnFromPairs: { insightId: string; targetId: string; workspaceId: string }[] = [];
+    // Typed edges the reasoning produced. Collected rather than written in the
+    // loop for the same reason drawnFromPairs is: one batch, one subrequest.
+    const typedEdges: { sourceId: string; targetId: string; type: TypedRelationship["type"]; workspaceId: string }[] = [];
     // Texts to compare a new proposal against, PER WORKSPACE: the insights that
     // workspace has already been given, plus (appended below) whatever this run
     // itself writes into it. Two different candidate pairs — in this run, or one
@@ -421,6 +475,16 @@ export async function runWeeklyInsights(
       // second chance is by never having been marked settled in the first
       // place.
       if (result.outcome === "failed") continue;
+
+      // Read before the decline is handled, and deliberately so. Declining to
+      // write a publishable sentence is not the same as having no view on how
+      // the pair relates, and declines are the common outcome — typing only the
+      // accepted ones would forfeit most of what this call already paid for.
+      if (result.relationship) {
+        const typed = typedEdgeFor(candidate, result.relationship, insightWorkspace);
+        if (typed) typedEdges.push(typed);
+      }
+
       if (result.outcome === "declined") {
         rejected.push(candidate.id);
         continue;
@@ -484,6 +548,59 @@ export async function runWeeklyInsights(
         .map(({ insightId, targetId, workspaceId }) => edgeInsertStatement(
           insightId, targetId, "drawn_from", { provenance: "system", weight: 1, workspaceId }, env,
         ))
+        .filter((stmt): stmt is D1PreparedStatement => stmt !== null),
+      ...typedEdges
+        .flatMap(({ sourceId, targetId, type, workspaceId }) => [
+          // Ordered insert -> inherit -> delete, and all three in this one batch.
+          //
+          // The generic edge has to still exist when the weight is read, which
+          // is why the DELETE comes last rather than first.
+          edgeInsertStatement(sourceId, targetId, type, {
+            provenance: "system", weight: INSIGHT_EDGE_WEIGHT,
+            metadata: { via: "insight-reasoning" }, workspaceId,
+          }, env),
+          // WEIGHTS ARE HIGH-WATER MARKS, and this step propagates that into
+          // typed edges. `max(weight, excluded.weight)` on the upsert (which
+          // predates this work) means a pair that once scored 0.90 keeps 0.90
+          // even after the content is rewritten and re-inference scores it 0.79;
+          // inheriting carries that figure onto the typed edge, and nothing ever
+          // lowers it — the nightly prune's `weight < 0.3` cannot match an
+          // inferred edge, whose floor is 0.78.
+          //
+          // Taken deliberately as the lesser of two errors. Weight here decides
+          // ORDERING under a fanout cap, not truth; an overstated ordering hint
+          // keeps a historically-strong pair reachable, whereas NOT inheriting
+          // drops a 0.85 pair to 0.75 and can push it out of the cap entirely —
+          // losing the memory rather than mis-ranking it. Letting the update
+          // path SET rather than MAX its inferred weight would fix the drift at
+          // the source; that is a change to pre-existing upsert semantics and is
+          // left as follow-up.
+          //
+          // Inherit the retired edge's weight when it was stronger. Inferred
+          // edges exist only at EDGE_INFER_THRESHOLD (0.78) and above, so the
+          // flat INSIGHT_EDGE_WEIGHT is BELOW every generic edge this replaces
+          // — and graph expansion sorts by weight under a per-node fanout cap.
+          // Without this, replacing a 0.85 edge with a 0.75 one can push a
+          // neighbour past the cap and make a reachable memory unreachable,
+          // which is the opposite of what typing it was for.
+          env.DB.prepare(
+            // scope-exempt: cron: by-id pair, both endpoints already confirmed to share one workspace before the pair reached the model
+            `UPDATE edges
+             SET weight = max(weight, COALESCE((
+                   SELECT MAX(g.weight) FROM edges g
+                   WHERE ((g.source_id = ? AND g.target_id = ?) OR (g.source_id = ? AND g.target_id = ?))
+                     AND g.type = 'relates_to' AND g.provenance = 'inferred'), 0))
+             WHERE source_id = ? AND target_id = ? AND type = ?`,
+          ).bind(sourceId, targetId, targetId, sourceId, sourceId, targetId, type),
+          // Typed replaces generic, and only the INFERRED generic: a relates_to
+          // the person drew themselves is a statement, not a guess this supersedes.
+          env.DB.prepare(
+            // scope-exempt: cron: by-id pair, both endpoints already confirmed to share one workspace before the pair reached the model
+            `DELETE FROM edges
+             WHERE ((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))
+               AND type = 'relates_to' AND provenance = 'inferred'`,
+          ).bind(sourceId, targetId, targetId, sourceId),
+        ])
         .filter((stmt): stmt is D1PreparedStatement => stmt !== null),
     ];
     if (statements.length) await env.DB.batch(statements);

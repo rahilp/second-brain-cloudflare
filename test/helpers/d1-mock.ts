@@ -341,6 +341,17 @@ export class D1Mock {
           if (placeholderCount !== args.length) {
             throw new Error(`INSERT INTO edges placeholder/bind mismatch: ${placeholderCount} vs ${args.length}`);
           }
+          // The guarded form (edgeInsertStatement's onlyIfNoTypedEdge): the row's
+          // ten values, then the pair the guard tests. Modelled here because the
+          // rule lives in the statement, so a mock that ignored it would report
+          // an insert production would have skipped.
+          if (s.includes("WHERE NOT EXISTS")) {
+            const [ga, gb, gc, gd] = args.slice(10);
+            const typed = db.edges.some((e: any) =>
+              ((e.source_id === ga && e.target_id === gb) || (e.source_id === gc && e.target_id === gd))
+              && e.type !== "relates_to");
+            if (typed) return { meta: { changes: 0 } };
+          }
           const [id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at] = args;
           const existing = db.edges.find((e: any) => e.source_id === source_id && e.target_id === target_id && e.type === type);
           if (existing) {
@@ -571,14 +582,28 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content, workspace_id: e.workspace_id ?? "" }));
           return { results: rows };
         }
-        if (s.includes("SELECT id, workspace_id FROM entries WHERE id IN")) {
-          // inferEdgesOnWrite: the source row's workspace (to stamp the edge with)
-          // and each candidate neighbour's (to refuse a pair that disagrees). Rows
-          // seeded without the column read as "", the pre-tenancy value, so a
-          // fixture that says nothing about workspaces still links exactly as it did.
+        if (s.includes("SELECT id, workspace_id, tags, created_at, source FROM entries WHERE id IN")) {
+          // inferEdgesOnWrite's one endpoint read: the source row's workspace (to
+          // stamp the edge with), each candidate neighbour's (to refuse a pair that
+          // disagrees), and — piggybacked on the same statement — the tags and
+          // timestamps `follows` typing needs. Rows seeded without the column read
+          // as "", the pre-tenancy value, so a fixture that says nothing about
+          // workspaces still links exactly as it did.
+          //
+          // The projection is matched in full ON PURPOSE. When this branch listed
+          // only `id, workspace_id` it silently stopped matching the moment
+          // production widened the SELECT, and every mock-backed inference then saw
+          // ZERO endpoint rows — no workspace refusal, no kind, no timestamps —
+          // while the tests kept passing for the wrong reason.
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, workspace_id: e.workspace_id ?? "" }));
+            .map((e: any) => ({
+              id: e.id,
+              workspace_id: e.workspace_id ?? "",
+              tags: e.tags ?? "[]",
+              created_at: e.created_at ?? 0,
+              source: e.source ?? "api",
+            }));
           return { results };
         }
         if (s.includes("SELECT id FROM entries WHERE id IN")) {

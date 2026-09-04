@@ -5,6 +5,12 @@ import { embed } from "../lib/ai";
 import { inferEdgesOnWrite } from "./edges";
 
 const GRAPH_PASS_BACKFILL_LIMIT = 25;
+
+/**
+ * The UTC weekday the dangling sweep runs on: Sunday. See the gate below for
+ * why it is a weekday rather than a cron trigger of its own.
+ */
+const GRAPH_SWEEP_WEEKDAY_UTC = 0;
 const EDGE_PRUNE_WEIGHT = 0.3;
 const EDGE_PRUNE_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -34,6 +40,47 @@ export async function runGraphPass(
     console.error("Graph prune failed (non-fatal):", e);
   }
 
+  // WEEKLY, not nightly. The sweep is a full scan of `edges` with two correlated
+  // endpoint lookups per inferred row, and it is the one scheduled full edge
+  // scan in the deployment — the cost GET /stats/graph refuses to let an
+  // operator schedule.
+  //
+  // Expressed as a weekday gate inside the nightly pass rather than as its own
+  // trigger because the free plan allows five cron schedules and all five are
+  // spoken for (see wrangler.jsonc, which says so explicitly). Gating on the day
+  // costs no query; a "last swept at" timestamp would spend a read every night
+  // to save a scan on six of them.
+  //
+  // Weekly is enough because inference no longer CREATES these rows: it refuses
+  // a neighbour missing from its endpoint read, so the sweep now clears
+  // historical rows and the occasional failed vector cascade rather than a
+  // steady stream. A missed Sunday defers idempotent cleanup by a week, which is
+  // not worth a state table to prevent.
+  if (new Date(Date.now()).getUTCDay() === GRAPH_SWEEP_WEEKDAY_UTC) {
+    try {
+      // Edges that outlived the entry they point at. Inert for reads today —
+      // every walk hydrates both endpoints and drops what is missing — but not
+      // permanently harmless: src/entries/import.ts accepts caller-supplied ids,
+      // so a later import can create a row with that id in ANOTHER workspace and
+      // turn a dead edge into a live crossing one.
+      //
+      // Inferred only. An explicit link pointing at a forgotten entry is
+      // something a person asserted, and deleting it silently would lose it;
+      // GET /stats/graph?deep=1 reports those instead.
+      await env.DB.prepare(
+        // scope-exempt: cron: sweep of inferred edges with a missing endpoint, deployment-wide by design
+        `DELETE FROM edges
+         WHERE provenance = 'inferred'
+           AND (NOT EXISTS (SELECT 1 FROM entries WHERE entries.id = edges.source_id)
+             OR NOT EXISTS (SELECT 1 FROM entries WHERE entries.id = edges.target_id))`
+      ).run();
+    } catch (e) {
+      // Its own sentence: this used to report a prune failure, which sends
+      // anyone reading the logs to the wrong statement.
+      console.error("Graph dangling sweep failed (non-fatal):", e);
+    }
+  }
+
   let unlinked: { id: string; content: string }[] = [];
   try {
     const sliceSql = workspaceId != null ? `\n         AND workspace_id = ?` : "";
@@ -41,7 +88,8 @@ export async function runGraphPass(
       // scope-exempt: cron: nightly backfill, narrowed by the workspace slice in sliceSql
       `SELECT id, content FROM entries
        WHERE id NOT IN (SELECT source_id FROM edges) AND id NOT IN (SELECT target_id FROM edges)
-         AND tags NOT LIKE '%"status:deprecated"%'${sliceSql}
+         AND tags NOT LIKE '%"status:deprecated"%'
+         AND tags NOT LIKE '%"duplicate-candidate"%'${sliceSql}
        ORDER BY created_at DESC LIMIT ${GRAPH_PASS_BACKFILL_LIMIT}`
     );
     const { results } = await (workspaceId != null ? stmt.bind(workspaceId) : stmt)

@@ -46,9 +46,73 @@ export interface ReasonedInsight {
  * marked rejected forever. See src/insight/weekly.ts.
  */
 export type ReasonOutcome =
-  | { outcome: "insight"; shape: InsightShape; text: string }
-  | { outcome: "declined" }
+  | { outcome: "insight"; shape: InsightShape; text: string; relationship?: TypedRelationship }
+  | { outcome: "declined"; relationship?: TypedRelationship }
   | { outcome: "failed" };
+
+/** How the model says the pair relates, and which side the edge points FROM. */
+export interface TypedRelationship {
+  type: "caused_by" | "decided" | "follows";
+  source: "A" | "B";
+}
+
+/**
+ * The types the insight call is allowed to propose.
+ *
+ * `supersedes` is deliberately absent though it is a real edge type. It is
+ * welded to deprecation semantics — the thing it points at is treated as
+ * retired — and a model volunteering it here would retire a memory nobody
+ * asked to retire, from a call whose actual job was to write a sentence.
+ */
+const RELATIONSHIP_TYPES: ReadonlySet<string> = new Set(["caused_by", "decided", "follows"]);
+
+/**
+ * The relationship verdict, read independently of whether an insight survived.
+ *
+ * Parsed from the raw response rather than from parseInsightResponse's result,
+ * because that function returns null for everything that is not a publishable
+ * insight — which is most calls. The model had to decide how the pair relates
+ * in order to answer at all, and that verdict is just as good on a response
+ * that declined.
+ */
+/** Whether the response carries a JSON object that actually parses. */
+function isReadableJsonObject(raw: string): boolean {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return false;
+  try {
+    JSON.parse(match[0]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function parseRelationship(raw: string): TypedRelationship | null {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+
+  const type = String(parsed.relationship ?? "");
+  if (!RELATIONSHIP_TYPES.has(type)) return null;
+
+  // No direction, no edge: a typed edge pointing the wrong way is worse than
+  // the generic one it would replace. Both ends are required and they must
+  // disagree — a response naming one memory as both source and target has not
+  // committed to a direction, and reading `source` alone would invent one.
+  const source = String(parsed.source ?? "").toUpperCase();
+  const target = String(parsed.target ?? "").toUpperCase();
+  if (source !== "A" && source !== "B") return null;
+  if (target !== "A" && target !== "B") return null;
+  if (source === target) return null;
+
+  return { type: type as TypedRelationship["type"], source };
+}
 
 const SHAPES: ReadonlySet<string> = new Set(["contradiction", "throughline", "connection"]);
 
@@ -280,7 +344,22 @@ The shape is one of:
 Write in the second person, plainly, in one or two sentences. Do not begin with a set phrase. Do not hedge.
 
 Respond with JSON only. No text outside the JSON object.
-{"insight": false} OR {"insight": true, "shape": "<shape>", "text": "<the insight>"}`;
+{"insight": false} OR {"insight": true, "shape": "<shape>", "text": "<the insight>"}
+
+Then, in that same JSON object and whichever of those you answered, say how the two memories relate.
+
+Read every type as one sentence: SOURCE <relationship> TARGET. Getting source and target the right way round matters as much as picking the type.
+
+- "caused_by" — SOURCE happened BECAUSE OF TARGET. The target is the cause, the source is the consequence. If A is a pricing review and B is a cancellation that happened because of it, then source is B and target is A.
+- "decided" — SOURCE is the decision; TARGET carries it out or reflects it. If A records choosing a vendor and B is the signed contract, then source is A and target is B.
+- "follows" — SOURCE came AFTER TARGET in the same line of thought. If A is the earlier note and B the later one, then source is B and target is A.
+- "none" — none of the three fits.
+
+"relationship": one of "caused_by", "decided", "follows", "none".
+"source": "A" or "B" — the memory the sentence starts with.
+"target": "A" or "B" — the other one. It must not be the same as source.
+
+Answer this even when you answered {"insight": false}. If none of the three fit, say "none" and omit source and target.`;
 
   let raw = "";
   try {
@@ -304,14 +383,26 @@ Respond with JSON only. No text outside the JSON object.
     return { outcome: "failed" };
   }
 
+  // A response with no JSON object in it at all — prose, or an object truncated
+  // before its closing brace — is not a judgement to record. `declined` marks
+  // the candidate rejected permanently and re-accrual cannot resurrect it, so a
+  // model that ran out of tokens mid-answer would cost the pair forever. Left
+  // `failed`, exactly like a thrown call: nothing was decided, so it stays
+  // pending and can be asked again.
+  if (!isReadableJsonObject(raw)) return { outcome: "failed" };
+
+  // Read before the insight gate: a decline is still an answer to this.
+  const relationship = parseRelationship(raw) ?? undefined;
+  const declined = (): ReasonOutcome => ({ outcome: "declined", ...(relationship && { relationship }) });
+
   const parsed = parseInsightResponse(raw);
-  if (!parsed) return { outcome: "declined" };
+  if (!parsed) return declined();
 
   // The mechanical floor. A real insight draws on vocabulary particular to
   // each side, not just what they share, and doesn't reach for the stock
   // phrases that mean the model gave up and restated the pair instead.
-  if (isRestatementFraming(parsed.text)) return { outcome: "declined" };
-  if (!sharesVocabulary(parsed.text, first, second)) return { outcome: "declined" };
+  if (isRestatementFraming(parsed.text)) return declined();
+  if (!sharesVocabulary(parsed.text, first, second)) return declined();
 
-  return { outcome: "insight", shape: parsed.shape, text: parsed.text };
+  return { outcome: "insight", shape: parsed.shape, text: parsed.text, ...(relationship && { relationship }) };
 }

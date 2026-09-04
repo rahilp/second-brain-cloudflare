@@ -39,7 +39,7 @@ describe("storeEntry chunk indexing for mirrored sources", () => {
     const content = longMirroredRecord();
     expect(content.length).toBeGreaterThan(CHUNK_MAX_CHARS);
 
-    const vectorIds = await storeEntry(env, "entry-1", content, ["email"], "email-gmail", Date.now());
+    const { vectorIds } = await storeEntry(env, "entry-1", content, ["email"], "email-gmail", Date.now());
 
     const upserted = (env.VECTORIZE.upsert as any).mock.calls[0][0];
     expect(upserted).toHaveLength(1);

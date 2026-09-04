@@ -2,7 +2,7 @@ import type { Env } from "../env";
 import { intParam, json, readWorkspaceParam, readTeamQueryParam } from "../lib/http";
 import { getReadableEntry } from "../lib/entry-access";
 import { requireIdentity } from "../lib/identity";
-import { createEdge, deleteEdge, isValidEdgeType, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
+import { createEdge, deleteEdge, isValidEdgeType, kindMismatchMessage, kindOfRow, kindsAllowEdge, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { buildGraph, getConnections } from "../graph/traverse";
 import { resolveConfig } from "../config";
@@ -29,9 +29,11 @@ export async function handleGraphRoutes(
     }
     if (sourceId === targetId) return json({ ok: false, error: "Cannot link an entry to itself" }, 400);
 
-    const source = await getReadableEntry(env, auth, sourceId);
+    // tags ride along on the reads this route already makes, so the kind gate
+    // below costs no extra query.
+    const source = await getReadableEntry(env, auth, sourceId, "id, workspace_id, actor_id, tags");
     if (!source) return json({ ok: false, error: `No entry found with ID: ${sourceId}` }, 404);
-    const target = await getReadableEntry(env, auth, targetId);
+    const target = await getReadableEntry(env, auth, targetId, "id, workspace_id, actor_id, tags");
     if (!target) return json({ ok: false, error: `No entry found with ID: ${targetId}` }, 404);
     // Same-workspace only. edges.workspace_id is one denormalized column copied
     // from the source entry, and a share re-stamps it to follow the entry that
@@ -42,6 +44,14 @@ export async function handleGraphRoutes(
     // vanishes from their graph. Costs nothing on a solo brain: one workspace.
     if (source.workspace_id !== target.workspace_id) {
       return json({ ok: false, error: CROSS_WORKSPACE_LINK_MESSAGE, code: "cross_workspace_link" }, 400);
+    }
+
+    // `decided` and `follows` mean something only between episodic memories.
+    // Inference and the insight pass both check this; an explicit caller that
+    // did not would be the one writer able to create the edge the type exists
+    // to exclude.
+    if (!kindsAllowEdge(type, kindOfRow(source), kindOfRow(target))) {
+      return json({ ok: false, error: kindMismatchMessage(type), code: "kind_not_allowed" }, 400);
     }
 
     const edge = await createEdge(sourceId, targetId, type, { provenance: "explicit", weight: 1.0, workspaceId: source.workspace_id }, env);
