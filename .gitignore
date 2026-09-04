@@ -16,7 +16,10 @@ coverage/
 docs/*
 !docs/dashboard-architecture.md
 .claude/
-.cursor/*
+# .cursor/** rather than .cursor/* so anything else added anywhere under
+# .cursor stays ignored. Only the shipped memory rule is re-included:
+# scripts/connect-ai-clients.* fetch it from the repo's raw URL for users.
+.cursor/**
 !.cursor/rules/
 !.cursor/rules/second-brain-memory.mdc
 .dev.vars
