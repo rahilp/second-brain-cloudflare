@@ -1,6 +1,4 @@
 import {
-  CAPSULE_CORE_TAG,
-  CAPSULE_PROJECT_TAG_PREFIX,
   CAPSULE_SLOT_TAG_PREFIX,
   capsuleTag,
   slotsForKind,
@@ -11,10 +9,12 @@ import {
   type PromptCapsuleSelection,
   type PromptCapsuleSlot,
 } from "./types";
+import { CAPSULE_TAG_PREFIX } from "../tags/system";
 
 function normalizedTags(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.some(tag => typeof tag !== "string")) return null;
-  return value.map(tag => tag.trim().toLowerCase()).filter(Boolean);
+  // Lowercase only: the SQL prefilter does not trim, so neither may this.
+  return value.map(tag => tag.toLowerCase()).filter(Boolean);
 }
 
 function canonicalStatus(tags: string[]): "canonical" | "ignore" | "invalid" {
@@ -25,7 +25,7 @@ function canonicalStatus(tags: string[]): "canonical" | "ignore" | "invalid" {
 }
 
 function capsuleNamespaceTags(tags: string[]): string[] {
-  return tags.filter(tag => tag === CAPSULE_CORE_TAG || tag.startsWith(CAPSULE_PROJECT_TAG_PREFIX));
+  return tags.filter(tag => tag.startsWith(CAPSULE_TAG_PREFIX));
 }
 
 /**
@@ -105,7 +105,7 @@ export function selectPromptCapsuleEntries(
 
   return {
     sections,
-    invalidEntries: invalidEntries.sort((a, b) => a.entryId.localeCompare(b.entryId)),
+    invalidEntries: invalidEntries.sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0)),
     duplicateSlots,
   };
 }

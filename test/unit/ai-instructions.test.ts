@@ -38,6 +38,7 @@ const MCP_TOOLS = [
   "connections",
   "share",
   "set_status",
+  "get_prompt_capsule",
 ] as const;
 
 describe("AI instruction files (#223 lazy MCP contract)", () => {

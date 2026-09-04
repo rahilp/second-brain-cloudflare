@@ -81,8 +81,9 @@ describe("MCP tools contract (InMemoryTransport)", () => {
         arguments: { kind: "core" },
       });
       expect(result.isError).toBe(true);
-      expect((result.content as { text?: string }[])[0]?.text)
-        .toContain("Prompt Capsule retrieval requires an authenticated identity.");
+      const text = (result.content as { text?: string }[])[0]?.text;
+      expect(text).toContain("Prompt Capsule retrieval requires an authenticated identity.");
+      expect(JSON.parse(text ?? "null")).toMatchObject({ ok: false, code: "unauthenticated", status: 401 });
     });
   });
 

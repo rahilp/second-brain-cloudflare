@@ -48,7 +48,13 @@ export interface PromptCapsuleSection {
 
 export interface PromptCapsuleInvalidEntry {
   entryId: string;
-  reason: "malformed-tags" | "base-tag-mismatch" | "invalid-status" | "invalid-slot" | "empty-content";
+  reason:
+    | "malformed-tags"
+    | "base-tag-mismatch"
+    | "invalid-status"
+    | "invalid-slot"
+    | "empty-content"
+    | "content-too-large";
 }
 
 export interface PromptCapsuleDuplicateSlot {

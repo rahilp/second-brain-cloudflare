@@ -61,6 +61,9 @@ export function serializePromptCapsule(
     throw new RangeError("maxChars is smaller than the empty capsule representation");
   }
 
+  // Once a slot does not fit, every later slot is omitted too, even one small
+  // enough to fit on its own. The emitted sections are therefore always a
+  // prefix of the full priority order, never a subset chosen by size.
   const included: PromptCapsuleSection[] = [];
   let omittedSlots: PromptCapsuleSlot[] = [];
   for (let index = 0; index < normalized.length; index++) {

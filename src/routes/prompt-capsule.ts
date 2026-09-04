@@ -42,9 +42,11 @@ function withoutHeadBody(request: Request, response: Response): Response {
   });
 }
 
-function successHeaders(etag: string): Headers {
+function successHeaders(etag: string, bodyText?: string): Headers {
   const headers = new Headers(CORS_HEADERS);
   headers.set("Content-Type", PROMPT_CAPSULE_MIME);
+  // Set explicitly so HEAD reports the same length GET would send.
+  if (bodyText !== undefined) headers.set("Content-Length", String(new TextEncoder().encode(bodyText).length));
   headers.set("Cache-Control", "private, max-age=0, must-revalidate");
   headers.set("ETag", etag);
   headers.set("Vary", "Authorization");
@@ -61,6 +63,12 @@ export async function handlePromptCapsuleRoutes(
 ): Promise<Response | null> {
   const target = parseTarget(url.pathname);
   if (target === null) return null;
+
+  // Authenticate first so an anonymous caller learns nothing about which ids
+  // or methods this namespace accepts.
+  const auth = await requireIdentity(request, env);
+  if (auth instanceof Response) return withoutHeadBody(request, auth);
+
   if (target === "invalid-project-id") {
     return withoutHeadBody(request, json({
       ok: false,
@@ -68,9 +76,6 @@ export async function handlePromptCapsuleRoutes(
     }, 400));
   }
   if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed();
-
-  const auth = await requireIdentity(request, env);
-  if (auth instanceof Response) return withoutHeadBody(request, auth);
 
   const workspaceRead = readWorkspaceParam(url);
   if (workspaceRead instanceof Response) return withoutHeadBody(request, workspaceRead);
@@ -84,10 +89,12 @@ export async function handlePromptCapsuleRoutes(
     team: url.searchParams.has("team") ? url.searchParams.get("team")! : undefined,
   });
   if (!built.ok) return withoutHeadBody(request, json(built.body, built.status));
-  const headers = successHeaders(built.etag);
 
   if (ifNoneMatchMatches(request.headers.get("If-None-Match"), built.etag)) {
-    return new Response(null, { status: 304, headers });
+    return new Response(null, { status: 304, headers: successHeaders(built.etag) });
   }
-  return new Response(request.method === "HEAD" ? null : built.bodyText, { status: 200, headers });
+  return new Response(request.method === "HEAD" ? null : built.bodyText, {
+    status: 200,
+    headers: successHeaders(built.etag, built.bodyText),
+  });
 }

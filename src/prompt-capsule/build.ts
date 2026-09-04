@@ -1,7 +1,9 @@
 import type { Env } from "../env";
+import { initializeDatabase } from "../db/init";
 import type { Identity } from "../lib/identity";
-import { readTeamParam, scopeWhereForRead } from "../lib/scope";
+import { readTeamParam, scopeWhereForRead, type ScopeClause } from "../lib/scope";
 import { STATUS_PREFIX } from "../memory/status";
+import { readCachedPromptCapsule, writeCachedPromptCapsule } from "./cache";
 import { sha256Hex, strongEtag } from "./etag";
 import { selectPromptCapsuleEntries } from "./select";
 import { serializePromptCapsule } from "./serialize";
@@ -67,50 +69,134 @@ function exactJsonTagNeedle(tag: string): string {
   return JSON.stringify(tag.toLowerCase());
 }
 
-const OVERSIZED_CONTENT_SENTINEL = "x".repeat(PROMPT_CAPSULE_MAX_CHARS + 1);
+function invalidRequest(error: string): PromptCapsuleBuildResult {
+  return { ok: false, status: 400, body: { ok: false, code: "invalid_request", error } };
+}
+
+interface ResolvedCapsuleScope {
+  workspace: "personal" | "company";
+  teamId?: string;
+  scope: ScopeClause;
+}
+
+interface PromptCapsuleCandidateRow {
+  id: string;
+  id_length: number;
+  content: unknown;
+  content_length: number;
+  tags: unknown;
+  tags_length: number;
+}
+
+interface PromptCapsuleD1Snapshot {
+  built: PromptCapsuleBuildResult;
+  /** Revision read in the same D1 batch transaction as the candidate rows. */
+  observedRevision: string | null;
+}
+
+/** Validate the request and resolve the one workspace it reads. No I/O. */
+function resolveCapsuleScope(
+  identity: Identity,
+  request: PromptCapsuleBuildRequest,
+): ResolvedCapsuleScope | PromptCapsuleBuildResult {
+  const workspace = request.workspace ?? "personal";
+  if (request.kind === "project" && !request.projectId) {
+    return invalidRequest("project_id is required for a project capsule");
+  }
+  if (request.kind === "core" && request.projectId !== undefined) {
+    return invalidRequest("project_id is valid only for a project capsule");
+  }
+
+  const teamRead = readTeamParam(request.team, identity, workspace);
+  if (teamRead.error) return invalidRequest(teamRead.error);
+  let teamId = teamRead.teamId;
+  if (workspace === "company" && !teamId) {
+    if (!identity.companyWorkspaceIds.length) {
+      return invalidRequest("No shared team workspace is available");
+    }
+    if (identity.companyWorkspaceIds.length > 1) {
+      return invalidRequest("team is required when you belong to more than one shared workspace");
+    }
+    teamId = identity.companyWorkspaceIds[0];
+  }
+
+  return { workspace, teamId, scope: scopeWhereForRead(identity, { layer: workspace, teamId }) };
+}
 
 /**
  * Build the single canonical Prompt Capsule representation used by both REST
  * and MCP. Authentication is resolved at the edge; this function only accepts
  * an identity-derived scope and never reads request credentials.
+ *
+ * Successful builds are served from KV (see ./cache.ts) keyed by the workspace
+ * id the scope clause binds. A repeat read pays one indexed D1 revision row,
+ * rather than scanning every entry in the workspace.
  */
 export async function buildPromptCapsule(
   env: Env,
   identity: Identity,
   request: PromptCapsuleBuildRequest,
 ): Promise<PromptCapsuleBuildResult> {
-  const workspace = request.workspace ?? "personal";
-  if (request.kind === "project" && !request.projectId) {
-    return { ok: false, status: 400, body: { ok: false, error: "project_id is required for a project capsule" } };
-  }
-  if (request.kind === "core" && request.projectId !== undefined) {
-    return { ok: false, status: 400, body: { ok: false, error: "project_id is valid only for a project capsule" } };
+  const resolved = resolveCapsuleScope(identity, request);
+  if ("ok" in resolved) return resolved;
+
+  // Prompt Capsule caching depends on the D1 revision table and entry triggers.
+  // The ordinary route startup initializes in waitUntil; this one read must wait
+  // so no v2 cache value can be created during a partially applied migration.
+  await initializeDatabase(env);
+
+  // The cache key is the bound workspace id itself, never the layer label. A
+  // scope that binds anything other than exactly one id is not cached.
+  const cacheWorkspaceId = resolved.scope.bindings.length === 1 ? resolved.scope.bindings[0] : null;
+  let cacheRevision: string | null = null;
+  if (cacheWorkspaceId !== null) {
+    const lookup = await readCachedPromptCapsule(
+      env,
+      cacheWorkspaceId,
+      request.kind,
+      { workspace: resolved.workspace, team: resolved.teamId ?? null },
+      request.projectId,
+    );
+    if (lookup.cached) return lookup.cached;
+    cacheRevision = lookup.revision;
   }
 
-  const teamRead = readTeamParam(request.team, identity, workspace);
-  if (teamRead.error) {
-    return { ok: false, status: 400, body: { ok: false, error: teamRead.error } };
+  // If the revision lookup failed, do not ask for it again inside the snapshot
+  // batch: the Capsule itself remains available as an uncached D1 read even
+  // while this derived cache metadata is unavailable.
+  const snapshotWorkspaceId = cacheRevision === null ? null : cacheWorkspaceId;
+  const snapshot = await buildPromptCapsuleFromD1(env, request, resolved, snapshotWorkspaceId);
+  const cacheable = snapshot.built.ok && (
+    request.kind === "core"
+    || snapshot.built.payload.sections.length > 0
+    || snapshot.built.payload.omitted_slots.length > 0
+  );
+  // Project ids are caller-selected. Do not let arbitrary ids create one empty
+  // KV key each; cache a project only after at least one definition exists.
+  if (cacheable && snapshot.built.ok && cacheWorkspaceId !== null) {
+    await writeCachedPromptCapsule(
+      env,
+      cacheWorkspaceId,
+      request.kind,
+      request.projectId,
+      cacheRevision,
+      snapshot.observedRevision,
+      snapshot.built,
+    );
   }
-  let teamId = teamRead.teamId;
-  if (workspace === "company" && !teamId) {
-    if (!identity.companyWorkspaceIds.length) {
-      return { ok: false, status: 400, body: { ok: false, error: "No shared team workspace is available" } };
-    }
-    if (identity.companyWorkspaceIds.length > 1) {
-      return {
-        ok: false,
-        status: 400,
-        body: { ok: false, error: "team is required when you belong to more than one shared workspace" },
-      };
-    }
-    teamId = identity.companyWorkspaceIds[0];
-  }
+  return snapshot.built;
+}
 
+async function buildPromptCapsuleFromD1(
+  env: Env,
+  request: PromptCapsuleBuildRequest,
+  { workspace, teamId, scope }: ResolvedCapsuleScope,
+  cacheWorkspaceId: string | null,
+): Promise<PromptCapsuleD1Snapshot> {
   const baseTag = capsuleTag(request.kind, request.projectId);
-  const scope = scopeWhereForRead(identity, { layer: workspace, teamId });
   // scope-checked: scopeWhereForRead resolves one identity-owned personal/team
   // workspace before the bounded tag scan; tool and route input never becomes SQL.
-  const { results } = await env.DB.prepare(
+  const candidateStatement = env.DB.prepare(
     `SELECT substr(id, 1, ?) AS id,
             length(id) AS id_length,
             substr(content, 1, ?) AS content,
@@ -131,31 +217,51 @@ export async function buildPromptCapsule(
     exactJsonTagNeedle(baseTag),
     exactJsonTagNeedle(`${STATUS_PREFIX}canonical`),
     PROMPT_CAPSULE_MAX_CANDIDATES + 1,
-  ).all<{
-    id: string;
-    id_length: number;
-    content: unknown;
-    content_length: number;
-    tags: unknown;
-    tags_length: number;
-  }>();
+  );
+
+  let results: PromptCapsuleCandidateRow[];
+  let observedRevision: string | null = null;
+  if (cacheWorkspaceId === null) {
+    ({ results } = await candidateStatement.all<PromptCapsuleCandidateRow>());
+  } else {
+    // D1 batch executes as one transaction. Reading the candidates and revision
+    // in that snapshot prevents a concurrent update or Time Travel restore from
+    // making future rows look as though they belonged to an older cache key.
+    const [candidateResult, revisionResult] = await env.DB.batch<Record<string, unknown>>([
+      candidateStatement,
+      env.DB.prepare(
+        `SELECT revision FROM prompt_capsule_revisions WHERE workspace_id = ?`,
+      ).bind(cacheWorkspaceId),
+    ]);
+    results = candidateResult.results as unknown as PromptCapsuleCandidateRow[];
+    const revision = revisionResult.results[0]?.revision;
+    observedRevision = typeof revision === "string" && /^[0-9a-f]{32}$/.test(revision)
+      ? revision
+      : null;
+  }
+
+  const finish = (built: PromptCapsuleBuildResult): PromptCapsuleD1Snapshot => ({
+    built,
+    observedRevision,
+  });
 
   if (results.length > PROMPT_CAPSULE_MAX_CANDIDATES) {
-    return {
+    return finish({
       ok: false,
       status: 409,
       body: {
         ok: false,
+        code: "too_many_candidates",
         error: `Prompt capsule has more than ${PROMPT_CAPSULE_MAX_CANDIDATES} canonical tagged candidates; clean up the capsule tags before retrying`,
       },
-    };
+    });
   }
 
   const oversizedEntryIdCount = results.filter(
     row => Number(row.id_length) > PROMPT_CAPSULE_MAX_ENTRY_ID_CHARS,
   ).length;
   if (oversizedEntryIdCount) {
-    return {
+    return finish({
       ok: false,
       status: 409,
       body: {
@@ -167,24 +273,40 @@ export async function buildPromptCapsule(
           reason: "entry-id-too-large",
         }],
       },
-    };
+    });
+  }
+
+  // A row longer than the whole budget can never be emitted, and its truncated
+  // prefix must never reach normalization (trailing whitespace could collapse it
+  // below the budget and publish a partial entry). Ids are safe to reflect: the
+  // oversized-id check above ran first.
+  const oversizedContent = results.filter(row => Number(row.content_length) > PROMPT_CAPSULE_MAX_CHARS);
+  if (oversizedContent.length) {
+    return finish({
+      ok: false,
+      status: 409,
+      body: {
+        ok: false,
+        code: "invalid_prompt_capsule",
+        error: `Prompt capsule contains ${oversizedContent.length} entry(ies) longer than ${PROMPT_CAPSULE_MAX_CHARS} characters`,
+        invalid_entries: oversizedContent.map(row => ({
+          entry_id: String(row.id ?? ""),
+          reason: "content-too-large",
+        })),
+      },
+    });
   }
 
   const candidates: PromptCapsuleCandidate[] = results.map(row => ({
     id: String(row.id ?? ""),
-    // Never pass a truncated prefix to normalization: trailing whitespace in
-    // that prefix could collapse below the budget and publish a partial entry.
-    // The sentinel is guaranteed to make serialization omit this slot whole.
-    content: Number(row.content_length) > PROMPT_CAPSULE_MAX_CHARS
-      ? OVERSIZED_CONTENT_SENTINEL
-      : row.content,
+    content: row.content,
     tags: Number(row.tags_length) > PROMPT_CAPSULE_MAX_TAG_CHARS
       ? null
       : parseStoredTags(row.tags),
   }));
   const selected = selectPromptCapsuleEntries(request.kind, candidates, request.projectId);
   if (selected.invalidEntries.length || selected.duplicateSlots.length) {
-    return {
+    return finish({
       ok: false,
       status: 409,
       body: {
@@ -200,7 +322,7 @@ export async function buildPromptCapsule(
           entry_ids: slot.entryIds,
         })),
       },
-    };
+    });
   }
 
   const serialized = serializePromptCapsule(request.kind, selected.sections);
@@ -224,10 +346,10 @@ export async function buildPromptCapsule(
     max_chars: serialized.maxChars,
   };
   const bodyText = JSON.stringify(payload, null, 2);
-  return {
+  return finish({
     ok: true,
     payload,
     bodyText,
     etag: await strongEtag("pcv1", bodyText),
-  };
+  });
 }

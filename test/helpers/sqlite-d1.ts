@@ -40,6 +40,11 @@ class SqliteStatement {
     return new SqliteStatement(this.db, this.sql, args);
   }
 
+  /** SQL text retained so batch-aware assertions can inspect its members. */
+  sourceSql(): string {
+    return this.sql;
+  }
+
   async all(): Promise<{ results: unknown[]; success: true; meta: { rows_written: 0 } }> {
     const rows = this.db.prepare(this.sql).all(...(this.args as never[]));
     // SQLite can prove that this SELECT wrote no rows, but it cannot reproduce
@@ -86,6 +91,8 @@ export interface SqliteD1 {
    * since `prepare()` here is only ever followed by a single execution.
    */
   issued: string[];
+  /** SQL members of each collapsed batch, without changing its one-subrequest count. */
+  batches: string[][];
   /** Column names currently on `entries`, straight from SQLite. */
   columns(): string[];
   /** Insert an entry directly, bypassing the capture pipeline. */
@@ -141,6 +148,24 @@ function stripSqlComments(sql: string): string {
   return out;
 }
 
+/** Split top-level schema statements without cutting semicolons inside triggers. */
+function splitSchemaStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = "";
+  let trigger = false;
+  for (const ch of sql) {
+    current += ch;
+    if (!trigger && /^\s*CREATE\s+TRIGGER\b/i.test(current)) trigger = true;
+    if (ch !== ";") continue;
+    if (trigger && !/\bEND\s*;\s*$/i.test(current)) continue;
+    statements.push(current.slice(0, -1));
+    current = "";
+    trigger = false;
+  }
+  if (current.trim()) statements.push(current);
+  return statements;
+}
+
 export function makeSqliteD1({ schema: applySchema = true }: { schema?: boolean } = {}): SqliteD1 {
   const raw = new DatabaseSync(":memory:");
   // The schema uses D1-flavoured DDL; execute it statement by statement so one
@@ -153,7 +178,7 @@ export function makeSqliteD1({ schema: applySchema = true }: { schema?: boolean 
   // comment-aware, so such a file migrates fine in production while silently
   // losing tables here — which is exactly how the whole `users` table (and with
   // it every tenancy test) went missing without a single red test.
-  for (const statement of stripSqlComments(schema).split(";")) {
+  for (const statement of splitSchemaStatements(stripSqlComments(schema))) {
     const sql = statement.trim();
     if (!sql) continue;
     try {
@@ -170,9 +195,11 @@ export function makeSqliteD1({ schema: applySchema = true }: { schema?: boolean 
   }
 
   const issued: string[] = [];
+  const batches: string[][] = [];
 
   return {
     issued,
+    batches,
     db: {
       prepare: (sql: string) => {
         issued.push(sql);
@@ -196,6 +223,15 @@ export function makeSqliteD1({ schema: applySchema = true }: { schema?: boolean 
       // they are replaced by the single entry the platform actually charges for.
       batch: async (statements: SqliteStatement[]) => {
         issued.splice(Math.max(0, issued.length - statements.length), statements.length, "BATCH");
+        // Some tests wrap a prepared statement to instrument run(). Preserve
+        // compatibility with those D1-shaped wrappers while retaining SQL when
+        // either the wrapper or its conventional __inner statement exposes it.
+        batches.push(statements.map((statement) => {
+          const wrapped = statement as SqliteStatement & { __inner?: SqliteStatement };
+          if (typeof wrapped.sourceSql === "function") return wrapped.sourceSql();
+          if (typeof wrapped.__inner?.sourceSql === "function") return wrapped.__inner.sourceSql();
+          return "[wrapped D1 statement]";
+        }));
         const out: { results?: unknown[]; success: true; meta: { rows_written: number } }[] = [];
         for (const statement of statements) out.push(await statement.run());
         return out;

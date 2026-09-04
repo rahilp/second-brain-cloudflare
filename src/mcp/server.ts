@@ -284,7 +284,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         return { content: [{ type: "text", text: `Stored. ID: ${result.id} — resolved contradiction with entry ${result.resolvedConflict}${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
       if (result.status === "contradiction_protected") {
-        return { content: [{ type: "text", text: `Stored as draft (ID: ${result.id}) — conflicts with a canonical memory (${result.canonicalId}), which was kept${result.reason ? `: ${result.reason}` : ""}.` }] };
+        const disposition = result.entryStatus
+          ? `Stored as ${result.entryStatus}`
+          : "Stored without a status pending classification";
+        return { content: [{ type: "text", text: `${disposition} (ID: ${result.id}) — conflicts with a canonical memory (${result.canonicalId}), which was kept${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
       if (result.status === "replaced") {
         return { content: [{ type: "text", text: `Memory updated — new content replaced outdated entry (ID: ${result.id}).` }] };
@@ -488,7 +491,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
   server.registerTool(
     "get_prompt_capsule",
     {
-      description: "Return one deterministic Prompt Capsule and its strong ETag. This read-only tool is for gateways that construct stable prompt prefixes; use recall for query-specific context.",
+      description: "Return one deterministic Prompt Capsule and its strong ETag. This read-only tool is for gateways that construct stable prompt prefixes; use recall for query-specific context. Only entries with canonical status are included: give the entry canonical status in its tags at remember time, or call set_status canonical afterwards.",
       inputSchema: {
         kind: z.enum(["core", "project"]).describe("Capsule kind"),
         project_id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional()
@@ -506,6 +509,8 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
           content: [{ type: "text", text: JSON.stringify({
             ok: false,
             schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            code: "unauthenticated",
+            status: 401,
             error: "Prompt Capsule retrieval requires an authenticated identity.",
           }) }],
         };
@@ -522,6 +527,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
           isError: true,
           content: [{ type: "text", text: JSON.stringify({
             schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            status: built.status,
             ...built.body,
           }) }],
         };

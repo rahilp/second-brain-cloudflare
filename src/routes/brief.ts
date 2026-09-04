@@ -3,6 +3,7 @@ import { json } from "../lib/http";
 import { requireIdentity } from "../lib/identity";
 import { scopeWhere } from "../lib/scope";
 import { INDEXABLE_SQL } from "../capture/lifecycle";
+import { isTopicTagSql } from "../compression/eligibility";
 import { PENDING_INSIGHT_SQL } from "../memory/patterns";
 import { STALE_REVIEW_SQL } from "../memory/stale";
 
@@ -131,10 +132,7 @@ export async function handleBriefRoutes(
     env.DB.prepare(
       `SELECT value AS tag, COUNT(*) AS n FROM entries, json_each(entries.tags)
        WHERE entries.created_at >= ?
-         AND value NOT LIKE 'kind:%' AND value NOT LIKE 'status:%'
-         AND value NOT LIKE 'volatility:%' AND value NOT LIKE 'stale:%'
-         AND value NOT LIKE 'capsule:%' AND value NOT LIKE 'capsule-slot:%'
-         AND value NOT IN ('auto-pattern', 'auto-insight', 'synthesized', 'rolled-up', 'duplicate-candidate')
+         AND ${isTopicTagSql()}
          AND value NOT GLOB '[0-9]*'
          AND ${scope.clause}
        GROUP BY value ORDER BY n DESC LIMIT 6`,

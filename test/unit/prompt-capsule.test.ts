@@ -38,17 +38,23 @@ describe("prompt capsule selection", () => {
     const selected = selectPromptCapsuleEntries("core", [
       candidate("bad-tags", "x", null),
       candidate("multi-base", "x", ["capsule:core", "capsule:project:p1", "capsule-slot:identity", "status:canonical"]),
+      candidate("unknown-base", "x", ["capsule:core", "capsule:typo", "capsule-slot:preferences", "status:canonical"]),
       candidate("wrong-base", "x", ["capsule:project:p1", "capsule-slot:identity", "status:canonical"]),
       candidate("two-statuses", "x", ["capsule:core", "capsule-slot:identity", "status:canonical", "status:draft"]),
       candidate("wrong-slot", "x", ["capsule:core", "capsule-slot:current-state", "status:canonical"]),
       candidate("empty", "  ", ["capsule:core", "capsule-slot:constraints", "status:canonical"]),
+      // Not trimmed: the SQL prefilter matches the exact quoted tag, so the
+      // selector must not accept a padded one the query would have skipped.
+      candidate("padded-slot", "x", ["capsule:core", " capsule-slot:identity", "status:canonical"]),
     ]);
 
     expect(selected.invalidEntries).toEqual([
       { entryId: "bad-tags", reason: "malformed-tags" },
       { entryId: "empty", reason: "empty-content" },
       { entryId: "multi-base", reason: "base-tag-mismatch" },
+      { entryId: "padded-slot", reason: "invalid-slot" },
       { entryId: "two-statuses", reason: "invalid-status" },
+      { entryId: "unknown-base", reason: "base-tag-mismatch" },
       { entryId: "wrong-base", reason: "base-tag-mismatch" },
       { entryId: "wrong-slot", reason: "invalid-slot" },
     ]);
@@ -119,6 +125,21 @@ describe("prompt capsule serialization", () => {
     expect(bounded.complete).toBe(false);
     expect(bounded.text).not.toContain("Never disclose credentials");
     expect(bounded.charCount).toBeLessThanOrEqual(firstOnly.charCount);
+  });
+
+  it("omits every slot after the first one that does not fit, even a later one that would", () => {
+    const withoutMiddle = serializePromptCapsule("core", [identity, constraints]);
+    const preferences: PromptCapsuleSection = {
+      slot: "preferences",
+      sourceEntryId: "mem-preferences",
+      content: "p".repeat(withoutMiddle.charCount),
+    };
+    const bounded = serializePromptCapsule("core", [identity, preferences, constraints], withoutMiddle.charCount);
+
+    expect(bounded.sections.map(section => section.slot)).toEqual(["identity"]);
+    expect(bounded.omittedSlots).toEqual(["preferences", "constraints"]);
+    expect(bounded.complete).toBe(false);
+    expect(bounded.text).not.toContain("Never disclose credentials");
   });
 
   it("rejects invalid budgets, slots, and duplicate slots", () => {
