@@ -98,7 +98,7 @@ export function makeMirrorStore(env: Env, writeCtx: WriteContext = OWNER_WRITE_C
       const cfg = await config();
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, id, content, refreshedTags, row.source as string, now, cfg, writeCtx);
+        newVectorIds = (await storeEntry(env, id, content, refreshedTags, row.source as string, now, cfg, writeCtx)).vectorIds;
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }

@@ -3,7 +3,7 @@ import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { createEdge, inferEdgesOnWrite } from "../graph/edges";
 import { getStatus, withStatus } from "../memory/status";
 import { extractHashtags } from "../text/hashtags";
-import { scheduleClassifyAndTag } from "./classify";
+import { classifyThenInfer, scheduleClassifyAndTag } from "./classify";
 import { checkDuplicateAndContradiction } from "./duplicate";
 import { deprecateEntry } from "./lifecycle";
 import { deleteStaleVectors, reembedOrThrow, storeEntry } from "./store";
@@ -115,7 +115,7 @@ export async function captureEntry(
       if (!protectedTarget) {
         let newVectorIds: string[] | null = null;
         try {
-          newVectorIds = await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg, writeCtx);
+          newVectorIds = (await reembedOrThrow(env, targetId, newContent, existingTags, existingSource, cfg, writeCtx)).vectorIds;
         } catch (e) {
           console.error("Merge re-embed failed — keeping both, target untouched:", e);
         }
@@ -138,7 +138,18 @@ export async function captureEntry(
             await deleteStaleVectors(env, oldVectorIds, newVectorIds);
           } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
 
-          scheduleClassifyAndTag(targetId, newContent, env, ctx, cfg);
+          // The survivor's content just changed, so its graph position should
+          // too. `neighbors` is the answer duplicate detection already got from
+          // Vectorize for this same text, reused rather than asked again — the
+          // merge therefore adds no query and no embed of its own.
+          // inferEdgesOnWrite drops the written id from its own candidates, so
+          // the target needs no filtering. dup.matchId does: the model picks the
+          // merge target and is free to choose the SECOND-best match, leaving
+          // the closest near-duplicate in `neighbors` — and linking the survivor
+          // to that is the junk edge suppression exists to prevent, arriving by
+          // a different door.
+          classifyThenInfer(targetId, newContent, env, ctx, cfg, kind =>
+            inferEdgesOnWrite(targetId, neighbors, env, { suppressId: dup.matchId, newKind: kind }));
 
           return mergeAction.action === "merge"
             ? { status: "merged", id: targetId }
@@ -169,7 +180,10 @@ export async function captureEntry(
   // straight off the back of the save can miss it by one refresh.
   ctx.waitUntil(rememberTags(env, finalTags, writeCtx.workspaceId));
 
-  scheduleClassifyAndTag(id, c, env, ctx, cfg);
+  // A flagged capture is a near-duplicate the writer chose to keep, so the
+  // entry it duplicates is its top neighbour by construction. Linking them
+  // spends an inference slot restating the duplicate-candidate tag.
+  const suppressId = dup.status === "flagged" ? dup.matchId : undefined;
 
   if (contradiction.detected && contradiction.conflicting_id) {
     const conflictId = contradiction.conflicting_id;
@@ -197,6 +211,8 @@ export async function captureEntry(
       } catch (e) {
         console.error("Contradiction count update failed (non-fatal):", e);
       }
+      // This path draws no edges, so there is nothing to chain onto.
+      scheduleClassifyAndTag(id, c, env, ctx, cfg);
       return { status: "contradiction_protected", id, canonicalId: conflictId, reason: contradiction.reason };
     }
 
@@ -223,11 +239,13 @@ export async function captureEntry(
     } catch (e) {
       console.error("Supersedes edge creation failed (non-fatal):", e);
     }
-    ctx.waitUntil(inferEdgesOnWrite(id, neighbors.filter(n => n.id !== conflictId), env).catch(e => console.error("Edge inference failed (non-fatal):", e)));
+    classifyThenInfer(id, c, env, ctx, cfg, kind =>
+      inferEdgesOnWrite(id, neighbors.filter(n => n.id !== conflictId), env, { suppressId, newKind: kind }));
     return { status: "contradiction", id, resolvedConflict: conflictId, reason: contradiction.reason };
   }
 
-  ctx.waitUntil(inferEdgesOnWrite(id, neighbors, env).catch(e => console.error("Edge inference failed (non-fatal):", e)));
+  classifyThenInfer(id, c, env, ctx, cfg, kind =>
+    inferEdgesOnWrite(id, neighbors, env, { suppressId, newKind: kind }));
 
   if (dup.status === "flagged") {
     return { status: "flagged", id, matchId: dup.matchId, score: dup.score };

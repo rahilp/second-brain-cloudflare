@@ -37,6 +37,9 @@ import { createMember, listMembers, listRoster, listTeamWorkspaces, lookupAuditN
 // than fixed: three workspaces for an admin would otherwise put a full page at
 // 103 bindings and fail the whole batch.
 
+/** How many nodes the degree ranking returns: a ranking, not a dump of the graph. */
+const GRAPH_STATS_TOP_DEGREE = 20;
+
 export async function handleAdminRoutes(
   request: Request,
   url: URL,
@@ -652,6 +655,118 @@ export async function handleAdminRoutes(
       unvectorized: (summary?.unvectorized as number) ?? 0,
       vectorize_grace_ms: graceMs(env),
       unclassified: (summary?.unclassified as number) ?? 0,
+    });
+  }
+
+  // GET /stats/graph — the edge-quality audit surface. The type histogram is a
+  // single grouped scan and always runs; the endpoint join, the degree ranking
+  // and the capture-gap histogram each cost their own pass over a table, so an
+  // operator polling the cheap half does not pay for them unless ?deep=1.
+  //
+  // ?deep=1 IS A MANUAL AUDIT. DO NOT SCHEDULE OR POLL IT.
+  //
+  // edges has no index on workspace_id, so a deep call is four full scans of
+  // the edge table plus two indexed endpoint seeks per edge — around 5M row
+  // visits at roughly 800k edges, which is D1's entire free daily allowance.
+  // Spending it fails every query on the ACCOUNT, not just this route, until
+  // 00:00 UTC. Run it by hand a few times, not on a timer.
+  //
+  // Indexing edges(workspace_id) would turn the scans into seeks, and was
+  // deliberately NOT taken: it taxes a write on every edge insert against the
+  // 100k/day write budget, to speed up a tool run manually. If this ever does
+  // get polled, cache a rollup then rather than reaching for the index.
+  if (url.pathname === "/stats/graph" && request.method === "GET") {
+    const auth = await requireAdmin(request, env);
+    if (auth instanceof Response) return auth;
+
+    // edges.workspace_id is denormalized from the source entry, so scoping the
+    // edge reads needs no join back to entries.
+    const edgeScope = scopeWhere(auth, undefined, "edges.workspace_id");
+    const typeRows = await env.DB.prepare(
+      `SELECT type, COUNT(*) AS n FROM edges WHERE ${edgeScope.clause} GROUP BY type`,
+    ).bind(...edgeScope.bindings).all();
+    const edgeTypes: Record<string, number> = {};
+    for (const r of typeRows.results as any[]) edgeTypes[r.type as string] = Number(r.n);
+
+    if (url.searchParams.get("deep") !== "1") return json({ ok: true, deep: false, edgeTypes });
+
+    // Edges with an endpoint that is not a live entry OF THE EDGE'S OWN
+    // WORKSPACE.
+    //
+    // Deliberately a SUPERSET of what the nightly sweep removes, so this number
+    // is not expected to reach zero. The sweep deletes only `inferred` edges
+    // whose endpoint has no `entries` row at all; this also counts an explicit
+    // link to a forgotten entry (deleting a link someone stated would lose it)
+    // and an edge whose endpoint exists but in another workspace (corrupt, but
+    // legacy data rather than obviously safe to delete). A reading that GROWS
+    // between sweeps is the signal worth acting on, not a non-zero one.
+    //
+    // Matching on edges.workspace_id rather than on the caller's readable list
+    // does two things. It makes the number mean the same thing for every
+    // caller: scoping the lookup to whoever is asking would count a correct
+    // edge as broken for an admin who cannot read its workspace, and count a
+    // genuinely corrupt cross-workspace edge as fine for one who can. And it
+    // costs no bindings, where repeating the scope list twice more put this
+    // statement at 3x the workspace count — past D1's 100-parameter ceiling for
+    // an admin in ~32 teams, which fails the whole request rather than
+    // degrading.
+    //
+    // It stays scoped for privacy by the outer clause: only edges the caller
+    // may read are counted at all.
+    const invalidEndpoints = await env.DB.prepare(
+      // scope-exempt: the entries reads are existence checks bound to edges.workspace_id, and the outer clause already limits the counted rows to edges the caller may read — so neither can reach or probe for an entry outside the caller's scope
+      `SELECT COUNT(*) AS n FROM edges
+       WHERE ${edgeScope.clause}
+         AND (NOT EXISTS (SELECT 1 FROM entries WHERE entries.id = edges.source_id AND entries.workspace_id = edges.workspace_id)
+           OR NOT EXISTS (SELECT 1 FROM entries WHERE entries.id = edges.target_id AND entries.workspace_id = edges.workspace_id))`,
+    ).bind(...edgeScope.bindings).first() as Record<string, any> | null;
+
+    // Both endpoints count, so a self-edge scores 2 — the same expansion a walk
+    // from that node would see.
+    const degreeRows = await env.DB.prepare(
+      `SELECT id, COUNT(*) AS degree FROM (
+         SELECT source_id AS id FROM edges WHERE ${edgeScope.clause}
+         UNION ALL
+         SELECT target_id AS id FROM edges WHERE ${edgeScope.clause}
+       ) GROUP BY id ORDER BY degree DESC, id ASC LIMIT ${GRAPH_STATS_TOP_DEGREE}`,
+    ).bind(...edgeScope.bindings, ...edgeScope.bindings).all();
+
+    // Bucketed in SQL: one row back however large the brain is. Reads the gap
+    // between consecutive captures, which is what sizes the `follows` window.
+    //
+    // PARTITIONED BY WORKSPACE, because that window is only ever applied within
+    // one: an unpartitioned LAG over a caller who reads three workspaces
+    // interleaves them and reports gaps between captures that no `follows` edge
+    // could ever join, biasing the whole distribution short.
+    const gapScope = scopeWhere(auth);
+    const gaps = await env.DB.prepare(
+      `WITH gaps AS (
+         SELECT created_at - LAG(created_at) OVER (PARTITION BY workspace_id ORDER BY created_at) AS gap
+         FROM entries WHERE ${gapScope.clause}
+       )
+       SELECT SUM(CASE WHEN gap <      300000 THEN 1 ELSE 0 END) AS under5m,
+              SUM(CASE WHEN gap >=     300000 AND gap <    1800000 THEN 1 ELSE 0 END) AS under30m,
+              SUM(CASE WHEN gap >=    1800000 AND gap <    7200000 THEN 1 ELSE 0 END) AS under2h,
+              SUM(CASE WHEN gap >=    7200000 AND gap <   86400000 THEN 1 ELSE 0 END) AS under1d,
+              SUM(CASE WHEN gap >=   86400000 AND gap <  604800000 THEN 1 ELSE 0 END) AS under7d,
+              SUM(CASE WHEN gap >=  604800000 THEN 1 ELSE 0 END) AS older
+       FROM gaps WHERE gap IS NOT NULL`,
+    ).bind(...gapScope.bindings).first() as Record<string, any> | null;
+
+    return json({
+      ok: true,
+      deep: true,
+      edgeTypes,
+      invalidEndpointEdges: Number(invalidEndpoints?.n ?? 0),
+      topDegree: (degreeRows.results as any[]).map(r => ({ id: r.id as string, degree: Number(r.degree) })),
+      gapBuckets: {
+        under5m: Number(gaps?.under5m ?? 0),
+        under30m: Number(gaps?.under30m ?? 0),
+        under2h: Number(gaps?.under2h ?? 0),
+        under1d: Number(gaps?.under1d ?? 0),
+        under7d: Number(gaps?.under7d ?? 0),
+        older: Number(gaps?.older ?? 0),
+      },
     });
   }
 

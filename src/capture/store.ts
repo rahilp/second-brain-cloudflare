@@ -18,6 +18,17 @@ function embedContextForRow(row: { workspace_id?: unknown }, writeCtx: WriteCont
   return { workspaceId: typeof row.workspace_id === "string" ? row.workspace_id : "", actorId: writeCtx.actorId };
 }
 
+/**
+ * What a write left behind: the vector ids now on the row, and the vector of
+ * its first chunk — the one a neighbour query should be run with.
+ *
+ * `values` is null only when there was nothing to embed.
+ */
+export interface StoredEntry {
+  vectorIds: string[];
+  values: number[] | null;
+}
+
 export async function storeEntry(
   env: Env,
   id: string,
@@ -27,7 +38,7 @@ export async function storeEntry(
   now: number,
   config: Readonly<Config> = DEFAULTS,
   writeCtx: WriteContext = OWNER_WRITE_CONTEXT
-): Promise<string[]> {
+): Promise<StoredEntry> {
   // A mirrored record is indexed by its first chunk only. `chunkText` splits at
   // CHUNK_MAX_CHARS and every chunk below gets its own vector, so a long one from
   // an external system produces vectors whose entire content is templated trailer
@@ -83,7 +94,11 @@ export async function storeEntry(
     `UPDATE entries SET vector_ids = ? WHERE id = ?`
   ).bind(JSON.stringify(vectorIds), id).run();
 
-  return vectorIds;
+  // The first chunk's vector rides back out with the ids. Callers that need to
+  // ask "what is this entry near?" straight after writing it — the update path
+  // below — would otherwise embed the very same text a second time, and an
+  // embed is a neuron against a 10k/day budget.
+  return { vectorIds, values: vectors[0]?.values ?? null };
 }
 
 export async function deleteStaleVectors(env: Env, oldIds: string[], newIds: string[]): Promise<void> {
@@ -92,10 +107,10 @@ export async function deleteStaleVectors(env: Env, oldIds: string[], newIds: str
   if (stale.length) await env.VECTORIZE.deleteByIds(stale);
 }
 
-export async function reembedOrThrow(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): Promise<string[]> {
-  const ids = await storeEntry(env, id, content, tags, source, Date.now(), config, writeCtx);
-  if (!ids.length) throw new Error("re-embed produced no vectors");
-  return ids;
+export async function reembedOrThrow(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): Promise<StoredEntry> {
+  const stored = await storeEntry(env, id, content, tags, source, Date.now(), config, writeCtx);
+  if (!stored.vectorIds.length) throw new Error("re-embed produced no vectors");
+  return stored;
 }
 
 /**
@@ -107,7 +122,7 @@ export async function reembedOrThrow(env: Env, id: string, content: string, tags
  * Callers that get null MUST NOT retire the old vectors — they are the entry's
  * only remaining semantic index until Vectorize returns.
  */
-export async function reembedOrDegrade(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): Promise<string[] | null> {
+export async function reembedOrDegrade(env: Env, id: string, content: string, tags: string[], source: string, config: Readonly<Config> = DEFAULTS, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): Promise<StoredEntry | null> {
   try {
     return await reembedOrThrow(env, id, content, tags, source, config, writeCtx);
   } catch (e) {
@@ -203,13 +218,14 @@ export async function updateEntryContent(
   // surface an error, instead of committing new content and then deleting every vector —
   // which would leave the entry silently unsearchable. null means Vectorize is unreachable
   // (#270), not that this embed failed.
-  let newVectorIds: string[] | null;
+  let reembedded: StoredEntry | null;
   try {
-    newVectorIds = await reembedOrDegrade(env, id, finalContent, mergedTags, source, config, embedCtx);
+    reembedded = await reembedOrDegrade(env, id, finalContent, mergedTags, source, config, embedCtx);
   } catch (e) {
     console.error("Re-embed failed — entry left unchanged:", e);
     return { status: "reembed_failed" };
   }
+  const newVectorIds = reembedded?.vectorIds ?? null;
 
   // Safe to commit: either the embed succeeded, or Vectorize is unavailable and the old
   // vectors are kept below rather than retired.
@@ -231,6 +247,21 @@ export async function updateEntryContent(
       await deleteStaleVectors(env, oldVectorIds, newVectorIds);
     } catch (e) {
       console.error("Old vector cleanup failed (non-fatal):", e);
+    }
+  }
+
+  // An edit changes what the entry means, so it changes where the entry belongs
+  // in the graph. Run on the vector the re-embed above already produced, so this
+  // costs one Vectorize query and no second embed.
+  //
+  // Skipped on the keyword-only degrade (#270): with no fresh vector there is
+  // nothing to ask the index with, and querying on the stale one would place the
+  // entry by the text it no longer contains.
+  if (reembedded?.values) {
+    try {
+      await inferEdgesOnWrite(id, await neighborsFromVectorQuery(reembedded.values, env), env);
+    } catch (e) {
+      console.error("Update auto-link failed (non-fatal):", e);
     }
   }
 
@@ -272,7 +303,7 @@ export async function appendToEntry(
   const refreshedTags = volatility ? withVolatility(appendedTags, volatility) : appendedTags;
 
   if (newContent.length > CHUNK_MAX_CHARS) {
-    const newVectorIds = await reembedOrDegrade(env, id, newContent, tags, source, config, embedCtx);
+    const newVectorIds = (await reembedOrDegrade(env, id, newContent, tags, source, config, embedCtx))?.vectorIds ?? null;
     const now = Date.now();
 
     // Both commits below are new logical versions (rewritten body, fresh index) that

@@ -9,7 +9,7 @@ import { applyStatus, forgetEntry } from "../capture/lifecycle";
 import { moveEntry, restampVectorWorkspace } from "../capture/share";
 import { auditEvent } from "../lib/audit";
 import { lookupActorLabels, resolveActorFilter, resolveActorLabel } from "../lib/actors";
-import { createEdge, deleteEdge, edgeLabel, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
+import { createEdge, deleteEdge, edgeLabel, isValidEdgeType, kindMismatchMessage, kindOfRow, kindsAllowEdge, CROSS_WORKSPACE_LINK_MESSAGE } from "../graph/edges";
 import { EDGE_TYPES } from "../graph/types";
 import { getConnections } from "../graph/traverse";
 import type { Identity } from "../lib/identity";
@@ -678,17 +678,30 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       inputSchema: {
         source_id: z.string().describe("Source entry ID"),
         target_id: z.string().describe("Target entry ID"),
-        type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).default("relates_to").describe("Relationship type"),
+        type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).default("relates_to").describe(
+          "How the memories relate, read as: SOURCE <type> TARGET. Direction is not cosmetic — source_id is the end the arrow points FROM. "
+          + "relates_to: they belong together, no direction implied (the default; use it when unsure). "
+          + "caused_by: the source happened BECAUSE of the target. "
+          + "decided: the source is a decision the target carries out or reflects; both memories must be episodic. "
+          + "follows: the source came AFTER the target in the same line of thought; both memories must be episodic. "
+          + "supersedes: the source replaces the target, and the target is treated as deprecated — use only when the older memory is genuinely wrong now. "
+          + "drawn_from: the source was derived from the target, as an insight is from its sources.",
+        ),
       },
     },
     async ({ source_id, target_id, type }) => {
-      const source = await getReadableEntry(env, identity, source_id);
+      // tags ride along on the reads this tool already makes, for the kind gate below.
+      const source = await getReadableEntry(env, identity, source_id, "id, workspace_id, actor_id, tags");
       if (!source) return { content: [{ type: "text", text: `No entry found with ID: ${source_id}` }] };
-      const target = await getReadableEntry(env, identity, target_id);
+      const target = await getReadableEntry(env, identity, target_id, "id, workspace_id, actor_id, tags");
       if (!target) return { content: [{ type: "text", text: `No entry found with ID: ${target_id}` }] };
       // Same rule and same sentence as POST /link — see CROSS_WORKSPACE_LINK_MESSAGE.
       if (source.workspace_id !== target.workspace_id) {
         return { content: [{ type: "text", text: CROSS_WORKSPACE_LINK_MESSAGE }] };
+      }
+      // Same gate as POST /link, same sentence — see kindMismatchMessage.
+      if (isValidEdgeType(type) && !kindsAllowEdge(type, kindOfRow(source), kindOfRow(target))) {
+        return { content: [{ type: "text", text: kindMismatchMessage(type) }] };
       }
 
       const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0, workspaceId: source.workspace_id }, env);
