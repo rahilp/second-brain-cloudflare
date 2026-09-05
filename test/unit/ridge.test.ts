@@ -1,13 +1,14 @@
 /**
- * Ridge's decision logic (plan.md §4), the part of `installer/src/ridge.ts`
- * that does not touch the DOM.
+ * Ridge's decision logic (plan.md §4 / #hardening), the part of
+ * `installer/src/ridge.ts` that does not touch the DOM.
  *
  * `main.ts` resolves `#app` at module scope and cannot be imported outside a
  * webview, and `ridge.ts` mounts into `document.body` the same way — but the
- * seen-set, the typing gate, and the reveal/settle rules are plain functions
- * of plain data, exported alongside the DOM-touching ones for exactly this
- * reason, the same arrangement `rotation-state.ts` and `connection-role.ts`
- * use.
+ * seen-set, the typing gate, the reveal/settle rules, the placement decision,
+ * the reaction throttle, and the pop/swap/pop-out phase machine are all plain
+ * functions of plain data, exported alongside the DOM-touching ones for
+ * exactly this reason, the same arrangement `rotation-state.ts` and
+ * `connection-role.ts` use.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -18,8 +19,19 @@ import {
   isFieldFocused,
   shouldSuppressLine,
   stepRevealCount,
-  nextRidgeState,
+  lingerMs,
+  shouldFireReaction,
+  decideRidgePlacement,
+  nextRidgePhase,
+  RIDGE_CHARACTER_WIDTH,
+  RIDGE_ANCHOR_GAP,
+  RIDGE_EDGE_MARGIN,
+  type AnchorRect,
 } from "../../installer/src/ridge";
+
+function rect(partial: Partial<AnchorRect>): AnchorRect {
+  return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, ...partial };
+}
 
 describe("the ridge.seen.v1 set", () => {
   it("reads an empty or missing record as no lines seen", () => {
@@ -56,8 +68,8 @@ describe("the ridge.seen.v1 set", () => {
   });
 });
 
-describe("the typing() gate", () => {
-  it("treats an input or textarea as a field Ridge must not interrupt", () => {
+describe("the typing() gate — tour lines only", () => {
+  it("treats an input or textarea as a field a tour line must not interrupt", () => {
     expect(isFieldFocused("INPUT")).toBe(true);
     expect(isFieldFocused("TEXTAREA")).toBe(true);
   });
@@ -71,7 +83,7 @@ describe("the typing() gate", () => {
   });
 });
 
-describe("whether a line should be suppressed", () => {
+describe("whether a tour line should be suppressed", () => {
   it("never suppresses an 'always' line, seen or not", () => {
     expect(
       shouldSuppressLine({ sameAsShown: false, persist: "always", alreadySeen: true }),
@@ -124,16 +136,102 @@ describe("the 2-chars-per-frame reveal", () => {
   });
 });
 
-describe("settling to idle once a line is fully said", () => {
-  it("only 'talking' settles — its mouth/bounce keyframes are infinite and would otherwise run forever", () => {
-    expect(nextRidgeState("talking", true)).toBe("idle");
-    expect(nextRidgeState("talking", false)).toBe("talking");
+describe("linger duration", () => {
+  it("gives a tour line the full 7s — it's part of the guided script", () => {
+    expect(lingerMs("tour")).toBe(7000);
+    expect(lingerMs()).toBe(7000);
   });
 
-  it("every other state holds — it's a deliberate, sustained expression a screen chose", () => {
-    for (const state of ["concerned", "celebrating", "thinking", "pointing", "waving", "idle"] as const) {
-      expect(nextRidgeState(state, true)).toBe(state);
-      expect(nextRidgeState(state, false)).toBe(state);
-    }
+  it("gives a reaction line only 5s — it's commentary on something already visible", () => {
+    expect(lingerMs("reaction")).toBe(5000);
+  });
+});
+
+describe("the reaction throttle", () => {
+  it("fires on the first entry into a bucket", () => {
+    expect(shouldFireReaction(null, "weak")).toBe(true);
+  });
+
+  it("never fires twice in a row for the same bucket — ten weak keystrokes, one reaction", () => {
+    expect(shouldFireReaction("weak", "weak")).toBe(false);
+  });
+
+  it("fires again once the bucket actually changes", () => {
+    expect(shouldFireReaction("weak", "breached")).toBe(true);
+    expect(shouldFireReaction("breached", "weak")).toBe(true);
+  });
+
+  it("never fires for a null bucket — nothing to react to", () => {
+    expect(shouldFireReaction("weak", null)).toBe(false);
+    expect(shouldFireReaction(null, null)).toBe(false);
+  });
+
+  it("re-fires on re-entry to a bucket once it was cleared in between", () => {
+    // weak -> null -> weak: the second "weak" is a fresh reaction, not a repeat,
+    // because the caller resets its tracked bucket to null in between.
+    expect(shouldFireReaction(null, "weak")).toBe(true);
+  });
+});
+
+describe("placement — right, then left, then below", () => {
+  const width = RIDGE_CHARACTER_WIDTH + RIDGE_ANCHOR_GAP + RIDGE_EDGE_MARGIN;
+
+  it("stands to the right when there is room", () => {
+    const anchor = rect({ left: 40, right: 300, top: 100, bottom: 140, width: 260, height: 40 });
+    expect(decideRidgePlacement(anchor, 300 + width)).toBe("right");
+  });
+
+  it("falls back to the left when the right side is too tight but the left isn't", () => {
+    const viewport = 900;
+    const anchor = rect({ left: viewport - 10, right: viewport - 5, top: 100, bottom: 140, width: 5, height: 40 });
+    expect(decideRidgePlacement(anchor, viewport)).toBe("left");
+  });
+
+  it("drops below when neither side has room — the installer's 760px minimum width", () => {
+    // .screen caps at 520px centered in a 760px window: ~120px gutter on
+    // each side, well under the ~224px a 200px-wide Ridge plus gaps needs.
+    const anchor = rect({ left: 120, right: 640, top: 100, bottom: 140, width: 520, height: 40 });
+    expect(decideRidgePlacement(anchor, 760)).toBe("below");
+  });
+
+  it("treats the exact clearance threshold as enough room", () => {
+    const anchor = rect({ left: 0, right: 0, top: 0, bottom: 40, width: 0, height: 40 });
+    expect(decideRidgePlacement(anchor, width)).toBe("right");
+    expect(decideRidgePlacement(anchor, width - 1)).toBe("below");
+  });
+});
+
+describe("the pop/swap/linger/pop-out phase machine", () => {
+  it("pops fresh from hidden", () => {
+    expect(nextRidgePhase("hidden", "pop")).toBe("popping");
+  });
+
+  it("advances popping -> revealing -> lingering -> popping-out -> hidden", () => {
+    expect(nextRidgePhase("popping", "popInDone")).toBe("revealing");
+    expect(nextRidgePhase("revealing", "revealDone")).toBe("lingering");
+    expect(nextRidgePhase("lingering", "lingerDone")).toBe("popping-out");
+    expect(nextRidgePhase("popping-out", "popOutDone")).toBe("hidden");
+  });
+
+  it("swaps a new line in place instead of re-popping when already visible", () => {
+    expect(nextRidgePhase("lingering", "swap")).toBe("revealing");
+    expect(nextRidgePhase("revealing", "swap")).toBe("revealing");
+  });
+
+  it("pops fresh (not swap) when a new line arrives while hidden", () => {
+    expect(nextRidgePhase("hidden", "swap")).toBe("popping");
+  });
+
+  it("dismissal pops out from any visible phase, and is a no-op while hidden", () => {
+    expect(nextRidgePhase("popping", "dismiss")).toBe("popping-out");
+    expect(nextRidgePhase("revealing", "dismiss")).toBe("popping-out");
+    expect(nextRidgePhase("lingering", "dismiss")).toBe("popping-out");
+    expect(nextRidgePhase("hidden", "dismiss")).toBe("hidden");
+  });
+
+  it("ignores an event that doesn't apply to the current phase", () => {
+    // revealDone only means something while revealing.
+    expect(nextRidgePhase("lingering", "revealDone")).toBe("lingering");
+    expect(nextRidgePhase("hidden", "popInDone")).toBe("hidden");
   });
 });

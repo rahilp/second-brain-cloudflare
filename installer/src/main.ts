@@ -33,7 +33,7 @@ import {
   type RotateOutcome,
   type RotationStepId,
 } from "./rotation-state";
-import { mount as mountRidge, ridgeSay, hasSeenLine } from "./ridge";
+import { mount as mountRidge, ridgeSay, ridgeOnScreenChange, hasSeenLine, shouldFireReaction } from "./ridge";
 import "./style.css";
 
 interface Account {
@@ -88,6 +88,12 @@ let welcomeIntroTimer: number | undefined;
 let welcomeGuardTimer: number | undefined;
 
 function show(...nodes: (Node | string)[]) {
+  // A screen change never has a line of its own queued yet — the incoming
+  // screen's own `ridgeSay` call (if any) runs synchronously right after this
+  // returns — so any bubble left over from the previous screen is cleared
+  // immediately rather than lingering on an anchor that's about to be gone
+  // (the two provisioning guards render no line of their own at all).
+  ridgeOnScreenChange();
   const screen = h("div", { class: "screen", tabindex: "-1" }, nodes);
   app.replaceChildren(screen);
   screen.focus({ preventScroll: true });
@@ -296,11 +302,12 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
     t("common.back"),
   ]);
   backBtn.addEventListener("click", back);
+  const choiceCards = h("div", { class: "choice-cards" }, [justMe, aTeam]);
   show(
     brand(),
     h("h1", {}, [t("audience.existingTitle")]),
     h("p", { class: "lede" }, [t("audience.existingLede")]),
-    h("div", { class: "choice-cards" }, [justMe, aTeam]),
+    choiceCards,
     backBtn,
     h("p", { class: "footnote" }, [t("audience.existingFootnote")]),
   );
@@ -310,6 +317,7 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
     key: "mascot.existingTeam.repeatQuestion",
     text: t("mascot.existingTeam.repeatQuestion"),
     state: "talking",
+    anchor: () => choiceCards,
     persist: "once",
   });
 }
@@ -692,12 +700,14 @@ function manualEntryScreen(
   // net.
   address.addEventListener("blur", () => {
     if (/^http:\/\//i.test(address.value.trim())) {
+      // Insecure, not merely a wrong guess (#hardening's mapping: a security
+      // concern gets the alarmed face, not the milder concerned one).
       ridgeSay({
         key: "mascot.manualEntry.insecureHttp",
         text: t("mascot.manualEntry.insecureHttp"),
-        state: "concerned",
+        state: "alarmed",
         anchor: () => address,
-        persist: "always",
+        kind: "reaction",
       });
     }
   });
@@ -776,12 +786,14 @@ function manualEntryScreen(
       persist: "always",
     });
   } else if (discoveryFailed) {
-    // Row error.discoverFailed (plan §4.5) — talking, not concerned: landing
-    // here is not a dead end, so it must not read like one.
+    // Row error.discoverFailed (plan §4.5/#hardening): the scan itself broke,
+    // not merely came up empty — concerned, anchored at the box that still
+    // works.
     ridgeSay({
       key: "mascot.error.discoverFailed",
       text: t("mascot.error.discoverFailed"),
-      state: "talking",
+      state: "concerned",
+      anchor: () => address,
       persist: "always",
     });
   } else {
@@ -846,6 +858,15 @@ function passwordScreen() {
   let check: PasswordCheck | null = null;
   let debounce: number | undefined;
 
+  // Ridge's face responds to the password itself, not the keystrokes —
+  // throttled (`shouldFireReaction`) to fire once per state change, so typing
+  // through ten "weak" keystrokes shows the concerned face once, not ten
+  // times. `kind: "reaction"` deliberately bypasses both the typing() focus
+  // gate (he must react while the field is still focused) and the seen-set
+  // (unlike the once-ever arrival greeting below, which shares the same key).
+  type PasswordReactionBucket = "weak" | "breached";
+  let lastPasswordReaction: PasswordReactionBucket | null = null;
+
   const render = () => {
     const s = meterFor(pw.value, check);
     fill.style.width = `${s.pct}%`;
@@ -857,17 +878,6 @@ function passwordScreen() {
     if (breached) {
       hint.textContent = t("password.breachHint");
       hint.className = "hint error";
-      // Row 3b (plan §4.4). Almost always queued rather than shown
-      // immediately — the password field is focused while this fires — which
-      // is exactly the typing() gate doing its job: it settles the moment the
-      // user tabs or clicks away.
-      ridgeSay({
-        key: "mascot.password.breached",
-        text: t("mascot.password.breached"),
-        state: "concerned",
-        anchor: () => generate,
-        persist: "always",
-      });
     } else if (pw.value && confirm.value && !match) {
       hint.textContent = t("password.mismatch");
       hint.className = "hint error";
@@ -879,6 +889,34 @@ function passwordScreen() {
       next.removeAttribute("disabled");
     } else {
       next.setAttribute("disabled", "");
+    }
+
+    const reaction: PasswordReactionBucket | null = breached
+      ? "breached"
+      : pw.value.length > 0 && !longEnough
+        ? "weak"
+        : null;
+    if (shouldFireReaction(lastPasswordReaction, reaction)) {
+      lastPasswordReaction = reaction;
+      if (reaction === "breached") {
+        ridgeSay({
+          key: "mascot.password.breached",
+          text: t("mascot.password.breached"),
+          state: "alarmed",
+          anchor: () => pw,
+          kind: "reaction",
+        });
+      } else {
+        ridgeSay({
+          key: "mascot.password.intro",
+          text: t("mascot.password.intro"),
+          state: "concerned",
+          anchor: () => pw,
+          kind: "reaction",
+        });
+      }
+    } else if (!reaction) {
+      lastPasswordReaction = null;
     }
   };
 
@@ -948,16 +986,15 @@ function passwordScreen() {
     back,
     h("p", { class: "footnote" }, [t("password.footnote")]),
   );
-  // Row 3 (plan §4.4). Wave 2 wired the Back button, so the original "no way
-  // back yet" sentence is dropped — the password-manager line stands alone.
-  // Spec calls this "pointing → talking"; simplified to "talking" with the
-  // spotlight ring doing the pointing, since RidgeState is one pose per line
-  // and "pointing" leaves the mouth static while a line is being read aloud.
+  // Row 3 (plan §4.4): the arrival greeting, once ever. The same key is
+  // reused above as the live "too short" reaction (#hardening) — that call
+  // never sets `persist`, so it is never suppressed by this one having
+  // already marked the key seen.
   ridgeSay({
     key: "mascot.password.intro",
     text: t("mascot.password.intro"),
     state: "talking",
-    anchor: () => generate,
+    anchor: () => pw,
     persist: "once",
   });
   pw.focus();
@@ -1400,10 +1437,14 @@ function detailsScreen() {
       hero: true,
     });
   } else if (connectionRole === "member") {
+    // Empathy face, not talking (#hardening) — the deliberate opposite of
+    // allSetSolo/allSetTeam just above: an owner built something, a member
+    // joined something. "concerned" is what actually renders the SVG's
+    // empathy expression (ridge-svg.ts); "talking" would smile through it.
     ridgeSay({
       key: "mascot.details.allSetMember",
       text: t("mascot.details.allSetMember"),
-      state: "talking",
+      state: "concerned",
       anchor: () => team,
       persist: "once",
     });
@@ -2270,6 +2311,7 @@ function rotateFailNotSentScreen(detail: string) {
     key: "mascot.error.rotateNotSent",
     text: t("mascot.error.rotateNotSent"),
     state: "concerned",
+    anchor: () => retry,
     persist: "always",
   });
 }
@@ -2387,6 +2429,7 @@ function rotateFailLocalScreen(outcome: RotateOutcome | null, detail = "") {
     key: "mascot.error.rotateLocal",
     text: t("mascot.error.rotateLocal"),
     state: "concerned",
+    anchor: () => exit,
     persist: "always",
   });
 }

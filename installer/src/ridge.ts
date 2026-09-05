@@ -1,13 +1,8 @@
-// Ridge, the guided-experience mascot (plan.md §4). Mounted once outside
-// `#app`, so `show()`'s `app.replaceChildren(...)` (main.ts) never touches it
-// and a locale change or screen change never tears it down.
-//
-// Every screen calls `ridgeSay(...)` once, at the end of its render, the same
-// way it assigns `currentScreen`. This module owns the rest: whether that line
-// has already been said (the `ridge.seen.v1` localStorage set), whether it is
-// safe to say right now (never interrupts a focused input — a password field
-// mid-type is the one place this mascot must stay silent), and how it says it
-// (a typed reveal that settles to idle, or instantly under reduced motion).
+// Ridge, the pop-up helper mascot. Absent by default — mounted once outside
+// `#app` (so `show()`'s `app.replaceChildren(...)` in main.ts never touches
+// it), but invisible and out of layout until a screen has something for him
+// to say. `ridgeSay(...)` pops him in beside whatever he's commenting on,
+// holds his line, then pops back out. He never occupies a fixed dock.
 //
 // Pure decision logic is exported separately from the DOM-touching functions
 // below it, for the same reason `rotation-state.ts` and `connection-role.ts`
@@ -17,14 +12,9 @@ import { h } from "./shared";
 import { t } from "./i18n";
 import { RIDGE_SVG } from "./ridge-svg";
 
-export type RidgeState =
-  | "idle"
-  | "talking"
-  | "thinking"
-  | "pointing"
-  | "celebrating"
-  | "concerned"
-  | "waving";
+export type RidgeState = "idle" | "talking" | "thinking" | "celebrating" | "concerned" | "alarmed";
+
+export type RidgeLineKind = "tour" | "reaction";
 
 export interface RidgeLine {
   /** Stable and never reused for a different sentence — the `ridge.seen.v1` key. */
@@ -33,14 +23,23 @@ export interface RidgeLine {
   /** Defaults to "talking": a line is, by construction, Ridge saying something. */
   state?: RidgeState;
   /** Evaluated at render time, never cached — the element it points to may not
-   *  exist yet when `ridgeSay` is called (e.g. before `show()` runs). */
+   *  exist yet when `ridgeSay` is called (e.g. before `show()` runs). Omitted =
+   *  the screen's primary button. */
   anchor?: () => HTMLElement | null;
   /** "once" = first time ever, tracked in localStorage. Omitted or "always" =
-   *  every time this call site runs. */
+   *  every time this call site runs. Only consulted for `kind: "tour"`. */
   persist?: "once" | "always";
-  /** Auto-dismiss after this many ms. Omitted = stays until the next line,
-   *  Escape, or a click on Ridge or the dismiss button. */
+  /** Auto-dismiss this many ms after the line first appears — a hard cap,
+   *  measured from render, not from reveal completion. Omitted = the normal
+   *  kind-based linger below. */
   dismissMs?: number;
+  /** "tour" (default): part of the guided script, gated by the seen-set and
+   *  the typing() focus gate, lingers ~7s once fully revealed. "reaction":
+   *  triggered by something the user just did (a password going weak, a
+   *  breach hit), never gated by the seen-set or focus, lingers ~5s. */
+  kind?: RidgeLineKind;
+  /** A standout moment (first hello, "you're all set") — a slightly larger
+   *  figure, nothing else. */
   hero?: boolean;
 }
 
@@ -72,13 +71,15 @@ export function withSeen(seen: string[], key: string): string[] {
   return hasSeen(seen, key) ? seen : [...seen, key];
 }
 
-/** Whether an element with this tag name is a field Ridge must not interrupt. */
+/** Whether an element with this tag name is a field Ridge must not interrupt
+ *  with a *tour* line. Reaction lines bypass this — they exist specifically to
+ *  respond to what's being typed. */
 export function isFieldFocused(tagName: string | null | undefined): boolean {
   return tagName === "INPUT" || tagName === "TEXTAREA";
 }
 
 /**
- * Whether a line should be silently dropped rather than shown.
+ * Whether a tour line should be silently dropped rather than shown.
  *
  * `sameAsShown` is the load-bearing case: a locale switch re-runs the current
  * screen, which calls `ridgeSay` again with the *same* key, now in the other
@@ -99,30 +100,115 @@ export function stepRevealCount(shown: number, total: number, charsPerTick = 2):
   return Math.min(total, shown + charsPerTick);
 }
 
+/** How long a fully-revealed line stays up before popping out, absent an
+ *  explicit `dismissMs`. Reaction lines get less room — they're commentary on
+ *  something already visible (the strength meter, the field itself), not the
+ *  only place the information lives. */
+export function lingerMs(kind: RidgeLineKind = "tour"): number {
+  return kind === "reaction" ? 5000 : 7000;
+}
+
 /**
- * Only "talking" settles to "idle" once its line is fully revealed — its mouth
- * and body-bounce keyframes are `infinite` (style.css) and would otherwise
- * animate forever after Ridge has finished speaking. Every other state
- * (concerned, celebrating, …) is a deliberate, sustained expression a screen
- * chose and holds until the next line or a dismissal.
+ * The reaction throttle: fires only on an actual change of bucket, and never
+ * repeats the bucket already showing — so a password that stays weak for ten
+ * keystrokes gets the concerned line once, not on every keystroke, and a
+ * bucket that clears (`null`, e.g. back to strong) never fires anything on its
+ * own re-entry until it becomes non-null again.
  */
-export function nextRidgeState(state: RidgeState, revealComplete: boolean): RidgeState {
-  return state === "talking" && revealComplete ? "idle" : state;
+export function shouldFireReaction<B>(prevBucket: B | null, nextBucket: B | null): boolean {
+  return nextBucket !== null && nextBucket !== prevBucket;
+}
+
+/** Available width to either side of the anchor before Ridge (a fixed
+ *  `RIDGE_CHARACTER_WIDTH`, plus a gap off the anchor and a margin off the
+ *  window edge) would crowd it or run off-window. */
+export const RIDGE_CHARACTER_WIDTH = 200;
+export const RIDGE_ANCHOR_GAP = 12;
+export const RIDGE_EDGE_MARGIN = 12;
+
+export type RidgePlacement = "right" | "left" | "below";
+
+export interface AnchorRect {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Where Ridge stands relative to the control he's commenting on. Right first —
+ * reading order, and it keeps him clear of a column of stacked full-width
+ * controls; left as the fallback for an anchor pinned to the window's right
+ * edge; below only when neither side has room, which is the common case at
+ * the installer window's 760px minimum width (plan/#hardening).
+ */
+export function decideRidgePlacement(anchorRect: AnchorRect, viewportWidth: number): RidgePlacement {
+  const required = RIDGE_CHARACTER_WIDTH + RIDGE_ANCHOR_GAP + RIDGE_EDGE_MARGIN;
+  const spaceRight = viewportWidth - anchorRect.right;
+  if (spaceRight >= required) return "right";
+  const spaceLeft = anchorRect.left;
+  if (spaceLeft >= required) return "left";
+  return "below";
+}
+
+/**
+ * The pop/swap/linger/pop-out state machine. A pure reduction so the timers
+ * and CSS-class wiring below it can be tested by asserting on the sequence of
+ * events they feed in, rather than on wall-clock animation behaviour.
+ */
+export type RidgePhase = "hidden" | "popping" | "revealing" | "lingering" | "popping-out";
+export type RidgePhaseEvent =
+  | "pop"
+  | "swap"
+  | "popInDone"
+  | "revealDone"
+  | "lingerDone"
+  | "popOutDone"
+  | "dismiss";
+
+export function nextRidgePhase(phase: RidgePhase, event: RidgePhaseEvent): RidgePhase {
+  switch (event) {
+    case "pop":
+      return "popping";
+    case "swap":
+      // A new line while hidden pops fresh; a new line while any part of him
+      // is already on screen swaps the bubble in place instead of re-popping.
+      return phase === "hidden" ? "popping" : "revealing";
+    case "popInDone":
+      return phase === "popping" ? "revealing" : phase;
+    case "revealDone":
+      return phase === "revealing" ? "lingering" : phase;
+    case "lingerDone":
+      return phase === "lingering" ? "popping-out" : phase;
+    case "popOutDone":
+      return phase === "popping-out" ? "hidden" : phase;
+    case "dismiss":
+      return phase === "hidden" ? "hidden" : "popping-out";
+    default:
+      return phase;
+  }
 }
 
 // ── DOM-touching module state ────────────────────────────────────────────────
 
 let mounted = false;
-let dockEl: HTMLElement;
+let rootEl: HTMLElement;
+let figureEl: HTMLElement;
 let bubbleEl: HTMLElement;
 let bubbleTextEl: HTMLElement;
-let spotlightEl: HTMLElement;
 
+let phase: RidgePhase = "hidden";
 let pendingLine: RidgeLine | null = null;
 let currentKey: string | null = null;
 let currentAnchor: (() => HTMLElement | null) | undefined;
-let dismissTimer: number | undefined;
+
 let revealFrame: number | undefined;
+let lingerTimer: number | undefined;
+let capTimer: number | undefined;
+let popInEndHandler: (() => void) | undefined;
+let popOutEndHandler: (() => void) | undefined;
 
 function loadSeen(): string[] {
   try {
@@ -147,19 +233,85 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-function positionSpotlight(anchor: (() => HTMLElement | null) | undefined): void {
-  const el = anchor?.();
-  if (!el) {
-    spotlightEl.hidden = true;
-    return;
+function setPhase(next: RidgePhase): void {
+  phase = next;
+  rootEl.dataset.ridgePhase = next;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
+/** Explicit anchor when given; otherwise the screen's primary button, then
+ *  the screen itself, so a screen with nothing else at least gets a sane
+ *  place to stand rather than the window's corner. */
+function resolveAnchorEl(anchorFn?: () => HTMLElement | null): HTMLElement | null {
+  const explicit = anchorFn?.();
+  if (explicit) return explicit;
+  return (
+    document.querySelector<HTMLElement>(".screen .btn-primary") ??
+    document.querySelector<HTMLElement>(".screen")
+  );
+}
+
+/** Positions the (already-visible, already-sized) root against the anchor,
+ *  then nudges the bubble back on-screen if it would run off an edge —
+ *  the bubble can be up to 260px wide against a 200px figure, so it is
+ *  measured after the fact rather than assumed to fit. */
+function position(anchorFn?: () => HTMLElement | null): void {
+  const anchorEl = resolveAnchorEl(anchorFn);
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const rect: AnchorRect = anchorEl
+    ? anchorEl.getBoundingClientRect()
+    : { top: vh / 2, bottom: vh / 2, left: vw / 2, right: vw / 2, width: 0, height: 0 };
+
+  const placement = decideRidgePlacement(rect, vw);
+  rootEl.dataset.ridgePlacement = placement;
+
+  const figW = figureEl.offsetWidth || RIDGE_CHARACTER_WIDTH;
+  const figH = figureEl.offsetHeight || Math.round((RIDGE_CHARACTER_WIDTH * 665) / 950);
+
+  let left: number;
+  let top: number;
+  if (placement === "right") {
+    left = rect.right + RIDGE_ANCHOR_GAP;
+    top = rect.top + rect.height / 2 - figH / 2;
+  } else if (placement === "left") {
+    left = rect.left - RIDGE_ANCHOR_GAP - figW;
+    top = rect.top + rect.height / 2 - figH / 2;
+  } else {
+    left = rect.left + rect.width / 2 - figW / 2;
+    top = rect.bottom + RIDGE_ANCHOR_GAP;
   }
-  const rect = el.getBoundingClientRect();
-  const pad = 4;
-  spotlightEl.style.left = `${rect.left - pad}px`;
-  spotlightEl.style.top = `${rect.top - pad}px`;
-  spotlightEl.style.width = `${rect.width + pad * 2}px`;
-  spotlightEl.style.height = `${rect.height + pad * 2}px`;
-  spotlightEl.hidden = false;
+
+  top = clamp(top, RIDGE_EDGE_MARGIN, vh - figH - RIDGE_EDGE_MARGIN);
+  left = clamp(left, RIDGE_EDGE_MARGIN, vw - figW - RIDGE_EDGE_MARGIN);
+  rootEl.style.left = `${left}px`;
+  rootEl.style.top = `${top}px`;
+
+  requestAnimationFrame(clampBubbleIntoViewport);
+}
+
+/** The figure's box is placed precisely; the bubble hangs off it by CSS and
+ *  can be wider than the figure or long enough to clear the top of a short
+ *  window. Nudges the whole root, so the bubble's tail stays pointed at him. */
+function clampBubbleIntoViewport(): void {
+  if (phase === "hidden") return;
+  const rect = bubbleEl.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let dx = 0;
+  let dy = 0;
+  if (rect.left < RIDGE_EDGE_MARGIN) dx = RIDGE_EDGE_MARGIN - rect.left;
+  else if (rect.right > vw - RIDGE_EDGE_MARGIN) dx = vw - RIDGE_EDGE_MARGIN - rect.right;
+  if (rect.top < RIDGE_EDGE_MARGIN) dy = RIDGE_EDGE_MARGIN - rect.top;
+  else if (rect.bottom > vh - RIDGE_EDGE_MARGIN) dy = vh - RIDGE_EDGE_MARGIN - rect.bottom;
+  if (!dx && !dy) return;
+  const left = parseFloat(rootEl.style.left || "0");
+  const top = parseFloat(rootEl.style.top || "0");
+  rootEl.style.left = `${left + dx}px`;
+  rootEl.style.top = `${top + dy}px`;
 }
 
 function cancelReveal(): void {
@@ -169,17 +321,16 @@ function cancelReveal(): void {
   }
 }
 
-function runTypedReveal(text: string, state: RidgeState): void {
+function runTypedReveal(text: string, onDone: () => void): void {
   cancelReveal();
   bubbleTextEl.textContent = "";
   let shown = 0;
   const step = () => {
     shown = stepRevealCount(shown, text.length);
     bubbleTextEl.textContent = text.slice(0, shown);
-    const complete = shown >= text.length;
-    if (complete) {
+    if (shown >= text.length) {
       revealFrame = undefined;
-      dockEl.dataset.ridgeState = nextRidgeState(state, true);
+      onDone();
     } else {
       revealFrame = requestAnimationFrame(step);
     }
@@ -187,44 +338,109 @@ function runTypedReveal(text: string, state: RidgeState): void {
   revealFrame = requestAnimationFrame(step);
 }
 
-function renderBubble(line: RidgeLine, instant: boolean): void {
-  window.clearTimeout(dismissTimer);
-  dismissTimer = undefined;
+/** Ends the current appearance. `event` distinguishes a natural linger
+ *  timeout from an explicit dismissal only for the pure phase reduction above —
+ *  both end up in the same place: fade out, then fully hidden. */
+function beginPopOut(event: "dismiss" | "lingerDone"): void {
+  if (phase === "hidden" || phase === "popping-out") return;
+  window.clearTimeout(lingerTimer);
+  window.clearTimeout(capTimer);
+  cancelReveal();
+  if (popInEndHandler) {
+    figureEl.removeEventListener("animationend", popInEndHandler);
+    popInEndHandler = undefined;
+  }
+  setPhase(nextRidgePhase(phase, event));
 
-  const state: RidgeState = line.state ?? "talking";
-  dockEl.dataset.ridgeState = state;
-  dockEl.classList.toggle("ridge--hero", !!line.hero);
-
-  currentAnchor = line.anchor;
-  positionSpotlight(line.anchor);
-
-  bubbleEl.hidden = false;
-
-  if (instant || prefersReducedMotion()) {
-    cancelReveal();
-    bubbleTextEl.textContent = line.text;
-    dockEl.dataset.ridgeState = nextRidgeState(state, true);
+  const finish = () => {
+    popOutEndHandler = undefined;
+    setPhase(nextRidgePhase(phase, "popOutDone"));
+    bubbleTextEl.textContent = "";
+    currentKey = null;
+    currentAnchor = undefined;
+  };
+  if (prefersReducedMotion()) {
+    finish();
   } else {
-    runTypedReveal(line.text, state);
+    popOutEndHandler = finish;
+    rootEl.addEventListener("animationend", finish, { once: true });
+  }
+}
+
+function renderLine(line: RidgeLine, sameAsShown: boolean, kind: RidgeLineKind): void {
+  window.clearTimeout(lingerTimer);
+  window.clearTimeout(capTimer);
+  if (popOutEndHandler) {
+    rootEl.removeEventListener("animationend", popOutEndHandler);
+    popOutEndHandler = undefined;
+  }
+  if (popInEndHandler) {
+    figureEl.removeEventListener("animationend", popInEndHandler);
+    popInEndHandler = undefined;
   }
 
+  const state: RidgeState = line.state ?? "talking";
+  rootEl.dataset.ridgeState = state;
+  rootEl.classList.toggle("ridge--hero", !!line.hero);
+
+  const wasHidden = phase === "hidden";
+  const reduced = prefersReducedMotion();
+
+  const onRevealDone = () => {
+    setPhase(nextRidgePhase(phase, "revealDone"));
+    if (!line.dismissMs) {
+      lingerTimer = window.setTimeout(() => beginPopOut("lingerDone"), lingerMs(kind));
+    }
+  };
+
+  const reveal = () => {
+    if (reduced || sameAsShown) {
+      cancelReveal();
+      bubbleTextEl.textContent = line.text;
+      onRevealDone();
+    } else {
+      runTypedReveal(line.text, onRevealDone);
+    }
+  };
+
+  setPhase(nextRidgePhase(phase, wasHidden ? "pop" : "swap"));
+  position(line.anchor);
+
   if (line.dismissMs) {
-    dismissTimer = window.setTimeout(() => ridgeDismiss(), line.dismissMs);
+    capTimer = window.setTimeout(() => beginPopOut("dismiss"), line.dismissMs);
+  }
+
+  if (wasHidden && !reduced) {
+    popInEndHandler = () => {
+      popInEndHandler = undefined;
+      setPhase(nextRidgePhase(phase, "popInDone"));
+      reveal();
+    };
+    figureEl.addEventListener("animationend", popInEndHandler, { once: true });
+  } else {
+    if (phase === "popping") setPhase(nextRidgePhase(phase, "popInDone"));
+    reveal();
   }
 }
 
 function present(line: RidgeLine): void {
-  const sameAsShown = currentKey === line.key;
-  const seen = loadSeen();
-  if (shouldSuppressLine({ sameAsShown, persist: line.persist, alreadySeen: hasSeen(seen, line.key) })) {
-    ridgeDismiss();
-    return;
+  const kind: RidgeLineKind = line.kind ?? "tour";
+  const sameAsShown = currentKey === line.key && phase !== "hidden";
+
+  if (kind === "tour") {
+    const seen = loadSeen();
+    if (shouldSuppressLine({ sameAsShown, persist: line.persist, alreadySeen: hasSeen(seen, line.key) })) {
+      ridgeDismiss();
+      return;
+    }
+    if (!sameAsShown && line.persist === "once") {
+      saveSeen(withSeen(seen, line.key));
+    }
   }
-  if (!sameAsShown && line.persist === "once") {
-    saveSeen(withSeen(seen, line.key));
-  }
+
   currentKey = line.key;
-  renderBubble(line, sameAsShown);
+  currentAnchor = line.anchor;
+  renderLine(line, sameAsShown, kind);
 }
 
 function isFieldActive(): boolean {
@@ -244,11 +460,11 @@ export function mount(): void {
   if (mounted) return;
   mounted = true;
 
-  dockEl = h("div", { class: "ridge", "data-ridge-state": "idle" });
+  rootEl = h("div", { class: "ridge", "data-ridge-phase": "hidden", "data-ridge-state": "idle" });
 
-  const avatarBtn = h("button", { class: "ridge-avatar-btn", "aria-hidden": "true", tabindex: "-1" });
-  avatarBtn.innerHTML = RIDGE_SVG;
-  avatarBtn.addEventListener("click", () => ridgeDismiss());
+  figureEl = h("button", { class: "ridge-figure", "aria-hidden": "true", tabindex: "-1" });
+  figureEl.innerHTML = RIDGE_SVG;
+  figureEl.addEventListener("click", () => ridgeDismiss());
 
   bubbleTextEl = h("p", { class: "ridge-bubble__text", "aria-live": "polite", "aria-atomic": "true" }, [
     "",
@@ -262,13 +478,9 @@ export function mount(): void {
     dismissBtn,
     h("div", { class: "ridge-bubble__tail" }),
   ]);
-  bubbleEl.hidden = true;
 
-  dockEl.append(avatarBtn, bubbleEl);
-  spotlightEl = h("div", { class: "ridge-spotlight" });
-  spotlightEl.hidden = true;
-
-  document.body.append(dockEl, spotlightEl);
+  rootEl.append(figureEl, bubbleEl);
+  document.body.append(rootEl);
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") ridgeDismiss();
@@ -279,13 +491,27 @@ export function mount(): void {
   document.addEventListener("focusout", () => {
     window.setTimeout(flushPending, 0);
   });
-  window.addEventListener("resize", () => positionSpotlight(currentAnchor));
+  // Clicking the control he's standing next to is still "engaging with the
+  // thing Ridge is talking about", not walking away from him.
+  document.addEventListener("pointerdown", (e) => {
+    if (phase === "hidden") return;
+    const target = e.target as Node;
+    if (rootEl.contains(target)) return;
+    const anchorEl = currentAnchor?.();
+    if (anchorEl?.contains(target)) return;
+    ridgeDismiss();
+  });
+  window.addEventListener("resize", () => {
+    if (phase !== "hidden") position(currentAnchor);
+  });
 }
 
-/** The one entry point every screen calls, once, at the end of its render. */
+/** The one entry point every screen calls, once, at the end of its render, plus
+ *  ad hoc reaction call sites (a password going weak, a breach hit). */
 export function ridgeSay(line: RidgeLine): void {
   if (!mounted) mount();
-  if (isFieldActive()) {
+  const kind = line.kind ?? "tour";
+  if (kind === "tour" && isFieldActive()) {
     pendingLine = line;
     return;
   }
@@ -294,22 +520,36 @@ export function ridgeSay(line: RidgeLine): void {
 
 export function ridgeDismiss(): void {
   if (!mounted) return;
-  cancelReveal();
-  window.clearTimeout(dismissTimer);
-  dismissTimer = undefined;
-  bubbleEl.hidden = true;
-  spotlightEl.hidden = true;
-  dockEl.classList.remove("ridge--hero");
-  dockEl.dataset.ridgeState = "idle";
-  currentKey = null;
-  currentAnchor = undefined;
+  pendingLine = null;
+  beginPopOut("dismiss");
 }
 
-/** An escape hatch to change pose without a new line — exported per plan §4.3;
- *  no v1 call site needs it, but a bubble already on screen may in v2. */
-export function ridgeState(state: RidgeState): void {
+/** A screen change never has a line of its own to say yet — the incoming
+ *  screen's own `ridgeSay` call (if any) runs synchronously right after this,
+ *  in the same tick, so this is a hard reset rather than a graceful pop-out:
+ *  a screen with no line of its own (the two provisioning guards) must not be
+ *  left with the previous screen's bubble pointing at an anchor that no
+ *  longer exists. */
+export function ridgeOnScreenChange(): void {
   if (!mounted) return;
-  dockEl.dataset.ridgeState = state;
+  cancelReveal();
+  window.clearTimeout(lingerTimer);
+  window.clearTimeout(capTimer);
+  if (popOutEndHandler) {
+    rootEl.removeEventListener("animationend", popOutEndHandler);
+    popOutEndHandler = undefined;
+  }
+  if (popInEndHandler) {
+    figureEl.removeEventListener("animationend", popInEndHandler);
+    popInEndHandler = undefined;
+  }
+  pendingLine = null;
+  currentKey = null;
+  currentAnchor = undefined;
+  phase = "hidden";
+  rootEl.dataset.ridgePhase = "hidden";
+  rootEl.classList.remove("ridge--hero");
+  bubbleTextEl.textContent = "";
 }
 
 /** Lets a screen sequence a first-run intro before an always-on line (the
