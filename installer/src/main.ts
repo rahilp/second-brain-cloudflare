@@ -770,7 +770,7 @@ function connectScreen(errorMsg?: string) {
       brand(),
       h("h1", {}, [t("cloudflare.waitingTitle")]),
       h("p", { class: "lede" }, [t("cloudflare.waitingLede")]),
-      h("div", { class: "checklist" }, [
+      h("div", { class: "checklist", role: "status", "aria-live": "polite" }, [
         h("li", { class: "running" }, [
           h("span", { class: "check-icon" }, [h("span", { class: "spinner" })]),
           t("cloudflare.watchingSignIn"),
@@ -848,13 +848,11 @@ function progressSteps(): { id: StepId; label: string }[] {
 }
 
 /** Supplements the icon swap for a screen reader; the icon glyph alone (a
- *  bullet/spinner/check/bang) conveys nothing to VoiceOver (#P0-7). Not run
- *  through `t()`: no catalog key exists for these three words, and this file
- *  may not add one (see the guard-screen actions below for the same limit). */
+ *  bullet/spinner/check/bang) conveys nothing to VoiceOver (#P0-7). */
 function statusWord(status: StepEvent["status"]): string {
-  if (status === "running") return "in progress";
-  if (status === "done") return "done";
-  return "failed";
+  if (status === "running") return t("progress.stepInProgress");
+  if (status === "done") return t("progress.stepDone");
+  return t("progress.stepFailed");
 }
 
 /** The tagged half of `start_provisioning`'s error contract (RUST-1): a plain
@@ -898,7 +896,7 @@ function structuredProvisioningError(e: unknown): StructuredProvisioningError | 
 /// reuse here, since this account was never scanned.
 function existingBrainGuardScreen(err: GuardExistingBrainError) {
   currentScreen = () => existingBrainGuardScreen(err);
-  const connectToIt = h("button", { class: "btn-primary" }, [t("connectExisting.connect")]);
+  const connectToIt = h("button", { class: "btn-primary" }, [t("guard.existingBrainConnect")]);
   connectToIt.addEventListener("click", () => manualEntryScreen(undefined, err.url));
   const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
     t("common.back"),
@@ -906,7 +904,7 @@ function existingBrainGuardScreen(err: GuardExistingBrainError) {
   back.addEventListener("click", () => welcomeScreen());
   show(
     brand(),
-    h("h1", {}, [t("connectExisting.title")]),
+    h("h1", {}, [t("guard.existingBrainTitle")]),
     h("p", { class: "lede" }, [err.message]),
     connectToIt,
     back,
@@ -921,7 +919,7 @@ function existingBrainGuardScreen(err: GuardExistingBrainError) {
 /// that need to branch on it rather than just display it.
 function resourceConflictGuardScreen(err: GuardNameConflictError) {
   currentScreen = () => resourceConflictGuardScreen(err);
-  const chooseAnother = h("button", { class: "btn-primary" }, [t("cloudflare.pickerTitle")]);
+  const chooseAnother = h("button", { class: "btn-primary" }, [t("guard.conflictChooseAnother")]);
   chooseAnother.addEventListener("click", () => connectScreen());
   const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
     t("common.back"),
@@ -929,7 +927,7 @@ function resourceConflictGuardScreen(err: GuardNameConflictError) {
   back.addEventListener("click", () => welcomeScreen());
   show(
     brand(),
-    h("h1", {}, [t("progress.title")]),
+    h("h1", {}, [t("guard.conflictTitle")]),
     h("p", { class: "lede" }, [err.message]),
     chooseAnother,
     back,
@@ -1102,7 +1100,7 @@ async function runWorkerUpdate(errorMsg?: string) {
     brand(),
     h("h1", {}, [t("cloudflare.waitingTitle")]),
     h("p", { class: "lede" }, [t("workerUpdate.waitingLede")]),
-    h("div", { class: "checklist" }, [
+    h("div", { class: "checklist", role: "status", "aria-live": "polite" }, [
       h("li", { class: "running" }, [
         h("span", { class: "check-icon" }, [h("span", { class: "spinner" })]),
         t("cloudflare.watchingSignIn"),

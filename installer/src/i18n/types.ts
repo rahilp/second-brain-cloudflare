@@ -368,6 +368,14 @@ export type Messages = {
     pickerTitle: string;
     pickerLede: string;
   };
+  /** The two `start_provisioning` preflight guards (#P0-1) — `commands.rs`'s
+   *  `ExistingBrainFound` / `ResourceNameConflict` payload variants. */
+  guard: {
+    existingBrainTitle: string;
+    existingBrainConnect: string;
+    conflictTitle: string;
+    conflictChooseAnother: string;
+  };
   progress: {
     title: string;
     lede: string;
@@ -375,6 +383,9 @@ export type Messages = {
     stepMemory: string;
     stepRecall: string;
     stepFinish: string;
+    stepInProgress: string;
+    stepDone: string;
+    stepFailed: string;
   };
   tools: {
     title: string;

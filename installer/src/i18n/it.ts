@@ -599,6 +599,12 @@ export const it: Messages = {
     pickerTitle: "Scegli un account Cloudflare",
     pickerLede: "Scegli l'account che possiederà e ospiterà questo Second Brain.",
   },
+  guard: {
+    existingBrainTitle: "Abbiamo trovato il tuo Second Brain esistente",
+    existingBrainConnect: "Collegati",
+    conflictTitle: "Questo indirizzo è già in uso",
+    conflictChooseAnother: "Scegli un altro account",
+  },
   progress: {
     title: "Creazione del Second Brain",
     lede: "Di solito richiede qualche minuto. Tieni aperta questa finestra mentre creiamo il tuo Second Brain; ti mostreremo ogni passaggio quando termina.",
@@ -606,6 +612,9 @@ export const it: Messages = {
     stepMemory: "Creazione dello spazio di memoria sicuro",
     stepRecall: "Preparazione della ricerca delle tue memorie",
     stepFinish: "Controlli finali",
+    stepInProgress: "in corso",
+    stepDone: "completato",
+    stepFailed: "fallito",
   },
   tools: {
     title: "Collega app AI",

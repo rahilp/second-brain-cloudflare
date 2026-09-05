@@ -613,6 +613,18 @@ export const en: Messages = {
     pickerTitle: "Choose a Cloudflare account",
     pickerLede: "Choose the account that will own and host this Second Brain.",
   },
+  /**
+   * The two `start_provisioning` preflight guards (#P0-1): a Second Brain
+   * already proven to exist on the chosen account, or a fixed resource name
+   * already taken by something unproven. Neither screen ever mutates anything
+   * — that is the whole point of the guard they render for.
+   */
+  guard: {
+    existingBrainTitle: "We found your existing Second Brain",
+    existingBrainConnect: "Connect to it",
+    conflictTitle: "This address is already in use",
+    conflictChooseAnother: "Choose another account",
+  },
   progress: {
     title: "Creating your Second Brain",
     lede: "This usually takes a few minutes. Keep this window open while we create your Second Brain; we'll show each step as it finishes.",
@@ -620,6 +632,12 @@ export const en: Messages = {
     stepMemory: "Creating secure memory storage",
     stepRecall: "Preparing search for your memories",
     stepFinish: "Final checks",
+    /** Appended after the step label as `${label}: ${word}` for a screen
+     *  reader — the icon swap alone (bullet/spinner/check/bang) says nothing
+     *  to VoiceOver (#P0-7). */
+    stepInProgress: "in progress",
+    stepDone: "done",
+    stepFailed: "failed",
   },
   tools: {
     title: "Connect AI apps",
