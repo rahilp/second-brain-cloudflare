@@ -417,7 +417,7 @@ function searchingScreen() {
   ridgeSay({
     key: "mascot.discover.searching",
     text: t("mascot.discover.searching"),
-    state: "thinking",
+    state: "idle",
     persist: "always",
     dismissMs: 8000,
   });
@@ -658,7 +658,7 @@ function unlockBrainScreen(
     ridgeSay({
       key: "mascot.error.wrongCredentialMemberAware",
       text: t("mascot.error.wrongCredentialMemberAware"),
-      state: "concerned",
+      state: "alarmed",
       anchor: () => password,
       persist: "always",
     });
@@ -781,7 +781,7 @@ function manualEntryScreen(
     ridgeSay({
       key: "mascot.error.wrongCredentialMemberAware",
       text: t("mascot.error.wrongCredentialMemberAware"),
-      state: "concerned",
+      state: "alarmed",
       anchor: () => password,
       persist: "always",
     });
@@ -792,7 +792,7 @@ function manualEntryScreen(
     ridgeSay({
       key: "mascot.error.discoverFailed",
       text: t("mascot.error.discoverFailed"),
-      state: "concerned",
+      state: "alarmed",
       anchor: () => address,
       persist: "always",
     });
@@ -910,7 +910,7 @@ function passwordScreen() {
         ridgeSay({
           key: "mascot.password.intro",
           text: t("mascot.password.intro"),
-          state: "concerned",
+          state: "talking",
           anchor: () => pw,
           kind: "reaction",
         });
@@ -1027,7 +1027,7 @@ function connectScreen(errorMsg?: string) {
     ridgeSay({
       key: "mascot.cloudflare.waiting",
       text: t("mascot.cloudflare.waiting"),
-      state: "thinking",
+      state: "idle",
       persist: "always",
       dismissMs: 6000,
     });
@@ -1062,7 +1062,7 @@ function connectScreen(errorMsg?: string) {
     ridgeSay({
       key: "mascot.error.cfSignIn",
       text: t("mascot.error.cfSignIn"),
-      state: "concerned",
+      state: "alarmed",
       anchor: () => signIn,
       persist: "always",
     });
@@ -1304,7 +1304,7 @@ function progressScreen() {
   ridgeSay({
     key: "mascot.progress.intro",
     text: t("mascot.progress.intro"),
-    state: "thinking",
+    state: "idle",
     persist: "always",
     dismissMs: 6000,
   });
@@ -1372,7 +1372,7 @@ function progressScreen() {
       ridgeSay({
         key: "mascot.error.provisioningHonest",
         text: t("mascot.error.provisioningHonest"),
-        state: "concerned",
+        state: "alarmed",
         anchor: () => retry,
         persist: "always",
       });
@@ -1437,14 +1437,15 @@ function detailsScreen() {
       hero: true,
     });
   } else if (connectionRole === "member") {
-    // Empathy face, not talking (#hardening) — the deliberate opposite of
-    // allSetSolo/allSetTeam just above: an owner built something, a member
-    // joined something. "concerned" is what actually renders the SVG's
-    // empathy expression (ridge-svg.ts); "talking" would smile through it.
+    // Calm spoken delivery, not a celebration and not the empathy frown —
+    // the user read that frown as angry, and joining a team is good news:
+    // an owner built something, a member joined something. "talking" keeps
+    // it warm and chatty; the line's wording (not the face) carries the
+    // no-party restraint.
     ridgeSay({
       key: "mascot.details.allSetMember",
       text: t("mascot.details.allSetMember"),
-      state: "concerned",
+      state: "talking",
       anchor: () => team,
       persist: "once",
     });
@@ -1821,7 +1822,7 @@ function lostPasswordIntroScreen(address: string | null, errorMsg?: string) {
   ridgeSay({
     key: "mascot.rotation.intro",
     text: t("mascot.rotation.intro"),
-    state: "concerned",
+    state: "idle",
     persist: "once",
   });
 }
@@ -2276,7 +2277,7 @@ function rotateBlockedScreen(detail: string) {
   ridgeSay({
     key: "mascot.error.rotateBlocked",
     text: t("mascot.error.rotateBlocked"),
-    state: "concerned",
+    state: "alarmed",
     anchor: () => settings,
     persist: "always",
   });
@@ -2310,7 +2311,7 @@ function rotateFailNotSentScreen(detail: string) {
   ridgeSay({
     key: "mascot.error.rotateNotSent",
     text: t("mascot.error.rotateNotSent"),
-    state: "concerned",
+    state: "alarmed",
     anchor: () => retry,
     persist: "always",
   });
@@ -2385,7 +2386,7 @@ function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
   ridgeSay({
     key: "mascot.error.rotateUnsure",
     text: t("mascot.error.rotateUnsure"),
-    state: "concerned",
+    state: "alarmed",
     anchor: () => secret,
     persist: "always",
   });
@@ -2428,7 +2429,7 @@ function rotateFailLocalScreen(outcome: RotateOutcome | null, detail = "") {
   ridgeSay({
     key: "mascot.error.rotateLocal",
     text: t("mascot.error.rotateLocal"),
-    state: "concerned",
+    state: "alarmed",
     anchor: () => exit,
     persist: "always",
   });
@@ -2558,7 +2559,7 @@ async function passwordChangedElsewhereScreen(errorMsg?: string) {
   ridgeSay({
     key: "mascot.error.staleLocal",
     text: t("mascot.error.staleLocal"),
-    state: "concerned",
+    state: "alarmed",
     anchor: () => password,
     persist: "always",
   });

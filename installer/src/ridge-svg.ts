@@ -64,6 +64,20 @@ export const RIDGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 12
       animation: lensGleam 3s ease-in-out infinite;
     }
 
+    .ridge-arm {
+      transform-box: fill-box;
+      animation: armSway 3s ease-in-out infinite alternate;
+    }
+
+    #left-arm {
+      transform-origin: 95% 15%;
+    }
+
+    #right-arm {
+      transform-origin: 5% 15%;
+      animation-delay: -1.5s;
+    }
+
     @keyframes mascotBob {
       0%, 100% { transform: translateY(0) rotate(0deg); }
       50% { transform: translateY(-8px) rotate(-0.7deg); }
@@ -90,8 +104,14 @@ export const RIDGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 12
       to { transform: scaleX(1.02) scaleY(1.04); }
     }
 
+    @keyframes armSway {
+      from { transform: rotate(-2.5deg); }
+      to { transform: rotate(2.5deg); }
+    }
+
     @media (prefers-reduced-motion: reduce) {
       .mascot-motion,
+      .ridge-arm,
       #sunglasses,
       #lens-reflections,
       #talking-mouth,
@@ -104,28 +124,62 @@ export const RIDGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 12
   <!-- Transparent canvas: no background shape is included. -->
   <g id="character" class="mascot-motion" stroke="#080808" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
     <g id="arms-and-hands" fill="#FF6A00">
-      <path id="left-arm-hand" d="M270 505
-        C218 521 194 562 181 604
-        C166 626 148 632 130 618
-        C106 599 78 609 77 634
-        C53 638 47 667 65 682
-        C56 706 80 729 104 718
-        C119 744 154 739 163 714
-        C198 703 221 676 229 645
-        C240 605 260 580 295 566 Z"/>
-      <path id="right-arm-hand" d="M708 515
-        C762 530 790 567 802 610
-        C812 642 832 663 861 674
-        C875 651 906 649 919 670
-        C944 672 951 701 932 716
-        C940 741 914 762 891 748
-        C871 771 837 758 836 732
-        C802 723 778 699 765 668
-        C748 625 728 594 693 576 Z"/>
-      <path id="left-hand-detail" d="M83 635 C105 631 118 645 121 663" fill="none" stroke-width="12"/>
-      <path id="left-thumb-detail" d="M106 718 C113 692 132 681 151 684" fill="none" stroke-width="12"/>
-      <path id="right-finger-detail" d="M862 674 C859 696 871 711 889 716" fill="none" stroke-width="12"/>
-      <path id="right-thumb-detail" d="M836 731 C849 711 865 704 882 710" fill="none" stroke-width="12"/>
+      <g id="left-arm" class="ridge-arm">
+        <path id="left-arm-hand" d="M270 505
+          C218 521 194 562 181 604
+          C173 620 162 632 149 639
+          C139 632 130 623 122 611
+          L111 595
+          C102 584 87 586 80 597
+          C73 608 77 621 87 629
+          L105 648
+          L77 636
+          C64 630 49 637 45 650
+          C41 664 49 676 62 681
+          L95 693
+          L67 690
+          C53 688 42 698 43 712
+          C44 726 56 735 69 733
+          L99 729
+          L83 740
+          C72 748 72 758 81 765
+          C91 773 104 770 114 762
+          L144 739
+          C169 724 188 704 198 682
+          C213 676 224 660 229 645
+          C240 605 260 580 295 566 Z"/>
+        <path id="left-hand-detail" d="M105 648 C119 655 128 667 130 681
+          M95 693 C109 693 120 700 126 711" fill="none" stroke-width="12"/>
+        <path id="left-thumb-detail" d="M144 739 C139 720 147 703 164 694" fill="none" stroke-width="12"/>
+      </g>
+      <g id="right-arm" class="ridge-arm">
+        <path id="right-arm-hand" d="M708 515
+          C762 530 790 567 802 610
+          C810 626 820 638 831 645
+          C841 638 850 629 858 617
+          L869 601
+          C878 590 893 592 900 603
+          C907 614 903 627 893 635
+          L875 654
+          L903 642
+          C916 636 931 643 935 656
+          C939 670 931 682 918 687
+          L885 699
+          L913 696
+          C927 694 938 704 937 718
+          C936 732 924 741 911 739
+          L881 735
+          L897 746
+          C908 754 908 764 899 771
+          C889 779 876 776 866 768
+          L836 745
+          C811 730 792 710 782 688
+          C775 684 769 677 765 668
+          C748 625 728 594 693 576 Z"/>
+        <path id="right-finger-detail" d="M875 654 C861 661 852 673 850 687
+          M885 699 C871 699 860 706 854 717" fill="none" stroke-width="12"/>
+        <path id="right-thumb-detail" d="M836 745 C841 726 833 709 816 700" fill="none" stroke-width="12"/>
+      </g>
     </g>
 
     <g id="brain">
@@ -200,21 +254,21 @@ export const RIDGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 12
     <g id="sunglasses">
       <path id="left-lens-frame" fill="#080808" d="M277 365
         Q286 346 309 349
-        L455 371
-        Q478 375 474 399
+        L455 353
+        Q478 354 474 379
         L462 470
         Q452 522 398 526
         L368 524
         Q315 517 300 475 Z"/>
-      <path id="right-lens-frame" fill="#080808" d="M526 399
-        Q522 375 545 371
+      <path id="right-lens-frame" fill="#080808" d="M526 379
+        Q522 354 545 353
         L691 349
         Q714 346 723 365
         L700 475
         Q685 517 632 524
         L602 526
         Q548 522 538 470 Z"/>
-      <path id="bridge" d="M468 401 Q500 380 532 401" fill="none" stroke-width="18"/>
+      <path id="bridge" d="M468 382 Q500 363 532 382" fill="none" stroke-width="18"/>
       <path id="left-temple" d="M289 379 L239 388" fill="none" stroke-width="19"/>
       <path id="right-temple" d="M711 379 L761 388" fill="none" stroke-width="19"/>
 

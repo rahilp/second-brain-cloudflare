@@ -782,65 +782,66 @@ export const it: Messages = {
   mascot: {
     dismiss: "Chiudi",
     welcome: {
-      intro: "Ciao, sono Ridge. Nuovo brain o uno esistente — scegli una porta qui sotto.",
-      guard: "Hai già un brain? Usa quel pulsante — uno nuovo qui può romperne la password.",
+      intro: "Ciao, sono Ridge, memoria extra, al tuo servizio. Scegli una porta qui sotto.",
+      guard: "Hai già un brain? Quel pulsante è per te. Uno nuovo qui potrebbe romperne la password.",
     },
     password: {
       intro: "Almeno dodici caratteri, poi dritto in un gestore password.",
-      breached: "Questa è già trapelata. Provane un'altra, o falla generare pulita.",
+      breached: "Questa è già trapelata, si rimedia facile. Provane un'altra, o falla generare a me.",
     },
     cloudflare: {
-      why: "L'unico account vero che ti serve — Cloudflare, gratis, davvero tuo.",
-      waiting: "Prenditi il tuo tempo nel browser — ti aspetto qui.",
-      pickerWhy: "Più di un account qui. Scegli con cura — la creazione parte lì per davvero.",
+      why: "L'unico account vero che ti serve: Cloudflare, gratis, davvero tuo.",
+      waiting: "Prenditi il tuo tempo nel browser, ti aspetto qui.",
+      pickerWhy: "Ci sono più account qui, scegli con cura: la creazione parte lì per davvero.",
     },
     progress: {
-      intro: "Sto creando il tuo spazio — l'unico passaggio che richiede attesa vera.",
+      intro: "Sto creando il tuo spazio, l'unico passaggio in cui puoi finalmente aspettare.",
     },
     tools: {
-      intro: "Claude Code o Cursor installati? Un clic li collega. Il resto, un link.",
+      intro: "Hai Claude Code o Cursor? Un clic li collega. Altrimenti, basta un link.",
     },
     details: {
-      allSetSolo: "Sei attivo. Salva questi due link — li ritrovi in Connessioni.",
-      allSetTeam: "Brain del team attivo. Prendi i link, invita il team dalla scheda Team quando vuoi.",
+      allSetSolo: "Sei pronto. Salva questi due link, li ritrovi in Connessioni.",
+      allSetTeam: "Il brain del team è pronto. Prendi i link, invita il team dalla scheda Team quando vuoi.",
       allSetMember: "Sei dentro. Le tue memorie restano private finché non scegli di condividerle.",
     },
     connect: {
-      fork: "Tuo? L'accesso Cloudflare qui sotto lo trova subito. Invitato? Usa il token.",
+      fork: "È tuo? Accedi con Cloudflare qui sotto e lo troviamo. Sei stato invitato? Usa il token.",
     },
     discover: {
-      searching: "Cerco nel tuo account Cloudflare qualcosa che sembri un Second Brain.",
+      searching: "Frugo nel tuo account Cloudflare in cerca di qualcosa a forma di brain.",
     },
     brainPicker: {
-      one: "Trovato uno — è questo? Sotto c'è l'opzione manuale.",
-      many: "Ne sono comparsi diversi. L'indirizzo li distingue.",
+      one: "Trovato uno, è questo? Se no, l'opzione manuale è proprio qui sotto.",
+      many: "Ne sono comparsi diversi, l'indirizzo li distingue.",
     },
     unlock: {
-      hint: "La password va qui — o il token d'invito, se entri in un team.",
+      hint: "La tua password va qui, o il token d'invito, se entri in un team.",
     },
     manualEntry: {
-      combined: "Incolla l'indirizzo esatto. C'è anche un token? Va nel campo password.",
-      insecureHttp: "Questo è http, non https — probabile refuso. Aggiungi la \"s\" prima di continuare.",
+      combined: "Incolla l'indirizzo esatto. Hai anche un token? Va nel campo password qui sotto.",
+      insecureHttp: "Questo è http, non https: refuso facile. Aggiungi la \"s\" e sei pronto a continuare.",
     },
     existingTeam: {
-      repeatQuestion: "La rivedi? Forse hai risposto altrove — questo brain non ha ancora registrato nulla.",
+      repeatQuestion: "La rivedi? Forse hai risposto altrove, non è ancora arrivato a questo brain.",
     },
     rotation: {
-      intro: "Non hai perso nulla — una password nuova ti fa rientrare. Da qui in poi taccio.",
+      intro: "Non hai perso nulla, una password nuova ti fa rientrare subito. Da qui in poi taccio.",
     },
     error: {
-      provisioningHonest: "Fermato a metà — alcune parti potrebbero esistere. Riprova; controlla la dashboard se si ripete.",
+      provisioningHonest: "Ops, fermato a metà: alcune parti potrebbero esistere. Riprova; dashboard se si ripete.",
       wrongCredentialMemberAware:
-        "Non corrisponde — token vecchio o refuso? Con un token, salta il reset: chiedi un token nuovo.",
-      cfSignIn: "Cloudflare ha detto no. Accedi di nuovo — non è stato toccato nulla.",
-      discoverFailed: "La ricerca automatica non ha funzionato — il campo manuale sotto va benissimo.",
-      rotateNotSent: "Niente è cambiato — la vecchia password funziona ancora. Riprova pure.",
-      rotateUnsure: "Inviata, non confermata. Salva la password mostrata — riprovare è sicuro comunque.",
-      rotateBlocked: "Una ricostruzione sta usando il brain — dalle una spinta in Impostazioni avanzate.",
-      rotateLocal: "Il tuo brain ha già la nuova password — questo computer deve solo recuperare.",
-      staleLocal: "Il tuo brain ha una password nuova da altrove. Nulla si è rotto — serve solo qui.",
-      disconnectPartial: "Alcune non si sono chiuse. Quelle chiuse restano chiuse — riprova solo per il resto.",
-      clipboard: "Non si è copiato — seleziona il testo e prendilo a mano, stavolta.",
+        "Non corrisponde: token vecchio o refuso? Con un token, salta il reset e chiedi al tuo admin.",
+      cfSignIn: "Cloudflare ha detto no, proviamo ad accedere di nuovo. Non è stato toccato nulla.",
+      discoverFailed: "La ricerca automatica non ha trovato nulla, il campo manuale qui sotto va benissimo.",
+      rotateNotSent: "Niente è cambiato, la vecchia password funziona ancora. Riprova pure.",
+      rotateUnsure:
+        "Inviata, ma il tuo brain non ha confermato in tempo. Salva la password mostrata, riprovare è sicuro.",
+      rotateBlocked: "Una ricostruzione tiene occupato il brain, dagli una spinta in Impostazioni avanzate.",
+      rotateLocal: "Il tuo brain ha già la nuova password, questo computer deve solo recuperare terreno.",
+      staleLocal: "Il tuo brain ha una password nuova da altrove. Nulla si è rotto, serve solo qui.",
+      disconnectPartial: "Alcune non si sono chiuse, ma quelle chiuse restano chiuse. Riprova per il resto.",
+      clipboard: "La copia non è andata, stavolta seleziona il testo e prendilo a mano.",
     },
   },
 };
