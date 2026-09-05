@@ -782,86 +782,65 @@ export const it: Messages = {
   mascot: {
     dismiss: "Chiudi",
     welcome: {
-      intro:
-        "Ciao, sono Ridge. Due porte, da qui: crei una memoria completamente nuova, oppure ti colleghi a una che esiste già — la tua, o quella a cui sei stato invitato. In entrambi i casi ti accompagno io.",
-      guard:
-        "Una cosa da chiederti prima: hai già un Second Brain attivo da qualche parte? Se sì, questo pulsante non è quello giusto — \"Ho già un Second Brain\" qui sotto è più sicuro. Crearne uno nuovo nello stesso account Cloudflare di uno esistente può mandare fuori uso la sua password.",
+      intro: "Ciao, sono Ridge. Nuovo brain o uno esistente — scegli una porta qui sotto.",
+      guard: "Hai già un brain? Usa quel pulsante — uno nuovo qui può romperne la password.",
     },
     password: {
-      intro: "Questa vale la pena farla bene — un gestore di password, appena la scegli.",
-      breached:
-        "Questa è comparsa in un elenco di violazioni, quindi non è più privata. Provane un'altra, oppure lascia che sia il generatore a crearne una nuova.",
+      intro: "Almeno dodici caratteri, poi dritto in un gestore password.",
+      breached: "Questa è già trapelata. Provane un'altra, o falla generare pulita.",
     },
     cloudflare: {
-      why:
-        "È l'unico account vero di cui hai bisogno — Cloudflare, gratuito, ed è davvero tuo: le tue memorie vivono nel tuo spazio, non nel nostro. Accedi se ne hai già uno, oppure creane uno nella finestra che si apre.",
-      waiting: "Prenditi il tempo che ti serve nel browser — sarò qui ad aspettarti.",
-      pickerWhy:
-        "Più di un account Cloudflare su questo accesso. Scegli con attenzione — da qui in poi la creazione parte per davvero su quell'account.",
+      why: "L'unico account vero che ti serve — Cloudflare, gratis, davvero tuo.",
+      waiting: "Prenditi il tuo tempo nel browser — ti aspetto qui.",
+      pickerWhy: "Più di un account qui. Scegli con cura — la creazione parte lì per davvero.",
     },
     progress: {
-      intro: "Sto creando il tuo spazio — è l'unico passaggio che richiede tempo vero. Ti avviso appena è pronto.",
+      intro: "Sto creando il tuo spazio — l'unico passaggio che richiede attesa vera.",
     },
     tools: {
-      intro:
-        "Se Claude Code o Cursor risultano installati, un clic li collega. Per tutto il resto basta copiare un link. Niente di tutto questo è obbligatorio ora — lo trovi di nuovo in Connessioni.",
+      intro: "Claude Code o Cursor installati? Un clic li collega. Il resto, un link.",
     },
     details: {
-      allSetSolo:
-        "Fatto — il tuo Second Brain è attivo. Questi due link vale la pena conservarli in un posto sicuro; il resto lo ritrovi sempre in Connessioni.",
-      allSetTeam:
-        "Il brain del team è attivo. Prendi questi due link, poi trova la scheda Team nella dashboard quando vuoi invitare le persone — con calma, quando vuoi.",
-      allSetMember:
-        "Sei dentro. Le tue memorie personali restano private di default — quello che scegli di condividere arriva dove il resto del team può vederlo.",
+      allSetSolo: "Sei attivo. Salva questi due link — li ritrovi in Connessioni.",
+      allSetTeam: "Brain del team attivo. Prendi i link, invita il team dalla scheda Team quando vuoi.",
+      allSetMember: "Sei dentro. Le tue memorie restano private finché non scegli di condividerle.",
     },
     connect: {
-      fork:
-        "Una verifica veloce prima di scegliere: questo Second Brain è tuo, o qualcuno ti ci ha invitato? Tuo → l'accesso Cloudflare qui sotto lo trova subito. Invitato → salta quello, tocca \"Ho un indirizzo o un token di accesso del team\" e usa il token dell'invito al posto di una password.",
+      fork: "Tuo? L'accesso Cloudflare qui sotto lo trova subito. Invitato? Usa il token.",
     },
     discover: {
-      searching:
-        "Sto guardando nel tuo account Cloudflare per trovare qualcosa che risponda come un Second Brain — non dovrebbe volerci molto.",
+      searching: "Cerco nel tuo account Cloudflare qualcosa che sembri un Second Brain.",
     },
     brainPicker: {
-      one: "Ne ho trovato uno — è questo? Se non lo è, c'è un'opzione manuale qui sotto.",
-      many: "Ne sono comparsi diversi. L'indirizzo è l'unica cosa che li distingue — scegli quello che riconosci.",
+      one: "Trovato uno — è questo? Sotto c'è l'opzione manuale.",
+      many: "Ne sono comparsi diversi. L'indirizzo li distingue.",
     },
     unlock: {
-      hint: "La password va qui — oppure, se sei stato invitato in un team, va nello stesso campo il token del tuo invito.",
+      hint: "La password va qui — o il token d'invito, se entri in un team.",
     },
     manualEntry: {
-      combined:
-        "Incolla l'indirizzo esattamente come lo hai — dai dettagli di connessione su un altro computer, da un'email di invito, o da dove l'hai salvato. Se è arrivato un token insieme, va nel campo password qui sotto. Incollalo invece di riscriverlo: i token sono lunghi, e una copia tagliata risulta al brain come una password sbagliata.",
-      insecureHttp:
-        "Questo indirizzo inizia con http, non https — l'app ci proverà comunque, ma la tua password viaggerebbe non cifrata per arrivarci. Quasi certamente una svista di battitura: aggiungi la \"s\".",
+      combined: "Incolla l'indirizzo esatto. C'è anche un token? Va nel campo password.",
+      insecureHttp: "Questo è http, non https — probabile refuso. Aggiungi la \"s\" prima di continuare.",
     },
     existingTeam: {
-      repeatQuestion:
-        "La rivedi? Potresti aver già risposto su un altro computer — questo brain non ha ancora registrato una scelta. Rispondere non annulla quello che hai scelto prima.",
+      repeatQuestion: "La rivedi? Forse hai risposto altrove — questo brain non ha ancora registrato nulla.",
     },
     rotation: {
-      intro:
-        "Non hai perso nulla — una nuova password ti fa rientrare. Da qui in poi mi faccio da parte: queste schermate dicono esattamente cosa è vero a ogni passaggio.",
+      intro: "Non hai perso nulla — una password nuova ti fa rientrare. Da qui in poi taccio.",
     },
     error: {
-      provisioningHonest:
-        "Si è fermato a metà. La configurazione potrebbe aver già creato parte del tuo Second Brain nel tuo account Cloudflare. Riprovare una volta di solito va bene; se continua a succedere, vale la pena controllare la dashboard di Cloudflare prima di riprovare ancora.",
+      provisioningHonest: "Fermato a metà — alcune parti potrebbero esistere. Riprova; controlla la dashboard se si ripete.",
       wrongCredentialMemberAware:
-        "Non corrisponde — è utile saperlo, questo stesso messaggio compare sia per un errore di battitura sia per un token che il tuo amministratore ha già sostituito. Se usi un token di invito e non una password scelta da te, \"Non ho la password\" qui sotto non ti aiuta: è pensato per chi possiede il brain. Per un token non più valido, la soluzione è chiedere all'amministratore un token nuovo.",
-      cfSignIn: "Cloudflare non ha risposto con un sì. Accedi di nuovo — finora non è stato toccato nulla.",
-      discoverFailed:
-        "La ricerca automatica non è riuscita, ma non è un vicolo cieco — il campo manuale qui sotto funziona esattamente allo stesso modo.",
-      rotateNotSent: "Niente è cambiato — la tua vecchia password funziona ancora. Puoi riprovare tranquillamente.",
-      rotateUnsure:
-        "Questo, onestamente, non è ancora chiaro. Salva prima la password mostrata a schermo, poi riprova — così o si completa il cambio o si conferma che è già avvenuto.",
-      rotateBlocked:
-        "In questo momento una ricostruzione sta usando il brain, quindi la password deve aspettare. Le Impostazioni avanzate sono il punto da cui darle una spinta.",
-      rotateLocal: "Il tuo Second Brain ha già la nuova password — è questo computer che deve recuperare.",
-      staleLocal:
-        "Il tuo Second Brain ha ricevuto una nuova password da un altro posto. Non si è rotto nulla — questo computer deve solo aggiornarsi.",
-      disconnectPartial:
-        "Alcune non si sono chiuse del tutto. Quelle chiuse restano chiuse, quindi riprovare serve solo per quelle rimaste.",
-      clipboard: "Non si è copiato — seleziona il testo e prendilo a mano, solo questa volta.",
+        "Non corrisponde — token vecchio o refuso? Con un token, salta il reset: chiedi un token nuovo.",
+      cfSignIn: "Cloudflare ha detto no. Accedi di nuovo — non è stato toccato nulla.",
+      discoverFailed: "La ricerca automatica non ha funzionato — il campo manuale sotto va benissimo.",
+      rotateNotSent: "Niente è cambiato — la vecchia password funziona ancora. Riprova pure.",
+      rotateUnsure: "Inviata, non confermata. Salva la password mostrata — riprovare è sicuro comunque.",
+      rotateBlocked: "Una ricostruzione sta usando il brain — dalle una spinta in Impostazioni avanzate.",
+      rotateLocal: "Il tuo brain ha già la nuova password — questo computer deve solo recuperare.",
+      staleLocal: "Il tuo brain ha una password nuova da altrove. Nulla si è rotto — serve solo qui.",
+      disconnectPartial: "Alcune non si sono chiuse. Quelle chiuse restano chiuse — riprova solo per il resto.",
+      clipboard: "Non si è copiato — seleziona il testo e prendilo a mano, stavolta.",
     },
   },
 };

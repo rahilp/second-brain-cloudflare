@@ -813,86 +813,64 @@ export const en: Messages = {
   mascot: {
     dismiss: "Dismiss",
     welcome: {
-      intro:
-        "Hey — I'm Ridge. Two doors here: build a brand-new memory, or plug into one that already exists — yours, or one someone invited you to. Either way I'll walk you through it.",
-      guard:
-        "One thing worth asking yourself first: do you already have a Second Brain running somewhere? If yes, this button isn't the one you want — \"Already have a Second Brain?\" below is safer. Building fresh in the same Cloudflare account as an existing one can knock out its password.",
+      intro: "Hey, I'm Ridge. New brain, or connect one that exists — pick a door below.",
+      guard: "Already have a brain? Use that button — a new one here can break its password.",
     },
     password: {
-      intro: "This one's worth getting right — a password manager, the moment you pick it.",
-      breached:
-        "That one's shown up in a breach list somewhere, which means it isn't private anymore. Try a different one, or let the generator make a fresh one.",
+      intro: "Twelve-plus characters, then straight into a password manager.",
+      breached: "That one's leaked before. Try another, or let the generator make a clean one.",
     },
     cloudflare: {
-      why:
-        "This is the one real account you'll need — Cloudflare, free, and it's genuinely yours: your memories live in your own space there, not ours. Sign in if you've got one, or create one in the window that opens.",
+      why: "The one real account you need — Cloudflare, free, and genuinely yours.",
       waiting: "Take your time in the browser — I'll be here when you're back.",
-      pickerWhy:
-        "More than one Cloudflare account on that login. Pick carefully — once you continue, this starts building for real in that account.",
+      pickerWhy: "More than one account here. Choose carefully — this builds for real there.",
     },
     progress: {
-      intro:
-        "Building your space now — this is the only step that takes real time. I'll let you know the moment it's done.",
+      intro: "Building your space now — the one step with real waiting involved.",
     },
     tools: {
-      intro:
-        "If Claude Code or Cursor turned up installed, one click connects them. Everything else takes copying one link. None of this is required right now — Connections has it all again later.",
+      intro: "Claude Code or Cursor installed? One click connects them. Else, one link.",
     },
     details: {
-      allSetSolo:
-        "That's it — your Second Brain is live. These two links are worth keeping somewhere safe; everything else you can always find again in Connections.",
-      allSetTeam:
-        "Team brain's up. Grab those two links, then find the Team tab in your dashboard whenever you're ready to invite people — that part's on your own time.",
-      allSetMember:
-        "You're in. Your own memories stay private by default — anything you choose to share lands where the rest of the team can see it.",
+      allSetSolo: "You're live. Save these two links — Connections has them again later.",
+      allSetTeam: "Team brain's up. Grab the links, invite people from the Team tab whenever.",
+      allSetMember: "You're in. Your memories stay private until you choose to share them.",
     },
     connect: {
-      fork:
-        "Quick check before you pick one: is this Second Brain yours, or did someone invite you to theirs? Yours → Cloudflare sign-in below finds it fast. Invited → skip that, tap \"I have an address or team sign-in token,\" and use the token from your invite instead of a password.",
+      fork: "Yours? Cloudflare sign-in below finds it fast. Invited? Use your token instead.",
     },
     discover: {
-      searching:
-        "Looking through your Cloudflare account for anything that answers like a Second Brain — shouldn't take long.",
+      searching: "Scanning your Cloudflare account for anything shaped like a Second Brain.",
     },
     brainPicker: {
-      one: "Found one — is this it? If not, there's a manual option below.",
-      many: "A few turned up. The address is the only thing that tells them apart — pick the one you recognize.",
+      one: "Found one — is this it? Manual option's below if not.",
+      many: "A few turned up. The address is what tells them apart.",
     },
     unlock: {
-      hint: "Password goes here — or, if this is a team you were invited to, the token from your invite email goes in the same box.",
+      hint: "Password goes here — or your invite token, if you're joining a team.",
     },
     manualEntry: {
-      combined:
-        "Paste the address exactly as you have it — from Connection details on another computer, an invite email, or wherever you saved it. If a token came with it, that goes in the password box below. Paste rather than retype — tokens are long, and a clipped copy reads to the brain as a wrong password.",
-      insecureHttp:
-        "That address starts with http, not https — this app will still try it, but your password would travel unencrypted to get there. Almost certainly a typo; add the 's'.",
+      combined: "Paste the address exactly. A token comes with it? Password box, below.",
+      insecureHttp: "That's http, not https — probably a typo. Add the 's' before you continue.",
     },
     existingTeam: {
-      repeatQuestion:
-        "Seeing this again? You may have already answered it on another computer — this brain hasn't recorded a choice yet. Answering doesn't undo anything you picked before.",
+      repeatQuestion: "Seeing this again? Might've answered elsewhere — this brain hasn't recorded one yet.",
     },
     rotation: {
-      intro:
-        "Nothing's lost — a new password gets you back in. I'll stay out of your way for the rest of this; these screens say exactly what's true at each step.",
+      intro: "Nothing's lost — a new password gets you back in. I'll stay quiet from here.",
     },
     error: {
-      provisioningHonest:
-        "That stopped partway through. Setup may have already created some of your Second Brain in your Cloudflare account. Retrying is usually fine once; if it keeps happening, it's worth checking your Cloudflare dashboard before trying again.",
+      provisioningHonest: "Stopped partway — parts may exist. Retry once; check your dashboard if it repeats.",
       wrongCredentialMemberAware:
-        "That didn't match — worth knowing, this same message shows up whether it's a typo, or a token your admin has since replaced. If you're using an invite token rather than a password you chose, \"I don't have my password\" below won't help; that's for the brain's owner. The real fix for a dead token is asking your admin for a new one.",
-      cfSignIn: "Cloudflare didn't come back with a yes. Sign in again — this hasn't touched anything yet.",
-      discoverFailed:
-        "Couldn't search automatically, but that's not a dead end — the manual box below works exactly the same way.",
-      rotateNotSent: "Nothing changed — your old password's still good. Safe to retry.",
-      rotateUnsure:
-        "This one honestly isn't settled yet. Save the password on screen before anything else, then try again — that either finishes the job or confirms it already did.",
-      rotateBlocked:
-        "A rebuild's using the brain right now, so the password has to wait. Advanced Settings is where to nudge that along.",
-      rotateLocal: "Your Second Brain already has the new password — this computer just needs to catch up.",
-      staleLocal:
-        "Your Second Brain got a new password somewhere else. Nothing broke — this computer just needs it too.",
-      disconnectPartial:
-        "Some of those didn't close out. The ones that did are staying closed, so trying again only chases what's left.",
+        "No match — old token, or a typo? Token users: skip password reset, ask your admin instead.",
+      cfSignIn: "Cloudflare said no. Sign in again — nothing's been touched yet.",
+      discoverFailed: "Auto-search struck out — the manual box below works just as well.",
+      rotateNotSent: "Nothing changed — your old password still works. Safe to retry.",
+      rotateUnsure: "Sent, but unconfirmed. Save the password shown — retrying now is safe either way.",
+      rotateBlocked: "A rebuild's using the brain right now — nudge it along in Advanced Settings.",
+      rotateLocal: "Your brain already has the new password — this computer just needs to catch up.",
+      staleLocal: "Your brain got a new password elsewhere. Nothing broke — just needs it here too.",
+      disconnectPartial: "Some didn't close. The ones that did stay closed — retry chases what's left.",
       clipboard: "Didn't copy — select the text and grab it by hand this once.",
     },
   },
