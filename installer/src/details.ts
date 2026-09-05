@@ -10,6 +10,7 @@ import {
   detailCards,
   emailButton,
   h,
+  icon,
   teamCard,
 } from "./shared";
 import { integrationRows, toolRows } from "./shared";
@@ -239,14 +240,14 @@ function updateCard(
   if (!mayUpdate) {
     // Prose, not a disabled button: a greyed-out control reads as "not right
     // now" about something that is not theirs to do at all.
-    return h("div", { class: "card", style: "border-color: var(--accent);" }, [
+    return h("div", { class: "card card--feature" }, [
       label,
       h("div", { class: "url-desc" }, [t("details.updateDescOther")]),
     ]);
   }
   const button = h("button", { class: "btn-primary" }, [t("details.updateButton")]);
   button.addEventListener("click", () => void invoke("begin_worker_update"));
-  return h("div", { class: "card", style: "border-color: var(--accent);" }, [
+  return h("div", { class: "card card--feature" }, [
     label,
     h("div", { class: "url-desc" }, [
       t(ownerUnconfirmed ? "details.updateDescLegacy" : "details.updateDesc"),
@@ -268,7 +269,7 @@ function passwordCard(blocked: boolean): HTMLElement {
   if (!blocked) {
     const change = h("button", { class: "btn-secondary" }, [t("details.passwordButton")]);
     change.addEventListener("click", () => void invoke("begin_password_change"));
-    card.append(h("div", { class: "row-actions", style: "justify-content:flex-end" }, [change]));
+    card.append(h("div", { class: "row-actions row-actions--end" }, [change]));
     return card;
   }
 
@@ -280,14 +281,14 @@ function passwordCard(blocked: boolean): HTMLElement {
   settings.addEventListener("click", () => void invoke("open_settings_window"));
   card.append(
     h("div", { class: "notice" }, [
-      "⚠️",
+      icon("alert"),
       h("div", {}, [
         h("div", { class: "url-label" }, [t("changePassword.blockedTitle")]),
         h("div", {}, [t("changePassword.blockedBody")]),
-        h("div", { style: "margin-top:8px" }, [t("changePassword.blockedEscape")]),
+        h("div", { class: "notice-escape" }, [t("changePassword.blockedEscape")]),
       ]),
     ]),
-    h("div", { class: "row-actions", style: "justify-content:flex-end" }, [settings]),
+    h("div", { class: "row-actions row-actions--end" }, [settings]),
   );
   return card;
 }

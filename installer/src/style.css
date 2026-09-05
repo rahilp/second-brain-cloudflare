@@ -9,12 +9,22 @@
 }
 
 :root {
-  --bg: #ffffff;
+  /* ── Palette ────────────────────────────────────────────────────────────────
+     The mascot's world, as tokens: warm cream paper, crisp ink, orange spent
+     sparingly. Two oranges, and the difference matters — `--accent` is the
+     brand orange and only ever carries decoration (3.2:1 on both surfaces:
+     legal for a non-text mark, not for a control's state); `--accent-btn` is
+     the ink-orange that carries text, borders, focus and every state that has
+     to be read (6.5:1 on paper, 6.7:1 as a white-on-orange button). Anything
+     that means something uses the second one. */
+  --bg: #fffdf9;
   --bg-card: #fcfbf7;
+  --bg-sunken: #ffffff;
   --accent: #fd540a;
   --accent-btn: #a83200;
   --accent-press: #a83200;
   --accent-soft: rgba(253, 84, 10, 0.09);
+  --accent-strong: rgba(253, 84, 10, 0.16);
   --on-accent: #161616;
   --text-primary: #161616;
   --text-secondary: #68635f;
@@ -23,10 +33,58 @@
   --text-dim: var(--text-secondary);
   --border: rgba(22, 22, 22, 0.11);
   --border-strong: rgba(22, 22, 22, 0.48);
+  --border-hover: rgba(22, 22, 22, 0.62);
   --danger: #b42318;
+  --danger-soft: rgba(180, 35, 24, 0.08);
+  --danger-strong: rgba(180, 35, 24, 0.16);
   --ok: #146a42;
+  --ok-soft: rgba(20, 106, 66, 0.12);
+
+  /* ── Spacing ────────────────────────────────────────────────────────────────
+     One 4px scale. Screens used to hand-roll 3/6/9/11/13/14/18/22/26/30px;
+     everything now lands on a step, which is what makes unrelated screens look
+     like the same app. */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 40px;
+
+  /* ── Radii ── generous and sticker-round, four steps plus a pill. */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  /* ── Type ── serif for the one heading, sans for everything that is read. */
   --font-serif: Georgia, "Times New Roman", serif;
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --fs-display: 30px;
+  --fs-title: 21px;
+  --fs-body: 15px;
+  --fs-label: 14px;
+  --fs-sm: 13.5px;
+  --fs-xs: 12.5px;
+  --fs-2xs: 11px;
+
+  /* ── Elevation ── warm and low. Cards sit on the page; they do not float. */
+  --shadow-sm: 0 1px 2px rgba(22, 22, 22, 0.04);
+  --shadow-card: 0 1px 2px rgba(22, 22, 22, 0.04), 0 6px 16px rgba(22, 22, 22, 0.045);
+  --shadow-lift: 0 2px 4px rgba(22, 22, 22, 0.05), 0 12px 28px rgba(22, 22, 22, 0.09);
+  /* The flat drop under a primary button — the one bit of sticker in the
+     button system, and the reason it reads as pressable rather than painted. */
+  --shadow-key: 0 2px 0 rgba(22, 22, 22, 0.14);
+
+  /* ── Focus ── one ring, stated once. A cream gap so it reads on a filled
+     button too, then ink-orange at 6.5:1 against either surface. */
+  --focus-ring: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent-btn);
+  --focus-ring-soft: 0 0 0 3px var(--accent-soft);
+
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   /* Ridge, the guided-experience mascot — aliases onto existing tokens rather
      than new colors, so he never drifts from the app's own palette. */
@@ -55,7 +113,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
+  /* Extra room at the foot, not all round: Ridge is docked bottom-right and a
+     footnote sitting on the same baseline as his mug reads as one object. */
+  padding: var(--s-7) var(--s-7) var(--s-8);
 }
 
 .screen {
@@ -75,142 +135,264 @@ body {
   }
 }
 
+/* The logo as a sticker rather than a watermark: cream disc, the same defined
+   edge every card has, one warm halo. It is the first thing on every screen and
+   used to be the faintest. */
 .brand {
-  width: 68px;
-  height: 68px;
+  width: 76px;
+  height: 76px;
   border-radius: 50%;
-  background: var(--accent-soft);
+  background: var(--bg-card);
+  border: 0.5px solid var(--border-strong);
+  box-shadow: 0 2px 0 rgba(22, 22, 22, 0.05), var(--shadow-card);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto 22px;
+  margin: 0 auto var(--s-6);
   position: relative;
 }
 
 .brand::after {
   content: "";
   position: absolute;
-  inset: -7px;
+  inset: -6px;
   border-radius: 50%;
-  border: 1px solid var(--accent-soft);
+  border: 2px solid var(--accent-soft);
 }
 
 .brand img {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   object-fit: contain;
 }
 
 h1 {
   font-family: var(--font-serif);
-  font-size: 28px;
+  font-size: var(--fs-display);
   font-weight: 500;
-  letter-spacing: -0.015em;
+  line-height: 1.22;
+  letter-spacing: -0.02em;
   text-align: center;
-  margin-bottom: 10px;
+  max-width: 460px;
+  margin: 0 auto var(--s-3);
 }
 
 .lede {
   color: var(--text-secondary);
   text-align: center;
-  max-width: 400px;
-  margin: 0 auto 30px;
+  max-width: 420px;
+  margin: 0 auto var(--s-6);
+}
+
+/* Three screens stack two ledes. The second is a continuation, not a new
+   block, so it closes up rather than sitting a full section away. */
+.lede + .lede {
+  margin-top: calc(var(--s-3) - var(--s-6));
+}
+
+/* ── Icons ───────────────────────────────────────────────────────────────────
+   Inline Lucide SVG (shared.ts `icon`), never emoji: three sizes, and colour
+   inherited from whatever the icon is placed in, so a mark inside a danger
+   notice is danger-red and the same mark on a filled step is white without
+   either call site saying so. */
+.icon {
+  width: 20px;
+  height: 20px;
+  /* Never squeezed by the sentence it sits beside, and no inline baseline gap
+     under it — an svg is replaced content and would otherwise sit on the text
+     baseline with a descender's worth of space below. */
+  flex-shrink: 0;
+  display: block;
+}
+
+.icon--sm {
+  width: 16px;
+  height: 16px;
+}
+
+.icon--lg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Announced by an aria-live ancestor, invisible on screen (main.ts srOnly). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  padding: 0;
+  margin: -1px;
 }
 
 .card {
   background: var(--bg-card);
   border: 0.5px solid var(--border-strong);
-  border-radius: 16px;
-  padding: 20px;
-  margin-bottom: 14px;
+  border-radius: var(--r-lg);
+  padding: var(--s-5);
+  margin-bottom: var(--s-4);
+  box-shadow: var(--shadow-card);
 }
 
+/* The one card that is the point of its screen — a team owner's next move, an
+   available update, a password that exists nowhere else. An ink-orange edge and
+   a warm inner band, rather than a second border colour shouting alongside the
+   first. */
+.card--feature {
+  border-color: var(--accent-btn);
+  box-shadow: var(--shadow-card), inset 0 3px 0 var(--accent-soft);
+}
+
+/* Screen rhythm. main.ts appends siblings into a flat column, so the gap
+   between two kinds of block is stated once here instead of as an inline
+   margin on every screen that happens to stack them. */
+.spacer {
+  height: var(--s-4);
+}
+
+div[role="alert"]:not(:empty) {
+  display: block;
+  margin-top: var(--s-5);
+}
+
+/* Four ranks, and a screen should never show two of the same rank as if they
+   were different: primary (one per screen, filled), choice-card (co-equal
+   doors), secondary (an action inside a card), ghost (leaving, going back,
+   the rarer path). A transparent border on the base keeps every button the
+   same size, so a hover or focus edge never nudges the layout. */
 button {
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 600;
-  border: none;
-  border-radius: 13px;
+  border: 0.5px solid transparent;
+  border-radius: var(--r-md);
   cursor: pointer;
-  transition: background 0.18s, transform 0.12s var(--ease), opacity 0.18s;
+  transition: background 0.18s, border-color 0.18s, color 0.18s,
+    box-shadow 0.18s, transform 0.12s var(--ease), opacity 0.18s;
 }
 
-button:active {
-  transform: scale(0.985);
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.995);
 }
 
 button:disabled {
   opacity: 0.45;
   cursor: default;
   transform: none;
+  box-shadow: none;
 }
 
 .btn-primary {
+  display: block;
   width: 100%;
-  padding: 15px;
+  padding: var(--s-4);
   background: var(--accent-btn);
+  border-color: var(--accent-btn);
   color: #ffffff;
+  letter-spacing: -0.005em;
+  box-shadow: var(--shadow-key);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: #8a2900;
+  border-color: #8a2900;
+}
+
+.btn-primary:active:not(:disabled) {
+  box-shadow: 0 1px 0 rgba(22, 22, 22, 0.14);
 }
 
 .btn-secondary {
-  padding: 9px 16px;
+  padding: var(--s-2) var(--s-4);
   background: var(--accent-soft);
   color: var(--accent-press);
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: rgba(253, 84, 10, 0.14);
+  background: var(--accent-strong);
+  border-color: var(--accent-btn);
 }
 
 .btn-ghost {
   background: none;
   color: var(--text-secondary);
   font-weight: 500;
-  font-size: 13.5px;
-  padding: 8px 12px;
+  font-size: var(--fs-label);
+  padding: var(--s-2) var(--s-3);
 }
 
 .btn-danger {
-  padding: 9px 16px;
-  background: rgba(180, 35, 24, 0.08);
+  padding: var(--s-2) var(--s-4);
+  background: var(--danger-soft);
   color: var(--danger);
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: rgba(180, 35, 24, 0.16);
+  background: var(--danger-strong);
+  border-color: var(--danger);
+}
+
+/* The save gate's confirmation is a small danger pill everywhere else in the
+   app and the whole screen here, so it takes the primary's metrics while
+   keeping the danger palette — an outline instead of a red fill, because the
+   act being confirmed is "I wrote it down", not "destroy this". */
+.btn-primary.btn-danger {
+  padding: var(--s-4);
+  font-size: var(--fs-body);
+  border-color: var(--danger);
+  box-shadow: var(--shadow-sm);
+}
+
+/* A button stacked under the one above it, full width. Replaces the inline
+   `width:100%;margin-top:8px` that every ghost in main.ts used to carry. */
+.btn-stack {
+  display: block;
+  width: 100%;
+  margin-top: var(--s-2);
+}
+
+/* Two, three or four of these in a row are one group of exits, not four
+   separate decisions, so they close up. */
+.btn-stack + .btn-stack {
+  margin-top: var(--s-1);
 }
 
 .logout-section {
-  margin-top: 26px;
-  padding-top: 16px;
+  margin-top: var(--s-6);
+  padding-top: var(--s-4);
   border-top: 0.5px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--s-3);
 }
 
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   color: var(--text-primary);
+  background: rgba(22, 22, 22, 0.045);
 }
 
 input[type="password"],
 input[type="text"] {
   width: 100%;
-  padding: 14px 16px;
+  padding: var(--s-4);
   background: var(--bg-card);
   border: 0.5px solid var(--border-strong);
-  border-radius: 13px;
+  border-radius: var(--r-md);
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: var(--fs-body);
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.18s, box-shadow 0.18s;
+  transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
   user-select: text;
 }
 
@@ -218,39 +400,50 @@ input::placeholder {
   color: var(--text-tertiary);
 }
 
+input:hover:not(:focus) {
+  border-color: var(--border-hover);
+}
+
+/* Ink-orange, not brand orange: a focused field's edge is a state, and the
+   brand orange only clears 3.2:1 against the surface behind it. */
 input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--accent-btn);
+  background: var(--bg-sunken);
+  box-shadow: var(--focus-ring-soft);
 }
 
 select.locale-select {
   width: 100%;
-  margin-top: 8px;
-  padding: 12px 14px;
+  margin-top: var(--s-2);
+  padding: var(--s-3) var(--s-4);
   background: var(--bg-card);
   border: 0.5px solid var(--border-strong);
-  border-radius: 13px;
+  border-radius: var(--r-md);
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: var(--fs-body);
   color: var(--text-primary);
   outline: none;
   cursor: pointer;
 }
 
+select.locale-select:hover {
+  border-color: var(--border-hover);
+}
+
 select.locale-select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--accent-btn);
+  box-shadow: var(--focus-ring-soft);
 }
 
 .settings-card {
-  margin-bottom: 14px;
+  margin-bottom: var(--s-4);
 }
 
 .field-stack {
   display: flex;
   flex-direction: column;
-  gap: 11px;
-  margin-bottom: 14px;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
 }
 
 /* A text input with a small action button tucked into its right edge. */
@@ -259,49 +452,60 @@ select.locale-select:focus {
 }
 
 .input-wrap input {
-  padding-right: 48px;
+  padding-right: 52px;
 }
 
 .input-action {
   position: absolute;
-  right: 8px;
+  right: var(--s-2);
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
   background: none;
   padding: 7px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   cursor: pointer;
-  color: var(--accent);
+  color: var(--accent-btn);
 }
 
 .input-action:hover {
   background: var(--accent-soft);
 }
 
+.input-action:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.94);
+}
+
 .hint {
-  font-size: 13px;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
   color: var(--text-secondary);
+}
+
+/* The hint is always in the DOM and usually says nothing; without this it
+   still spends a full field-stack gap saying it. */
+.hint:empty {
+  display: none;
 }
 
 .hint.error {
   color: var(--danger);
+  font-weight: 500;
 }
 
 .strength {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 2px 2px 0;
+  gap: var(--s-3);
+  margin: var(--s-1) 2px 0;
 }
 
 .strength-track {
   flex: 1;
-  height: 5px;
-  border-radius: 3px;
+  height: 6px;
+  border-radius: var(--r-pill);
   background: var(--border);
   overflow: hidden;
 }
@@ -309,95 +513,192 @@ select.locale-select:focus {
 .strength-fill {
   height: 100%;
   width: 0;
-  border-radius: 3px;
+  border-radius: var(--r-pill);
   background: var(--danger);
   transition: width 0.25s var(--ease), background 0.25s;
 }
 
 .strength-label {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   color: var(--text-secondary);
-  min-width: 64px;
+  min-width: 76px;
   text-align: right;
 }
 
+/* A tinted block with a coloured edge, left-aligned inside centred screens so
+   a two-line warning does not read as ragged poetry. */
 .notice {
   display: flex;
-  gap: 10px;
+  align-items: flex-start;
+  gap: var(--s-3);
   background: var(--accent-soft);
-  border-radius: 13px;
-  padding: 13px 15px;
-  font-size: 13.5px;
+  border-left: 3px solid var(--accent-btn);
+  border-radius: var(--r-md);
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  text-align: left;
   color: var(--text-primary);
-  margin-bottom: 14px;
+  margin-bottom: var(--s-4);
 }
 
 .notice.error {
-  background: rgba(180, 35, 24, 0.08);
+  background: var(--danger-soft);
+  border-left-color: var(--danger);
   color: var(--danger);
 }
 
+/* The mark takes the colour of the notice's own edge, so the two read as one
+   bracket around the sentence rather than as two unrelated decorations. */
+.notice > .icon {
+  color: var(--accent-btn);
+}
+
+.notice.error > .icon {
+  color: var(--danger);
+}
+
+/* The way out, set off from the reason inside the same notice. */
+.notice-escape {
+  margin-top: var(--s-2);
+}
+
+/* The single-line waiting state and the multi-step checklist are the same
+   moment of the flow, so they are the same object: one cream panel. */
 .searching-status {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  padding: 13px 6px;
-  font-size: 15px;
+  gap: var(--s-3);
+  padding: var(--s-5);
+  font-size: var(--fs-body);
+  font-weight: 500;
   color: var(--text-primary);
+  background: var(--bg-card);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
 }
 
 .checklist {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--s-1);
+  padding: var(--s-2);
+  background: var(--bg-card);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* progressScreen and the update flow already wrap the list in a .card. There
+   the card is the chrome and the list is just the list. */
+.card > .checklist {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.card:has(> .checklist) {
+  padding: var(--s-2);
 }
 
 .checklist li {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 13px 6px;
-  font-size: 15px;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  font-size: var(--fs-body);
   color: var(--text-tertiary);
-  transition: color 0.3s;
+  transition: color 0.3s, background 0.3s;
 }
 
-.checklist li.running,
-.checklist li.done {
+/* The rail that turns four rows into one sequence. Anchored to the icon's top
+   edge rather than the row's centre, so a label that wraps pushes the join
+   behind the icon instead of leaving it dangling in mid-air. */
+.checklist li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 26px;
+  margin-left: -1px;
+  top: 40px;
+  bottom: -16px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border);
+  transition: background 0.3s;
+}
+
+.checklist li.done:not(:last-child)::before {
+  background: var(--ok-soft);
+}
+
+/* Three states, three different jobs: what is happening now is the loudest
+   thing on the screen, what is finished steps back without disappearing, and
+   what has not started yet is legible but plainly not the subject. */
+.checklist li.running {
   color: var(--text-primary);
+  font-weight: 600;
+  background: var(--accent-soft);
+}
+
+.checklist li.done {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.checklist li.error {
+  color: var(--danger);
+  font-weight: 600;
+  background: var(--danger-soft);
 }
 
 .check-icon {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  background: var(--border);
-  color: var(--text-tertiary);
+  font-size: var(--fs-label);
+  font-weight: 700;
+  line-height: 1;
+  background: transparent;
+  border: 2px solid var(--border-strong);
+  color: var(--text-secondary);
   flex-shrink: 0;
-  transition: background 0.3s;
+  transition: background 0.3s, border-color 0.3s, color 0.3s;
+}
+
+.checklist li.running .check-icon,
+.searching-status .check-icon {
+  border-color: var(--accent-btn);
+  background: var(--accent-soft);
 }
 
 li.done .check-icon {
   background: var(--ok);
+  border-color: var(--ok);
   color: #fff;
 }
 
 li.error .check-icon {
   background: var(--danger);
+  border-color: var(--danger);
   color: #fff;
 }
 
 .spinner {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   border: 2px solid var(--accent-soft);
-  border-top-color: var(--accent);
+  border-top-color: var(--accent-btn);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -412,8 +713,8 @@ li.error .check-icon {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 13px 4px;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-1);
 }
 
 .row + .row {
@@ -422,68 +723,102 @@ li.error .check-icon {
 
 .row-title {
   font-weight: 600;
-  font-size: 14.5px;
+  font-size: var(--fs-label);
+  letter-spacing: -0.005em;
 }
 
 .badge {
   display: inline-block;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 2px 7px;
-  border-radius: 999px;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 2px var(--s-2);
+  border-radius: var(--r-pill);
   background: rgba(22, 22, 22, 0.06);
   color: var(--text-secondary);
-  vertical-align: middle;
-  margin-left: 8px;
+  vertical-align: 1px;
+  margin-left: var(--s-2);
 }
 
 .badge.on {
-  background: rgba(24, 121, 78, 0.12);
+  background: var(--ok-soft);
   color: var(--ok);
 }
 
 .row-sub {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
   color: var(--text-secondary);
+  margin-top: 2px;
 }
 
 .row-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--s-2);
   flex-shrink: 0;
 }
 
+.row-actions--end {
+  justify-content: flex-end;
+  margin-top: var(--s-3);
+}
+
 .url-card {
-  margin-bottom: 14px;
+  margin-bottom: var(--s-3);
 }
 
 .url-label {
   font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 3px;
+  font-size: var(--fs-label);
+  letter-spacing: -0.005em;
+  margin-bottom: 2px;
 }
 
 .url-desc {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
   color: var(--text-secondary);
-  margin-bottom: 10px;
+  margin-bottom: var(--s-3);
+}
+
+/* The description's margin exists to separate it from the value line below.
+   On the cards that are prose all the way down — the team card, the "no value
+   to show" password card — there is nothing below it, and the margin read as
+   a card with a hole in the bottom of it. */
+.card > .url-desc:last-child {
+  margin-bottom: 0;
+}
+
+.bullet-list {
+  margin: 0;
+  padding-left: var(--s-5);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.bullet-list li + li {
+  margin-top: var(--s-1);
 }
 
 .url-line {
   display: flex;
-  gap: 8px;
+  gap: var(--s-2);
   align-items: center;
 }
 
+/* Sunk into the card rather than sitting on it, with the same defined edge
+   every other control has — this is the value the whole card exists to hand
+   over, and it used to be the one box on screen with a hairline border. */
 .url-value {
   flex: 1;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  background: var(--bg);
-  border: 0.5px solid var(--border);
-  border-radius: 9px;
-  padding: 9px 11px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  background: var(--bg-sunken);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  padding: var(--s-2) var(--s-3);
   overflow-x: auto;
   white-space: nowrap;
   user-select: text;
@@ -493,49 +828,94 @@ li.error .check-icon {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 4px;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
 }
 
+/* Picking a brain or a Cloudflare account is the same kind of act as picking a
+   door on the audience screen, so the list borrows that vocabulary outright —
+   same surface, same edge, same chevron. */
 .account-list {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s-2);
 }
 
 .account-list button {
+  position: relative;
   width: 100%;
   text-align: left;
-  padding: 14px 16px;
+  padding: var(--s-4) var(--s-8) var(--s-4) var(--s-5);
   background: var(--bg-card);
-  border: 0.5px solid var(--border);
-  border-radius: 13px;
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
   font-weight: 500;
+  font-size: var(--fs-label);
+  /* These hold addresses as often as names, and an address that overflows a
+     nowrap row is a row you cannot read the end of. */
+  word-break: break-word;
 }
 
-.account-list button:hover {
-  border-color: var(--accent);
+.account-list button:hover:not(:disabled) {
+  border-color: var(--accent-btn);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-lift);
 }
 
+/* Demo mode. A sticker, deliberately: ink outline, flat drop, brand orange —
+   it is the one label in the app that is allowed to look stuck on. Above
+   Ridge's layer so the mascot never covers the "this is not real" flag. */
 .dry-run-badge {
   position: fixed;
-  top: 12px;
-  right: 12px;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 50;
   background: var(--accent);
   color: var(--on-accent);
-  font-size: 11px;
+  border: 1px solid var(--on-accent);
+  font-size: var(--fs-2xs);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 4px 9px;
-  border-radius: 999px;
+  letter-spacing: 0.08em;
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--r-pill);
+  box-shadow: 0 2px 0 rgba(22, 22, 22, 0.16);
   text-transform: uppercase;
 }
 
 .footnote {
   text-align: center;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
   color: var(--text-tertiary);
-  margin-top: 18px;
+  max-width: 420px;
+  margin: var(--s-5) auto 0;
+}
+
+/* A footnote that explains the button directly above it belongs to that
+   button, not to the section after it. */
+.btn-primary + .footnote,
+.btn-stack + .footnote {
+  margin-top: var(--s-3);
+}
+
+/* …and carries its own margin the other way, because a footnote has no
+   margin-bottom and the block after it (a card, a primary, a guarded exit) is
+   just as likely not to have a margin-top. Six screens stack exactly that way.
+   Two consecutive footnotes are one paragraph and stay close. */
+.footnote + * {
+  margin-top: var(--s-4);
+}
+
+.footnote + .footnote {
+  margin-top: var(--s-2);
+}
+
+/* A ghost stacked above the primary — the reveal/open pair on the finished
+   password change is the only one, and it had no gap at all. */
+.btn-stack + .btn-primary {
+  margin-top: var(--s-3);
 }
 
 /* Category rows in the integrations browser drill into a provider list. */
@@ -559,28 +939,28 @@ li.error .check-icon {
    single tall column the setup flow uses. */
 .panel {
   display: grid;
-  grid-template-columns: 188px minmax(0, 1fr);
-  gap: 28px;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: var(--s-7);
   width: 100%;
   max-width: 900px;
   margin: 0 auto;
-  padding: 26px 30px 34px;
+  padding: var(--s-6) var(--s-7) var(--s-8);
   align-items: start;
 }
 
 @media (max-width: 720px) {
   .panel {
     grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
+    gap: var(--s-4);
   }
 }
 
 .rail {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--s-1);
   position: sticky;
-  top: 26px;
+  top: var(--s-6);
 }
 
 @media (max-width: 720px) {
@@ -593,24 +973,30 @@ li.error .check-icon {
 
 .rail-btn {
   appearance: none;
-  border: 0;
+  border: 0.5px solid transparent;
   background: transparent;
-  color: var(--text);
+  color: var(--text-dim);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-label);
+  font-weight: 500;
   text-align: left;
-  padding: 9px 12px;
-  border-radius: 9px;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-md);
   cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
 }
 
 .rail-btn:hover {
   background: var(--bg-card);
+  color: var(--text-primary);
 }
 
+/* Selected reads as selected on its own — a warm fill and full-strength ink,
+   not a cream chip one shade off the cream page behind it. */
 .rail-btn.on {
-  background: var(--bg-card);
-  border: 0.5px solid var(--border);
+  background: var(--accent-soft);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
@@ -619,27 +1005,29 @@ li.error .check-icon {
 }
 
 .pane-title {
-  margin: 0 0 4px;
-  font-size: 21px;
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-title);
   font-weight: 650;
+  letter-spacing: -0.012em;
 }
 
 .pane-desc {
-  margin: 0 0 16px;
+  margin: 0 0 var(--s-5);
   color: var(--text-dim);
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
+  max-width: 62ch;
 }
 
 /* Category heading inside the integrations pane. Everything sits on one screen
    under its heading, so there is no second level to get lost in. */
 .group-head {
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin: 18px 0 2px;
+  margin: var(--s-5) 0 var(--s-1);
 }
 
 .card > .group-head:first-child {
@@ -707,8 +1095,8 @@ body.settings-page #app {
   align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
   font-size: 0.85rem;
   cursor: pointer;
   color: var(--text-primary);
@@ -721,7 +1109,7 @@ body.settings-page #app {
 /* The selected pill is outlined rather than filled: three of these sit side by
    side, and a filled one reads as a primary action. */
 .settings-level:has(input:checked) {
-  border-color: var(--accent);
+  border-color: var(--accent-btn);
   background: var(--accent-soft);
   font-weight: 600;
 }
@@ -751,7 +1139,7 @@ body.settings-page #app {
   display: inline-block;
   margin-bottom: 0.35rem;
   padding: 0.1rem 0.5rem;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--accent-soft);
   color: var(--accent-press);
   font-size: 0.72rem;
@@ -779,7 +1167,7 @@ body.settings-page #app {
    panel has to make "changed but not saved" unmistakable. */
 
 .settings-edited {
-  border-color: var(--accent);
+  border-color: var(--accent-btn);
   box-shadow: 0 0 0 1px var(--accent-soft);
 }
 
@@ -847,15 +1235,15 @@ body.settings-page #app {
 .settings-progress {
   height: 6px;
   margin: 0.45rem 0 0.2rem;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--accent-soft);
   overflow: hidden;
 }
 
 .settings-progress-fill {
   height: 100%;
-  border-radius: 999px;
-  background: var(--accent);
+  border-radius: var(--r-pill);
+  background: var(--accent-btn);
   transition: width 0.3s ease;
 }
 
@@ -895,7 +1283,7 @@ body.settings-page #app {
    rather than as the thing being chosen. */
 .settings-migration-model {
   margin-top: 0.2rem;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--text-tertiary);
   word-break: break-all;
@@ -933,7 +1321,7 @@ body.settings-page #app {
    invisible until they hit Save. */
 .rail-dot {
   margin-left: 0.4rem;
-  color: var(--accent);
+  color: var(--accent-btn);
   font-size: 0.6rem;
   vertical-align: middle;
 }
@@ -982,7 +1370,7 @@ body.settings-page #app {
 }
 
 .ridge-avatar-btn:focus-visible {
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: var(--focus-ring);
 }
 
 .ridge--hero .ridge-avatar-btn {
@@ -1001,14 +1389,16 @@ body.settings-page #app {
   display: block;
 }
 
+/* Ridge's bubble is a card like any other — same cream, same defined edge, same
+   radius step — so he reads as living in the app rather than pasted over it. */
 .ridge-bubble {
   pointer-events: auto;
   background: var(--bg-card);
-  border: 0.5px solid var(--border);
-  border-radius: 14px;
-  padding: 12px 30px 12px 14px;
-  box-shadow: 0 6px 20px rgba(22, 22, 22, 0.1);
-  font-size: 13.5px;
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  padding: var(--s-3) var(--s-7) var(--s-3) var(--s-4);
+  box-shadow: var(--shadow-lift);
+  font-size: var(--fs-sm);
   line-height: 1.45;
   color: var(--text-primary);
   max-width: 240px;
@@ -1038,8 +1428,8 @@ body.settings-page #app {
   width: 12px;
   height: 12px;
   background: var(--bg-card);
-  border-right: 0.5px solid var(--border);
-  border-bottom: 0.5px solid var(--border);
+  border-right: 0.5px solid var(--border-strong);
+  border-bottom: 0.5px solid var(--border-strong);
   transform: rotate(-45deg);
 }
 
@@ -1067,9 +1457,12 @@ body.settings-page #app {
   color: var(--text-primary);
 }
 
+/* The ring follows the card radius, so it hugs whatever it is lighting up
+   instead of bulging past its corners. Brand orange, not ink-orange: this is
+   the one purely decorative mark in the app, and it is allowed to sing. */
 .ridge-spotlight {
   position: fixed;
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   pointer-events: none;
   z-index: 39;
   animation: ridge-spotlight-pulse 1.6s var(--ease) infinite;
@@ -1365,38 +1758,110 @@ body.settings-page #app {
 
 /* The audience screen's two doors (main.ts audienceScreen) as co-equal choice
    cards, rather than a primary button over a smaller ghost link — neither
-   "just me" nor "a team" is the default the other one is a fallback from. */
+   "just me" nor "a team" is the default the other one is a fallback from.
+   Same surface, edge and shadow as .card, so a door reads as a thing you can
+   pick up rather than a field you can type in. */
 .choice-cards {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
 }
 
 .choice-card {
+  position: relative;
   width: 100%;
   text-align: left;
-  padding: 16px 18px;
+  padding: var(--s-4) var(--s-8) var(--s-4) var(--s-5);
   background: var(--bg-card);
   border: 0.5px solid var(--border-strong);
-  border-radius: 13px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
   cursor: pointer;
-  transition: border-color 0.18s, background 0.18s;
 }
 
-.choice-card:hover {
-  border-color: var(--accent);
+/* One chevron, drawn in CSS, shared by both kinds of pickable row — it is what
+   says "this goes somewhere" without a word of copy. */
+.choice-card::after,
+.account-list button::after {
+  content: "";
+  position: absolute;
+  right: var(--s-5);
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -4px;
+  border-right: 2px solid var(--text-tertiary);
+  border-top: 2px solid var(--text-tertiary);
+  transform: rotate(45deg);
+  transition: border-color 0.18s, transform 0.18s var(--ease);
+}
+
+.choice-card:hover:not(:disabled) {
+  border-color: var(--accent-btn);
   background: var(--accent-soft);
+  box-shadow: var(--shadow-lift);
+  transform: translateY(-1px);
+}
+
+.choice-card:hover::after,
+.account-list button:hover::after {
+  border-color: var(--accent-btn);
+  transform: rotate(45deg) translate(2px, -2px);
+}
+
+.choice-card:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .choice-card-title {
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-body);
+  letter-spacing: -0.005em;
   color: var(--text-primary);
 }
 
 .choice-card-desc {
-  margin-top: 3px;
-  font-size: 13px;
+  margin-top: var(--s-1);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
   color: var(--text-secondary);
+}
+
+/* ── Guard and help screens ──────────────────────────────────────────────────
+   The three screens where the app has stopped and owes an explanation: a brain
+   already exists, a name is taken, a team token no longer works. Nothing is
+   broken and nothing was touched, so they are composed as a calm statement —
+   mark, one sentence, one way on — rather than as an error stack. The panel is
+   what separates them from a screen that is merely asking a question. */
+.guard {
+  background: var(--bg-card);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-6) var(--s-5);
+  margin-bottom: var(--s-5);
+  text-align: center;
+}
+
+.guard-mark {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto var(--s-4);
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border: 0.5px solid var(--border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-btn);
+}
+
+/* Inside the panel the explanation is the subject, not a subtitle, so it
+   carries full-strength ink and drops the section-sized margin it has when it
+   sits under a heading out in the open. */
+.guard .lede {
+  margin: 0 auto;
+  color: var(--text-primary);
+  max-width: 380px;
 }

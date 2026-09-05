@@ -10,6 +10,8 @@ import {
   detailCards,
   emailButton,
   h,
+  icon,
+  type IconName,
   secretCard,
   teamCard,
   toolRows,
@@ -101,7 +103,7 @@ function welcomeScreen() {
   window.clearTimeout(welcomeGuardTimer);
   const start = h("button", { class: "btn-primary" }, [t("welcome.getStarted")]);
   start.addEventListener("click", audienceScreen);
-  const existing = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const existing = h("button", { class: "btn-ghost btn-stack" }, [
     t("welcome.alreadyHave"),
   ]);
   existing.addEventListener("click", () => connectExistingScreen());
@@ -174,7 +176,7 @@ function audienceScreen() {
     teamMode = true;
     passwordScreen();
   });
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   back.addEventListener("click", welcomeScreen);
@@ -290,7 +292,7 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
     void toolsScreen();
   });
   // Only forward buttons before this (#F4): quitting was the only way out.
-  const backBtn = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const backBtn = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   backBtn.addEventListener("click", back);
@@ -314,8 +316,39 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
 
 function notice(message: string, tone: "error" | "info" = "error"): HTMLElement {
   return h("div", { class: `notice ${tone}` }, [
-    tone === "error" ? "⚠️" : "💡",
+    icon(tone === "error" ? "alert" : "lightbulb"),
     h("span", {}, [message]),
+  ]);
+}
+
+/**
+ * The "write this down before you go any further" notice. Seven screens show
+ * one, and they used to spell out the same three-node structure seven times —
+ * which is how six of them ended up with a key emoji and the seventh with a
+ * padlock.
+ */
+function keyNotice(message: string): HTMLElement {
+  return h("div", { class: "notice" }, [icon("key"), h("span", {}, [message])]);
+}
+
+/**
+ * The composition the three "we stopped, here is why" screens share — the two
+ * provisioning guards and the member-token dead end.
+ *
+ * They are not errors and they are not questions: nothing was created, nothing
+ * was touched, and there is exactly one sensible next move. So they get a panel
+ * with a mark, one sentence at full-strength ink, and the way on underneath —
+ * rather than the default lede-floating-above-two-buttons that a screen asking
+ * a routine question uses. Being visibly a different kind of screen is the
+ * point; that is what stops it reading as a failure.
+ *
+ * The mark is decoration and is hidden from assistive tech: the heading and the
+ * message already say everything it gestures at.
+ */
+function guardPanel(mark: IconName, body: Node | string): HTMLElement {
+  return h("div", { class: "guard" }, [
+    h("div", { class: "guard-mark" }, [icon(mark, "icon icon--lg")]),
+    body,
   ]);
 }
 
@@ -330,12 +363,12 @@ function connectExistingScreen(errorMsg?: string) {
   const signIn = h("button", { class: "btn-primary" }, [t("connectExisting.signInButton")]);
   signIn.addEventListener("click", () => void discoverScreen());
 
-  const manual = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const manual = h("button", { class: "btn-ghost btn-stack" }, [
     t("connectExisting.manualButton"),
   ]);
   manual.addEventListener("click", () => manualEntryScreen());
 
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [t("common.back")]);
+  const back = h("button", { class: "btn-ghost btn-stack" }, [t("common.back")]);
   back.addEventListener("click", welcomeScreen);
 
   show(
@@ -435,13 +468,13 @@ function brainPickerScreen(found: DiscoveredBrain[]) {
     btn.addEventListener("click", () => unlockBrainScreen(brain, undefined, found));
     list.append(h("li", {}, [btn]));
   }
-  const manual = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const manual = h("button", { class: "btn-ghost btn-stack" }, [
     t("connectExisting.manualButton"),
   ]);
   manual.addEventListener("click", () => manualEntryScreen());
 
   const one = found.length === 1;
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   back.addEventListener("click", () => connectExistingScreen());
@@ -518,14 +551,15 @@ function connectExistingErrorMessage(e: unknown): string {
 /// is an owner-only Cloudflare recovery a member structurally cannot complete.
 function memberTokenHelpScreen(back: () => void) {
   currentScreen = () => memberTokenHelpScreen(back);
-  const ok = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
-    t("common.back"),
-  ]);
+  // Promoted from ghost to primary: it is the only control on the screen, and
+  // the one way back out of a dead end should not be styled as the quiet
+  // alternative to something else. Same handler, same label, same back-chain.
+  const ok = h("button", { class: "btn-primary" }, [t("common.back")]);
   ok.addEventListener("click", back);
   show(
     brand(),
     h("h1", {}, [t("connectExisting.memberTokenHelpTitle")]),
-    h("p", { class: "lede" }, [t("connectExisting.memberTokenHelpLede")]),
+    guardPanel("key", h("p", { class: "lede" }, [t("connectExisting.memberTokenHelpLede")])),
     ok,
   );
 }
@@ -547,7 +581,7 @@ function unlockBrainScreen(
     "aria-label": passwordLabel,
   });
   const connect = h("button", { class: "btn-primary" }, [t("connectExisting.connect")]);
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [t("common.back")]);
+  const back = h("button", { class: "btn-ghost btn-stack" }, [t("common.back")]);
   // Back to the pick-list, not to the chooser: returning to the chooser would
   // discard the scan and cost another Cloudflare sign-in to get here again.
   back.addEventListener("click", () => brainPickerScreen(found));
@@ -556,7 +590,7 @@ function unlockBrainScreen(
   // password field it would invite people to take it before trying the password
   // they have. The brain is chosen and Cloudflare is signed in from discovery,
   // so this goes straight to the password step.
-  const lost = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const lost = h("button", { class: "btn-ghost btn-stack" }, [
     t("connectExisting.lostPassword"),
   ]);
   lost.addEventListener("click", () => {
@@ -572,7 +606,7 @@ function unlockBrainScreen(
   // into "I don't have my password" above.
   const memberHelp = isCredentialError(errorMsg)
     ? (() => {
-        const btn = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+        const btn = h("button", { class: "btn-ghost btn-stack" }, [
           t("connectExisting.memberTokenHelp"),
         ]);
         btn.addEventListener("click", () =>
@@ -674,13 +708,13 @@ function manualEntryScreen(
     "aria-label": passwordLabel,
   });
   const connect = h("button", { class: "btn-primary" }, [t("connectExisting.connect")]);
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [t("common.back")]);
+  const back = h("button", { class: "btn-ghost btn-stack" }, [t("common.back")]);
   back.addEventListener("click", () => connectExistingScreen());
 
   // No Cloudflare session here, so this door routes through sign-in and
   // discovery first. Anything already typed is carried over as the fallback
   // address, for the brain a scan can't see — a custom domain, another account.
-  const lost = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const lost = h("button", { class: "btn-ghost btn-stack" }, [
     t("connectExisting.lostPassword"),
   ]);
   lost.addEventListener("click", () => {
@@ -695,7 +729,7 @@ function manualEntryScreen(
   // and this is the screen the member persona is most likely to actually reach.
   const memberHelp = isCredentialError(errorMsg)
     ? (() => {
-        const btn = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+        const btn = h("button", { class: "btn-ghost btn-stack" }, [
           t("connectExisting.memberTokenHelp"),
         ]);
         btn.addEventListener("click", () =>
@@ -777,12 +811,13 @@ function meterFor(pw: string, check: PasswordCheck | null): {
   if (pw.length === 0) return { pct: 0, label: "", color: "var(--danger)" };
   if (pw.trim().length < 12)
     return { pct: 20, label: t("password.tooShort"), color: "var(--danger)" };
-  if (check === null) return { pct: 45, label: t("password.checking"), color: "var(--accent)" };
+  if (check === null)
+    return { pct: 45, label: t("password.checking"), color: "var(--accent-btn)" };
   if (check.breached)
     return { pct: 30, label: t("password.foundInBreaches"), color: "var(--danger)" };
   if (check.score >= 4) return { pct: 100, label: t("password.strong"), color: "var(--ok)" };
   if (check.score === 3) return { pct: 70, label: t("password.good"), color: "var(--ok)" };
-  return { pct: 45, label: t("password.easyToGuess"), color: "var(--accent)" };
+  return { pct: 45, label: t("password.easyToGuess"), color: "var(--accent-btn)" };
 }
 
 function passwordScreen() {
@@ -805,11 +840,7 @@ function passwordScreen() {
     title: t("password.generateTitle"),
     "aria-label": t("password.generateTitle"),
   });
-  generate.innerHTML =
-    '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-    '<path d="M11 2 C11.7 6.8 13.2 8.3 18 9 C13.2 9.7 11.7 11.2 11 16 C10.3 11.2 8.8 9.7 4 9 C8.8 8.3 10.3 6.8 11 2 Z"/>' +
-    '<path d="M18 13 C18.35 15.4 19.1 16.15 21.5 16.5 C19.1 16.85 18.35 17.6 18 20 C17.65 17.6 16.9 16.85 14.5 16.5 C16.9 16.15 17.65 15.4 18 13 Z"/>' +
-    "</svg>";
+  generate.append(icon("sparkles", "icon icon--sm"));
   const next = h("button", { class: "btn-primary", disabled: "" }, [t("common.continueToCloudflare")]);
 
   let check: PasswordCheck | null = null;
@@ -897,7 +928,7 @@ function passwordScreen() {
 
   // Nothing is written remotely yet at this point (#F3): `submit_password`
   // only holds the choice in memory (`commands.rs:156-172`), so leaving is free.
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   back.addEventListener("click", () => audienceScreen());
@@ -912,7 +943,7 @@ function passwordScreen() {
       confirm,
       hint,
     ]),
-    h("div", { class: "notice" }, ["🔑", h("span", {}, [t("password.notice")])]),
+    keyNotice(t("password.notice")),
     next,
     back,
     h("p", { class: "footnote" }, [t("password.footnote")]),
@@ -935,12 +966,10 @@ function passwordScreen() {
 function connectScreen(errorMsg?: string) {
   currentScreen = () => connectScreen(errorMsg);
   const signIn = h("button", { class: "btn-primary" }, [t("cloudflare.signIn")]);
-  const error = errorMsg
-    ? h("div", { class: "notice error" }, ["⚠️", h("span", {}, [errorMsg])])
-    : "";
+  const error = errorMsg ? notice(errorMsg) : "";
   // The password chosen a screen back is still only in memory (#F3), same as
   // `passwordScreen`'s own Back — nothing here has been sent to Cloudflare yet.
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   back.addEventListener("click", () => passwordScreen());
@@ -1032,7 +1061,7 @@ function accountPickerScreen(
   // Without this the screen is a dead end: a user who signed in with the wrong
   // Cloudflare login, or who recognises none of the names, could only quit.
   const backBtn = back
-    ? h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [t("common.back")])
+    ? h("button", { class: "btn-ghost btn-stack" }, [t("common.back")])
     : "";
   if (back && backBtn instanceof HTMLElement) backBtn.addEventListener("click", back);
 
@@ -1067,8 +1096,25 @@ function progressSteps(): { id: StepId; label: string }[] {
   ];
 }
 
-/** Supplements the icon swap for a screen reader; the icon glyph alone (a
- *  bullet/spinner/check/bang) conveys nothing to VoiceOver (#P0-7). */
+/**
+ * What goes inside a checklist row's `.check-icon` for a given step state.
+ *
+ * One function for all three checklists, so a state cannot end up drawn one way
+ * on the setup screen and another on the password-change screen — which is
+ * exactly what happened while each of them spelled its own glyph chain out.
+ *
+ * "running" is the CSS spinner rather than an icon: it is the only one of the
+ * four that has to move.
+ */
+function stepMark(status: StepEvent["status"] | "pending"): Node {
+  if (status === "running") return h("span", { class: "spinner" });
+  if (status === "done") return icon("check", "icon icon--sm");
+  if (status === "error") return icon("x", "icon icon--sm");
+  return icon("dot", "icon icon--sm");
+}
+
+/** Supplements the icon swap for a screen reader; the mark alone (a
+ *  dot/spinner/check/cross) conveys nothing to VoiceOver (#P0-7). */
 function statusWord(status: StepEvent["status"]): string {
   if (status === "running") return t("progress.stepInProgress");
   if (status === "done") return t("progress.stepDone");
@@ -1080,19 +1126,10 @@ function statusWord(status: StepEvent["status"]): string {
  * on screen (#P0-7 follow-up). The checklists' only other DOM change on a step
  * update is `.check-icon`'s glyph swap or an `aria-label` attribute — neither
  * is a live-region trigger in VoiceOver/NVDA, so the running/done/failed
- * sentence needs its own text node. Style is inline, not a class: this file
- * does not own `style.css` this wave.
+ * sentence needs its own text node.
  */
 function srOnly(text = ""): HTMLElement {
-  return h(
-    "span",
-    {
-      style:
-        "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);" +
-        "white-space:nowrap;border:0;padding:0;margin:-1px;",
-    },
-    [text],
-  );
+  return h("span", { class: "sr-only" }, [text]);
 }
 
 /** The tagged half of `start_provisioning`'s error contract (RUST-1): a plain
@@ -1138,14 +1175,16 @@ function existingBrainGuardScreen(err: GuardExistingBrainError) {
   currentScreen = () => existingBrainGuardScreen(err);
   const connectToIt = h("button", { class: "btn-primary" }, [t("guard.existingBrainConnect")]);
   connectToIt.addEventListener("click", () => manualEntryScreen(undefined, err.url));
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   back.addEventListener("click", () => welcomeScreen());
   show(
     brand(),
     h("h1", {}, [t("guard.existingBrainTitle")]),
-    h("p", { class: "lede" }, [err.message]),
+    // A brain, because one was found — this screen is good news wearing the
+    // shape of an interruption, and the mark is the first thing that says so.
+    guardPanel("brain", h("p", { class: "lede" }, [err.message])),
     connectToIt,
     back,
   );
@@ -1178,13 +1217,15 @@ function resourceConflictGuardScreen(err: GuardNameConflictError) {
     );
   }
   const back = canChooseAnother
-    ? h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [t("common.back")])
+    ? h("button", { class: "btn-ghost btn-stack" }, [t("common.back")])
     : h("button", { class: "btn-primary" }, [t("common.back")]);
   back.addEventListener("click", () => welcomeScreen());
   show(
     brand(),
     h("h1", {}, [t("guard.conflictTitle")]),
-    h("p", { class: "lede" }, [err.message]),
+    // Roadworks, not a warning triangle: a taken name is an obstruction to go
+    // around, and nothing on this account was created or overwritten.
+    guardPanel("construction", h("p", { class: "lede" }, [err.message])),
     chooseAnother,
     back,
   );
@@ -1203,7 +1244,11 @@ function progressScreen() {
   });
   for (const step of progressSteps()) {
     const status = srOnly();
-    const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label, status]);
+    const li = h("li", {}, [
+      h("span", { class: "check-icon" }, [stepMark("pending")]),
+      step.label,
+      status,
+    ]);
     rows.set(step.id, li);
     labels.set(step.id, step.label);
     statusEls.set(step.id, status);
@@ -1233,14 +1278,12 @@ function progressScreen() {
     li.className = ev.status;
     const sentence = `${labels.get(ev.step)}: ${statusWord(ev.status)}`;
     li.setAttribute("aria-label", sentence);
-    // The live region only ever mutates `.check-icon`'s glyph and this text
+    // The live region only ever mutates `.check-icon`'s mark and this text
     // node — an attribute change alone (the `aria-label` above) does not
     // trigger VoiceOver/NVDA (#P0-7).
     statusEls.get(ev.step)!.textContent = sentence;
-    const icon = li.querySelector<HTMLSpanElement>(".check-icon")!;
-    if (ev.status === "running") icon.replaceChildren(h("span", { class: "spinner" }));
-    if (ev.status === "done") icon.replaceChildren("✓");
-    if (ev.status === "error") icon.replaceChildren("!");
+    const mark = li.querySelector<HTMLSpanElement>(".check-icon")!;
+    mark.replaceChildren(stepMark(ev.status));
   };
 
   let unlisten: (() => void) | null = null;
@@ -1248,7 +1291,7 @@ function progressScreen() {
     for (const [id, li] of rows) {
       li.className = "";
       li.removeAttribute("aria-label");
-      li.querySelector(".check-icon")!.replaceChildren("•");
+      li.querySelector(".check-icon")!.replaceChildren(stepMark("pending"));
       statusEls.get(id)!.textContent = "";
     }
     errorBox.replaceChildren();
@@ -1276,7 +1319,7 @@ function progressScreen() {
       const retry = h("button", { class: "btn-primary" }, [t("common.trySetupAgain")]);
       retry.addEventListener("click", () => void start());
       errorBox.replaceChildren(
-        h("div", { class: "notice error" }, ["⚠️", h("span", {}, [message])]),
+        notice(message),
         retry,
       );
       // `errorBox` is mutated in place rather than re-rendered through `show()`
@@ -1341,7 +1384,7 @@ function detailsScreen() {
     ...(team ? [team] : []),
     cards,
     h("div", { class: "actions-spread" }, [copyBothButton(details!), emailButton(details!)]),
-    h("div", { style: "height:14px" }),
+    h("div", { class: "spacer" }),
     done,
   );
   // Rows 7 / 7b / 7c (plan §4.4). 7c (member) is talking, deliberately NOT
@@ -1397,7 +1440,7 @@ async function workerUpdateScreen() {
     : t("workerUpdate.ledeGeneric");
   const start = h("button", { class: "btn-primary" }, [t("workerUpdate.signInUpdate")]);
   start.addEventListener("click", () => void runWorkerUpdate());
-  const notNow = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const notNow = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.skipUpdateForNow"),
   ]);
   notNow.addEventListener("click", () => void invoke("open_dashboard"));
@@ -1405,7 +1448,7 @@ async function workerUpdateScreen() {
     brand(),
     h("h1", {}, [t("workerUpdate.title")]),
     h("p", { class: "lede" }, [versionLine]),
-    h("div", { class: "notice" }, ["🔒", h("span", {}, [t("workerUpdate.notice")])]),
+    h("div", { class: "notice" }, [icon("shieldCheck"), h("span", {}, [t("workerUpdate.notice")])]),
     start,
     notNow,
   );
@@ -1416,14 +1459,14 @@ async function runWorkerUpdate(errorMsg?: string) {
   if (errorMsg) {
     const retry = h("button", { class: "btn-primary" }, [t("common.tryAgain")]);
     retry.addEventListener("click", () => void runWorkerUpdate());
-    const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    const back = h("button", { class: "btn-ghost btn-stack" }, [
       t("common.skipUpdateForNow"),
     ]);
     back.addEventListener("click", () => void invoke("open_dashboard"));
     show(
       brand(),
       h("h1", {}, [t("workerUpdate.title")]),
-      h("div", { class: "notice error" }, ["⚠️", h("span", {}, [errorMsg])]),
+      notice(errorMsg),
       retry,
       back,
     );
@@ -1458,7 +1501,11 @@ async function runWorkerUpdate(errorMsg?: string) {
   });
   for (const step of updateProgressSteps()) {
     const status = srOnly();
-    const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label, status]);
+    const li = h("li", {}, [
+      h("span", { class: "check-icon" }, [stepMark("pending")]),
+      step.label,
+      status,
+    ]);
     rows.set(step.id, li);
     labels.set(step.id, step.label);
     statusEls.set(step.id, status);
@@ -1477,10 +1524,7 @@ async function runWorkerUpdate(errorMsg?: string) {
     const sentence = `${labels.get(e.payload.step)}: ${statusWord(e.payload.status)}`;
     li.setAttribute("aria-label", sentence);
     statusEls.get(e.payload.step)!.textContent = sentence;
-    const icon = li.querySelector<HTMLSpanElement>(".check-icon")!;
-    if (e.payload.status === "running") icon.replaceChildren(h("span", { class: "spinner" }));
-    if (e.payload.status === "done") icon.replaceChildren("✓");
-    if (e.payload.status === "error") icon.replaceChildren("!");
+    li.querySelector<HTMLSpanElement>(".check-icon")!.replaceChildren(stepMark(e.payload.status));
   });
   try {
     details = await invoke<ConnectionDetails>("start_worker_update");
@@ -1611,7 +1655,7 @@ function guardedExit(label: string, leave: () => void): HTMLElement {
   const host = h("div", {});
   const render = (confirming: boolean) => {
     if (!confirming) {
-      const go = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [label]);
+      const go = h("button", { class: "btn-ghost btn-stack" }, [label]);
       go.addEventListener("click", () => render(true));
       host.replaceChildren(go);
       return;
@@ -1621,7 +1665,7 @@ function guardedExit(label: string, leave: () => void): HTMLElement {
     const stay = h("button", { class: "btn-ghost" }, [t("changePassword.leaveKeep")]);
     stay.addEventListener("click", () => render(false));
     host.replaceChildren(
-      h("div", { class: "notice" }, ["🔑", h("span", {}, [t("changePassword.leaveWarn")])]),
+      keyNotice(t("changePassword.leaveWarn")),
       h("div", { class: "row-actions" }, [confirm, stay]),
     );
   };
@@ -1671,7 +1715,7 @@ function changePasswordIntroScreen(errorMsg?: string) {
       () => choosePasswordScreen(),
     ),
   );
-  const notNow = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const notNow = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.notNow"),
   ]);
   notNow.addEventListener("click", () => void invoke("open_dashboard"));
@@ -1680,7 +1724,7 @@ function changePasswordIntroScreen(errorMsg?: string) {
     brand(),
     h("h1", {}, [t("changePassword.title")]),
     h("p", { class: "lede" }, [t("changePassword.lede")]),
-    h("div", { class: "notice" }, ["🔑", h("span", {}, [t("changePassword.notice")])]),
+    keyNotice(t("changePassword.notice")),
     errorMsg ? notice(errorMsg) : "",
     signIn,
     notNow,
@@ -1710,7 +1754,7 @@ function lostPasswordIntroScreen(address: string | null, errorMsg?: string) {
     void rotationSignIn((msg) => lostPasswordIntroScreen(address, msg), proceed);
   });
 
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   back.addEventListener("click", () => rotationExit());
@@ -1722,7 +1766,7 @@ function lostPasswordIntroScreen(address: string | null, errorMsg?: string) {
     h("p", { class: "lede" }, [
       t(signedIn ? "changePassword.lostBodySignedIn" : "changePassword.lostBodySignIn"),
     ]),
-    h("div", { class: "notice" }, ["🔑", h("span", {}, [t("changePassword.lostNotice")])]),
+    keyNotice(t("changePassword.lostNotice")),
     errorMsg ? notice(errorMsg) : "",
     primary,
     back,
@@ -1791,12 +1835,12 @@ function lostBrainPickerScreen(found: DiscoveredBrain[]) {
   // Same slot as on the connect picker, different destination: the screen it
   // used to open has a password field, which is the one thing this user hasn't
   // got.
-  const manual = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const manual = h("button", { class: "btn-ghost btn-stack" }, [
     t("connectExisting.manualButton"),
   ]);
   manual.addEventListener("click", () => lostAddressScreen(found, undefined, true));
 
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   back.addEventListener("click", () => lostPasswordIntroScreen(null));
@@ -1860,7 +1904,7 @@ function lostAddressScreen(
     choosePasswordScreen();
   });
 
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   // Back to the picker when there was one. With no picker there is nothing
@@ -1914,11 +1958,7 @@ function choosePasswordScreen() {
     title: t("password.generateTitle"),
     "aria-label": t("password.generateTitle"),
   });
-  generate.innerHTML =
-    '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-    '<path d="M11 2 C11.7 6.8 13.2 8.3 18 9 C13.2 9.7 11.7 11.2 11 16 C10.3 11.2 8.8 9.7 4 9 C8.8 8.3 10.3 6.8 11 2 Z"/>' +
-    '<path d="M18 13 C18.35 15.4 19.1 16.15 21.5 16.5 C19.1 16.85 18.35 17.6 18 20 C17.65 17.6 16.9 16.85 14.5 16.5 C16.9 16.15 17.65 15.4 18 13 Z"/>' +
-    "</svg>";
+  generate.append(icon("sparkles", "icon icon--sm"));
   const next = h("button", { class: "btn-primary", disabled: "" }, [t("common.continue")]);
 
   let check: PasswordCheck | null = null;
@@ -1996,7 +2036,7 @@ function choosePasswordScreen() {
     savePasswordScreen();
   });
 
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
   back.addEventListener("click", () => rotationBack());
@@ -2012,7 +2052,7 @@ function choosePasswordScreen() {
       hint,
       generatedNote,
     ]),
-    h("div", { class: "notice" }, ["🔑", h("span", {}, [t("changePassword.pickNotice")])]),
+    keyNotice(t("changePassword.pickNotice")),
     next,
     back,
     h("p", { class: "footnote" }, [t("password.footnote")]),
@@ -2036,13 +2076,11 @@ function savePasswordScreen() {
   // screen's primary, so it borrows the setup buttons' metrics. Its label is
   // itself the acknowledgement, matching the one other place in the app where
   // that is true (freeing the old search index).
-  const confirm = h(
-    "button",
-    { class: "btn-primary btn-danger", style: "padding:15px;font-size:15px" },
-    [t("changePassword.saveConfirm")],
-  );
+  const confirm = h("button", { class: "btn-primary btn-danger" }, [
+    t("changePassword.saveConfirm"),
+  ]);
   confirm.addEventListener("click", () => void runRotation());
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("changePassword.saveBack"),
   ]);
   back.addEventListener("click", () => choosePasswordScreen());
@@ -2089,16 +2127,8 @@ function rotationProgressScreen() {
   });
   for (const step of rotationSteps()) {
     const status = rotationStepStatus.get(step.id);
-    const icon =
-      status === "running"
-        ? h("span", { class: "spinner" })
-        : status === "done"
-          ? "✓"
-          : status === "error"
-            ? "!"
-            : "•";
     const li = h("li", status ? { class: status } : {}, [
-      h("span", { class: "check-icon" }, [icon]),
+      h("span", { class: "check-icon" }, [stepMark(status ?? "pending")]),
       step.label,
       // A real text node, not just the `aria-label` below: an attribute change
       // is not a live-region trigger in VoiceOver/NVDA (#P0-7).
@@ -2179,7 +2209,7 @@ function rotateBlockedScreen(detail: string) {
   const leave = copy.guardLeaving
     ? guardedExit(t("changePassword.failUnsureLeave"), leaveRotation)
     : (() => {
-        const go = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+        const go = h("button", { class: "btn-ghost btn-stack" }, [
           t("common.notNow"),
         ]);
         go.addEventListener("click", leaveRotation);
@@ -2222,7 +2252,7 @@ function rotateFailNotSentScreen(detail: string) {
   currentScreen = () => rotateFailNotSentScreen(detail);
   const retry = h("button", { class: "btn-primary" }, [t("common.tryAgain")]);
   retry.addEventListener("click", () => void runRotation());
-  const leave = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const leave = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.notNow"),
   ]);
   leave.addEventListener("click", leaveRotation);
@@ -2255,7 +2285,7 @@ function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
 
   // Read-only: a /health probe with the new password, no write. It is safe to
   // offer on the one screen where the user does not know what happened.
-  const check = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const check = h("button", { class: "btn-ghost btn-stack" }, [
     t("changePassword.recheckButton"),
   ]);
   check.addEventListener("click", async () => {
@@ -2372,7 +2402,7 @@ function rotateDoneScreen(revealed = false) {
   // command's config and the open dashboard window — so the extension and the
   // Obsidian plugin hold the old password on *this* computer too, which is what
   // Door B's notice has always told people and this list used to deny.
-  const needs = h("ul", { class: "url-desc", style: "padding-left:18px" }, [
+  const needs = h("ul", { class: "bullet-list" }, [
     h("li", {}, [t("changePassword.doneNeeds1")]),
     h("li", {}, [t("changePassword.doneNeeds2")]),
     h("li", {}, [t("changePassword.doneNeeds3")]),
@@ -2384,7 +2414,7 @@ function rotateDoneScreen(revealed = false) {
   // Opens the pane the control lives in; it disconnects nothing on click.
   disconnect.addEventListener("click", () => void invoke("open_details_window"));
 
-  const reveal = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const reveal = h("button", { class: "btn-ghost btn-stack" }, [
     t(revealed ? "changePassword.doneHide" : "changePassword.doneShow"),
   ]);
   reveal.addEventListener("click", () => rotateDoneScreen(!revealed));
@@ -2408,7 +2438,7 @@ function rotateDoneScreen(revealed = false) {
       // A notice, not a notice error. Most changes are hygiene, and a red block
       // on every one of them trains people to skip the block — including the
       // person it was written for.
-      h("div", { class: "notice" }, ["🔑", h("span", {}, [t("changePassword.doneLeak")])]),
+      keyNotice(t("changePassword.doneLeak")),
       h("div", { class: "row-actions" }, [disconnect]),
     ]),
     // Collapsed by default, so it is not sitting in a window someone walked
@@ -2455,12 +2485,12 @@ async function passwordChangedElsewhereScreen(errorMsg?: string) {
     }
   });
 
-  const findAgain = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const findAgain = h("button", { class: "btn-ghost btn-stack" }, [
     t("passwordChangedElsewhere.findAgain"),
   ]);
   findAgain.addEventListener("click", () => void discoverScreen());
 
-  const lost = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+  const lost = h("button", { class: "btn-ghost btn-stack" }, [
     t("connectExisting.lostPassword"),
   ]);
   lost.addEventListener("click", () => {
