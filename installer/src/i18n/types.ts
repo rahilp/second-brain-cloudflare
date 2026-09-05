@@ -156,6 +156,29 @@ export type Messages = {
       barWorking: string;
     };
   };
+  /**
+   * The left rail's step labels (`steps.ts`). Plain nouns, short enough to sit
+   * on one line in a 208px rail in either language, and deliberately not
+   * screen titles: several screens share a step, so a label that echoed one of
+   * their headings would be wrong on the others.
+   */
+  steps: {
+    navLabel: string;
+    start: string;
+    protect: string;
+    signIn: string;
+    find: string;
+    connect: string;
+    build: string;
+    tools: string;
+    details: string;
+    /** The accessible name of a completed step that can be returned to. */
+    backTo: string;
+    /** The title on a completed step that is behind the point of no return. */
+    locked: string;
+    /** The narrow-window row, which replaces the list with a position. */
+    compact: string;
+  };
   welcome: {
     title: string;
     lede: string;

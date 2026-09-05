@@ -310,6 +310,20 @@ export const it: Messages = {
         "Il tuo Second Brain è al lavoro. Le altre impostazioni sono bloccate fino alla fine.",
     },
   },
+  steps: {
+    navLabel: "Passaggi di configurazione",
+    start: "Inizio",
+    protect: "Password",
+    signIn: "Accesso",
+    find: "Ricerca",
+    connect: "Connessione",
+    build: "Creazione",
+    tools: "Strumenti",
+    details: "Dettagli",
+    backTo: "Torna al passaggio {step}",
+    locked: "Già fatto. La configurazione non può tornare a questo passaggio.",
+    compact: "Passaggio {n} di {total}",
+  },
   welcome: {
     title: "Configura il tuo Second Brain",
     lede:

@@ -314,6 +314,20 @@ export const en: Messages = {
       barWorking: "Working on your Second Brain. Other settings are locked until this finishes.",
     },
   },
+  steps: {
+    navLabel: "Setup steps",
+    start: "Start",
+    protect: "Password",
+    signIn: "Sign in",
+    find: "Find",
+    connect: "Connect",
+    build: "Build",
+    tools: "Tools",
+    details: "Details",
+    backTo: "Back to {step}",
+    locked: "Done already. Setup cannot go back to this step.",
+    compact: "Step {n} of {total}",
+  },
   welcome: {
     title: "Set up your Second Brain",
     lede:

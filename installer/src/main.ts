@@ -34,6 +34,14 @@ import {
   type RotationStepId,
 } from "./rotation-state";
 import { mount as mountRidge, ridgeSay, ridgeOnScreenChange, hasSeenLine, shouldFireReaction } from "./ridge";
+import {
+  allowedBackSteps,
+  railFor,
+  STEP_LABEL_KEYS,
+  type PathId,
+  type ScreenName,
+  type StepId as RailStepId,
+} from "./steps";
 import "./style.css";
 
 interface Account {
@@ -87,6 +95,132 @@ let currentScreen: (() => void) | null = null;
 let welcomeIntroTimer: number | undefined;
 let welcomeGuardTimer: number | undefined;
 
+// ── The step rail ───────────────────────────────────────────────────────────
+//
+// The shell's left column: what setup is going to ask for, where the user is,
+// and the way back into the few steps that are genuinely re-enterable. The
+// step model itself lives in `steps.ts` as pure data; everything below is the
+// rendering and the wiring to the *existing* screen functions — the rail never
+// invents a second way to navigate, so focus handling, Ridge's anchoring and
+// every state reset stay exactly whatever the Back buttons already do.
+
+/** Which screen is on, and which of the three walks it is part of. Set by each
+ *  screen function beside `currentScreen`, for the same reason: a locale change
+ *  re-renders through the same function and must draw the same rail. */
+let railScreen: ScreenName = "welcome";
+let railPath: PathId = "new";
+/** An await is in flight on the current screen. Cleared by `setRail`, so it
+ *  cannot outlive the screen that set it. */
+let railBusy = false;
+/**
+ * The last discovery result. `unlockBrainScreen`'s own Back button returns to
+ * the picker through a closure; the rail is outside every closure, so the list
+ * it would re-open has to be reachable from here. Held rather than re-scanned:
+ * re-running discovery would cost a second Cloudflare round trip to land on a
+ * screen the user was already looking at.
+ */
+let lastFound: DiscoveredBrain[] = [];
+
+function setRail(screen: ScreenName, path: PathId = railPath) {
+  railScreen = screen;
+  railPath = path;
+  railBusy = false;
+}
+
+/// Each allowed jump is the screen function the matching Back button calls,
+/// and nothing else. `steps.ts` decides whether a jump is offered at all; this
+/// only says where it lands, and a step with no safe landing is not in
+/// `steps.ts`'s jumpable set in the first place.
+function jumpToStep(step: RailStepId) {
+  if (step === "start") return welcomeScreen();
+  if (step === "protect") return passwordScreen();
+  if (step === "signIn") return connectExistingScreen();
+  if (step === "find") return brainPickerScreen(lastFound);
+}
+
+function stepRail(): HTMLElement | null {
+  const model = railFor(railScreen, railPath);
+  if (!model) return null;
+  const jumps = new Set(
+    allowedBackSteps(railScreen, railPath, {
+      busy: railBusy,
+      signedIn: signedInToCloudflare(),
+      hasFound: lastFound.length > 0,
+    }),
+  );
+
+  const list = h("ol", { class: "steprail-list", role: "list" });
+  for (const step of model.steps) {
+    const label = t(STEP_LABEL_KEYS[step.id]);
+    // The running step draws the shared CSS spinner, a finished one the shared
+    // check; everything else is its position, which is the whole point of a
+    // rail — it says how much is left.
+    const mark = h("span", { class: "steprail-mark" }, [
+      step.state === "done"
+        ? icon("check", "icon icon--sm")
+        : step.state === "current" && model.running
+          ? h("span", { class: "spinner" })
+          : String(step.index),
+    ]);
+    const text = h("span", { class: "steprail-label" }, [label]);
+
+    let inner: HTMLElement;
+    if (jumps.has(step.id)) {
+      const btn = h("button", { class: "steprail-jump", type: "button" }, [mark, text]);
+      // "Back to Password", not "Password": out of context a screen reader
+      // reads the list item alone, and the label on its own says nothing about
+      // what activating it does.
+      btn.setAttribute("aria-label", t("steps.backTo", { step: label }));
+      btn.addEventListener("click", () => jumpToStep(step.id));
+      inner = btn;
+    } else {
+      inner = h("span", { class: "steprail-static" }, [mark, text]);
+      // Tooltip-grade only: the reduced affordance (no button, no pointer, no
+      // hover) is what actually communicates this, and the heading and buttons
+      // on the screen already say where the user is.
+      //
+      // Not while a request is out: every step is unclickable then, and this
+      // string says the step is permanently behind the user, which for a step
+      // that will be a door again the moment the connect returns is a claim
+      // the app cannot make.
+      if (step.state === "done" && !railBusy) inner.setAttribute("title", t("steps.locked"));
+    }
+
+    const li = h("li", { class: `steprail-item is-${step.state}` }, [inner]);
+    if (step.state === "current") li.setAttribute("aria-current", "step");
+    list.append(li);
+  }
+
+  // The narrow-window form. Both are in the DOM and CSS shows exactly one;
+  // `display: none` takes the other out of the accessibility tree too, so no
+  // reader ever hears the position twice.
+  const compact = h("p", { class: "steprail-compact" }, [
+    h("span", { class: "steprail-compact-count" }, [
+      t("steps.compact", { n: String(model.index), total: String(model.total) }),
+    ]),
+    h("span", { class: "steprail-compact-label" }, [t(STEP_LABEL_KEYS[model.current])]),
+  ]);
+
+  const nav = h("nav", { class: "steprail", "aria-label": t("steps.navLabel") }, [compact, list]);
+  if (model.paused) nav.classList.add("is-paused");
+  return nav;
+}
+
+/// Redraws the rail without redrawing the screen — for the two changes that
+/// happen inside a screen rather than between screens: an await going out
+/// (which suspends every jump) and provisioning failing (which has to stop the
+/// spinner on the Build step).
+function refreshStepRail() {
+  const screen = app.querySelector<HTMLElement>(".screen");
+  if (!screen) return;
+  const existing = screen.querySelector(".steprail");
+  const next = stepRail();
+  document.body.classList.toggle("has-steprail", next !== null);
+  if (existing && next) existing.replaceWith(next);
+  else if (existing) existing.remove();
+  else if (next) screen.prepend(next);
+}
+
 function show(...nodes: (Node | string)[]) {
   // A screen change never has a line of its own queued yet — the incoming
   // screen's own `ridgeSay` call (if any) runs synchronously right after this
@@ -94,9 +228,25 @@ function show(...nodes: (Node | string)[]) {
   // immediately rather than lingering on an anchor that's about to be gone
   // (the two provisioning guards render no line of their own at all).
   ridgeOnScreenChange();
-  const screen = h("div", { class: "screen", tabindex: "-1" }, nodes);
+  const rail = stepRail();
+  // The shell, not the screen: the rail is a class on `body` because the dark
+  // canvas it stands on is drawn by `body::before`, and its width has to
+  // change with it.
+  document.body.classList.toggle("has-steprail", rail !== null);
+  const screen = h("div", { class: "screen", tabindex: "-1" }, rail ? [rail, ...nodes] : nodes);
   app.replaceChildren(screen);
-  screen.focus({ preventScroll: true });
+  // The rail comes before the heading in reading order, which is right for a
+  // nav and wrong as a starting point: nobody wants to hear six step labels
+  // before the question they were asked. Focus lands on the heading instead,
+  // so the rail is behind the reader rather than in front of them, and is
+  // still one shift-tab away. Screens with no heading keep the old behaviour.
+  const heading = screen.querySelector("h1");
+  if (heading) {
+    heading.setAttribute("tabindex", "-1");
+    heading.focus({ preventScroll: true });
+  } else {
+    screen.focus({ preventScroll: true });
+  }
 }
 
 function brand(): HTMLElement {
@@ -105,6 +255,9 @@ function brand(): HTMLElement {
 
 function welcomeScreen() {
   currentScreen = welcomeScreen;
+  // Re-entering the front door restarts the walk: the path the rail draws is
+  // whichever door is taken next, not the one taken last time.
+  setRail("welcome", "new");
   window.clearTimeout(welcomeIntroTimer);
   window.clearTimeout(welcomeGuardTimer);
   const start = h("button", { class: "btn-primary" }, [t("welcome.getStarted")]);
@@ -164,6 +317,7 @@ interface DiscoveredBrain {
 /// welcome screen ranks its own two doors.
 function audienceScreen() {
   currentScreen = audienceScreen;
+  setRail("audience", "new");
   // Two co-equal choice cards, not a primary button over a secondary link:
   // "just me" is not the default the other is a fallback from (user-requested
   // promotion). Row 2's own Ridge line is deliberately skipped here — the
@@ -253,6 +407,7 @@ async function brainReportsMembers(brainUrl: string, brainPassword: string): Pro
 /// The question only ever runs on a solo brain whose mode was never recorded.
 async function existingTeamScreen(brainUrl: string, brainPassword: string, back: () => void) {
   currentScreen = () => existingTeamScreen(brainUrl, brainPassword, back);
+  setRail("existingTeam");
   if (details?.teamMode) {
     // A team brain this machine has already recorded. The mode is settled, but
     // the role is not — it is re-derived here rather than skipped, because the
@@ -367,6 +522,7 @@ function guardPanel(mark: IconName, body: Node | string): HTMLElement {
 /// first-class choice.
 function connectExistingScreen(errorMsg?: string) {
   currentScreen = () => connectExistingScreen(errorMsg);
+  setRail("connectExisting", "existing");
 
   const signIn = h("button", { class: "btn-primary" }, [t("connectExisting.signInButton")]);
   signIn.addEventListener("click", () => void discoverScreen());
@@ -374,7 +530,14 @@ function connectExistingScreen(errorMsg?: string) {
   const manual = h("button", { class: "btn-ghost btn-stack" }, [
     t("connectExisting.manualButton"),
   ]);
-  manual.addEventListener("click", () => manualEntryScreen());
+  // The manual door is the member/token walk: no Cloudflare sign-in, no scan.
+  // Taking it here is the earliest moment the app can know that, which is why
+  // the rail derives the path from the door rather than from the role the
+  // brain reports two screens later.
+  manual.addEventListener("click", () => {
+    railPath = "token";
+    manualEntryScreen();
+  });
 
   const back = h("button", { class: "btn-ghost btn-stack" }, [t("common.back")]);
   back.addEventListener("click", welcomeScreen);
@@ -425,6 +588,7 @@ function searchingScreen() {
 
 async function discoverScreen() {
   currentScreen = searchingScreen;
+  setRail("searching", "existing");
   searchingScreen();
   try {
     accounts = await invoke<Account[]>("connect_cloudflare");
@@ -448,6 +612,7 @@ async function discoverScreen() {
 
 async function runDiscovery() {
   currentScreen = searchingScreen;
+  setRail("searching", "existing");
   searchingScreen();
   try {
     const found = await invoke<DiscoveredBrain[]>("discover_brains", {
@@ -468,6 +633,8 @@ async function runDiscovery() {
 
 function brainPickerScreen(found: DiscoveredBrain[]) {
   currentScreen = () => brainPickerScreen(found);
+  setRail("brainPicker", "existing");
+  lastFound = found;
   const list = h("ul", { class: "account-list", role: "list" });
   for (const brain of found) {
     // The address leads, not the name: this app deploys every brain under the
@@ -559,6 +726,7 @@ function connectExistingErrorMessage(e: unknown): string {
 /// is an owner-only Cloudflare recovery a member structurally cannot complete.
 function memberTokenHelpScreen(back: () => void) {
   currentScreen = () => memberTokenHelpScreen(back);
+  setRail("memberTokenHelp");
   // Promoted from ghost to primary: it is the only control on the screen, and
   // the one way back out of a dead end should not be styled as the quiet
   // alternative to something else. Same handler, same label, same back-chain.
@@ -582,6 +750,8 @@ function unlockBrainScreen(
   found: DiscoveredBrain[] = [brain],
 ) {
   currentScreen = () => unlockBrainScreen(brain, errorMsg, found);
+  setRail("unlockBrain", "existing");
+  lastFound = found;
   const passwordLabel = t("connectExisting.passwordPlaceholder");
   const password = h("input", {
     type: "password",
@@ -627,6 +797,8 @@ function unlockBrainScreen(
   connect.addEventListener("click", async () => {
     connect.disabled = true;
     connect.textContent = t("common.checking");
+    railBusy = true;
+    refreshStepRail();
     try {
       details = await invoke<ConnectionDetails>("connect_existing", {
         address: brain.url,
@@ -685,6 +857,10 @@ function manualEntryScreen(
   discoveryFailed = false,
 ) {
   currentScreen = () => manualEntryScreen(errorMsg, prefillAddress, tone, discoveryFailed);
+  // Path deliberately inherited, not set: this same screen is the token door
+  // (reached from the connect fork or the existing-brain guard) and the
+  // fallback for a scan that came up empty, which is still the discover walk.
+  setRail("manualEntry");
   const addressLabel = t("connectExisting.addressPlaceholder");
   const address = h("input", {
     type: "text",
@@ -752,6 +928,8 @@ function manualEntryScreen(
   connect.addEventListener("click", async () => {
     connect.disabled = true;
     connect.textContent = t("common.checking");
+    railBusy = true;
+    refreshStepRail();
     try {
       details = await invoke<ConnectionDetails>("connect_existing", {
         address: address.value,
@@ -834,6 +1012,7 @@ function meterFor(pw: string, check: PasswordCheck | null): {
 
 function passwordScreen() {
   currentScreen = passwordScreen;
+  setRail("password", "new");
   const pw = h("input", {
     type: "password",
     placeholder: t("password.placeholder"),
@@ -955,10 +1134,14 @@ function passwordScreen() {
   });
 
   next.addEventListener("click", async () => {
+    railBusy = true;
+    refreshStepRail();
     try {
       await invoke("submit_password", { password: pw.value });
       connectScreen();
     } catch (e) {
+      railBusy = false;
+      refreshStepRail();
       hint.textContent = String(e);
       hint.className = "hint error";
     }
@@ -1002,6 +1185,7 @@ function passwordScreen() {
 
 function connectScreen(errorMsg?: string) {
   currentScreen = () => connectScreen(errorMsg);
+  setRail("cloudflare", "new");
   const signIn = h("button", { class: "btn-primary" }, [t("cloudflare.signIn")]);
   const error = errorMsg ? notice(errorMsg) : "";
   // The password chosen a screen back is still only in memory (#F3), same as
@@ -1012,6 +1196,9 @@ function connectScreen(errorMsg?: string) {
   back.addEventListener("click", () => passwordScreen());
 
   signIn.addEventListener("click", async () => {
+    // Watching a browser tab: the step has not moved, and nothing on the rail
+    // is clickable while it is out.
+    setRail("cloudflareWaiting", "new");
     show(
       brand(),
       h("h1", {}, [t("cloudflare.waitingTitle")]),
@@ -1086,6 +1273,14 @@ function accountPickerScreen(
   back?: () => void,
 ) {
   currentScreen = () => accountPickerScreen(next, title, lede, back);
+  // Three callers, three meanings. "Which account do I build in?" is the
+  // Connect step; "which account do I scan?" is Find. The third is the
+  // lost-password rediscovery, which has no rail at all — so the rail is only
+  // moved when there is one, rather than by testing for the rotation flow a
+  // second way here.
+  if (railFor(railScreen, railPath)) {
+    setRail(next === progressScreen ? "accountPickerProvision" : "accountPickerDiscover");
+  }
   const list = h("ul", { class: "account-list", role: "list" });
   for (const account of accounts) {
     const btn = h("button", {}, [account.name]);
@@ -1210,8 +1405,12 @@ function structuredProvisioningError(e: unknown): StructuredProvisioningError | 
 /// reuse here, since this account was never scanned.
 function existingBrainGuardScreen(err: GuardExistingBrainError) {
   currentScreen = () => existingBrainGuardScreen(err);
+  setRail("existingBrainGuard", "new");
   const connectToIt = h("button", { class: "btn-primary" }, [t("guard.existingBrainConnect")]);
-  connectToIt.addEventListener("click", () => manualEntryScreen(undefined, err.url));
+  connectToIt.addEventListener("click", () => {
+    railPath = "token";
+    manualEntryScreen(undefined, err.url);
+  });
   const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
@@ -1235,6 +1434,7 @@ function existingBrainGuardScreen(err: GuardExistingBrainError) {
 /// that need to branch on it rather than just display it.
 function resourceConflictGuardScreen(err: GuardNameConflictError) {
   currentScreen = () => resourceConflictGuardScreen(err);
+  setRail("resourceConflictGuard", "new");
   // Routing "choose another account" through `connectScreen` would re-run
   // `connect_cloudflare`, whose sign-in handler short-circuits straight back to
   // this same account when the login only has one (`main.ts:782-784`) —
@@ -1270,6 +1470,7 @@ function resourceConflictGuardScreen(err: GuardNameConflictError) {
 
 function progressScreen() {
   currentScreen = progressScreen;
+  setRail("progress", "new");
   const rows = new Map<StepId, HTMLLIElement>();
   const labels = new Map<StepId, string>();
   const statusEls = new Map<StepId, HTMLElement>();
@@ -1325,6 +1526,8 @@ function progressScreen() {
 
   let unlisten: (() => void) | null = null;
   const start = async () => {
+    setRail("progress", "new");
+    refreshStepRail();
     for (const [id, li] of rows) {
       li.className = "";
       li.removeAttribute("aria-label");
@@ -1352,6 +1555,11 @@ function progressScreen() {
         resourceConflictGuardScreen(structured);
         return;
       }
+      // The rail is redrawn rather than left alone: the Build step is showing a
+      // spinner, and a spinner that keeps turning next to the words "setup
+      // failed" is the app disagreeing with itself.
+      setRail("progressFailed", "new");
+      refreshStepRail();
       const message = structured ? structured.message : String(e);
       const retry = h("button", { class: "btn-primary" }, [t("common.trySetupAgain")]);
       retry.addEventListener("click", () => void start());
@@ -1383,6 +1591,7 @@ function progressScreen() {
 
 async function toolsScreen() {
   currentScreen = () => void toolsScreen();
+  setRail("tools");
   const tools = await invoke<ToolStatus>("detect_tools");
   const next = h("button", { class: "btn-primary" }, [t("common.continueToConnectionDetails")]);
   next.addEventListener("click", detailsScreen);
@@ -1408,6 +1617,7 @@ async function toolsScreen() {
 
 function detailsScreen() {
   currentScreen = detailsScreen;
+  setRail("details");
   const done = h("button", { class: "btn-primary" }, [t("details.openDashboard")]);
   done.addEventListener("click", () => void invoke("open_dashboard"));
   const cards = h("div", {}, detailCards(details!));
@@ -1476,6 +1686,7 @@ function updateProgressSteps(): { id: StepId; label: string }[] {
 
 async function workerUpdateScreen() {
   currentScreen = () => void workerUpdateScreen();
+  setRail("workerUpdate");
   const info = await invoke<WorkerUpdateInfo | null>("worker_update_available").catch(() => null);
   const versionLine = info
     ? t("workerUpdate.ledeWithVersion", { version: info.availableVersion })
@@ -1498,6 +1709,7 @@ async function workerUpdateScreen() {
 
 async function runWorkerUpdate(errorMsg?: string) {
   currentScreen = () => void runWorkerUpdate(errorMsg);
+  setRail("workerUpdate");
   if (errorMsg) {
     const retry = h("button", { class: "btn-primary" }, [t("common.tryAgain")]);
     retry.addEventListener("click", () => void runWorkerUpdate());
@@ -1580,6 +1792,7 @@ async function runWorkerUpdate(errorMsg?: string) {
 
 function workerUpdateDoneScreen() {
   currentScreen = workerUpdateDoneScreen;
+  setRail("workerUpdate");
   const done = h("button", { class: "btn-primary" }, [t("details.openDashboard")]);
   done.addEventListener("click", () => void invoke("open_dashboard"));
   show(
@@ -1651,6 +1864,11 @@ let rotationMayBeLive = false;
 function beginRotation() {
   rotationPassword = "";
   rotationGenerated = false;
+  // Every screen from here to the done screen is a management flow launched
+  // from Details or from a connect screen, not a step of setup. One call
+  // covers the whole flow: `setRail` is re-asserted on each of its screens
+  // below, and nothing inside it ever sets a setup screen.
+  setRail("rotation");
 }
 
 /** Where the password step's Back leads. Usually the intro; the discovery paths
@@ -1731,6 +1949,7 @@ function cloudflareWaitingScreen(lede: string) {
 
 async function rotationSignIn(onError: (msg: string) => void, next: () => void) {
   currentScreen = () => cloudflareWaitingScreen(t("changePassword.waitingLede"));
+  setRail("rotation");
   cloudflareWaitingScreen(t("changePassword.waitingLede"));
   try {
     accounts = await invoke<Account[]>("connect_cloudflare");
@@ -1746,6 +1965,7 @@ async function rotationSignIn(onError: (msg: string) => void, next: () => void) 
 /// login that does not hold it is a wrong answer rather than a choice.
 function changePasswordIntroScreen(errorMsg?: string) {
   currentScreen = () => changePasswordIntroScreen(errorMsg);
+  setRail("rotation");
   rotationDoor = "change";
   rotationAddress = null;
   rotationBack = () => changePasswordIntroScreen();
@@ -1779,6 +1999,7 @@ function changePasswordIntroScreen(errorMsg?: string) {
 /// else. `address` is null when the brain still has to be found.
 function lostPasswordIntroScreen(address: string | null, errorMsg?: string) {
   currentScreen = () => lostPasswordIntroScreen(address, errorMsg);
+  setRail("rotation");
   rotationDoor = "lost";
   rotationAddress = address;
   rotationBack = () => lostPasswordIntroScreen(address);
@@ -1843,6 +2064,7 @@ async function lostDiscovery() {
 
 async function runLostDiscovery() {
   currentScreen = searchingScreen;
+  setRail("rotation");
   searchingScreen();
   try {
     const found = await invoke<DiscoveredBrain[]>("discover_brains", {
@@ -1864,6 +2086,7 @@ async function runLostDiscovery() {
 /// "Connect to it" is wrong when there is nothing to connect with yet.
 function lostBrainPickerScreen(found: DiscoveredBrain[]) {
   currentScreen = () => lostBrainPickerScreen(found);
+  setRail("rotation");
   const list = h("ul", { class: "account-list", role: "list" });
   for (const brain of found) {
     const btn = h("button", {}, [brain.url.replace(/^https:\/\//, "")]);
@@ -1910,6 +2133,7 @@ function lostAddressScreen(
   prefill = rotationTypedAddress,
 ) {
   currentScreen = () => lostAddressScreen(found, errorMsg, fromPicker, prefill);
+  setRail("rotation");
   const address = h("input", {
     type: "text",
     placeholder: t("connectExisting.addressPlaceholder"),
@@ -1979,6 +2203,7 @@ function lostAddressScreen(
 /// breach check back exactly as at setup.
 function choosePasswordScreen() {
   currentScreen = choosePasswordScreen;
+  setRail("rotation");
   const pw = h("input", {
     type: "text",
     placeholder: t("password.placeholder"),
@@ -2114,6 +2339,7 @@ function choosePasswordScreen() {
 /// connection link are not secrets and this is, and a button is advice.
 function savePasswordScreen() {
   currentScreen = savePasswordScreen;
+  setRail("rotation");
   // btn-danger is a small pill everywhere else in the app; here it is the
   // screen's primary, so it borrows the setup buttons' metrics. Its label is
   // itself the acknowledgement, matching the one other place in the app where
@@ -2161,6 +2387,7 @@ const rotationStepStatus = new Map<StepId, StepEvent["status"]>();
 /// moment would manufacture the "may already be live" case on purpose.
 function rotationProgressScreen() {
   currentScreen = rotationProgressScreen;
+  setRail("rotation");
   const list = h("ul", {
     class: "checklist",
     role: "list",
@@ -2242,6 +2469,7 @@ async function runRotation() {
 /// The other truth is not dropped: `blockedCopy` puts it on this screen.
 function rotateBlockedScreen(detail: string) {
   currentScreen = () => rotateBlockedScreen(detail);
+  setRail("rotation");
   const copy = blockedCopy(rotationMayBeLive);
   const settings = h("button", { class: "btn-primary" }, [t("changePassword.blockedButton")]);
   settings.addEventListener("click", () => void invoke("open_settings_window"));
@@ -2292,6 +2520,7 @@ function failDetailLine(detail: string): HTMLElement | string {
 /// labelled by what it actually is here: chosen, and not in use.
 function rotateFailNotSentScreen(detail: string) {
   currentScreen = () => rotateFailNotSentScreen(detail);
+  setRail("rotation");
   const retry = h("button", { class: "btn-primary" }, [t("common.tryAgain")]);
   retry.addEventListener("click", () => void runRotation());
   const leave = h("button", { class: "btn-ghost btn-stack" }, [
@@ -2323,6 +2552,7 @@ function rotateFailNotSentScreen(detail: string) {
 /// what landed or completes what did not.
 function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
   currentScreen = () => rotateFailUnsureScreen(detail, recheck);
+  setRail("rotation");
   const retry = h("button", { class: "btn-primary" }, [t("common.tryAgain")]);
   retry.addEventListener("click", () => void runRotation());
 
@@ -2397,6 +2627,7 @@ function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
 /// would change the password a second time.
 function rotateFailLocalScreen(outcome: RotateOutcome | null, detail = "") {
   currentScreen = () => rotateFailLocalScreen(outcome, detail);
+  setRail("rotation");
   // Heading and body are chosen together. They used to disagree: the body
   // switched to the CLI-specific message when secure storage had in fact
   // succeeded, while the heading went on saying the password was "not saved on
@@ -2442,6 +2673,7 @@ function rotateFailLocalScreen(outcome: RotateOutcome | null, detail = "") {
 /// warning, so a hygiene user dismisses it in one beat.
 function rotateDoneScreen(revealed = false) {
   currentScreen = () => rotateDoneScreen(revealed);
+  setRail("rotation");
   // Four items, not three. A change writes to secure storage, the brain
   // command's config and the open dashboard window — so the extension and the
   // Obsidian plugin hold the old password on *this* computer too, which is what
@@ -2499,6 +2731,10 @@ function rotateDoneScreen(revealed = false) {
 /// without the new password and someone who did not make the change.
 async function passwordChangedElsewhereScreen(errorMsg?: string) {
   currentScreen = () => void passwordChangedElsewhereScreen(errorMsg);
+  // A recovery entry point, not step one: this computer already finished setup
+  // once, so a rail ticking off Start and Password would be describing a walk
+  // that is not happening.
+  setRail("stalePassword");
   const stored = await invoke<ConnectionDetails>("get_connection_details").catch(() => null);
   if (!stored) {
     // Nothing stored to be stale about; the ordinary connect path applies.

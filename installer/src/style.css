@@ -1,4 +1,4 @@
-/* Matches the Worker dashboard's look (public/index.html) with system fonts
+/* Shares the dashboard and marketing site's visual language with system fonts
    only — setup must render fully offline. */
 *,
 *::before,
@@ -10,30 +10,26 @@
 
 :root {
   /* ── Palette ────────────────────────────────────────────────────────────────
-     The mascot's world, as tokens: warm cream paper, crisp ink, orange spent
-     sparingly. Two oranges, and the difference matters — `--accent` is the
-     brand orange and only ever carries decoration (3.2:1 on both surfaces:
-     legal for a non-text mark, not for a control's state); `--accent-btn` is
-     the ink-orange that carries text, borders, focus and every state that has
-     to be read (6.5:1 on paper, 6.7:1 as a white-on-orange button). Anything
-     that means something uses the second one. */
-  --bg: #fffdf9;
-  --bg-card: #fcfbf7;
+     Warm paper and near-black ink come directly from the product surfaces.
+     Brand orange can carry control chrome and dark text; `--accent-press`
+     remains the darker accessible orange for text on light backgrounds. */
+  --bg: #f7f4ef;
+  --bg-card: #fffdfa;
   --bg-sunken: #ffffff;
   --accent: #fd540a;
-  --accent-btn: #a83200;
+  --accent-btn: #fa5208;
   --accent-press: #a83200;
-  --accent-soft: rgba(253, 84, 10, 0.09);
-  --accent-strong: rgba(253, 84, 10, 0.16);
+  --accent-soft: rgba(253, 84, 10, 0.1);
+  --accent-strong: rgba(253, 84, 10, 0.17);
   --on-accent: #161616;
   --text-primary: #161616;
   --text-secondary: #68635f;
   --text-tertiary: #756f69;
   --text: var(--text-primary);
   --text-dim: var(--text-secondary);
-  --border: rgba(22, 22, 22, 0.11);
-  --border-strong: rgba(22, 22, 22, 0.48);
-  --border-hover: rgba(22, 22, 22, 0.62);
+  --border: rgba(22, 22, 22, 0.1);
+  --border-strong: rgba(22, 22, 22, 0.2);
+  --border-hover: rgba(22, 22, 22, 0.4);
   --danger: #b42318;
   --danger-soft: rgba(180, 35, 24, 0.08);
   --danger-strong: rgba(180, 35, 24, 0.16);
@@ -53,18 +49,18 @@
   --s-7: 32px;
   --s-8: 40px;
 
-  /* ── Radii ── generous and sticker-round, four steps plus a pill. */
-  --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 18px;
-  --r-xl: 22px;
+  /* ── Radii ── product-card restraint, with pills reserved for badges. */
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 12px;
+  --r-xl: 16px;
   --r-pill: 999px;
 
   /* ── Type ── serif for the one heading, sans for everything that is read. */
   --font-serif: Georgia, "Times New Roman", serif;
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
-  --fs-display: 30px;
+  --fs-display: 34px;
   --fs-title: 21px;
   --fs-body: 15px;
   --fs-label: 14px;
@@ -72,17 +68,15 @@
   --fs-xs: 12.5px;
   --fs-2xs: 11px;
 
-  /* ── Elevation ── warm and low. Cards sit on the page; they do not float. */
-  --shadow-sm: 0 1px 2px rgba(22, 22, 22, 0.04);
-  --shadow-card: 0 1px 2px rgba(22, 22, 22, 0.04), 0 6px 16px rgba(22, 22, 22, 0.045);
-  --shadow-lift: 0 2px 4px rgba(22, 22, 22, 0.05), 0 12px 28px rgba(22, 22, 22, 0.09);
-  /* The flat drop under a primary button — the one bit of sticker in the
-     button system, and the reason it reads as pressable rather than painted. */
-  --shadow-key: 0 2px 0 rgba(22, 22, 22, 0.14);
+  /* ── Elevation ── almost flat, like the dashboard and site cards. */
+  --shadow-sm: 0 1px 2px rgba(22, 22, 22, 0.035);
+  --shadow-card: 0 1px 2px rgba(22, 22, 22, 0.035);
+  --shadow-lift: 0 2px 4px rgba(22, 22, 22, 0.045), 0 10px 24px rgba(22, 22, 22, 0.075);
+  --shadow-key: 0 2px 0 #c73e05;
 
   /* ── Focus ── one ring, stated once. A cream gap so it reads on a filled
-     button too, then ink-orange at 6.5:1 against either surface. */
-  --focus-ring: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent-btn);
+     button too, then the darker orange against either surface. */
+  --focus-ring: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent-press);
   --focus-ring-soft: 0 0 0 3px var(--accent-soft);
 
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -107,6 +101,27 @@ body {
   cursor: default;
 }
 
+/* Setup borrows the marketing site's alternating ink/paper canvas while the
+   work surface stays as quiet as the dashboard. Ridge naturally chooses the
+   open left side of the anchored control, turning that rail into his stage. */
+body:has(.screen) {
+  position: relative;
+  overflow-x: hidden;
+}
+
+body:has(.screen)::before {
+  content: "";
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 30%;
+  z-index: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at 48% 66%, rgba(253, 84, 10, 0.17), transparent 39%),
+    #171615;
+  pointer-events: none;
+}
+
 #app {
   min-height: 100vh;
   display: flex;
@@ -117,10 +132,24 @@ body {
   padding: var(--s-7) var(--s-7) var(--s-8);
 }
 
+body:has(.screen) #app {
+  position: relative;
+  z-index: 1;
+  justify-content: flex-end;
+  padding: 48px 56px 48px calc(30vw + 40px);
+}
+
 .screen {
   width: 100%;
   max-width: 520px;
   animation: fade-in 0.45s var(--ease);
+}
+
+body:has(.screen) .screen {
+  max-width: 500px;
+  margin-left: auto;
+  margin-top: auto;
+  margin-bottom: auto;
 }
 
 @keyframes fade-in {
@@ -138,8 +167,8 @@ body {
    edge every card has, one warm halo. It is the first thing on every screen and
    used to be the faintest. */
 .brand {
-  width: 76px;
-  height: 76px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   background: var(--bg-card);
   border: 0.5px solid var(--border-strong);
@@ -147,7 +176,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto var(--s-6);
+  margin: 0 0 var(--s-6);
   position: relative;
 }
 
@@ -160,9 +189,50 @@ body {
 }
 
 .brand img {
-  width: 42px;
-  height: 42px;
+  width: 34px;
+  height: 34px;
   object-fit: contain;
+}
+
+body:has(.screen) .brand {
+  position: fixed;
+  top: var(--s-7);
+  left: var(--s-7);
+  z-index: 2;
+  width: 54px;
+  height: 54px;
+  margin: 0;
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow: none;
+}
+
+body:has(.screen) .brand::after {
+  border-color: rgba(253, 84, 10, 0.28);
+}
+
+@media (max-width: 700px) {
+  body:has(.screen)::before {
+    display: none;
+  }
+
+  body:has(.screen) #app {
+    justify-content: center;
+    padding: var(--s-7) var(--s-6) var(--s-8);
+  }
+
+  body:has(.screen) .screen {
+    max-width: 520px;
+    margin-left: 0;
+  }
+
+  body:has(.screen) .brand {
+    position: relative;
+    inset: auto;
+    width: 60px;
+    height: 60px;
+    margin: 0 0 var(--s-6);
+    border-color: var(--border-strong);
+  }
 }
 
 h1 {
@@ -171,16 +241,16 @@ h1 {
   font-weight: 500;
   line-height: 1.22;
   letter-spacing: -0.02em;
-  text-align: center;
+  text-align: left;
   max-width: 460px;
-  margin: 0 auto var(--s-3);
+  margin: 0 0 var(--s-3);
 }
 
 .lede {
   color: var(--text-secondary);
-  text-align: center;
+  text-align: left;
   max-width: 420px;
-  margin: 0 auto var(--s-6);
+  margin: 0 0 var(--s-6);
 }
 
 /* Three screens stack two ledes. The second is a continuation, not a new
@@ -229,7 +299,7 @@ h1 {
 
 .card {
   background: var(--bg-card);
-  border: 0.5px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: var(--r-lg);
   padding: var(--s-5);
   margin-bottom: var(--s-4);
@@ -237,7 +307,7 @@ h1 {
 }
 
 /* The one card that is the point of its screen — a team owner's next move, an
-   available update, a password that exists nowhere else. An ink-orange edge and
+   available update, a password that exists nowhere else. An orange edge and
    a warm inner band, rather than a second border colour shouting alongside the
    first. */
 .card--feature {
@@ -266,7 +336,7 @@ button {
   font-family: var(--font-sans);
   font-size: var(--fs-body);
   font-weight: 600;
-  border: 0.5px solid transparent;
+  border: 1px solid transparent;
   border-radius: var(--r-md);
   cursor: pointer;
   transition: background 0.18s, border-color 0.18s, color 0.18s,
@@ -292,17 +362,17 @@ button:disabled {
 .btn-primary {
   display: block;
   width: 100%;
-  padding: var(--s-4);
+  padding: 14px var(--s-4);
   background: var(--accent-btn);
-  border-color: var(--accent-btn);
-  color: #ffffff;
+  border-color: rgba(22, 22, 22, 0.22);
+  color: var(--on-accent);
   letter-spacing: -0.005em;
   box-shadow: var(--shadow-key);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #8a2900;
-  border-color: #8a2900;
+  background: #ec4c08;
+  border-color: rgba(22, 22, 22, 0.36);
 }
 
 .btn-primary:active:not(:disabled) {
@@ -385,7 +455,7 @@ input[type="text"] {
   width: 100%;
   padding: var(--s-4);
   background: var(--bg-card);
-  border: 0.5px solid var(--border-strong);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
   font-family: var(--font-sans);
   font-size: var(--fs-body);
@@ -403,8 +473,8 @@ input:hover:not(:focus) {
   border-color: var(--border-hover);
 }
 
-/* Ink-orange, not brand orange: a focused field's edge is a state, and the
-   brand orange only clears 3.2:1 against the surface behind it. */
+/* The control orange is tuned just past 3:1 against the paper, so a focused
+   field has a clearly visible state without reaching for a second brand hue. */
 input:focus {
   border-color: var(--accent-btn);
   background: var(--bg-sunken);
@@ -416,7 +486,7 @@ select.locale-select {
   margin-top: var(--s-2);
   padding: var(--s-3) var(--s-4);
   background: var(--bg-card);
-  border: 0.5px solid var(--border-strong);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
   font-family: var(--font-sans);
   font-size: var(--fs-body);
@@ -525,7 +595,7 @@ select.locale-select:focus {
   text-align: right;
 }
 
-/* A tinted block with a coloured edge, left-aligned inside centred screens so
+/* A tinted block with a coloured edge, left-aligned inside the task pane so
    a two-line warning does not read as ragged poetry. */
 .notice {
   display: flex;
@@ -938,19 +1008,20 @@ li.error .check-icon {
    single tall column the setup flow uses. */
 .panel {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  gap: var(--s-7);
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 0;
   width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
-  padding: var(--s-6) var(--s-7) var(--s-8);
-  align-items: start;
+  max-width: none;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  align-items: stretch;
 }
 
 @media (max-width: 720px) {
   .panel {
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--s-4);
+    min-height: auto;
   }
 }
 
@@ -959,20 +1030,30 @@ li.error .check-icon {
   flex-direction: column;
   gap: var(--s-1);
   position: sticky;
-  top: var(--s-6);
+  top: 0;
+  height: 100vh;
+  padding: var(--s-7) var(--s-5);
+  background: var(--bg-sunken);
+  border-right: 1px solid var(--border);
 }
 
 @media (max-width: 720px) {
   .rail {
-    position: static;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: auto;
     flex-direction: row;
     flex-wrap: wrap;
+    padding: var(--s-3) var(--s-4);
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 }
 
 .rail-btn {
   appearance: none;
-  border: 0.5px solid transparent;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
   font: inherit;
@@ -994,28 +1075,40 @@ li.error .check-icon {
    not a cream chip one shade off the cream page behind it. */
 .rail-btn.on {
   background: var(--accent-soft);
-  border-color: var(--border-strong);
-  color: var(--text-primary);
+  border-color: transparent;
+  color: var(--accent-press);
   font-weight: 600;
 }
 
 .pane {
   min-width: 0;
+  width: 100%;
+  max-width: 780px;
+  padding: 48px 56px 80px;
 }
 
 .pane-title {
-  margin: 0 0 var(--s-1);
-  font-size: var(--fs-title);
-  font-weight: 650;
-  letter-spacing: -0.012em;
+  margin: 0 0 var(--s-2);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
 .pane-desc {
-  margin: 0 0 var(--s-5);
+  margin: 0 0 var(--s-6);
   color: var(--text-dim);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
+  font-size: var(--fs-label);
+  line-height: 1.55;
   max-width: 62ch;
+}
+
+@media (max-width: 720px) {
+  .pane {
+    max-width: none;
+    padding: var(--s-7) var(--s-6) 88px;
+  }
 }
 
 /* Category heading inside the integrations pane. Everything sits on one screen
@@ -1177,12 +1270,20 @@ body.settings-page #app {
   align-items: center;
   gap: 0.6rem;
   width: 100%;
-  max-width: 900px;
+  max-width: none;
   margin: 0 auto;
-  padding: 0.85rem 30px;
+  padding: 0.85rem 56px 0.85rem 276px;
   border-top: 1px solid var(--border);
   /* Opaque: cards scroll underneath this bar. */
-  background: var(--bg);
+  background: rgba(247, 244, 239, 0.96);
+  box-shadow: 0 -8px 24px rgba(22, 22, 22, 0.04);
+  backdrop-filter: blur(12px);
+}
+
+@media (max-width: 720px) {
+  .settings-actions {
+    padding: var(--s-3) var(--s-6);
+  }
 }
 
 .settings-actions-status {
@@ -1643,4 +1744,277 @@ body.settings-page #app {
   margin: 0 auto;
   color: var(--text-primary);
   max-width: 380px;
+}
+
+/* ── The step rail ───────────────────────────────────────────────────────────
+   What setup is going to ask for, where the user is in it, and the way back
+   into the handful of steps that can actually be re-entered (main.ts's
+   `stepRail`, over `steps.ts`'s model).
+
+   It is part of the shell rather than of any screen: `body.has-steprail` is
+   what switches the layout, because the dark canvas the rail stands on is
+   drawn by `body::before` and its width has to change with it. Wide enough,
+   that canvas stops being 30% of decoration and becomes exactly the rail; the
+   content column moves off the right edge and over to sit beside it, and the
+   reserved space Ridge used to have on the left is reserved on the right
+   instead. He was always meant to stand there first — `decideRidgePlacement`
+   tries "right" before "left" for reading order — and only ended up on the
+   left because the column was pinned to the window's right edge.
+
+   `--ridge-gutter` is that reservation, and it is not a round number: Ridge's
+   placement needs 200 + 12 + 12 = 224px clear of the anchor's right edge, and
+   his bubble (narrowed below, since the gutter is paid for out of the reading
+   column) needs 12 + 220 + 12 = 244px before `clampBubbleIntoViewport` would
+   drag him back over the text he is commenting on. */
+:root {
+  --rail-w: 208px;
+  --rail-gap: 36px;
+  --ridge-gutter: 248px;
+  /* The shared ring, with the rail's own near-black as the gap colour: the
+     cream/dark-orange pairing is built for a paper surface and disappears
+     against ink. Same two-stop shape, same accent. */
+  --focus-ring-dark: 0 0 0 2px #171615, 0 0 0 4px var(--accent);
+}
+
+/* The screen's entrance animation moves to its children while the rail is up.
+   `fade-in` uses a transform, and a transformed element is the containing
+   block for its `position: fixed` descendants — so for the 450ms it runs, a
+   rail asking for `left: 0` would be drawn at the content column's left edge
+   and then snap back. Animating each child instead is visually identical (they
+   all run on the same clock) and leaves the rail, which is shell rather than
+   screen, out of it entirely: it does not re-enter on every screen change,
+   because it did not leave. */
+body.has-steprail .screen {
+  animation: none;
+}
+
+body.has-steprail .screen > *:not(.steprail) {
+  animation: fade-in 0.45s var(--ease);
+}
+
+.steprail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.steprail-compact {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin: 0;
+}
+
+.steprail-item {
+  list-style: none;
+}
+
+/* One row shape whether or not it is a button, so a step does not shift by a
+   pixel when it becomes reachable. */
+.steprail-jump,
+.steprail-static {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-label);
+  line-height: 1.3;
+  text-align: left;
+}
+
+.steprail-mark {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.steprail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.steprail .spinner {
+  border-color: rgba(255, 255, 255, 0.2);
+  border-top-color: var(--accent);
+}
+
+/* ── Wide: the rail is the left column ──────────────────────────────────── */
+@media (min-width: 900px) {
+  body.has-steprail:has(.screen)::before {
+    width: var(--rail-w);
+  }
+
+  body.has-steprail:has(.screen) #app {
+    justify-content: flex-start;
+    padding: 48px var(--ridge-gutter) 48px calc(var(--rail-w) + var(--rail-gap));
+  }
+
+  body.has-steprail:has(.screen) .screen {
+    margin-left: 0;
+  }
+
+  .steprail {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--rail-w);
+    z-index: 2;
+    /* Clears the logo, which is already pinned to this canvas at 32px and is
+       the rail's heading whether or not it knows it. */
+    padding: 104px var(--s-4) var(--s-6);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    overflow: hidden;
+  }
+
+  .steprail-compact {
+    display: none;
+  }
+
+  /* Three ranks on ink. Done is legible but finished, current is the only
+     filled thing on the canvas, and what is still ahead is present enough to
+     be counted and quiet enough not to be read as available. */
+  .steprail-item.is-todo > * {
+    color: rgba(255, 255, 255, 0.32);
+  }
+
+  /* Completion is the check, always: the mark says what happened and does not
+     change with whether the step can be re-entered. Availability is the label
+     instead — a step that is still a door reads at full strength, one that is
+     behind the point of no return sits back with it. Without that split the
+     two are identical until the pointer is already on them, and a rail where
+     some completed steps are doors and others are not (the account picker
+     after sign-in, the unlock screen with no scan held) is the common case,
+     not the edge one. */
+  .steprail-item.is-done .steprail-mark {
+    color: var(--accent);
+    border-color: rgba(253, 84, 10, 0.45);
+  }
+
+  .steprail-item.is-done .steprail-label {
+    color: rgba(255, 255, 255, 0.72);
+  }
+
+  .steprail-item.is-done .steprail-static .steprail-label {
+    color: rgba(255, 255, 255, 0.46);
+  }
+
+  .steprail-item.is-current > * {
+    background: var(--accent-strong);
+    border-color: rgba(253, 84, 10, 0.42);
+    color: #fff;
+  }
+
+  .steprail-item.is-current .steprail-mark {
+    background: var(--accent-btn);
+    border-color: transparent;
+    color: var(--on-accent);
+    font-weight: 600;
+  }
+
+  /* The one place the spinner sits on a filled orange disc rather than on
+     paper. Its default ring is `--accent-soft`, which on orange is orange, so
+     it turns invisibly; the ink it inherits from the filled mark is what makes
+     it read as turning at all. */
+  .steprail-item.is-current .steprail-mark .spinner {
+    border-color: rgba(22, 22, 22, 0.25);
+    border-top-color: var(--on-accent);
+  }
+
+  button.steprail-jump {
+    cursor: pointer;
+  }
+
+  button.steprail-jump:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.16);
+    color: #fff;
+  }
+
+  button.steprail-jump:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring-dark);
+  }
+
+  /* A guard, a scan, a sign-in being watched: the step has not moved and
+     nothing here is clickable, so the whole rail steps back rather than
+     leaving a filled current step looking like it is making progress. */
+  .steprail.is-paused {
+    opacity: 0.6;
+  }
+
+  .steprail.is-paused .steprail-item.is-current > * {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .steprail.is-paused .steprail-item.is-current .steprail-mark {
+    background: none;
+    border-color: rgba(255, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.75);
+  }
+}
+
+/* ── Narrow: one row above the heading ───────────────────────────────────────
+   The window's minimum is 760x560 (src-tauri/src/windows.rs), so this band is
+   reachable by dragging an edge and the full rail's band is where the app
+   opens. Below 900px the layout is left exactly as it was before the rail
+   existed — same dark canvas, same right-hand column, same place for Ridge to
+   stand — and the rail collapses to its position and its label, which is the
+   part that still fits and still answers "how much of this is left". */
+@media (max-width: 899px) {
+  .steprail {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-3);
+    margin: 0 0 var(--s-5);
+    padding: var(--s-2) var(--s-4);
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .steprail-list {
+    display: none;
+  }
+
+  .steprail-compact-count {
+    color: var(--text-tertiary);
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  .steprail-compact-label {
+    color: var(--text-primary);
+    font-size: var(--fs-label);
+    font-weight: 600;
+  }
+
+  .steprail.is-paused {
+    opacity: 0.7;
+  }
+}
+
+/* The gutter buys Ridge room on the right; his bubble is narrowed to fit
+   inside it, rather than being nudged back over the column it is pointing at.
+   Only while the rail is up — every other flow keeps the wider bubble. */
+body.has-steprail .ridge-bubble {
+  max-width: 220px;
 }
