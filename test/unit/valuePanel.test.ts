@@ -3,23 +3,27 @@
  *
  * Same arrangement as `test/unit/steps.test.ts`: the render lives in `main.ts`
  * and cannot be imported outside a webview, so the part that is a decision
- * rather than a render — which screen shows which testimonial, and which
- * screens show none — is a module of plain data with its own tests.
+ * rather than a render — which screen shows which testimonial, which screens
+ * show none, and which quotes are long enough to need the smaller of the
+ * band's two type steps — is a module of plain data with its own tests.
  *
  * The failures worth guarding here are the ones a screenshot would not show.
  * A quote that changed between two renders of the same screen looks fine in
  * any single frame and is only wrong in motion. A screen missing from the
- * table would be a panel that silently stopped appearing halfway through
- * setup. And a panel on the progress screen would be marketing copy next to a
- * progress bar, which no reviewer would catch unless provisioning happened to
- * be running while they looked.
+ * table would be a band that silently stopped appearing halfway through
+ * setup. And a testimonial on the progress screen would be marketing copy
+ * next to a progress bar, which no reviewer would catch unless provisioning
+ * happened to be running while they looked.
  */
 import { describe, it, expect } from "vitest";
 import {
+  LONG_QUOTE_CHARS,
   QUOTES,
   SCREEN_QUOTES,
   SOURCE_LABEL_KEYS,
+  STAT_ICONS,
   STAT_KEYS,
+  isLongQuote,
   quoteFor,
   type QuoteId,
 } from "../../installer/src/valuePanel";
@@ -30,7 +34,7 @@ import { it as itCatalog } from "../../installer/src/i18n/it";
 /** Every screen `main.ts` can render, from the rail's own list. */
 const ALL_SCREENS = Object.keys(SCREEN_STEPS) as ScreenName[];
 
-/** The screens that must never draw a panel, and why, in one place. */
+/** The screens that must never draw a band, and why, in one place. */
 const SILENT: ScreenName[] = [
   // Real status on screen, or the payoff.
   "progress",
@@ -50,7 +54,7 @@ describe("the screen-to-quote table", () => {
     expect(Object.keys(SCREEN_QUOTES).sort()).toEqual(ALL_SCREENS.sort());
   });
 
-  it("is silent where the gutter is carrying something else", () => {
+  it("is silent where the screen is carrying something else", () => {
     for (const screen of SILENT) {
       expect(quoteFor(screen), screen).toBeNull();
     }
@@ -65,7 +69,7 @@ describe("the screen-to-quote table", () => {
 
   it("gives the same screen the same quote every time", () => {
     // The whole reason this is a table and not a rotation: a locale change or
-    // a rail refresh re-renders the screen, and a panel that swapped its words
+    // a rail refresh re-renders the screen, and a band that swapped its words
     // underneath a user mid-sentence would pull their eye off the field.
     for (const screen of ALL_SCREENS) {
       expect(quoteFor(screen), screen).toBe(quoteFor(screen));
@@ -99,8 +103,8 @@ describe("the screen-to-quote table", () => {
 
   it("keeps a scan and the picker it produces on one quote", () => {
     // `searching` resolves into `brainPicker` without the user doing anything.
-    // A different quote on each would move the gutter at the exact moment the
-    // answer arrives in the column.
+    // A different quote on each would rewrite the top of the window at the
+    // exact moment the answer arrives in the column below it.
     expect(quoteFor("searching")?.id).toBe(quoteFor("brainPicker")?.id);
     expect(quoteFor("accountPickerDiscover")?.id).toBe(quoteFor("brainPicker")?.id);
   });
@@ -122,21 +126,36 @@ describe("the quotes themselves", () => {
   });
 
   it("stays short enough to read at a glance", () => {
-    // The panel is at most 340px wide and lives in the corner of the eye. A
-    // testimonial long enough to need reading is a testimonial that competes
-    // with the question the screen is asking.
+    // The band is now the first thing on the screen and sets type between
+    // 22 and 44px, so length is a vertical budget rather than a matter of
+    // taste: at 940x700 every 40 characters past this cap is another line
+    // pushing the task, and the button on it, further down the window.
     for (const quote of Object.values(QUOTES)) {
       expect(quote.text.length, quote.id).toBeLessThanOrEqual(160);
     }
+  });
+
+  it("drops to the smaller type step only where a quote needs it", () => {
+    // The size tier is a property of the words, not of the screen they land
+    // on: a quote remapped to another screen has to take its own line count
+    // with it. Both ends are asserted so that a threshold quietly raised
+    // above every quote — which would silently switch the tier off — fails
+    // here rather than at 940x700 in a screenshot nobody re-took.
+    const long = Object.values(QUOTES).filter(isLongQuote);
+    const short = Object.values(QUOTES).filter((q) => !isLongQuote(q));
+    expect(long.map((q) => q.id).sort()).toEqual(["gludius", "needleworker", "vahid"]);
+    expect(short.length).toBeGreaterThan(0);
+    for (const quote of long) expect(quote.text.length).toBeGreaterThan(LONG_QUOTE_CHARS);
+    for (const quote of short) expect(quote.text.length).toBeLessThanOrEqual(LONG_QUOTE_CHARS);
   });
 });
 
 describe("the furniture", () => {
   const catalogs = { en, it: itCatalog };
 
-  it("has both locales for every key the panel renders", () => {
+  it("has both locales for every key the band renders", () => {
     const keys = [
-      "value.heading",
+      "value.editorialHeading",
       "value.label",
       ...Object.values(SOURCE_LABEL_KEYS),
       ...STAT_KEYS,
@@ -156,7 +175,16 @@ describe("the furniture", () => {
     expect(itCatalog.value.sourceProductHunt).toBe(en.value.sourceProductHunt);
   });
 
-  it("reads the three facts in the order the panel draws them", () => {
+  it("reads the three facts in the order the strip draws them", () => {
     expect(STAT_KEYS).toEqual(["value.statSetup", "value.statCost", "value.statData"]);
+  });
+
+  it("gives every fact its own mark", () => {
+    // The strip is a row rather than a stack now, so the marks are what keep
+    // the three facts from reading as one run-on line. A key without one
+    // would render as a gap in the row, which is the kind of thing that only
+    // shows up in a screenshot of the one screen somebody happened to take.
+    for (const key of STAT_KEYS) expect(STAT_ICONS[key], key).toBeTruthy();
+    expect(Object.keys(STAT_ICONS).sort()).toEqual([...STAT_KEYS].sort());
   });
 });

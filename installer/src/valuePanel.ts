@@ -1,36 +1,42 @@
 /**
- * The value panel — what the right gutter says while the user is thinking.
+ * The value panel — the testimonial setup opens each screen with.
  *
  * Most setup screens ask for one thing and then wait: a password typed, an
  * account chosen, a brain unlocked. The rail on the left says how much is
- * left; the column in the middle asks the question; the gutter on the right
- * was empty on every screen that Ridge had nothing to say on. This fills it
- * with one real testimonial and the three facts a first-run user is actually
- * weighing (how long, how much, whose account), and with nothing else.
+ * left; the column asks the question. This is the argument for answering it,
+ * and it is one real person's published words plus the three facts a first-run
+ * user is actually weighing (how long, how much, whose account).
  *
- * Three rules shape the data below, and all three are about not competing:
+ * It used to be a 340px card in the corner of the right gutter, below the
+ * fold, faded out whenever Ridge had anything to say. That put the one thing
+ * on screen written to convince somebody in the quietest place the window
+ * has. It is now the editorial opening: a full-width pull quote above the
+ * task, at the size the words deserve, with the three facts as a foot strip
+ * under the whole composition.
+ *
+ * Three rules shape the data below:
  *
  * 1. One quote per screen, fixed. The mapping is a table rather than a
  *    rotation or a shuffle so that a re-render — a locale change, a rail
  *    refresh, a failed check redrawing the same screen — puts the same words
- *    back. A panel that changed its mind while the user was reading it would
- *    pull the eye off the field they were filling in, which is the one thing
- *    an ambient panel must never do.
+ *    back. A quote that changed its mind while the user was reading it would
+ *    pull the eye off the field they were filling in, and it is now big
+ *    enough that the movement would be impossible to ignore.
  * 2. `null` means the screen is busy or finished. Provisioning, its failure
- *    screen and the connection details are the three places where the right
- *    side of the window is either carrying real status or holding the payoff,
- *    and marketing copy alongside either one reads as a shrug. The three
- *    launch modes (`rotation`, `workerUpdate`, `stalePassword`) are not
- *    onboarding at all: nobody changing a password needs to be sold the app
- *    they already installed.
+ *    screen and the connection details are the three places that are either
+ *    carrying real status or holding the payoff, and marketing copy alongside
+ *    either one reads as a shrug. The three launch modes (`rotation`,
+ *    `workerUpdate`, `stalePassword`) are not onboarding at all: nobody
+ *    changing a password needs to be sold the app they already installed.
  * 3. Quotes are other people's words, so they are stored verbatim in one
  *    place and are never translated. Only the furniture around them — the
- *    heading, the source labels, the stat line — goes through `t()`.
+ *    kicker, the source labels, the stat line — goes through `t()`.
  *
  * Like `steps.ts`, this module is plain data and pure lookups with no DOM in
  * it, so `test/unit/valuePanel.test.ts` can check the mapping without a
  * webview. `main.ts` renders it.
  */
+import type { IconName } from "./shared";
 import type { ScreenName } from "./steps";
 
 /** Where a quote was published. Both are proper nouns in either locale. */
@@ -179,7 +185,7 @@ export const SCREEN_QUOTES: Record<ScreenName, QuoteId | null> = {
 };
 
 /**
- * The stat line under the card, in the order it reads.
+ * The stat line under the composition, in the order it reads.
  *
  * Three keys rather than one sentence: the separator between them is drawn by
  * CSS, so a locale can translate each fact without also having to reproduce
@@ -190,6 +196,34 @@ export const STAT_KEYS: readonly `value.${string}`[] = [
   "value.statCost",
   "value.statData",
 ];
+
+/**
+ * One Lucide mark per fact, so the strip reads as three answers rather than as
+ * a sentence that has lost its commas. Each mark restates its own fact and
+ * nothing else: a clock for how long, a tick for the price, a shield for whose
+ * account it lands in.
+ */
+export const STAT_ICONS: Record<(typeof STAT_KEYS)[number], IconName> = {
+  "value.statSetup": "clock",
+  "value.statCost": "check",
+  "value.statData": "shieldCheck",
+};
+
+/**
+ * Where a quote stops being one confident line and starts being a paragraph.
+ *
+ * The band's type scales with the window, but three of the eight testimonials
+ * are long enough that the largest step would cost a fourth line at 940px and
+ * push the task down with it. They drop one step instead. The threshold is on
+ * the text rather than on the screen so that a quote moved to another screen
+ * takes its own sizing with it.
+ */
+export const LONG_QUOTE_CHARS = 115;
+
+/** Whether a quote renders at the smaller of the band's two type steps. */
+export function isLongQuote(quote: Quote): boolean {
+  return quote.text.length > LONG_QUOTE_CHARS;
+}
 
 /** The quote a screen shows, or `null` when it shows no panel. */
 export function quoteFor(screen: ScreenName): Quote | null {

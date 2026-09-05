@@ -180,20 +180,20 @@ export type Messages = {
     compact: string;
   };
   /**
-   * The right gutter's ambient panel (`valuePanel.ts`). Furniture only: the
+   * The editorial band above the task (`valuePanel.ts`). Furniture only: the
    * testimonials themselves are other people's published words and stay in
    * English in both locales, so nothing here is a quote.
    */
   value: {
-    /** The panel's own small heading, above the card. */
-    heading: string;
-    /** The accessible name of the panel as a region. */
+    /** The kicker line over the pull quote. */
+    editorialHeading: string;
+    /** The accessible name of the quote as a figure. */
     label: string;
     /** Where a quote was published. Proper nouns, so both read the same. */
     sourceProductHunt: string;
     sourceReddit: string;
     /**
-     * The three facts under the card, read left to right. Kept as three keys
+     * The three facts in the foot strip, read left to right. Kept as three keys
      * so the separator between them stays with the CSS rather than with the
      * translation.
      */

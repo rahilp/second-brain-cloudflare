@@ -325,18 +325,19 @@ export const it: Messages = {
     compact: "Passaggio {n} di {total}",
   },
   value: {
-    heading: "Cosa dicono gli utenti",
+    editorialHeading: "Nelle loro parole",
     label: "Cosa dicono gli utenti di Second Brain",
     sourceProductHunt: "Product Hunt",
     sourceReddit: "Reddit",
     statSetup: "2 minuti di configurazione",
-    statCost: "$0, gratuito e open source",
-    statData: "100% i tuoi dati, il tuo account",
+    statCost: "Gratuito e open source",
+    statData: "I tuoi dati, il tuo account",
   },
   welcome: {
     title: "Configura il tuo Second Brain",
     lede:
-      "Una memoria privata che le app AI che scegli possono usare. Si trova in un account Cloudflare che controlli. Ti guideremo nella creazione o nel collegamento; la maggior parte delle configurazioni richiede pochi minuti.",
+      "Una memoria privata per le app AI che scegli. " +
+      "Si trova in un account Cloudflare che controlli.",
     getStarted: "Crea un nuovo Second Brain",
     alreadyHave: "Collega un Second Brain che ho già",
     footnote: "Gratuito per iniziare · I tuoi dati restano nell'account Cloudflare che scegli",
@@ -392,8 +393,7 @@ export const it: Messages = {
   },
   password: {
     title: "Scegli una password",
-    lede:
-      "Scegli una password per questo Second Brain. La userai per collegare i tuoi nuovi computer e le app AI.",
+    lede: "Usala per collegare i tuoi computer e le app AI.",
     placeholder: "Scegli una password (almeno 12 caratteri)",
     confirmPlaceholder: "Inserisci di nuovo la stessa password",
     generateTitle: "Genera una password sicura",
@@ -408,10 +408,8 @@ export const it: Messages = {
       "Prova un'altra o genera una nuova.",
     mismatch: "Le password non coincidono.",
     notice:
-      "Salvala in un gestore password prima di continuare. Non potremo mostrartela più tardi e ti servirà per collegare i tuoi computer e le app AI.",
-    footnote:
-      "Verifichiamo le password contro violazioni note senza inviare la password: " +
-      "solo un frammento di impronta lascia questo computer.",
+      "Salvala in un gestore di password. Non potremo mostrartela in seguito.",
+    footnote: "Il controllo usa un frammento dell'impronta, mai la password.",
   },
   changePassword: {
     title: "Cambia la tua password",

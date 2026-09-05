@@ -1770,6 +1770,21 @@ body.settings-page #app {
   --rail-w: 208px;
   --rail-gap: 36px;
   --ridge-gutter: 248px;
+  /* The editorial band's geometry (see the band's own section at the foot of
+     this file). It runs from the column's left edge to `--band-margin` off
+     the right of the window, so it is wider than the column it starts in and
+     is given that width outright rather than by margins.
+
+     `--task-inset` is the strip of that width Ridge can stand in: the gutter
+     less the margin the band stops at. Everything here is restated per
+     breakpoint rather than derived, because a custom property is substituted
+     where it is declared — a `calc()` written on `:root` would keep `:root`'s
+     margin no matter what the breakpoint below says. */
+  --band-margin: 48px;
+  --task-inset: 200px;
+  --band-w: min(1064px, calc(100vw - var(--rail-w) - var(--rail-gap) - var(--band-margin)));
+  /* The reading measure the task keeps in a window wide enough to give it. */
+  --task-max: 560px;
   /* The shared ring, with the rail's own near-black as the gap colour: the
      cream/dark-orange pairing is built for a paper surface and disappears
      against ink. Same two-stop shape, same accent. */
@@ -1857,13 +1872,25 @@ body.has-steprail .screen > *:not(.steprail) {
     width: var(--rail-w);
   }
 
+  /* The gutter stays as padding, so `.screen` stays exactly what it was: the
+     task column, ending `--ridge-gutter` short of the window. That is what
+     Ridge measures against — the primary button when there is one and the
+     column itself when there is not — and the band spans the canvas by being
+     wider than this column rather than by widening it.
+
+     The block padding is the one thing that gives way on a short window:
+     48px top and bottom is 96px of the 560px minimum. */
   body.has-steprail:has(.screen) #app {
     justify-content: flex-start;
-    padding: 48px var(--ridge-gutter) 48px calc(var(--rail-w) + var(--rail-gap));
+    padding: clamp(20px, 4.4vh, 48px) var(--ridge-gutter) clamp(20px, 4.4vh, 48px)
+      calc(var(--rail-w) + var(--rail-gap));
   }
 
+  /* 60px more measure than the old fixed 500px, and only where the window has
+     it to give: at 940 the column is still the 448px the gutter leaves. */
   body.has-steprail:has(.screen) .screen {
     margin-left: 0;
+    max-width: var(--task-max);
   }
 
   .steprail {
@@ -1973,11 +2000,59 @@ body.has-steprail .screen > *:not(.steprail) {
 /* ── Narrow: one row above the heading ───────────────────────────────────────
    The window's minimum is 760x560 (src-tauri/src/windows.rs), so this band is
    reachable by dragging an edge and the full rail's band is where the app
-   opens. Below 900px the layout is left exactly as it was before the rail
-   existed — same dark canvas, same right-hand column, same place for Ridge to
-   stand — and the rail collapses to its position and its label, which is the
-   part that still fits and still answers "how much of this is left". */
+   opens. The rail collapses to its position and its label, which is the part
+   that still fits and still answers "how much of this is left".
+
+   What the rail gives up, the composition takes: at 760px there is not room
+   for a 30% ink canvas, a reading column and Ridge's 248px all at once, so
+   the canvas goes and the surface runs the full width with the same shape it
+   has at 940 — band across the top, task on the left, Ridge beside it. The
+   logo comes off the ink and back onto paper with it. */
 @media (max-width: 899px) {
+  body.has-steprail:has(.screen) {
+    --band-margin: 24px;
+    --task-inset: 224px;
+    --band-w: min(1064px, calc(100vw - 2 * var(--band-margin)));
+  }
+
+  body.has-steprail:has(.screen)::before {
+    display: none;
+  }
+
+  body.has-steprail:has(.screen) #app {
+    justify-content: flex-start;
+    /* The gutter is still held open on the right, so Ridge stands beside the
+       task here exactly as he does at 940. The top clears the logo, which is
+       pinned above the composition rather than in it. */
+    padding: clamp(56px, 10vh, 68px) var(--ridge-gutter) clamp(16px, 3.5vh, 24px)
+      var(--band-margin);
+  }
+
+  body.has-steprail:has(.screen) .screen {
+    max-width: var(--task-max);
+    margin-left: 0;
+  }
+
+  /* Paper, not ink: the same disc every other surface draws, one size down so
+     it reads as a mark rather than as a heading. */
+  body.has-steprail:has(.screen) .brand {
+    top: var(--s-4);
+    left: var(--band-margin);
+    width: 40px;
+    height: 40px;
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-card);
+  }
+
+  body.has-steprail:has(.screen) .brand img {
+    width: 24px;
+    height: 24px;
+  }
+
+  body.has-steprail:has(.screen) .brand::after {
+    border-color: var(--accent-soft);
+  }
+
   .steprail {
     display: flex;
     align-items: baseline;
@@ -2019,146 +2094,289 @@ body.has-steprail .ridge-bubble {
   max-width: 220px;
 }
 
-/* The value panel ───────────────────────────────────────────────────────────
-   The gutter's other occupant (main.ts valuePanel, valuePanel.ts). Ridge owns
-   this strip whenever he has something to say; the panel only borrows it for
-   the rest of the time, which is most of setup. So everything here is written
-   to lose an argument: it is quieter than any card on the work surface, it is
-   never focusable, it sits at the foot of the window rather than beside the
-   heading, and it disappears the moment Ridge arrives.
+/* The editorial band ────────────────────────────────────────────────────────
+   One testimonial, above the task, at the size of a headline (main.ts
+   valuePanel, valuePanel.ts).
 
-   Absent by default rather than shown by default. The panel needs the gutter
-   that `body.has-steprail` opens at 900px and up, and outside that one case —
-   a narrow window, a launch mode, the details screen — `display: none` takes
-   it out of the layout and the accessibility tree together. */
-.value-panel {
+   It used to be a 340px card pinned to the bottom-right corner that faded out
+   whenever Ridge spoke. That is the quietest place a window has, and this is
+   the one piece of the screen written to convince somebody, so it now opens
+   the composition instead: a kicker, an oversized quotation mark, the words at
+   between 22 and 44px of Georgia, the author at a size that reads as a byline,
+   and a rule under all of it before the task starts.
+
+   Three things carry the responsive behaviour, and all three are the same
+   idea — the band is the first thing to give way when the window shrinks,
+   because it is the only thing on screen nobody has to act on:
+
+   1. `--value-quote` scales with the *smaller* of the window's width and its
+      height. Width alone would set 44px type in a 1440x600 window and push
+      the button the user came for off the bottom; the `vh` term is what makes
+      a short window a short band.
+   2. `--value-rhythm` collapses the padding and the margin around the rule on
+      the same clock, so the band loses its air before it loses its size.
+   3. `.is-long` drops the three testimonials that would otherwise take an
+      extra line down one step (`LONG_QUOTE_CHARS` in valuePanel.ts).
+
+   The band is `--band-w` wide inside a task column that is narrower than
+   that, so it deliberately overflows to the right. That is the whole trick:
+   `.screen` stays the column Ridge measures himself against, and only these
+   two elements reach across the canvas.
+
+   The rule that used to fade this out whenever Ridge spoke is gone: he stands
+   beside the task, under the band's rule, and the one window short enough for
+   his bubble to reach the band's own line is handled where the rest of the
+   short-window behaviour is, at the foot of this file. */
+body.has-steprail:has(.screen) {
+  --value-quote: clamp(22px, min(3.6vw, 5vh), 44px);
+  /* The hanging indent the quotation mark sits in. */
+  --value-indent: clamp(34px, 4.6vw, 56px);
+  --value-rhythm: clamp(12px, 3vh, 32px);
+}
+
+/* Absent by default rather than shown by default: the band belongs to the
+   rail's layout, and outside it — a launch mode, the details screen — there
+   is no composition for it to open. `display: none` takes it out of the
+   layout and the accessibility tree together. */
+.value-panel,
+.value-stats {
   display: none;
 }
 
-@media (min-width: 900px) {
-  body.has-steprail .value-panel {
-    position: fixed;
-    right: var(--s-6);
-    bottom: var(--s-7);
-    /* Grows into a wide window and stops at a readable measure; on a narrow
-       one it gives back everything except the strip the gutter reserved, so
-       it can never reach the content column. The subtracted terms are the
-       rail, its gap, the column's own max-width and a margin. */
-    width: clamp(
-      196px,
-      calc(100vw - var(--rail-w) - var(--rail-gap) - 500px - var(--s-7)),
-      340px
-    );
-    /* Half the window at most: the panel is a footnote, and a footnote that
-       runs from the fold to the floor is a column. */
-    max-height: 50vh;
-    display: flex;
-    flex-direction: column;
+body.has-steprail:has(.screen) .value-panel {
+  display: block;
+  width: var(--band-w);
+  margin: 0 0 var(--value-rhythm);
+  padding-bottom: var(--value-rhythm);
+  border-bottom: 1px solid var(--border);
+}
+
+body.has-steprail:has(.screen) .value-panel.is-long {
+  --value-quote: clamp(20px, min(3.15vw, 4.4vh), 40px);
+}
+
+.value-kicker {
+  margin: 0 0 clamp(6px, 1.4vh, 16px) var(--value-indent);
+  color: var(--accent-press);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.value-quote-wrap {
+  position: relative;
+  padding-left: var(--value-indent);
+}
+
+/* The only piece of brand on the band, and it is punctuation. Absolutely
+   positioned so the quote's first line starts at the same left edge as its
+   second: a mark in the flow would indent one line and hang the rest. */
+.value-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--accent);
+  font-family: var(--font-serif);
+  font-size: calc(var(--value-quote) * 2.3);
+  line-height: 0.8;
+}
+
+.value-quote {
+  margin: 0;
+  /* A measure, not the window. Past this a line is long enough that the eye
+     loses the start of the next one, and the band is 1000px wide before it
+     gets there. */
+  max-width: 940px;
+  color: var(--text-primary);
+  font-family: var(--font-serif);
+  font-size: var(--value-quote);
+  font-weight: 400;
+  line-height: 1.14;
+  letter-spacing: -0.019em;
+  text-wrap: pretty;
+}
+
+.value-attrib {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-3);
+  margin: clamp(8px, 1.8vh, 18px) 0 0 var(--value-indent);
+}
+
+/* Named at a size somebody would sign with. The quote is only worth its space
+   if a real person said it, so the name is the second-largest thing in the
+   band rather than a caption under it. */
+.value-author {
+  color: var(--text-primary);
+  font-size: clamp(15px, calc(var(--value-quote) * 0.53), 22px);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.014em;
+  /* Two of the eight are Reddit handles with no spaces in them. */
+  overflow-wrap: anywhere;
+}
+
+.value-source {
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+}
+
+/* The three facts, closing the composition.
+   One row rather than the stack the 340px gutter forced them into: across the
+   full surface there is room for all three side by side, and a rule above
+   them separates the answer to "what does this cost me" from the task that
+   raised the question. Each fact carries its own mark, so the row reads as
+   three answers rather than as a sentence missing its commas. */
+body.has-steprail:has(.screen) .value-stats {
+  display: flex;
+  width: var(--band-w);
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-6);
+  margin: var(--value-rhythm) 0 0;
+  padding-top: clamp(10px, 1.6vh, 16px);
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.value-stat {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.value-stat .icon {
+  color: var(--accent-press);
+}
+
+/* ── Short windows ───────────────────────────────────────────────────────────
+   The app opens at 940x700 and its minimum is 760x560 (src-tauri/windows.rs),
+   so on the two sizes that matter most the window is shorter than the content
+   would like. The band's own type and rhythm already scale with `vh`; this is
+   the rest of the composition doing the same thing, in two steps.
+
+   The order things give way in is the order they matter in. Air goes first —
+   the gaps between blocks, the padding inside the controls, the display size
+   of the heading. Then, below 620px, the two pieces of the band that are
+   furniture rather than testimony: the kicker line (the oversized quotation
+   mark already says what it says) and the three facts. The quote, the author,
+   the fields, the notice, the primary button and the way back are never
+   touched — a window at its minimum still shows a real person's words and
+   still shows every control that gets the user out of the screen. */
+@media (max-height: 720px) {
+  body.has-steprail:has(.screen) {
+    --fs-display: 30px;
+  }
+
+  body.has-steprail:has(.screen) h1 {
+    margin-bottom: var(--s-2);
+  }
+
+  body.has-steprail:has(.screen) .lede {
+    margin-bottom: var(--s-4);
+  }
+
+  body.has-steprail:has(.screen) .field-stack {
     gap: var(--s-2);
-    z-index: 1;
-    /* Fades with Ridge's phase, below. `visibility` rides along so that a
-       faded panel is out of the way of the pointer as well as the eye. */
-    transition: opacity 200ms var(--ease), visibility 200ms;
+    margin-bottom: var(--s-3);
   }
 
-  /* Ridge wins, always. His root carries the phase and lives on `body` beside
-     `#app`, so the panel can read it without a line of JavaScript: anything
-     other than `hidden` means he is on his way in, settled, or on his way
-     out, and the gutter is his for all three. Fading rather than hiding is
-     what keeps it from reading as a flicker when he says one short line and
-     goes. */
-  body:has(.ridge:not([data-ridge-phase="hidden"])) .value-panel {
-    opacity: 0;
-    visibility: hidden;
+  body.has-steprail:has(.screen) input[type="password"],
+  body.has-steprail:has(.screen) input[type="text"] {
+    padding: 11px var(--s-4);
   }
 
-  /* The screen's children fade in on every render; the panel does not, for
-     the same reason the rail does not. `fade-in` uses a transform, and a
-     transformed ancestor becomes the containing block for its fixed
-     descendants — so for the 450ms it ran, a panel asking for `right: 24px`
-     would be measured from the content column instead of the window. See the
-     matching note on `.steprail` above. */
-  body.has-steprail .screen > .value-panel {
-    animation: none;
+  body.has-steprail:has(.screen) .notice {
+    padding: var(--s-2) var(--s-3);
+    margin-bottom: var(--s-3);
   }
 
-  .value-heading {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    color: var(--text-tertiary);
-    font-size: var(--fs-2xs);
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
+  body.has-steprail:has(.screen) .btn-primary {
+    padding: 11px var(--s-4);
   }
 
-  .value-heading .icon {
-    color: var(--accent);
-    opacity: 0.75;
+  body.has-steprail:has(.screen) .btn-ghost {
+    padding: var(--s-1) var(--s-3);
   }
 
-  /* A card with the edge taken off: same cream and radius as the work
-     surface, but the border is the soft one and there is no shadow at all, so
-     it sits behind the screen's own cards in the same way a caption sits
-     behind a photograph. */
-  .value-card {
-    margin: 0;
-    padding: var(--s-4);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    /* The one piece of brand on it, and it is 3px wide. */
-    border-left: 3px solid var(--accent-soft);
-    overflow: hidden;
+  body.has-steprail:has(.screen) .btn-stack {
+    margin-top: var(--s-1);
   }
 
-  .value-quote {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: var(--fs-sm);
-    font-style: italic;
-    line-height: 1.5;
+  body.has-steprail:has(.screen) .footnote {
+    margin-top: var(--s-2);
   }
 
-  .value-attrib {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--s-1) var(--s-2);
+  body.has-steprail:has(.screen) .value-stats {
     margin-top: var(--s-3);
-    font-size: var(--fs-2xs);
-  }
-
-  .value-author {
-    color: var(--text-primary);
-    font-weight: 600;
-  }
-
-  .value-source {
-    color: var(--text-tertiary);
-  }
-
-  /* Three facts, stacked, one per line.
-     They were written as a single "a · b · c" line, and that is still what
-     `value.stat*` says. But the gutter is between 196px and 340px wide and
-     the run-together form needs about 380px, so it wrapped on every window
-     the app can open at — and wrapping a dot-separated line leaves the dots
-     orphaned at the start of the next line, where they read as bullets that
-     have lost their text. Stacking says the same three things in the same
-     order and never produces that. The separator is dropped rather than
-     moved: with one fact per line there is nothing left for it to separate. */
-  .value-stats {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    color: var(--text-tertiary);
-    font-size: var(--fs-2xs);
-    line-height: 1.45;
+    padding-top: var(--s-2);
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .value-panel {
-    transition: none;
+@media (max-height: 620px) {
+  /* The one place the band gives up the full width, and it is Ridge's doing.
+     He stands beside the task and his bubble opens above his head; on a
+     window this short the task is high enough that the top of that bubble
+     reaches the band's last line. Everywhere else it clears it — at 940x700
+     the bubble passes under the attribution with room to spare, and only the
+     hairline runs behind it.
+
+     Padding rather than a narrower band: the rule still spans the whole
+     canvas, so the composition keeps its width, and only the words step out
+     of the column he can climb into. `--task-inset` is exactly that column,
+     which is why the two are the same number. */
+  body.has-steprail:has(.screen) .value-panel {
+    padding-right: var(--task-inset);
+  }
+
+  /* The kicker names what the oversized quotation mark and the byline under
+     it have already made obvious, and it costs a line of its own. */
+  body.has-steprail:has(.screen) .value-kicker {
+    display: none;
+  }
+
+  /* The three facts are ours rather than a user's, they repeat on every
+     screen, and they are the one block here that nothing depends on. At the
+     window's minimum height that makes them the right thing to spend. */
+  body.has-steprail:has(.screen) .value-stats {
+    display: none;
+  }
+
+  body.has-steprail:has(.screen) {
+    --fs-display: 27px;
+    --value-rhythm: clamp(10px, 2vh, 32px);
+  }
+
+  body.has-steprail:has(.screen) .lede {
+    margin-bottom: var(--s-3);
+  }
+
+  body.has-steprail:has(.screen) .field-stack {
+    margin-bottom: var(--s-2);
+  }
+
+  body.has-steprail:has(.screen) input[type="password"],
+  body.has-steprail:has(.screen) input[type="text"] {
+    padding: 9px var(--s-4);
+  }
+
+  body.has-steprail:has(.screen) .notice {
+    padding: 6px var(--s-3);
+  }
+
+  body.has-steprail:has(.screen) .footnote {
+    margin-top: var(--s-1);
+    font-size: var(--fs-2xs);
+    line-height: 1.45;
+  }
+
+  /* The compact rail keeps its shape and loses its air, like everything else
+     on this tier. */
+  body.has-steprail:has(.screen) .steprail {
+    margin-bottom: var(--s-3);
+    padding: 6px var(--s-3);
   }
 }

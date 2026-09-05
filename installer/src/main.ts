@@ -42,7 +42,7 @@ import {
   type ScreenName,
   type StepId as RailStepId,
 } from "./steps";
-import { SOURCE_LABEL_KEYS, STAT_KEYS, quoteFor } from "./valuePanel";
+import { SOURCE_LABEL_KEYS, STAT_ICONS, STAT_KEYS, isLongQuote, quoteFor } from "./valuePanel";
 import "./style.css";
 
 interface Account {
@@ -224,40 +224,55 @@ function refreshStepRail() {
 
 // ── The value panel ─────────────────────────────────────────────────────────
 //
-// The shell's right gutter, opposite the rail: one testimonial and the three
-// facts a first-run user is weighing, on the screens where the gutter would
-// otherwise be blank. Which quote a screen gets is pure data in
-// `valuePanel.ts`; everything below is the render, and it is deliberately
-// inert — no buttons, no links, nothing focusable, nothing that moves. It
-// yields to Ridge in CSS rather than here, so a line arriving mid-screen
-// never has to reach into this.
+// One testimonial, at the top of the screen and at the size of a headline, on
+// every screen that is asking the user for something rather than reporting on
+// itself. Which quote a screen gets is pure data in `valuePanel.ts`;
+// everything below is the render, and it is deliberately inert — no buttons,
+// no links, nothing focusable, nothing that moves.
+//
+// A figure, a blockquote and a figcaption, because that is what this is. The
+// old gutter card was `aria-hidden`: it was ambient decoration and announcing
+// it would have interrupted the field the user was in. Above the task it is
+// content, so it is named instead — and `show()` still puts focus on the
+// heading, so the band is behind the reader rather than in front of them.
 
 function valuePanel(): HTMLElement | null {
   const quote = quoteFor(railScreen);
   if (!quote) return null;
 
+  const panel = h("figure", { class: "value-panel", "aria-label": t("value.label") }, [
+    h("p", { class: "value-kicker" }, [t("value.editorialHeading")]),
+    h("div", { class: "value-quote-wrap" }, [
+      // Typographic furniture, not punctuation: the words are stored without
+      // it, every locale draws the same mark, and a reader would otherwise
+      // hear an opening quote that never closes.
+      h("span", { class: "value-mark", "aria-hidden": "true" }, ["“"]),
+      // `lang` on the quote and not on the band: the testimonials are English
+      // in both locales, so an Italian reader's synthesiser has to switch
+      // voice for these words and back again for the furniture around them.
+      h("blockquote", { class: "value-quote", lang: "en" }, [quote.text]),
+    ]),
+    h("figcaption", { class: "value-attrib" }, [
+      h("strong", { class: "value-author" }, [quote.author]),
+      h("span", { class: "value-source" }, [t(SOURCE_LABEL_KEYS[quote.source])]),
+    ]),
+  ]);
+  if (isLongQuote(quote)) panel.classList.add("is-long");
+  return panel;
+}
+
+/// The three facts, as the foot of the composition rather than as a footnote
+/// to the quote: they answer "what does this cost me" for the whole screen,
+/// not for the testimonial, and under the task is where that question is
+/// actually being asked. Drawn only where the band is drawn.
+function valueStats(): HTMLElement {
   const stats = h("p", { class: "value-stats" });
   for (const key of STAT_KEYS) {
-    stats.append(h("span", { class: "value-stat" }, [t(key)]));
+    stats.append(
+      h("span", { class: "value-stat" }, [icon(STAT_ICONS[key], "icon icon--sm"), t(key)]),
+    );
   }
-
-  // `aria-hidden`, and not a region with a label: this is the same
-  // marketing copy on every one of these screens, and a reader that met it
-  // once has met it on all of them. It is ambient by construction — the
-  // reason it can sit next to a password field at all is that it never asks
-  // for the user's attention, and announcing it would be exactly that ask.
-  const panel = h("aside", { class: "value-panel", "aria-hidden": "true" }, [
-    h("p", { class: "value-heading" }, [icon("sparkles", "icon icon--sm"), t("value.heading")]),
-    h("figure", { class: "value-card" }, [
-      h("blockquote", { class: "value-quote" }, [quote.text]),
-      h("figcaption", { class: "value-attrib" }, [
-        h("span", { class: "value-author" }, [quote.author]),
-        h("span", { class: "value-source" }, [t(SOURCE_LABEL_KEYS[quote.source])]),
-      ]),
-    ]),
-    stats,
-  ]);
-  return panel;
+  return stats;
 }
 
 function show(...nodes: (Node | string)[]) {
@@ -272,18 +287,23 @@ function show(...nodes: (Node | string)[]) {
   // canvas it stands on is drawn by `body::before`, and its width has to
   // change with it.
   document.body.classList.toggle("has-steprail", rail !== null);
-  // The panel lives in the gutter the rail's layout opens on the right, so it
-  // is drawn only where that gutter exists. Without the rail the column is
-  // right-aligned against the window edge and there is no gutter to sit in —
-  // a panel there would be over the screen rather than beside it. Both of the
-  // ways that happens (a launch mode, or a screen and path that cannot
-  // co-occur) already have no quote or no rail, so this costs nothing and
-  // makes the geometry an invariant rather than a coincidence.
+  // The band is part of the rail's layout — the wide composition, the task
+  // column with Ridge's gutter kept clear beside it — so it is drawn only
+  // where that layout is. Without the rail the column is right-aligned
+  // against the window edge and there is nothing to span. Both of the ways
+  // that happens (a launch mode, or a screen and path that cannot co-occur)
+  // already have no quote or no rail, so this costs nothing and makes the
+  // geometry an invariant rather than a coincidence.
+  //
+  // Above the task and, for the stat strip, below all of it: the quote is the
+  // reason to answer the screen, so it comes before the question, and the
+  // three facts close the composition rather than interrupting it.
   const value = rail ? valuePanel() : null;
   const screen = h("div", { class: "screen", tabindex: "-1" }, [
     ...(rail ? [rail] : []),
-    ...nodes,
     ...(value ? [value] : []),
+    ...nodes,
+    ...(value ? [valueStats()] : []),
   ]);
   app.replaceChildren(screen);
   // The rail comes before the heading in reading order, which is right for a

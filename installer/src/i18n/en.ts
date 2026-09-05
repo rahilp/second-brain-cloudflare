@@ -329,18 +329,19 @@ export const en: Messages = {
     compact: "Step {n} of {total}",
   },
   value: {
-    heading: "What people say",
+    editorialHeading: "In their own words",
     label: "What people say about Second Brain",
     sourceProductHunt: "Product Hunt",
     sourceReddit: "Reddit",
     statSetup: "2 min setup",
-    statCost: "$0 free and open source",
-    statData: "100% your data, your account",
+    statCost: "Free and open source",
+    statData: "Your data, your account",
   },
   welcome: {
     title: "Set up your Second Brain",
     lede:
-      "One private memory that the AI apps you choose can use. It lives in a Cloudflare account you control. We'll guide you through creating or connecting it; most setups take a few minutes.",
+      "One private memory for the AI apps you choose. " +
+      "It lives in a Cloudflare account you control.",
     getStarted: "Create a new Second Brain",
     alreadyHave: "Connect a Second Brain I already have",
     footnote: "Free to start · Your data stays in the Cloudflare account you choose",
@@ -401,8 +402,7 @@ export const en: Messages = {
   },
   password: {
     title: "Choose a password",
-    lede:
-      "Choose a password for this Second Brain. You'll use it to connect your own new computers and AI apps.",
+    lede: "Use it to connect your computers and AI apps.",
     placeholder: "Choose a password (at least 12 characters)",
     confirmPlaceholder: "Enter the same password again",
     generateTitle: "Generate a strong password",
@@ -417,11 +417,8 @@ export const en: Messages = {
       "to use here. Try another, or let us generate one.",
     mismatch: "Those don't match yet.",
     notice:
-      "Save this in a password manager before continuing. We cannot show it to you later, and you'll need it to connect your own computers and AI apps.",
-    footnote:
-      "We check new passwords against known data breaches without ever " +
-      "sending your password anywhere — only a fragment of a fingerprint " +
-      "leaves this computer.",
+      "Save it in a password manager. We cannot show it to you later.",
+    footnote: "Breach checks use a fingerprint fragment, never your password.",
   },
   changePassword: {
     title: "Change your password",
