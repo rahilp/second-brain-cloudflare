@@ -328,6 +328,15 @@ export const en: Messages = {
     locked: "Done already. Setup cannot go back to this step.",
     compact: "Step {n} of {total}",
   },
+  value: {
+    heading: "What people say",
+    label: "What people say about Second Brain",
+    sourceProductHunt: "Product Hunt",
+    sourceReddit: "Reddit",
+    statSetup: "2 min setup",
+    statCost: "$0 free and open source",
+    statData: "100% your data, your account",
+  },
   welcome: {
     title: "Set up your Second Brain",
     lede:

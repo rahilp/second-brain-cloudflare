@@ -2018,3 +2018,147 @@ body.has-steprail .screen > *:not(.steprail) {
 body.has-steprail .ridge-bubble {
   max-width: 220px;
 }
+
+/* The value panel ───────────────────────────────────────────────────────────
+   The gutter's other occupant (main.ts valuePanel, valuePanel.ts). Ridge owns
+   this strip whenever he has something to say; the panel only borrows it for
+   the rest of the time, which is most of setup. So everything here is written
+   to lose an argument: it is quieter than any card on the work surface, it is
+   never focusable, it sits at the foot of the window rather than beside the
+   heading, and it disappears the moment Ridge arrives.
+
+   Absent by default rather than shown by default. The panel needs the gutter
+   that `body.has-steprail` opens at 900px and up, and outside that one case —
+   a narrow window, a launch mode, the details screen — `display: none` takes
+   it out of the layout and the accessibility tree together. */
+.value-panel {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  body.has-steprail .value-panel {
+    position: fixed;
+    right: var(--s-6);
+    bottom: var(--s-7);
+    /* Grows into a wide window and stops at a readable measure; on a narrow
+       one it gives back everything except the strip the gutter reserved, so
+       it can never reach the content column. The subtracted terms are the
+       rail, its gap, the column's own max-width and a margin. */
+    width: clamp(
+      196px,
+      calc(100vw - var(--rail-w) - var(--rail-gap) - 500px - var(--s-7)),
+      340px
+    );
+    /* Half the window at most: the panel is a footnote, and a footnote that
+       runs from the fold to the floor is a column. */
+    max-height: 50vh;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    z-index: 1;
+    /* Fades with Ridge's phase, below. `visibility` rides along so that a
+       faded panel is out of the way of the pointer as well as the eye. */
+    transition: opacity 200ms var(--ease), visibility 200ms;
+  }
+
+  /* Ridge wins, always. His root carries the phase and lives on `body` beside
+     `#app`, so the panel can read it without a line of JavaScript: anything
+     other than `hidden` means he is on his way in, settled, or on his way
+     out, and the gutter is his for all three. Fading rather than hiding is
+     what keeps it from reading as a flicker when he says one short line and
+     goes. */
+  body:has(.ridge:not([data-ridge-phase="hidden"])) .value-panel {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  /* The screen's children fade in on every render; the panel does not, for
+     the same reason the rail does not. `fade-in` uses a transform, and a
+     transformed ancestor becomes the containing block for its fixed
+     descendants — so for the 450ms it ran, a panel asking for `right: 24px`
+     would be measured from the content column instead of the window. See the
+     matching note on `.steprail` above. */
+  body.has-steprail .screen > .value-panel {
+    animation: none;
+  }
+
+  .value-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    color: var(--text-tertiary);
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  .value-heading .icon {
+    color: var(--accent);
+    opacity: 0.75;
+  }
+
+  /* A card with the edge taken off: same cream and radius as the work
+     surface, but the border is the soft one and there is no shadow at all, so
+     it sits behind the screen's own cards in the same way a caption sits
+     behind a photograph. */
+  .value-card {
+    margin: 0;
+    padding: var(--s-4);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    /* The one piece of brand on it, and it is 3px wide. */
+    border-left: 3px solid var(--accent-soft);
+    overflow: hidden;
+  }
+
+  .value-quote {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);
+    font-style: italic;
+    line-height: 1.5;
+  }
+
+  .value-attrib {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-1) var(--s-2);
+    margin-top: var(--s-3);
+    font-size: var(--fs-2xs);
+  }
+
+  .value-author {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .value-source {
+    color: var(--text-tertiary);
+  }
+
+  /* Three facts, stacked, one per line.
+     They were written as a single "a · b · c" line, and that is still what
+     `value.stat*` says. But the gutter is between 196px and 340px wide and
+     the run-together form needs about 380px, so it wrapped on every window
+     the app can open at — and wrapping a dot-separated line leaves the dots
+     orphaned at the start of the next line, where they read as bullets that
+     have lost their text. Stacking says the same three things in the same
+     order and never produces that. The separator is dropped rather than
+     moved: with one fact per line there is nothing left for it to separate. */
+  .value-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color: var(--text-tertiary);
+    font-size: var(--fs-2xs);
+    line-height: 1.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .value-panel {
+    transition: none;
+  }
+}

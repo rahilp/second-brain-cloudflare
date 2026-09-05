@@ -42,6 +42,7 @@ import {
   type ScreenName,
   type StepId as RailStepId,
 } from "./steps";
+import { SOURCE_LABEL_KEYS, STAT_KEYS, quoteFor } from "./valuePanel";
 import "./style.css";
 
 interface Account {
@@ -221,6 +222,44 @@ function refreshStepRail() {
   else if (next) screen.prepend(next);
 }
 
+// ── The value panel ─────────────────────────────────────────────────────────
+//
+// The shell's right gutter, opposite the rail: one testimonial and the three
+// facts a first-run user is weighing, on the screens where the gutter would
+// otherwise be blank. Which quote a screen gets is pure data in
+// `valuePanel.ts`; everything below is the render, and it is deliberately
+// inert — no buttons, no links, nothing focusable, nothing that moves. It
+// yields to Ridge in CSS rather than here, so a line arriving mid-screen
+// never has to reach into this.
+
+function valuePanel(): HTMLElement | null {
+  const quote = quoteFor(railScreen);
+  if (!quote) return null;
+
+  const stats = h("p", { class: "value-stats" });
+  for (const key of STAT_KEYS) {
+    stats.append(h("span", { class: "value-stat" }, [t(key)]));
+  }
+
+  // `aria-hidden`, and not a region with a label: this is the same
+  // marketing copy on every one of these screens, and a reader that met it
+  // once has met it on all of them. It is ambient by construction — the
+  // reason it can sit next to a password field at all is that it never asks
+  // for the user's attention, and announcing it would be exactly that ask.
+  const panel = h("aside", { class: "value-panel", "aria-hidden": "true" }, [
+    h("p", { class: "value-heading" }, [icon("sparkles", "icon icon--sm"), t("value.heading")]),
+    h("figure", { class: "value-card" }, [
+      h("blockquote", { class: "value-quote" }, [quote.text]),
+      h("figcaption", { class: "value-attrib" }, [
+        h("span", { class: "value-author" }, [quote.author]),
+        h("span", { class: "value-source" }, [t(SOURCE_LABEL_KEYS[quote.source])]),
+      ]),
+    ]),
+    stats,
+  ]);
+  return panel;
+}
+
 function show(...nodes: (Node | string)[]) {
   // A screen change never has a line of its own queued yet — the incoming
   // screen's own `ridgeSay` call (if any) runs synchronously right after this
@@ -233,7 +272,19 @@ function show(...nodes: (Node | string)[]) {
   // canvas it stands on is drawn by `body::before`, and its width has to
   // change with it.
   document.body.classList.toggle("has-steprail", rail !== null);
-  const screen = h("div", { class: "screen", tabindex: "-1" }, rail ? [rail, ...nodes] : nodes);
+  // The panel lives in the gutter the rail's layout opens on the right, so it
+  // is drawn only where that gutter exists. Without the rail the column is
+  // right-aligned against the window edge and there is no gutter to sit in —
+  // a panel there would be over the screen rather than beside it. Both of the
+  // ways that happens (a launch mode, or a screen and path that cannot
+  // co-occur) already have no quote or no rail, so this costs nothing and
+  // makes the geometry an invariant rather than a coincidence.
+  const value = rail ? valuePanel() : null;
+  const screen = h("div", { class: "screen", tabindex: "-1" }, [
+    ...(rail ? [rail] : []),
+    ...nodes,
+    ...(value ? [value] : []),
+  ]);
   app.replaceChildren(screen);
   // The rail comes before the heading in reading order, which is right for a
   // nav and wrong as a starting point: nobody wants to hear six step labels

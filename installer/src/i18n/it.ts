@@ -324,6 +324,15 @@ export const it: Messages = {
     locked: "Già fatto. La configurazione non può tornare a questo passaggio.",
     compact: "Passaggio {n} di {total}",
   },
+  value: {
+    heading: "Cosa dicono gli utenti",
+    label: "Cosa dicono gli utenti di Second Brain",
+    sourceProductHunt: "Product Hunt",
+    sourceReddit: "Reddit",
+    statSetup: "2 minuti di configurazione",
+    statCost: "$0, gratuito e open source",
+    statData: "100% i tuoi dati, il tuo account",
+  },
   welcome: {
     title: "Configura il tuo Second Brain",
     lede:
