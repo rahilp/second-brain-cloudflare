@@ -12,15 +12,19 @@
   --bg: #ffffff;
   --bg-card: #fcfbf7;
   --accent: #fd540a;
+  --accent-btn: #a83200;
   --accent-press: #a83200;
   --accent-soft: rgba(253, 84, 10, 0.09);
   --on-accent: #161616;
   --text-primary: #161616;
   --text-secondary: #68635f;
-  --text-tertiary: #96908b;
+  --text-tertiary: #756f69;
+  --text: var(--text-primary);
+  --text-dim: var(--text-secondary);
   --border: rgba(22, 22, 22, 0.11);
+  --border-strong: rgba(22, 22, 22, 0.45);
   --danger: #b42318;
-  --ok: #18794e;
+  --ok: #146a42;
   --font-serif: Georgia, "Times New Roman", serif;
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -111,7 +115,7 @@ h1 {
 
 .card {
   background: var(--bg-card);
-  border: 0.5px solid var(--border);
+  border: 0.5px solid var(--border-strong);
   border-radius: 16px;
   padding: 20px;
   margin-bottom: 14px;
@@ -140,18 +144,18 @@ button:disabled {
 .btn-primary {
   width: 100%;
   padding: 15px;
-  background: var(--accent);
+  background: var(--accent-btn);
   color: #ffffff;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-press);
+  background: #8a2900;
 }
 
 .btn-secondary {
   padding: 9px 16px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-press);
   font-size: 13.5px;
 }
 
@@ -196,7 +200,7 @@ input[type="text"] {
   width: 100%;
   padding: 14px 16px;
   background: var(--bg-card);
-  border: 0.5px solid var(--border);
+  border: 0.5px solid var(--border-strong);
   border-radius: 13px;
   font-family: var(--font-sans);
   font-size: 15px;
@@ -220,7 +224,7 @@ select.locale-select {
   margin-top: 8px;
   padding: 12px 14px;
   background: var(--bg-card);
-  border: 0.5px solid var(--border);
+  border: 0.5px solid var(--border-strong);
   border-radius: 13px;
   font-family: var(--font-sans);
   font-size: 15px;

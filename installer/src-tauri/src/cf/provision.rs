@@ -7,6 +7,7 @@
 //! result. Progress is reported through a callback as coarse, user-friendly
 //! steps; raw error detail stays internal.
 
+use super::discover;
 use super::types::CfApiError;
 use crate::worker_bundle::WorkerManifest;
 use serde::Serialize;
@@ -70,6 +71,29 @@ pub struct ProvisionOutcome {
     pub mcp_url: String,
 }
 
+/// The fixed-name resource category that prevents a fresh installation.
+///
+/// These are deliberately user-facing concepts rather than Cloudflare product
+/// names. The webview uses the serialized value to choose recovery copy without
+/// learning what D1, KV, Vectorize, or a Worker script is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResourceKind {
+    MemoryStorage,
+    SmartSearch,
+    WebApp,
+}
+
+/// The read-only result immediately before a fresh provisioning run mutates an
+/// account. A future transaction-journal variant can be added here without
+/// weakening the rule that an unmarked fixed-name resource is never reused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvisionPreflight {
+    Clear,
+    ExistingBrain { url: String },
+    NameConflict { kind: ResourceKind },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProvisionError {
     #[error(transparent)]
@@ -100,6 +124,7 @@ pub enum ProvisionError {
 pub trait Backend {
     async fn get_account_subdomain(&self) -> Result<Option<String>, CfApiError>;
     async fn register_account_subdomain(&self, name: &str) -> Result<String, CfApiError>;
+    async fn list_workers(&self) -> Result<Vec<String>, CfApiError>;
     async fn find_d1(&self, name: &str) -> Result<Option<String>, CfApiError>;
     async fn create_d1(&self, name: &str) -> Result<String, CfApiError>;
     async fn find_kv(&self, title: &str) -> Result<Option<String>, CfApiError>;
@@ -290,6 +315,87 @@ pub fn build_update_metadata(
         },
         "observability": { "enabled": true }
     })
+}
+
+/// Refuses to provision over any object using one of this installer's fixed
+/// names unless the conventional script's control-plane bindings prove that it
+/// is already a Second Brain.
+///
+/// All fixed-name reads happen before a decision is returned. This is not a
+/// resume mechanism: without the transaction journal planned for Gate 4, a
+/// resource name is never evidence that this installer created the resource.
+pub async fn preflight_account<B: Backend>(
+    backend: &B,
+    manifest: &WorkerManifest,
+) -> Result<ProvisionPreflight, CfApiError> {
+    let (subdomain, scripts, d1, kv, vectorize) = tokio::join!(
+        backend.get_account_subdomain(),
+        backend.list_workers(),
+        backend.find_d1(&manifest.d1_name),
+        backend.find_kv(KV_TITLE),
+        backend.vectorize_exists(&manifest.vectorize_name),
+    );
+    let subdomain = subdomain?;
+    let scripts = scripts?;
+    let d1 = d1?;
+    let kv = kv?;
+    let vectorize = vectorize?;
+
+    let script_exists = scripts.iter().any(|name| name == &manifest.script_name);
+    let script_bindings = if script_exists {
+        match backend.get_script_bindings(&manifest.script_name).await {
+            Ok(bindings) => Some(bindings),
+            Err(CfApiError::Unauthorized) => return Err(CfApiError::Unauthorized),
+            Err(CfApiError::Network(error)) => return Err(CfApiError::Network(error)),
+            Err(error) => {
+                log::warn!(
+                    "could not prove ownership of fixed-name Worker {}: {error}",
+                    manifest.script_name
+                );
+                return Ok(ProvisionPreflight::NameConflict {
+                    kind: ResourceKind::WebApp,
+                });
+            }
+        }
+    } else {
+        None
+    };
+
+    if script_bindings.as_deref().is_some_and(|bindings| {
+        discover::bindings_look_like_a_brain(bindings, &manifest.vectorize_name)
+    }) {
+        if let Some(subdomain) = subdomain.filter(|name| discover::is_safe_dns_label(name)) {
+            return Ok(ProvisionPreflight::ExistingBrain {
+                url: discover::workers_dev_url(&manifest.script_name, &subdomain),
+            });
+        }
+
+        // The bindings prove what the script is, but without a safe workers.dev
+        // hostname the installer cannot offer a trustworthy address to connect.
+        return Ok(ProvisionPreflight::NameConflict {
+            kind: ResourceKind::WebApp,
+        });
+    }
+
+    // A script name alone is explicitly not ownership. Put it first because a
+    // subsequent deploy would overwrite executable code, bindings, and secrets.
+    if script_exists {
+        return Ok(ProvisionPreflight::NameConflict {
+            kind: ResourceKind::WebApp,
+        });
+    }
+    if d1.is_some() || kv.is_some() {
+        return Ok(ProvisionPreflight::NameConflict {
+            kind: ResourceKind::MemoryStorage,
+        });
+    }
+    if vectorize {
+        return Ok(ProvisionPreflight::NameConflict {
+            kind: ResourceKind::SmartSearch,
+        });
+    }
+
+    Ok(ProvisionPreflight::Clear)
 }
 
 async fn ensure_account_subdomain<B: Backend>(
@@ -726,6 +832,7 @@ mod tests {
     struct Fake {
         log: Mutex<Vec<String>>,
         existing_subdomain: Option<String>,
+        existing_workers: Vec<String>,
         existing_d1: Option<String>,
         existing_kv: Option<String>,
         existing_vectorize: bool,
@@ -802,7 +909,12 @@ mod tests {
             self.log(format!("register_subdomain:{name}"));
             Ok(name.to_string())
         }
+        async fn list_workers(&self) -> Result<Vec<String>, CfApiError> {
+            self.log("list_workers");
+            Ok(self.existing_workers.clone())
+        }
         async fn find_d1(&self, _name: &str) -> Result<Option<String>, CfApiError> {
+            self.log("find_d1");
             Ok(self.existing_d1.clone())
         }
         async fn create_d1(&self, name: &str) -> Result<String, CfApiError> {
@@ -810,6 +922,7 @@ mod tests {
             Ok("d1-uuid-new".into())
         }
         async fn find_kv(&self, _title: &str) -> Result<Option<String>, CfApiError> {
+            self.log("find_kv");
             Ok(self.existing_kv.clone())
         }
         async fn create_kv(&self, title: &str) -> Result<String, CfApiError> {
@@ -817,6 +930,7 @@ mod tests {
             Ok("kv-id-new".into())
         }
         async fn vectorize_exists(&self, name: &str) -> Result<bool, CfApiError> {
+            self.log("find_vectorize");
             Ok(self.existing_vectorize && !self.missing_vectorize.iter().any(|n| n == name))
         }
         async fn delete_vectorize(&self, name: &str) -> Result<(), CfApiError> {
@@ -939,26 +1053,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rerun_reuses_existing_resources() {
+    async fn rerun_is_stopped_before_redeploying_an_existing_brain() {
         let fake = Fake {
             existing_subdomain: Some("already-there".into()),
+            existing_workers: vec!["second-brain".into()],
             existing_d1: Some("d1-existing".into()),
             existing_kv: Some("kv-existing".into()),
             existing_vectorize: true,
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "d1-existing" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors" }),
+            ],
             ..Default::default()
         };
-        let outcome = provision(&&fake, &test_manifest(), "ignored", "pw-123456789012", |_| {})
+        let guard = preflight_account(&&fake, &test_manifest())
             .await
             .unwrap();
         assert_eq!(
-            outcome.worker_url,
-            "https://second-brain.already-there.workers.dev"
+            guard,
+            ProvisionPreflight::ExistingBrain {
+                url: "https://second-brain.already-there.workers.dev".into()
+            }
         );
         let log = fake.entries();
-        assert!(!log.iter().any(|l| l.starts_with("create_")));
-        assert!(!log.iter().any(|l| l.starts_with("register_subdomain")));
-        // Deploy still runs (that's the idempotent redeploy path).
-        assert!(log.iter().any(|l| l.starts_with("deploy:")));
+        for read in [
+            "get_subdomain",
+            "list_workers",
+            "find_d1",
+            "find_kv",
+            "find_vectorize",
+            "get_script_bindings:second-brain",
+        ] {
+            assert!(
+                log.contains(&read.to_string()),
+                "preflight skipped the {read} ownership check: {log:?}"
+            );
+        }
+        assert!(
+            !log.iter().any(|entry| {
+                entry.starts_with("create_")
+                    || entry.starts_with("register_subdomain")
+                    || entry.starts_with("upload_assets")
+                    || entry.starts_with("deploy:")
+                    || entry.starts_with("set_cron")
+                    || entry.starts_with("enable_subdomain")
+            }),
+            "the guard must return before every mutation: {log:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_worker_name_without_brain_bindings_is_a_web_app_conflict() {
+        let fake = Fake {
+            existing_subdomain: Some("account-name".into()),
+            existing_workers: vec!["second-brain".into()],
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "other" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "unrelated-index" }),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            preflight_account(&&fake, &test_manifest()).await.unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::WebApp
+            },
+            "a conventional script name is never ownership proof"
+        );
+        assert!(!fake.entries().iter().any(|entry| entry.starts_with("deploy:")));
+    }
+
+    #[tokio::test]
+    async fn fixed_storage_and_search_names_report_plain_language_categories() {
+        let d1 = Fake {
+            existing_d1: Some("unowned-d1".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            preflight_account(&&d1, &test_manifest()).await.unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::MemoryStorage
+            }
+        );
+
+        let kv = Fake {
+            existing_kv: Some("unowned-kv".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            preflight_account(&&kv, &test_manifest()).await.unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::MemoryStorage
+            }
+        );
+
+        let vectorize = Fake {
+            existing_vectorize: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            preflight_account(&&vectorize, &test_manifest()).await.unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::SmartSearch
+            }
+        );
     }
 
     #[tokio::test]

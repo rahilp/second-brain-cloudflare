@@ -22,6 +22,10 @@ export const it: Messages = {
     notFound: "Non trovato",
     demoMode: "Modalità demo",
     appTitle: "Second Brain",
+    continueToCloudflare: "Continua su Cloudflare",
+    continueToConnectionDetails: "Continua ai dettagli di connessione",
+    trySetupAgain: "Prova di nuovo la configurazione",
+    skipUpdateForNow: "Salta l'aggiornamento per ora",
   },
   settings: {
     title: "Impostazioni",
@@ -46,7 +50,7 @@ export const it: Messages = {
     unsavedOne: "1 modifica non salvata",
     saving: "Salvataggio…",
     saved: "Salvato",
-    loadFailed: "Non è stato possibile caricare le impostazioni.",
+    loadFailed: "Non è stato possibile caricare le Impostazioni avanzate. Chiudi questa finestra e riprova.",
     recency: {
       label: "Quanto i ricordi recenti contano più di quelli vecchi",
       desc: "I ricordi più vecchi perdono gradualmente terreno rispetto ai nuovi. Qui decidi con quanta rapidità — e quanta protezione ottengono i ricordi consolidati e importanti.",
@@ -298,7 +302,7 @@ export const it: Messages = {
         "di ricerca non ci sono più. Nient'altro è cambiato.",
       loading: "Verifica di come vengono letti i tuoi ricordi…",
       loadFailed:
-        "Non è stato possibile verificare come vengono letti i tuoi ricordi in questo momento.",
+        "Non è stato possibile controllare le impostazioni di ricerca in questo momento. Riprova tra poco.",
       barRunning:
         "Rilettura dei tuoi ricordi — {done} su {total} completati. Le altre impostazioni " +
         "sono bloccate fino alla fine.",
@@ -309,85 +313,67 @@ export const it: Messages = {
   welcome: {
     title: "Configura il tuo Second Brain",
     lede:
-      "Una memoria privata condivisa tra tutti gli strumenti AI che usi. " +
-      "Ogni app e dispositivo che colleghi è una porta sulla stessa memoria, " +
-      "quindi non c'è nulla da sincronizzare tra loro. " +
-      "Ci vogliono circa due minuti, tutto nel tuo spazio privato, " +
-      "senza competenze tecniche.",
-    getStarted: "Inizia",
-    alreadyHave: "Hai già un Second Brain?",
-    footnote: "Gratuito · I tuoi dati restano tuoi",
+      "Una memoria privata che le app AI che scegli possono usare. Si trova in un account Cloudflare che controlli. Ti guideremo nella creazione o nel collegamento; la maggior parte delle configurazioni richiede pochi minuti.",
+    getStarted: "Crea un nuovo Second Brain",
+    alreadyHave: "Collega un Second Brain che ho già",
+    footnote: "Gratuito per iniziare · I tuoi dati restano nell'account Cloudflare che scegli",
   },
   audience: {
-    title: "Per chi è questo Second Brain?",
+    title: "Lo userai da solo o con un team?",
     lede:
-      "Entrambe le scelte creano lo stesso Second Brain privato, nel tuo spazio " +
-      "Cloudflare. Cambia solo ciò che ti spieghiamo alla fine.",
+      "Scegli come prevedi di usare questo nuovo Second Brain. Se sei stato invitato nel team di qualcun altro, torna indietro e scegli 'Collega un Second Brain che ho già'.",
     justMe: "Solo per me",
-    aTeam: "Con il mio team",
-    existingTitle: "Altri useranno questo Second Brain?",
+    aTeam: "Crea un Second Brain di team",
+    existingTitle: "Userai questo Second Brain con un team?",
     existingLede:
-      "Il tuo Second Brain ora supporta i team: ogni membro ha ricordi privati, " +
-      "più un livello condiviso visibile a tutti. Sei l'amministratore — invita i " +
-      "membri dalla scheda Team della dashboard quando vuoi.",
+      "Puoi rendere questo un Second Brain di team. Ogni persona ha ricordi privati e può scegliere cosa condividere con il team. Se scegli un team, potrai invitare persone in seguito dalla dashboard.",
     existingFootnote:
-      "Scelta una sola volta: quando entrano i membri, il brain resta un brain di " +
-      "team. I tuoi ricordi non vengono mai coinvolti.",
+      "Questa scelta diventa permanente quando qualcuno entra nel team. I tuoi ricordi personali esistenti restano privati.",
     footnote:
-      "In un Second Brain di team ogni persona riceve un accesso proprio — e " +
-      "condividere un ricordo è sempre una scelta di chi l'ha scritto.",
+      "In un Second Brain di team, ogni persona ha il proprio accesso e ricordi privati. Le persone scelgono quali ricordi condividere con il team.",
   },
   connectExisting: {
-    title: "Collega il tuo Second Brain",
+    title: "Collegati a un Second Brain",
     lede:
-      "Nuovo computer? Inserisci l'indirizzo del Second Brain che hai già e poi " +
-      "la tua password — oppure, se qualcuno ti ha invitato nel suo team, il " +
-      "token che ti ha mandato. Nulla verrà modificato o resettato.",
-    addressPlaceholder: "Indirizzo Second Brain (…workers.dev)",
-    passwordPlaceholder: "La tua password o il token di invito del team",
-    connect: "Collega",
+      "Incolla l'indirizzo web del Second Brain, poi inserisci la sua password oppure il token di accesso del team presente nel tuo invito. Il collegamento salva l'accesso solo su questo computer.",
+    addressPlaceholder: "Indirizzo web del Second Brain (incolla il link ricevuto)",
+    passwordPlaceholder: "Password o token di accesso del team",
+    connect: "Collega questo computer",
     footnote:
-      "L'indirizzo è in Dettagli connessione sull'altro computer " +
-      "o nell'email di conferma che hai inviato a te stesso.",
+      "Trovi l'indirizzo in Dettagli connessione su un altro computer, oppure nell'email di invito o di conferma.",
     chooseLede:
-      "Nuovo computer? Collega il Second Brain che hai già — nulla verrà " +
-      "modificato o resettato.",
-    signInButton: "Accedi con Cloudflare",
-    signInHint: "Troveremo noi il tuo Second Brain — nessun indirizzo da cercare.",
+      "Scegli come collegarti. Se è il tuo Second Brain, possiamo cercarlo nel tuo account Cloudflare. Se sei stato invitato a un team, usa l'indirizzo e il token di accesso del tuo invito.",
+    signInButton: "Trova il mio Second Brain in Cloudflare",
+    signInHint: "Usa questa opzione solo per un Second Brain nel tuo account Cloudflare.",
     signInFootnote:
-      "Il tuo Second Brain si trova nel tuo spazio su Cloudflare, quindi " +
-      "accediamo lì per trovarlo. Cloudflare ti chiederà di autorizzare " +
-      "l'accesso. Non vediamo mai la tua password Cloudflare e non conserviamo " +
-      "la chiave: accedi di nuovo ogni volta. Preferisci di no? " +
-      "\u201cInserisci l'indirizzo a mano\u201d non richiede l'accesso a Cloudflare.",
-    manualButton: "Inserisci l'indirizzo a mano",
-    accountPickerTitle: "In quale spazio cerchiamo?",
-    accountPickerLede: "Il tuo login ne ha più di uno — scegli dove si trova il tuo Second Brain.",
+      "Per un Second Brain che hai configurato tu, Cloudflare ci permette di trovarne l'indirizzo. Cloudflare gestisce l'accesso; questa app non vede mai la tua password Cloudflare. Se qualcuno ti ha invitato nel suo team, non ti serve un account Cloudflare: scegli 'Ho un indirizzo o un token di accesso del team'.",
+    manualButton: "Ho un indirizzo o un token di accesso del team",
+    accountPickerTitle: "In quale account Cloudflare dobbiamo cercare?",
+    accountPickerLede: "Scegli l'account in cui hai creato il tuo Second Brain.",
     searchingTitle: "Ricerca del tuo Second Brain",
-    searchingLede: "Controlliamo il tuo spazio Cloudflare. Può richiedere fino a un minuto.",
-    searchingStep: "Analisi del tuo spazio",
-    pickTitleOne: "È questo il tuo Second Brain?",
-    pickTitleMany: "Quale è il tuo Second Brain?",
-    pickLedeOne: "Collegati, oppure inserisci a mano un altro indirizzo.",
-    pickLedeMany: "Scegli quello a cui vuoi collegarti.",
+    searchingLede: "Cerchiamo in questo account Cloudflare. Può richiedere fino a un minuto.",
+    searchingStep: "Cerchiamo Second Brain in questo account",
+    pickTitleOne: "È questo il Second Brain a cui vuoi collegarti?",
+    pickTitleMany: "A quale Second Brain vuoi collegarti?",
+    pickLedeOne: "Sceglilo per continuare, oppure usa un indirizzo da un altro computer o invito.",
+    pickLedeMany: "Scegli il Second Brain a cui vuoi collegarti.",
     noneFound:
-      "Non abbiamo trovato un Second Brain in quello spazio. Se si trova " +
-      "altrove — un altro spazio o un tuo indirizzo web — inserisci l'indirizzo qui sotto.",
-    unlockTitle: "Inserisci la tua password",
+      "Non abbiamo trovato un Second Brain in quell'account Cloudflare. Potrebbe trovarsi in un altro account, usare un altro indirizzo web oppure appartenere a un team che ti ha invitato. Incolla qui sotto l'indirizzo che hai ricevuto.",
+    unlockTitle: "Inserisci i tuoi dati di accesso",
     unlockLede:
-      "È la password che hai scelto quando hai configurato il tuo Second Brain " +
-      "la prima volta — oppure, se qualcuno ti ha invitato nel suo team, il " +
-      "token che ti ha mandato. Nulla verrà modificato o resettato.",
+      "Usa la password di questo Second Brain oppure il token di accesso del team presente nel tuo invito. Il collegamento salva l'accesso solo su questo computer.",
     lostPassword: "Non ho la mia password",
+    memberTokenHelp: "Sono un membro del team — chiedo all'amministratore un nuovo token",
+    memberTokenHelpTitle: "Chiedi al tuo amministratore del team un nuovo token",
+    memberTokenHelpLede: "Un token sostituito, o un account sospeso o rimosso, non può essere riparato su questo computer. Chiedi a chi ti ha invitato di emetterne uno nuovo.",
   },
   password: {
-    title: "Crea la tua password",
+    title: "Scegli una password",
     lede:
-      "È la chiave del tuo Second Brain. La userai per collegare nuovi strumenti " +
-      "e per accedere da altri computer.",
-    placeholder: "Scegli una password (12+ caratteri)",
-    confirmPlaceholder: "Ripeti la password",
-    generateTitle: "Genera una password sicura per me",
+      "Scegli una password per questo Second Brain. La userai per collegare i tuoi nuovi computer e le app AI.",
+    placeholder: "Scegli una password (almeno 12 caratteri)",
+    confirmPlaceholder: "Inserisci di nuovo la stessa password",
+    generateTitle: "Genera una password sicura",
     tooShort: "Troppo corta",
     checking: "Verifica…",
     foundInBreaches: "Trovata in violazioni",
@@ -399,8 +385,7 @@ export const it: Messages = {
       "Prova un'altra o genera una nuova.",
     mismatch: "Le password non coincidono.",
     notice:
-      "Salvala in un posto sicuro — un gestore password è ideale. " +
-      "Ti servirà per collegare nuovi strumenti; non può essere recuperata.",
+      "Salvala in un gestore password prima di continuare. Non potremo mostrartela più tardi e ti servirà per collegare i tuoi computer e le app AI.",
     footnote:
       "Verifichiamo le password contro violazioni note senza inviare la password: " +
       "solo un frammento di impronta lascia questo computer.",
@@ -590,7 +575,7 @@ export const it: Messages = {
     body:
       "La trovi dove l'hai salvata quando l'hai cambiata. È lo stesso Second " +
       "Brain, allo stesso indirizzo.",
-    findAgain: "Ritrova il mio Second Brain",
+    findAgain: "Trova un Second Brain diverso",
     findAgainHint:
       "Accede a Cloudflare e lo cerca, nel caso tu stia collegando un Second " +
       "Brain diverso.",
@@ -602,35 +587,33 @@ export const it: Messages = {
       "password, la vecchia viene chiusa definitivamente.",
   },
   cloudflare: {
-    title: "Collega il tuo account",
+    title: "Crea o collega il tuo account Cloudflare",
     lede:
-      "Il Second Brain vive nel tuo spazio privato su Cloudflare — " +
-      "le tue memorie sono tue, non nostre. Accedi o crea un account gratuito.",
-    signIn: "Accedi per creare il tuo spazio",
-    footnote: "Non vediamo la password Cloudflare.",
-    waitingTitle: "In attesa del browser…",
+      "Cloudflare ospiterà questo nuovo Second Brain in un account che controlli. Accedi a un account Cloudflare esistente oppure creane uno gratuito nella finestra del browser che si apre.",
+    signIn: "Apri Cloudflare per creare il mio Second Brain",
+    footnote: "Cloudflare gestisce l'accesso. Questa app non vede mai la tua password Cloudflare.",
+    waitingTitle: "Completa l'accesso nel browser",
     waitingLede:
-      "Completa l'accesso (o la creazione dell'account) nel browser aperto, " +
-      "poi torna qui.",
-    watchingSignIn: "In attesa che completi l'accesso",
-    pickerTitle: "In quale spazio installarlo?",
-    pickerLede: "Il tuo login ha più di uno — scegli dove mettere il Second Brain.",
+      "Completa l'accesso o la creazione dell'account nella finestra del browser. Quando hai finito, torna qui.",
+    watchingSignIn: "In attesa del completamento dell'accesso a Cloudflare",
+    pickerTitle: "Scegli un account Cloudflare",
+    pickerLede: "Scegli l'account che possiederà e ospiterà questo Second Brain.",
   },
   progress: {
-    title: "Configurazione del Second Brain",
-    lede: "Di solito ci vuole un minuto o due. Puoi allungarti.",
-    stepSpace: "Creazione dello spazio privato",
-    stepMemory: "Creazione del deposito memorie",
-    stepRecall: "Attivazione del richiamo intelligente",
-    stepFinish: "Completamento",
+    title: "Creazione del Second Brain",
+    lede: "Di solito richiede qualche minuto. Tieni aperta questa finestra mentre creiamo il tuo Second Brain; ti mostreremo ogni passaggio quando termina.",
+    stepSpace: "Preparazione dell'account Cloudflare",
+    stepMemory: "Creazione dello spazio di memoria sicuro",
+    stepRecall: "Preparazione della ricerca delle tue memorie",
+    stepFinish: "Controlli finali",
   },
   tools: {
-    title: "Collega i tuoi strumenti AI",
-    lede: "Dai a ogni strumento accesso alla stessa memoria. Puoi aggiungere altri più tardi.",
-    autoSetup: "Configurazione automatica.",
-    notOnComputer: "Non trovato su questo computer.",
+    title: "Collega app AI",
+    lede: "Collega ora le app AI che usi, oppure salta questo passaggio e aggiungile più tardi. Ogni app collegata può usare lo stesso Second Brain.",
+    autoSetup: "Aggiunge automaticamente all'app i dettagli di connessione di questo computer.",
+    notOnComputer: "Non installato su questo computer. Puoi collegarlo più tardi da Connessioni.",
     doneRestart: "Fatto — riavvia lo strumento per usare il Second Brain.",
-    cliSub: "Usa il Second Brain da terminale.",
+    cliSub: "Facoltativo: usa Second Brain dal terminale (per chi usa strumenti a riga di comando).",
     setupCli: "Configura CLI",
     settingUp: "Configurazione…",
     cliDone: "Fatto. Il comando brain è pronto nel terminale.",
@@ -638,7 +621,7 @@ export const it: Messages = {
     installed: "Installato ✓",
     reopenTerminal: "Il comando brain è pronto. Riapri il terminale se non lo trovi.",
     configSaved: "Config salvata ✓",
-    configSavedInstallFailed: "Config salvata, ma l'installazione non è finita. Esegui: ",
+    configSavedInstallFailed: "I dettagli di connessione sono stati salvati, ma il comando opzionale per il terminale non è stato installato. Il tuo Second Brain funziona comunque nell'app.",
     configSavedNoNpm: "Config salvata. Installa Node.js, poi esegui: ",
     pasteInSettings: "Copia il link e incollalo nei connettori nelle impostazioni.",
     claudeCode: "Claude Code",
@@ -653,7 +636,7 @@ export const it: Messages = {
       "Da qui colleghi le cose al tuo Second Brain. " +
       "Le memorie vivono nella dashboard, che si apre in una finestra dedicata.",
     notSetupTitle: "Non ancora configurato",
-    notSetupLede: "Completa prima la configurazione — i dettagli appariranno qui.",
+    notSetupLede: "Prima completa la creazione o il collegamento del tuo Second Brain. I dettagli di connessione appariranno qui al termine della configurazione.",
     addressLabel: "Indirizzo del Second Brain",
     addressDesc: "La dashboard web privata e dove collegi nuovi strumenti. Salvalo.",
     mcpLabel: "Link di connessione (per strumenti AI)",
@@ -693,8 +676,7 @@ export const it: Messages = {
       "usano la tua password non sono interessati: quelle connessioni si " +
       "chiudono cambiando la password.",
     disconnectFailed:
-      "Non è stato possibile chiudere alcune connessioni. Quelle già chiuse " +
-      "restano chiuse, quindi riprovando si riprende solo da ciò che manca.",
+      "Non è stato possibile chiudere alcune connessioni alle app AI. Quelle già chiuse restano chiuse. Riprova per chiudere quelle rimanenti.",
     connectToolsTitle: "Collega i tuoi strumenti AI",
     connectToolsDesc:
       "Gli strumenti su questo computer si collegano con un clic. Per gli altri, " +
@@ -721,24 +703,18 @@ export const it: Messages = {
       "te lo dice. Basta un aggiornamento perché il brain sappia rispondere, e " +
       "questa nota sparisce.",
     updateButton: "Aggiorna il Second Brain",
-    allSetTitle: "Tutto pronto",
-    allSetLede: "Due link da conservare. Li trovi sempre qui in Dettagli connessione.",
+    allSetTitle: "Il tuo Second Brain è pronto",
+    allSetLede: "Salva questi due link se prevedi di collegare altri dispositivi o app AI. Li potrai trovare anche più tardi in questa app, in Connessioni.",
     allSetTeamLede:
-      "Due link da conservare — e un team da invitare. Li trovi sempre qui in Dettagli connessione.",
+      "Salva questi due link, poi invita il tuo team dalla dashboard. Ogni persona riceve il proprio token di accesso.",
     teamCardLabel: "Il Second Brain del tuo team",
     teamCardBody:
-      "Hai effettuato l'accesso come proprietario-amministratore di questo brain. " +
-      "Apri la dashboard e usa il pannello Team per invitare le persone: ogni " +
-      "membro riceve il suo token. I ricordi privati di ciascuno restano privati, " +
-      "e ciò che viene condiviso finisce nel livello aziendale, visibile a tutti.",
+      "Hai configurato questo team. Apri la dashboard e scegli Team per invitare persone. Ognuna riceve un token di accesso separato. I loro ricordi privati restano privati; i ricordi che scelgono di condividere sono visibili al team.",
     teamCardBodyAdmin:
-      "Hai effettuato l'accesso come amministratore del team. Apri la dashboard e usa il pannello Team per invitare altre persone: ognuna riceve il proprio token. La password di questo brain la cambia chi lo ha creato, dal proprio account Cloudflare.",
+      "Puoi invitare persone dalla sezione Team della dashboard. Solo la persona che ha originariamente configurato questo Second Brain può cambiarne la password, perché si trova nel suo account Cloudflare.",
     teamCardBodyMember:
-      "Hai effettuato l'accesso come membro del team. I tuoi ricordi restano " +
-      "privati; ciò che condividi finisce nel livello aziendale, dove tutte le " +
-      "persone possono trovarlo. Se questo token smette di funzionare, " +
-      "chiedine uno nuovo a un amministratore.",
-    openDashboard: "Apri il mio Second Brain",
+      "Sei collegato come membro del team. I tuoi ricordi personali restano privati. I ricordi che scegli di condividere possono essere trovati da tutte le persone del team. Se questo token smette di funzionare, chiedi a un amministratore del team di emetterne uno nuovo.",
+    openDashboard: "Apri la dashboard del mio Second Brain",
   },
   integrations: {
     extensionTitle: "Estensione browser",
@@ -766,8 +742,7 @@ export const it: Messages = {
     confirm: "Sì, esci",
     keep: "Resta connesso",
     desc:
-      "Il Second Brain e tutte le memorie restano al sicuro — questo rimuove solo " +
-      "la connessione su questo computer. Puoi ricollegarti con indirizzo e password.",
+      "Puoi ricollegarti con l'indirizzo e la password oppure, per un Second Brain di team, con il token di accesso che ti è stato fornito.",
   },
   workerUpdate: {
     title: "Aggiorna il Second Brain",
@@ -782,7 +757,7 @@ export const it: Messages = {
     waitingLede:
       "Completa l'accesso a Cloudflare nel browser aperto, poi torna qui.",
     updatingTitle: "Aggiornamento del Second Brain",
-    updatingLede: "Di solito ci vuole un minuto. Le tue memorie sono al sicuro.",
+    updatingLede: "Di solito ci vuole un minuto. Tieni aperta questa finestra mentre l'aggiornamento termina.",
     stepMemory: "Aggiornamento deposito memorie",
     stepRecall: "Aggiornamento richiamo intelligente",
     stepFinish: "Completamento",

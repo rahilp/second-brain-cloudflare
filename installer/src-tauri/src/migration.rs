@@ -708,11 +708,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_server_error_does_not_leak_a_raw_body() {
+    async fn a_server_error_uses_the_stable_key_without_raw_detail() {
         let (url, _) = spawn_worker(500);
         let err = fetch_estimate(&url, "tok", 384, Locale::En).await.unwrap_err();
-        assert!(err.contains("500"), "the status is useful here: {err}");
-        assert!(!err.contains("{"), "leaked a response body: {err}");
+        assert_eq!(err, i18n::t(Locale::En, Key::ErrorBrainHttpStatus));
+        assert!(!err.contains("500"), "leaked a raw status code: {err}");
+        assert!(!err.contains('{'), "leaked a response body: {err}");
     }
 
     #[tokio::test]

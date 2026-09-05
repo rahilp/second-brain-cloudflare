@@ -493,7 +493,7 @@ const I18N_EN = {
     email: 'Email invite',
     subject: 'Your Second Brain team invite',
     body:
-      'Hi {name},\n\nYou have been added to our shared Second Brain — one memory the whole team can search.\n\n1. Open {url}\n2. Paste this one-time sign-in token:\n{token}\n3. Press Connect.\n\nAnything you capture stays personal unless you share it with the team. The token is shown once, so keep this message until you have signed in.',
+      'Hi {name},\n\nYou have been added to our shared Second Brain — one memory the whole team can search.\n\n1. Open {url}\n2. Paste your team sign-in token:\n{token}\n3. Press Connect.\n\nAnything you capture stays personal unless you share it with the team. Keep it — you\'ll need it again if you set up another computer. Ask an admin to reissue it if it stops working.',
   },
   brief: {
     eyebrow: 'Your brain, lately',
@@ -1172,7 +1172,7 @@ const I18N_IT = {
     email: 'Invia per email',
     subject: 'Il tuo invito al team di Second Brain',
     body:
-      'Ciao {name},\n\nSei stata/o aggiunta/o al nostro Second Brain condiviso — una memoria che tutto il team può consultare.\n\n1. Apri {url}\n2. Incolla questo token di accesso monouso:\n{token}\n3. Premi Connetti.\n\nTutto ciò che salvi resta personale finché non lo condividi col team. Il token viene mostrato una sola volta, quindi conserva questo messaggio finché non hai effettuato l’accesso.',
+      'Ciao {name},\n\nSei stata/o aggiunta/o al nostro Second Brain condiviso — una memoria che tutto il team può consultare.\n\n1. Apri {url}\n2. Incolla il tuo token di accesso del team:\n{token}\n3. Premi Connetti.\n\nTutto ciò che salvi resta personale finché non lo condividi col team. Conservalo: ti servirà di nuovo se configuri un altro computer. Chiedi a un amministratore di emetterne uno nuovo se smette di funzionare.',
   },
   brief: {
     eyebrow: 'Il tuo cervello, di recente',

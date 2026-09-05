@@ -29,6 +29,10 @@ export type Messages = {
     notFound: string;
     demoMode: string;
     appTitle: string;
+    continueToCloudflare: string;
+    continueToConnectionDetails: string;
+    trySetupAgain: string;
+    skipUpdateForNow: string;
   };
   settings: {
     title: string;
@@ -200,6 +204,9 @@ export type Messages = {
     unlockLede: string;
     /** Door B into the password change (#235) — a ghost link on both screens. */
     lostPassword: string;
+    memberTokenHelp: string;
+    memberTokenHelpTitle: string;
+    memberTokenHelpLede: string;
   };
   password: {
     title: string;
