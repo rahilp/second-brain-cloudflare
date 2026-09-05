@@ -77,10 +77,12 @@ describe("the three strings a member-token install depends on", () => {
 
   it("no longer calls the credential a password and nothing else", () => {
     // The whole of "the desktop app configures member tokens": the field
-    // already took one, and until now nothing on screen said so.
-    expect(String(enFlat.get("connectExisting.passwordPlaceholder"))).toMatch(/invite token/i);
+    // already took one, and until now nothing on screen said so. The wording
+    // has since moved from "invite token" to "team sign-in token" (#P0-2), but
+    // the requirement — a member reads something other than "password" — holds.
+    expect(String(enFlat.get("connectExisting.passwordPlaceholder"))).toMatch(/sign-in token/i);
     expect(String(itCatalog.connectExisting.unlockLede)).toMatch(/token/i);
-    expect(String(en.connectExisting.unlockLede)).toMatch(/invite/i);
+    expect(String(en.connectExisting.unlockLede)).toMatch(/invitation/i);
   });
 
   it("tells a member what to type on the screen a member actually reaches", () => {
@@ -106,18 +108,25 @@ describe("the three strings a member-token install depends on", () => {
 
   it("calls the shared layer what the rest of the product calls it", () => {
     // The Worker's enum is z.enum(["personal","company"]), POST /capture's 400
-    // says `workspace must be "personal" or "company"`, the dashboard says
-    // "company", and the owner's own card three lines above the member's said
-    // "the company layer". Only the member's card invented "team layer" — a
-    // name that appears nowhere the member could go and look for it.
+    // says `workspace must be "personal" or "company"`, and the dashboard says
+    // "company". The installer copy has since dropped that jargon entirely
+    // (#P0-2's plain-language pass) rather than making the member's card match
+    // it — "the company layer" no longer appears anywhere in the catalogs — but
+    // the failure mode this test exists to catch is unchanged: whichever way
+    // sharing is described, the member's card must describe it the same way the
+    // owner's and admin's cards do, not invent a name of its own.
     for (const [path, value] of [...enFlat, ...itFlat]) {
       expect(String(value), `${path} names a layer the product does not have`).not.toMatch(
-        /\bteam layer\b|\blivello del team\b/i,
+        /\bteam layer\b|\blivello del team\b|\bcompany layer\b|\blivello aziendale\b/i,
       );
     }
-    // Said positively, so deleting the phrase rather than correcting it fails.
-    expect(String(enFlat.get("details.teamCardBodyMember"))).toMatch(/company layer/i);
-    expect(String(itFlat.get("details.teamCardBodyMember"))).toMatch(/livello aziendale/i);
+    // Said positively, so deleting the description rather than aligning it
+    // fails: both the owner's and the member's cards must say where a shared
+    // memory ends up, in the same plain word the rest of the app uses for it.
+    for (const catalog of [enFlat, itFlat]) {
+      expect(String(catalog.get("details.teamCardBody"))).toMatch(/\bteam\b/i);
+      expect(String(catalog.get("details.teamCardBodyMember"))).toMatch(/\bteam\b/i);
+    }
   });
 
   it("explains a Worker update a non-owner cannot perform, rather than hiding it", () => {

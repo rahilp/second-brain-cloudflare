@@ -16,7 +16,7 @@ import {
 } from "./shared";
 import { PROBE_TIMEOUT_MS, fetchRoleProbe, roleFromProbe, type ConnectionRole } from "./connection-role";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { initI18n, LOCALE_CHANGE_EVENT, t } from "./i18n";
+import { getLocale, initI18n, LOCALE_CHANGE_EVENT, t } from "./i18n";
 import {
   blockedCopy,
   localFailureCopy,
@@ -80,7 +80,9 @@ let connectionRole: ConnectionRole = "owner";
 let currentScreen: (() => void) | null = null;
 
 function show(...nodes: (Node | string)[]) {
-  app.replaceChildren(h("div", { class: "screen" }, nodes));
+  const screen = h("div", { class: "screen", tabindex: "-1" }, nodes);
+  app.replaceChildren(screen);
+  screen.focus({ preventScroll: true });
 }
 
 function brand(): HTMLElement {
@@ -199,8 +201,8 @@ async function brainReportsMembers(brainUrl: string, brainPassword: string): Pro
 ///      going back to solo would mean destroying other people's memories, so
 ///      there is deliberately no downgrade path and no second question).
 /// The question only ever runs on a solo brain whose mode was never recorded.
-async function existingTeamScreen(brainUrl: string, brainPassword: string) {
-  currentScreen = () => existingTeamScreen(brainUrl, brainPassword);
+async function existingTeamScreen(brainUrl: string, brainPassword: string, back: () => void) {
+  currentScreen = () => existingTeamScreen(brainUrl, brainPassword, back);
   if (details?.teamMode) {
     // A team brain this machine has already recorded. The mode is settled, but
     // the role is not — it is re-derived here rather than skipped, because the
@@ -243,12 +245,18 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string) {
     await invoke("set_team_mode", { teamMode: true }).catch(() => {});
     void toolsScreen();
   });
+  // Only forward buttons before this (#F4): quitting was the only way out.
+  const backBtn = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("common.back"),
+  ]);
+  backBtn.addEventListener("click", back);
   show(
     brand(),
     h("h1", {}, [t("audience.existingTitle")]),
     h("p", { class: "lede" }, [t("audience.existingLede")]),
     justMe,
     aTeam,
+    backBtn,
     h("p", { class: "footnote" }, [t("audience.existingFootnote")]),
   );
 }
@@ -299,7 +307,7 @@ function searchingScreen() {
     brand(),
     h("h1", {}, [t("connectExisting.searchingTitle")]),
     h("p", { class: "lede" }, [t("connectExisting.searchingLede")]),
-    h("div", { class: "searching-status" }, [
+    h("div", { class: "searching-status", role: "status", "aria-live": "polite" }, [
       h("span", { class: "check-icon" }, [h("span", { class: "spinner" })]),
       t("connectExisting.searchingStep"),
     ]),
@@ -351,7 +359,7 @@ async function runDiscovery() {
 
 function brainPickerScreen(found: DiscoveredBrain[]) {
   currentScreen = () => brainPickerScreen(found);
-  const list = h("ul", { class: "account-list" });
+  const list = h("ul", { class: "account-list", role: "list" });
   for (const brain of found) {
     // The address leads, not the name: this app deploys every brain under the
     // same script name, so the address is the only part that distinguishes one.
@@ -382,6 +390,52 @@ function brainPickerScreen(found: DiscoveredBrain[]) {
   );
 }
 
+/**
+ * Whether a `connect_existing` rejection is the wrong-credential error rather
+ * than a bad address, an unreachable host, or anything else.
+ *
+ * `connect_existing` rejects with a plain, already-localised string — there is
+ * no structured shape to switch on here the way `start_provisioning` has one
+ * (`commands.rs:566-586`: `ErrorEmptyPassword` for a blank field,
+ * `ErrorWrongPassword` for a probe that came back `WorkerProbe::WrongPassword`).
+ * Matching against the exact Rust-side text, per the locale this window is
+ * already synced to (`i18n.ts`'s `getLocale()`/`syncLocaleToRust`), is the only
+ * way to tell "this credential doesn't work" apart from every other failure
+ * without inventing a new IPC contract for it.
+ */
+const CREDENTIAL_ERROR_TEXT: Record<"en" | "it", string[]> = {
+  en: [
+    "Enter the Second Brain password or the team sign-in token from your invitation.",
+    "That password or team sign-in token does not work for this Second Brain. Check the invitation or password and try again.",
+  ],
+  it: [
+    "Inserisci la password del Second Brain oppure il token di accesso del team presente nel tuo invito.",
+    "Questa password o questo token di accesso del team non funziona per questo Second Brain. Controlla l'invito o la password e riprova.",
+  ],
+};
+
+function isCredentialError(errorMsg: string | undefined): boolean {
+  return !!errorMsg && CREDENTIAL_ERROR_TEXT[getLocale()].includes(errorMsg);
+}
+
+/// Reached only from the new ghost action on a wrong-credential failure. States
+/// plainly that a rotated/suspended/removed token cannot be repaired on this
+/// computer — never routes a token holder into `lostPasswordIntroScreen`, which
+/// is an owner-only Cloudflare recovery a member structurally cannot complete.
+function memberTokenHelpScreen(back: () => void) {
+  currentScreen = () => memberTokenHelpScreen(back);
+  const ok = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("common.back"),
+  ]);
+  ok.addEventListener("click", back);
+  show(
+    brand(),
+    h("h1", {}, [t("connectExisting.memberTokenHelpTitle")]),
+    h("p", { class: "lede" }, [t("connectExisting.memberTokenHelpLede")]),
+    ok,
+  );
+}
+
 /// The address is known by this point, so only the password is asked for.
 /// Discovery cannot retrieve it: Cloudflare secrets are write-only, so an
 /// existing AUTH_TOKEN can never be read back — only overwritten, which would
@@ -392,9 +446,11 @@ function unlockBrainScreen(
   found: DiscoveredBrain[] = [brain],
 ) {
   currentScreen = () => unlockBrainScreen(brain, errorMsg, found);
+  const passwordLabel = t("connectExisting.passwordPlaceholder");
   const password = h("input", {
     type: "password",
-    placeholder: t("connectExisting.passwordPlaceholder"),
+    placeholder: passwordLabel,
+    "aria-label": passwordLabel,
   });
   const connect = h("button", { class: "btn-primary" }, [t("connectExisting.connect")]);
   const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [t("common.back")]);
@@ -415,6 +471,23 @@ function unlockBrainScreen(
     lostPasswordIntroScreen(brain.url);
   });
 
+  // A member whose token was rotated, suspended, or mistyped gets the same
+  // wrong-credential message an owner with a bad password gets (#P0-2). Their
+  // only correct recovery is structurally different — it does not run through
+  // Cloudflare at all — so it is offered as its own action rather than folded
+  // into "I don't have my password" above.
+  const memberHelp = isCredentialError(errorMsg)
+    ? (() => {
+        const btn = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+          t("connectExisting.memberTokenHelp"),
+        ]);
+        btn.addEventListener("click", () =>
+          memberTokenHelpScreen(() => unlockBrainScreen(brain, undefined, found)),
+        );
+        return btn;
+      })()
+    : "";
+
   connect.addEventListener("click", async () => {
     connect.disabled = true;
     connect.textContent = t("common.checking");
@@ -423,7 +496,9 @@ function unlockBrainScreen(
         address: brain.url,
         password: password.value,
       });
-      await existingTeamScreen(brain.url, password.value);
+      await existingTeamScreen(brain.url, password.value, () =>
+        unlockBrainScreen(brain, undefined, found),
+      );
     } catch (e) {
       unlockBrainScreen(brain, String(e), found);
     }
@@ -438,6 +513,7 @@ function unlockBrainScreen(
     connect,
     back,
     lost,
+    memberHelp,
   );
   password.focus();
 }
@@ -450,15 +526,22 @@ function manualEntryScreen(
   tone: "error" | "info" = "error",
 ) {
   currentScreen = () => manualEntryScreen(errorMsg, prefillAddress, tone);
+  const addressLabel = t("connectExisting.addressPlaceholder");
   const address = h("input", {
     type: "text",
-    placeholder: t("connectExisting.addressPlaceholder"),
+    placeholder: addressLabel,
+    "aria-label": addressLabel,
     autocapitalize: "off",
     autocorrect: "off",
     spellcheck: "false",
   });
   if (prefillAddress) address.value = prefillAddress;
-  const password = h("input", { type: "password", placeholder: t("connectExisting.passwordPlaceholder") });
+  const passwordLabel = t("connectExisting.passwordPlaceholder");
+  const password = h("input", {
+    type: "password",
+    placeholder: passwordLabel,
+    "aria-label": passwordLabel,
+  });
   const connect = h("button", { class: "btn-primary" }, [t("connectExisting.connect")]);
   const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [t("common.back")]);
   back.addEventListener("click", () => connectExistingScreen());
@@ -476,6 +559,21 @@ function manualEntryScreen(
     lostPasswordIntroScreen(null);
   });
 
+  // Same wrong-credential branch as `unlockBrainScreen` (#P0-2): a member's
+  // rotated/suspended/mistyped token reads identically to a bad password here,
+  // and this is the screen the member persona is most likely to actually reach.
+  const memberHelp = isCredentialError(errorMsg)
+    ? (() => {
+        const btn = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+          t("connectExisting.memberTokenHelp"),
+        ]);
+        btn.addEventListener("click", () =>
+          memberTokenHelpScreen(() => manualEntryScreen(undefined, address.value, tone)),
+        );
+        return btn;
+      })()
+    : "";
+
   connect.addEventListener("click", async () => {
     connect.disabled = true;
     connect.textContent = t("common.checking");
@@ -484,7 +582,9 @@ function manualEntryScreen(
         address: address.value,
         password: password.value,
       });
-      await existingTeamScreen(address.value.trim(), password.value);
+      await existingTeamScreen(address.value.trim(), password.value, () =>
+        manualEntryScreen(undefined, address.value, tone),
+      );
     } catch (e) {
       manualEntryScreen(String(e), address.value);
     }
@@ -500,6 +600,7 @@ function manualEntryScreen(
     back,
     h("p", { class: "footnote" }, [t("connectExisting.footnote")]),
     lost,
+    memberHelp,
   );
   address.focus();
 }
@@ -529,8 +630,16 @@ function meterFor(pw: string, check: PasswordCheck | null): {
 
 function passwordScreen() {
   currentScreen = passwordScreen;
-  const pw = h("input", { type: "password", placeholder: t("password.placeholder") });
-  const confirm = h("input", { type: "password", placeholder: t("password.confirmPlaceholder") });
+  const pw = h("input", {
+    type: "password",
+    placeholder: t("password.placeholder"),
+    "aria-label": t("password.placeholder"),
+  });
+  const confirm = h("input", {
+    type: "password",
+    placeholder: t("password.confirmPlaceholder"),
+    "aria-label": t("password.confirmPlaceholder"),
+  });
   const fill = h("div", { class: "strength-fill" });
   const label = h("span", { class: "strength-label" });
   const hint = h("p", { class: "hint" }, [""]);
@@ -618,6 +727,13 @@ function passwordScreen() {
     }
   });
 
+  // Nothing is written remotely yet at this point (#F3): `submit_password`
+  // only holds the choice in memory (`commands.rs:156-172`), so leaving is free.
+  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("common.back"),
+  ]);
+  back.addEventListener("click", () => audienceScreen());
+
   show(
     brand(),
     h("h1", {}, [t("password.title")]),
@@ -630,6 +746,7 @@ function passwordScreen() {
     ]),
     h("div", { class: "notice" }, ["🔑", h("span", {}, [t("password.notice")])]),
     next,
+    back,
     h("p", { class: "footnote" }, [t("password.footnote")]),
   );
   pw.focus();
@@ -641,6 +758,12 @@ function connectScreen(errorMsg?: string) {
   const error = errorMsg
     ? h("div", { class: "notice error" }, ["⚠️", h("span", {}, [errorMsg])])
     : "";
+  // The password chosen a screen back is still only in memory (#F3), same as
+  // `passwordScreen`'s own Back — nothing here has been sent to Cloudflare yet.
+  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("common.back"),
+  ]);
+  back.addEventListener("click", () => passwordScreen());
 
   signIn.addEventListener("click", async () => {
     show(
@@ -660,7 +783,10 @@ function connectScreen(errorMsg?: string) {
         chosenAccount = accounts[0];
         progressScreen();
       } else {
-        accountPickerScreen();
+        // Without a back closure here the screen was a dead end for anyone who
+        // signed in with the wrong Cloudflare login (#F1) — the other two
+        // `accountPickerScreen` call sites already wire one.
+        accountPickerScreen(progressScreen, undefined, undefined, () => connectScreen());
       }
     } catch (e) {
       connectScreen(String(e));
@@ -673,6 +799,7 @@ function connectScreen(errorMsg?: string) {
     h("p", { class: "lede" }, [t("cloudflare.lede")]),
     error,
     signIn,
+    back,
     h("p", { class: "footnote" }, [t("cloudflare.footnote")]),
   );
 }
@@ -686,7 +813,7 @@ function accountPickerScreen(
   back?: () => void,
 ) {
   currentScreen = () => accountPickerScreen(next, title, lede, back);
-  const list = h("ul", { class: "account-list" });
+  const list = h("ul", { class: "account-list", role: "list" });
   for (const account of accounts) {
     const btn = h("button", {}, [account.name]);
     btn.addEventListener("click", () => {
@@ -720,16 +847,112 @@ function progressSteps(): { id: StepId; label: string }[] {
   ];
 }
 
+/** Supplements the icon swap for a screen reader; the icon glyph alone (a
+ *  bullet/spinner/check/bang) conveys nothing to VoiceOver (#P0-7). Not run
+ *  through `t()`: no catalog key exists for these three words, and this file
+ *  may not add one (see the guard-screen actions below for the same limit). */
+function statusWord(status: StepEvent["status"]): string {
+  if (status === "running") return "in progress";
+  if (status === "done") return "done";
+  return "failed";
+}
+
+/** The tagged half of `start_provisioning`'s error contract (RUST-1): a plain
+ *  string is the legacy shape and falls through to the generic retry screen
+ *  below unchanged. */
+interface GuardExistingBrainError {
+  kind: "existingBrainFound";
+  errorKey: "GuardExistingBrain";
+  message: string;
+  url: string;
+}
+interface GuardNameConflictError {
+  kind: "resourceNameConflict";
+  errorKey: "GuardNameConflict";
+  message: string;
+  resourceKind: "memoryStorage" | "smartSearch" | "webApp";
+}
+interface ProvisioningFailedError {
+  kind: "provisioningFailed";
+  errorKey: "ErrorProvisioningDetail";
+  message: string;
+}
+type StructuredProvisioningError =
+  | GuardExistingBrainError
+  | GuardNameConflictError
+  | ProvisioningFailedError;
+
+function structuredProvisioningError(e: unknown): StructuredProvisioningError | null {
+  if (typeof e !== "object" || e === null) return null;
+  const kind = (e as { kind?: unknown }).kind;
+  if (kind === "existingBrainFound" || kind === "resourceNameConflict" || kind === "provisioningFailed") {
+    return e as StructuredProvisioningError;
+  }
+  return null;
+}
+
+/// P0-1's render half: a proven Second Brain was found on the chosen account,
+/// so provisioning never ran and nothing was touched. Routes to the same
+/// manual-entry screen the "Already have one?" door uses, prefilled with the
+/// address the preflight already resolved — there is no discovery scan to
+/// reuse here, since this account was never scanned.
+function existingBrainGuardScreen(err: GuardExistingBrainError) {
+  currentScreen = () => existingBrainGuardScreen(err);
+  const connectToIt = h("button", { class: "btn-primary" }, [t("connectExisting.connect")]);
+  connectToIt.addEventListener("click", () => manualEntryScreen(undefined, err.url));
+  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("common.back"),
+  ]);
+  back.addEventListener("click", () => welcomeScreen());
+  show(
+    brand(),
+    h("h1", {}, [t("connectExisting.title")]),
+    h("p", { class: "lede" }, [err.message]),
+    connectToIt,
+    back,
+  );
+}
+
+/// P0-1's other guard outcome: a fixed name is already taken on this account
+/// but nothing proved it is a Second Brain, so nothing was created or
+/// overwritten. `err.message` already names the resource category in plain
+/// language (`resource_kind_label` in `commands.rs`) — this screen does not
+/// re-derive it from `resourceKind`, which exists on the payload for callers
+/// that need to branch on it rather than just display it.
+function resourceConflictGuardScreen(err: GuardNameConflictError) {
+  currentScreen = () => resourceConflictGuardScreen(err);
+  const chooseAnother = h("button", { class: "btn-primary" }, [t("cloudflare.pickerTitle")]);
+  chooseAnother.addEventListener("click", () => connectScreen());
+  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
+    t("common.back"),
+  ]);
+  back.addEventListener("click", () => welcomeScreen());
+  show(
+    brand(),
+    h("h1", {}, [t("progress.title")]),
+    h("p", { class: "lede" }, [err.message]),
+    chooseAnother,
+    back,
+  );
+}
+
 function progressScreen() {
   currentScreen = progressScreen;
   const rows = new Map<StepId, HTMLLIElement>();
-  const list = h("ul", { class: "checklist" });
+  const labels = new Map<StepId, string>();
+  const list = h("ul", {
+    class: "checklist",
+    role: "list",
+    "aria-live": "polite",
+    "aria-atomic": "false",
+  });
   for (const step of progressSteps()) {
     const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label]);
     rows.set(step.id, li);
+    labels.set(step.id, step.label);
     list.append(li);
   }
-  const errorBox = h("div", {});
+  const errorBox = h("div", { role: "alert" });
   show(
     brand(),
     h("h1", {}, [t("progress.title")]),
@@ -742,6 +965,7 @@ function progressScreen() {
     const li = rows.get(ev.step);
     if (!li) return;
     li.className = ev.status;
+    li.setAttribute("aria-label", `${labels.get(ev.step)}: ${statusWord(ev.status)}`);
     const icon = li.querySelector<HTMLSpanElement>(".check-icon")!;
     if (ev.status === "running") icon.replaceChildren(h("span", { class: "spinner" }));
     if (ev.status === "done") icon.replaceChildren("✓");
@@ -752,6 +976,7 @@ function progressScreen() {
   const start = async () => {
     for (const li of rows.values()) {
       li.className = "";
+      li.removeAttribute("aria-label");
       li.querySelector(".check-icon")!.replaceChildren("•");
     }
     errorBox.replaceChildren();
@@ -764,10 +989,22 @@ function progressScreen() {
       unlisten?.();
       toolsScreen();
     } catch (e) {
+      const structured = structuredProvisioningError(e);
+      if (structured?.kind === "existingBrainFound") {
+        unlisten?.();
+        existingBrainGuardScreen(structured);
+        return;
+      }
+      if (structured?.kind === "resourceNameConflict") {
+        unlisten?.();
+        resourceConflictGuardScreen(structured);
+        return;
+      }
+      const message = structured ? structured.message : String(e);
       const retry = h("button", { class: "btn-primary" }, [t("common.tryAgain")]);
       retry.addEventListener("click", () => void start());
       errorBox.replaceChildren(
-        h("div", { class: "notice error" }, ["⚠️", h("span", {}, [String(e)])]),
+        h("div", { class: "notice error" }, ["⚠️", h("span", {}, [message])]),
         retry,
       );
     }
@@ -879,10 +1116,17 @@ async function runWorkerUpdate(errorMsg?: string) {
   }
 
   const rows = new Map<StepId, HTMLLIElement>();
-  const list = h("ul", { class: "checklist" });
+  const labels = new Map<StepId, string>();
+  const list = h("ul", {
+    class: "checklist",
+    role: "list",
+    "aria-live": "polite",
+    "aria-atomic": "false",
+  });
   for (const step of updateProgressSteps()) {
     const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label]);
     rows.set(step.id, li);
+    labels.set(step.id, step.label);
     list.append(li);
   }
   show(
@@ -895,6 +1139,7 @@ async function runWorkerUpdate(errorMsg?: string) {
     const li = rows.get(e.payload.step);
     if (!li) return;
     li.className = e.payload.status;
+    li.setAttribute("aria-label", `${labels.get(e.payload.step)}: ${statusWord(e.payload.status)}`);
     const icon = li.querySelector<HTMLSpanElement>(".check-icon")!;
     if (e.payload.status === "running") icon.replaceChildren(h("span", { class: "spinner" }));
     if (e.payload.status === "done") icon.replaceChildren("✓");
@@ -1187,7 +1432,7 @@ async function runLostDiscovery() {
 /// "Connect to it" is wrong when there is nothing to connect with yet.
 function lostBrainPickerScreen(found: DiscoveredBrain[]) {
   currentScreen = () => lostBrainPickerScreen(found);
-  const list = h("ul", { class: "account-list" });
+  const list = h("ul", { class: "account-list", role: "list" });
   for (const brain of found) {
     const btn = h("button", {}, [brain.url.replace(/^https:\/\//, "")]);
     btn.addEventListener("click", () => {
@@ -1236,6 +1481,7 @@ function lostAddressScreen(
   const address = h("input", {
     type: "text",
     placeholder: t("connectExisting.addressPlaceholder"),
+    "aria-label": t("connectExisting.addressPlaceholder"),
     autocapitalize: "off",
     autocorrect: "off",
     spellcheck: "false",
@@ -1301,8 +1547,16 @@ function lostAddressScreen(
 /// breach check back exactly as at setup.
 function choosePasswordScreen() {
   currentScreen = choosePasswordScreen;
-  const pw = h("input", { type: "text", placeholder: t("password.placeholder") });
-  const confirm = h("input", { type: "text", placeholder: t("password.confirmPlaceholder") });
+  const pw = h("input", {
+    type: "text",
+    placeholder: t("password.placeholder"),
+    "aria-label": t("password.placeholder"),
+  });
+  const confirm = h("input", {
+    type: "text",
+    placeholder: t("password.confirmPlaceholder"),
+    "aria-label": t("password.confirmPlaceholder"),
+  });
   pw.value = rotationPassword;
   confirm.value = rotationPassword;
   const fill = h("div", { class: "strength-fill" });
@@ -1481,7 +1735,12 @@ const rotationStepStatus = new Map<StepId, StepEvent["status"]>();
 /// moment would manufacture the "may already be live" case on purpose.
 function rotationProgressScreen() {
   currentScreen = rotationProgressScreen;
-  const list = h("ul", { class: "checklist" });
+  const list = h("ul", {
+    class: "checklist",
+    role: "list",
+    "aria-live": "polite",
+    "aria-atomic": "false",
+  });
   for (const step of rotationSteps()) {
     const status = rotationStepStatus.get(step.id);
     const icon =
@@ -1492,12 +1751,12 @@ function rotationProgressScreen() {
           : status === "error"
             ? "!"
             : "•";
-    list.append(
-      h("li", status ? { class: status } : {}, [
-        h("span", { class: "check-icon" }, [icon]),
-        step.label,
-      ]),
-    );
+    const li = h("li", status ? { class: status } : {}, [
+      h("span", { class: "check-icon" }, [icon]),
+      step.label,
+    ]);
+    if (status) li.setAttribute("aria-label", `${step.label}: ${statusWord(status)}`);
+    list.append(li);
   }
   show(
     brand(),
@@ -1797,6 +2056,7 @@ async function passwordChangedElsewhereScreen(errorMsg?: string) {
   const password = h("input", {
     type: "password",
     placeholder: t("connectExisting.passwordPlaceholder"),
+    "aria-label": t("connectExisting.passwordPlaceholder"),
   });
   const connect = h("button", { class: "btn-primary" }, [t("common.connect")]);
   connect.addEventListener("click", async () => {

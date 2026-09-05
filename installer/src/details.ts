@@ -192,9 +192,18 @@ async function boot() {
       rail.append(button);
     }
 
+    // The pane's own heading, not the section wrapper: focusing it is what
+    // makes VoiceOver announce "Connection" → "AI tools" as a real navigation
+    // rather than leaving focus on the rail button that was just clicked (#P0-3).
+    // Every `paneFor` branch returns its `<h2 class="pane-title">` first, by
+    // construction, so this needs no per-branch plumbing to find it.
+    const paneEls = paneFor(active);
+    const heading = paneEls[0] as HTMLElement;
+    heading.setAttribute("tabindex", "-1");
     app.replaceChildren(
-      h("div", { class: "panel" }, [rail, h("section", { class: "pane" }, paneFor(active))]),
+      h("div", { class: "panel" }, [rail, h("section", { class: "pane" }, paneEls)]),
     );
+    heading.focus({ preventScroll: true });
   };
 
   render();

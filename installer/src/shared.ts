@@ -144,7 +144,11 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
     ]);
     const actions = h("div", { class: "row-actions" });
     if (installed) {
-      const btn = h("button", { class: "btn-secondary" }, [t("common.connect")]);
+      const btn = h(
+        "button",
+        { class: "btn-secondary", "aria-label": `${t("common.connect")} ${title}` },
+        [t("common.connect")],
+      );
       btn.addEventListener("click", async () => {
         btn.disabled = true;
         btn.textContent = t("common.connecting");
@@ -160,7 +164,11 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
       });
       actions.append(btn);
     } else {
-      const copy = h("button", { class: "btn-ghost" }, [t("common.copyLink")]);
+      const copy = h(
+        "button",
+        { class: "btn-ghost", "aria-label": `${t("common.copyLink")} ${title}` },
+        [t("common.copyLink")],
+      );
       copy.addEventListener("click", () => void copyText(details.mcpUrl, copy));
       actions.append(copy);
     }
@@ -177,9 +185,14 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
   };
 
   const cliRow = () => {
+    const cliTitle = t("tools.cliTitle");
     const sub = h("div", { class: "row-sub" }, [t("tools.cliSub")]);
     const actions = h("div", { class: "row-actions" });
-    const setupBtn = h("button", { class: "btn-secondary" }, [t("tools.setupCli")]);
+    const setupBtn = h(
+      "button",
+      { class: "btn-secondary", "aria-label": `${t("tools.setupCli")} ${cliTitle}` },
+      [t("tools.setupCli")],
+    );
     actions.append(setupBtn);
 
     void (async () => {
@@ -236,15 +249,23 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
     })();
 
     return h("div", { class: "row" }, [
-      h("div", {}, [h("div", { class: "row-title" }, [t("tools.cliTitle")]), sub]),
+      h("div", {}, [h("div", { class: "row-title" }, [cliTitle]), sub]),
       actions,
     ]);
   };
 
   const webTool = (title: string, settingsUrl: string) => {
-    const copy = h("button", { class: "btn-secondary" }, [t("common.copyLink")]);
+    const copy = h(
+      "button",
+      { class: "btn-secondary", "aria-label": `${t("common.copyLink")} ${title}` },
+      [t("common.copyLink")],
+    );
     copy.addEventListener("click", () => void copyText(details.mcpUrl, copy));
-    const open = h("button", { class: "btn-ghost" }, [t("common.openSettings")]);
+    const open = h(
+      "button",
+      { class: "btn-ghost", "aria-label": `${t("common.openSettings")} ${title}` },
+      [t("common.openSettings")],
+    );
     open.addEventListener("click", () => void invoke("open_external", { url: settingsUrl }));
     return h("div", { class: "row" }, [
       h("div", {}, [
