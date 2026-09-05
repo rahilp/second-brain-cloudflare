@@ -400,7 +400,9 @@ describe("team panel", () => {
     await ctx.submitNewMember();
     ctx.copyInviteMessage();
     expect(copied[0]).toContain("Second Brain condiviso");
-    expect(copied[0]).toContain("Incolla questo token");
+    expect(copied[0]).toContain("Incolla il tuo token di accesso del team");
+    expect(copied[0]).toContain("Conservalo: ti servirà di nuovo se configuri un altro computer");
+    expect(copied[0]).not.toContain("token monouso");
   });
 
   it("surfaces a duplicate email instead of a token", async () => {
