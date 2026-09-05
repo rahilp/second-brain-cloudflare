@@ -13,6 +13,7 @@ use crate::i18n::{self, AppLocale, Key, Locale};
 use crate::rotate::{self, RotateOutcome};
 use crate::worker_url::subdomain_of;
 use crate::{cli_config, mcp_config, password_check, secure_store, windows, worker_bundle};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -42,6 +43,11 @@ pub struct SetupSession {
     /// a brain is actually connected. Non-secret, but pointless — and possibly
     /// wrong — to persist for a scan the user abandoned.
     cf_hints: Mutex<Option<(String, String)>>,
+    /// Fixed-name resources created by this process, scoped to their Cloudflare
+    /// account. This is the in-session retry bridge for a provision that failed
+    /// after creating storage but before deploying the Worker; it is never
+    /// persisted and cannot authorize residue from another app session.
+    created_resources: Mutex<HashMap<String, provision::CreatedResources>>,
     /// Demo mode's stand-in for the outstanding-index note. Dry-run must never
     /// reach the keychain — every read there can raise an OS password prompt,
     /// which is #252 all over again — so the demo keeps its note in memory and
@@ -61,6 +67,7 @@ impl SetupSession {
             pending_rotation: Mutex::new(false),
             stale_password: Mutex::new(false),
             cf_hints: Mutex::new(None),
+            created_resources: Mutex::new(HashMap::new()),
             demo_previous_index: Mutex::new(None),
         }
     }
@@ -74,6 +81,7 @@ impl SetupSession {
         *self.pending_rotation.lock().unwrap() = false;
         *self.stale_password.lock().unwrap() = false;
         *self.cf_hints.lock().unwrap() = None;
+        self.created_resources.lock().unwrap().clear();
         *self.demo_previous_index.lock().unwrap() = None;
     }
 }
@@ -98,6 +106,37 @@ fn user_err(locale: Locale, key: Key) -> String {
 pub enum StartProvisioningError {
     Message(String),
     Structured(ProvisioningErrorPayload),
+}
+
+/// Errors from `connect_existing` keep legacy paths as strings while giving
+/// credential failures stable keys for the member-token recovery branch.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(untagged)]
+pub enum ConnectExistingError {
+    Message(String),
+    Credential {
+        #[serde(rename = "errorKey")]
+        error_key: &'static str,
+        message: String,
+    },
+}
+
+impl From<String> for ConnectExistingError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+fn credential_error(locale: Locale, key: Key) -> ConnectExistingError {
+    let error_key = match key {
+        Key::ErrorWrongPassword => "ErrorWrongPassword",
+        Key::ErrorEmptyPassword => "ErrorEmptyPassword",
+        _ => unreachable!("credential_error only accepts credential keys"),
+    };
+    ConnectExistingError::Credential {
+        error_key,
+        message: user_err(locale, key),
+    }
 }
 
 impl From<String> for StartProvisioningError {
@@ -133,17 +172,6 @@ pub enum ProvisioningErrorPayload {
     },
 }
 
-fn resource_kind_label(locale: Locale, kind: provision::ResourceKind) -> &'static str {
-    match (locale, kind) {
-        (Locale::En, provision::ResourceKind::MemoryStorage) => "memory storage",
-        (Locale::En, provision::ResourceKind::SmartSearch) => "smart search",
-        (Locale::En, provision::ResourceKind::WebApp) => "the web app",
-        (Locale::It, provision::ResourceKind::MemoryStorage) => "archiviazione dei ricordi",
-        (Locale::It, provision::ResourceKind::SmartSearch) => "ricerca intelligente",
-        (Locale::It, provision::ResourceKind::WebApp) => "l'app web",
-    }
-}
-
 fn existing_brain_error(locale: Locale, url: String) -> StartProvisioningError {
     StartProvisioningError::Structured(ProvisioningErrorPayload::ExistingBrainFound {
         error_key: "GuardExistingBrain",
@@ -156,10 +184,15 @@ fn resource_conflict_error(
     locale: Locale,
     resource_kind: provision::ResourceKind,
 ) -> StartProvisioningError {
+    let resource_key = match resource_kind {
+        provision::ResourceKind::MemoryStorage => Key::ResourceKindMemoryStorage,
+        provision::ResourceKind::SmartSearch => Key::ResourceKindSmartSearch,
+        provision::ResourceKind::WebApp => Key::ResourceKindWebApp,
+    };
     let message = i18n::t_fmt(
         locale,
         Key::GuardNameConflict,
-        &[("kind", resource_kind_label(locale, resource_kind))],
+        &[("kind", i18n::t(locale, resource_key))],
     );
     StartProvisioningError::Structured(ProvisioningErrorPayload::ResourceNameConflict {
         error_key: "GuardNameConflict",
@@ -350,10 +383,11 @@ pub async fn discover_brains(
     let client = CfClient::new(tokens.access_token.clone(), account_id.clone());
 
     let manifest = worker_bundle::manifest();
+    let known_brain_indexes = brain_index_names();
     let found = discover::discover_in_account(
         &client,
         &manifest.script_name,
-        &manifest.vectorize_name,
+        &known_brain_indexes,
     )
     .await
     .map_err(|e| match e {
@@ -432,11 +466,18 @@ pub async fn start_provisioning(
             *session.tokens.lock().unwrap() = Some(tokens.clone());
         }
 
-        // One transparent refresh+retry on auth expiry: provisioning is
-        // retried only after the preflight has run again with the refreshed
-        // token. If the first attempt created anything before expiring, the
-        // second preflight refuses the unjournaled residue instead of assuming
-        // a same-name object belongs to this installation.
+        // One transparent refresh+retry on auth expiry. A successful create is
+        // recorded before the pipeline can fail, so the next preflight may
+        // admit only this session's exact residue; unrecorded same-name objects
+        // remain conflicts.
+        let known_brain_indexes = brain_index_names();
+        let mut created = session
+            .created_resources
+            .lock()
+            .unwrap()
+            .get(&account_id)
+            .cloned()
+            .unwrap_or_default();
         let mut attempt = 0;
         loop {
             attempt += 1;
@@ -447,7 +488,14 @@ pub async fn start_provisioning(
             // Release-blocking ownership guard. Keep this immediately before
             // `provision`: every call above is authentication/session setup and
             // every operation below may mutate the selected account.
-            let preflight = match provision::preflight_account(&backend, manifest).await {
+            let preflight = match provision::preflight_account(
+                &backend,
+                manifest,
+                &known_brain_indexes,
+                &created,
+            )
+            .await
+            {
                 Ok(preflight) => preflight,
                 Err(CfApiError::Unauthorized) if attempt == 1 => {
                     tokens = oauth::refresh(&tokens).await.map_err(|e| {
@@ -476,9 +524,21 @@ pub async fn start_provisioning(
             let progress = move |event: provision::StepEvent| {
                 let _ = progress_app.emit("setup-progress", &event);
             };
-            match provision::provision(&backend, manifest, &account_name, &password, progress)
-                .await
-            {
+            let result = provision::provision_recording(
+                &backend,
+                manifest,
+                &account_name,
+                &password,
+                &mut created,
+                progress,
+            )
+            .await;
+            session
+                .created_resources
+                .lock()
+                .unwrap()
+                .insert(account_id.clone(), created.clone());
+            match result {
                 Ok(outcome) => break outcome,
                 Err(ProvisionError::Api(CfApiError::Unauthorized)) if attempt == 1 => {
                     tokens = oauth::refresh(&tokens).await.map_err(|e| {
@@ -561,12 +621,12 @@ pub async fn connect_existing(
     password: String,
     app: AppHandle,
     session: State<'_, SetupSession>,
-) -> Result<ProvisionOutcome, String> {
+) -> Result<ProvisionOutcome, ConnectExistingError> {
     let locale = locale_of(&app);
     let worker_url = normalize_worker_url(&address, locale)?;
     let password = password.trim().to_string();
     if password.is_empty() {
-        return Err(user_err(locale, Key::ErrorEmptyPassword));
+        return Err(credential_error(locale, Key::ErrorEmptyPassword));
     }
 
     if !session.dry_run {
@@ -574,14 +634,14 @@ pub async fn connect_existing(
         match probe_worker(&worker_url, &password).await {
             Ok(WorkerProbe::Valid) => {}
             Ok(WorkerProbe::WrongPassword) => {
-                return Err(user_err(locale, Key::ErrorWrongPassword));
+                return Err(credential_error(locale, Key::ErrorWrongPassword));
             }
             Ok(WorkerProbe::NotABrain) => {
-                return Err(user_err(locale, Key::ErrorNotABrain));
+                return Err(user_err(locale, Key::ErrorNotABrain).into());
             }
             Err(e) => {
                 log::warn!("existing-brain probe failed: {e}");
-                return Err(user_err(locale, Key::ErrorCantReach));
+                return Err(user_err(locale, Key::ErrorCantReach).into());
             }
         }
         secure_store::save_setup(&worker_url, &password).map_err(|e| {
@@ -1703,9 +1763,7 @@ async fn confirm_target_is_a_brain(
 /// `AUTH_TOKEN` overwritten while the user is told their brain's password
 /// changed.
 fn bindings_are_a_brains(bindings: &[serde_json::Value], locale: Locale) -> Result<(), String> {
-    brain_index_names()
-        .iter()
-        .any(|name| discover::bindings_look_like_a_brain(bindings, name))
+    discover::bindings_look_like_a_brain(bindings, &brain_index_names())
         .then_some(())
         .ok_or_else(|| user_err(locale, Key::ErrorNotABrain))
 }
@@ -2742,13 +2800,14 @@ mod tests {
     use super::{
         app_mode, bindings_are_a_brains, blocked_by_migration, brain_index_names,
         clear_pending_rotation, cloudflare_client_for_brain, confirm_target_is_a_brain,
-        dashboard_credentials, existing_brain_error, fetch_connection_role, for_log,
-        normalize_worker_url, provisioning_failed_error, resource_conflict_error,
+        credential_error, dashboard_credentials, existing_brain_error, fetch_connection_role,
+        for_log, normalize_worker_url, provisioning_failed_error, resource_conflict_error,
         role_probe_from_body, update_prompt_is_offerable,
         password_opens_brain, ConnectionRoleProbe,
         previous_index_for, previous_index_to_record, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
         rotation_address, rotation_block, rotation_failure, rotation_target,
-        ProvisioningErrorPayload, RotateError, SetupSession, StartProvisioningError,
+        ConnectExistingError, ProvisioningErrorPayload, RotateError, SetupSession,
+        StartProvisioningError,
         LOG_DETAIL_MAX,
     };
     use crate::cf::oauth::Tokens;
@@ -2908,6 +2967,65 @@ mod tests {
     }
 
     #[test]
+    fn connect_existing_credential_errors_have_stable_machine_readable_shapes() {
+        for (locale, key, expected_error_key) in [
+            (Locale::En, Key::ErrorEmptyPassword, "ErrorEmptyPassword"),
+            (Locale::En, Key::ErrorWrongPassword, "ErrorWrongPassword"),
+            (Locale::It, Key::ErrorEmptyPassword, "ErrorEmptyPassword"),
+            (Locale::It, Key::ErrorWrongPassword, "ErrorWrongPassword"),
+        ] {
+            let value = serde_json::to_value(credential_error(locale, key)).unwrap();
+            let object = value.as_object().expect("credential error is an object");
+            assert_eq!(object.len(), 2, "the credential wire shape changed: {value}");
+            assert_eq!(value["errorKey"], expected_error_key);
+            assert_eq!(value["message"], i18n::t(locale, key));
+        }
+
+        assert_eq!(
+            serde_json::to_value(ConnectExistingError::Message("plain".into())).unwrap(),
+            "plain",
+            "non-credential connect errors retain their legacy string shape"
+        );
+
+        let src = include_str!("commands.rs");
+        let body = fn_body(src, "pub async fn connect_existing(");
+        for key in ["Key::ErrorEmptyPassword", "Key::ErrorWrongPassword"] {
+            assert!(
+                body.contains(&format!("credential_error(locale, {key})")),
+                "connect_existing no longer returns a structured error for {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn credential_copy_is_pinned_in_both_rust_locales() {
+        let catalog = include_str!("i18n.rs");
+        for (key, message) in [
+            (
+                "ErrorEmptyPassword",
+                "Enter the Second Brain password or the team sign-in token from your invitation.",
+            ),
+            (
+                "ErrorWrongPassword",
+                "That password or team sign-in token does not work for this Second Brain. Check the invitation or password and try again.",
+            ),
+            (
+                "ErrorEmptyPassword",
+                "Inserisci la password del Second Brain oppure il token di accesso del team presente nel tuo invito.",
+            ),
+            (
+                "ErrorWrongPassword",
+                "Questa password o questo token di accesso del team non funziona per questo Second Brain. Controlla l'invito o la password e riprova.",
+            ),
+        ] {
+            assert!(
+                catalog.contains(message),
+                "the pinned EN/IT {key} copy changed or disappeared: {message:?}"
+            );
+        }
+    }
+
+    #[test]
     fn provisioning_preflight_is_after_auth_and_immediately_before_mutation() {
         let src = include_str!("commands.rs");
         let body = fn_body(src, "pub async fn start_provisioning(");
@@ -2921,7 +3039,7 @@ mod tests {
             "an expired token must be refreshed before the ownership preflight"
         );
         assert!(
-            preflight < at(body, "provision::provision(&backend"),
+            preflight < at(body, "provision::provision_recording("),
             "the ownership preflight must run before the first mutating pipeline"
         );
     }

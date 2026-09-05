@@ -391,31 +391,49 @@ function brainPickerScreen(found: DiscoveredBrain[]) {
 }
 
 /**
- * Whether a `connect_existing` rejection is the wrong-credential error rather
- * than a bad address, an unreachable host, or anything else.
+ * Whether a `connect_existing` rejection is specifically the wrong-credential
+ * error — a submitted password/token that Cloudflare rejected — rather than a
+ * blank field, a bad address, an unreachable host, or anything else.
  *
- * `connect_existing` rejects with a plain, already-localised string — there is
- * no structured shape to switch on here the way `start_provisioning` has one
- * (`commands.rs:566-586`: `ErrorEmptyPassword` for a blank field,
- * `ErrorWrongPassword` for a probe that came back `WorkerProbe::WrongPassword`).
- * Matching against the exact Rust-side text, per the locale this window is
- * already synced to (`i18n.ts`'s `getLocale()`/`syncLocaleToRust`), is the only
- * way to tell "this credential doesn't work" apart from every other failure
- * without inventing a new IPC contract for it.
+ * `connect_existing` now rejects a bad credential with a structured
+ * `{ errorKey, message }` shape (`commands.rs`'s `ConnectExistingError`:
+ * `ErrorEmptyPassword` for a blank field, `ErrorWrongPassword` for a probe
+ * that came back `WorkerProbe::WrongPassword`), same idea as
+ * `start_provisioning`'s tagged errors below. Only `message` — the
+ * already-localised prose, unwrapped by `connectExistingErrorMessage` below —
+ * travels through this file's `errorMsg: string` render-chain parameter, so
+ * this still matches against that text rather than the tag; per the locale
+ * this window is already synced to (`i18n.ts`'s
+ * `getLocale()`/`syncLocaleToRust`).
+ *
+ * Deliberately excludes `ErrorEmptyPassword`'s text: that fires before
+ * anything is even sent to Cloudflare, so the member-recovery ghost action
+ * would otherwise appear on a field the user simply hasn't filled in yet.
  */
-const CREDENTIAL_ERROR_TEXT: Record<"en" | "it", string[]> = {
-  en: [
-    "Enter the Second Brain password or the team sign-in token from your invitation.",
-    "That password or team sign-in token does not work for this Second Brain. Check the invitation or password and try again.",
-  ],
-  it: [
-    "Inserisci la password del Second Brain oppure il token di accesso del team presente nel tuo invito.",
-    "Questa password o questo token di accesso del team non funziona per questo Second Brain. Controlla l'invito o la password e riprova.",
-  ],
+const WRONG_CREDENTIAL_ERROR_TEXT: Record<"en" | "it", string> = {
+  en: "That password or team sign-in token does not work for this Second Brain. Check the invitation or password and try again.",
+  it: "Questa password o questo token di accesso del team non funziona per questo Second Brain. Controlla l'invito o la password e riprova.",
 };
 
 function isCredentialError(errorMsg: string | undefined): boolean {
-  return !!errorMsg && CREDENTIAL_ERROR_TEXT[getLocale()].includes(errorMsg);
+  return !!errorMsg && errorMsg === WRONG_CREDENTIAL_ERROR_TEXT[getLocale()];
+}
+
+/**
+ * The display text for a `connect_existing` rejection, whichever of its two
+ * wire shapes it came back as. Precondition/network failures still reject
+ * with a plain, already-localised string; a submitted-but-wrong credential
+ * now rejects with `{ errorKey, message }` instead (`commands.rs`'s
+ * `ConnectExistingError`), so its `message` has to be unwrapped explicitly —
+ * `String(e)` on that object stringifies to `"[object Object]"` and would
+ * both blank the error notice and starve `isCredentialError` of the text it
+ * matches against.
+ */
+function connectExistingErrorMessage(e: unknown): string {
+  if (typeof e === "object" && e !== null && typeof (e as { message?: unknown }).message === "string") {
+    return (e as { message: string }).message;
+  }
+  return String(e);
 }
 
 /// Reached only from the new ghost action on a wrong-credential failure. States
@@ -500,7 +518,7 @@ function unlockBrainScreen(
         unlockBrainScreen(brain, undefined, found),
       );
     } catch (e) {
-      unlockBrainScreen(brain, String(e), found);
+      unlockBrainScreen(brain, connectExistingErrorMessage(e), found);
     }
   });
 
@@ -586,7 +604,7 @@ function manualEntryScreen(
         manualEntryScreen(undefined, address.value, tone),
       );
     } catch (e) {
-      manualEntryScreen(String(e), address.value);
+      manualEntryScreen(connectExistingErrorMessage(e), address.value);
     }
   });
 
@@ -653,7 +671,7 @@ function passwordScreen() {
     '<path d="M11 2 C11.7 6.8 13.2 8.3 18 9 C13.2 9.7 11.7 11.2 11 16 C10.3 11.2 8.8 9.7 4 9 C8.8 8.3 10.3 6.8 11 2 Z"/>' +
     '<path d="M18 13 C18.35 15.4 19.1 16.15 21.5 16.5 C19.1 16.85 18.35 17.6 18 20 C17.65 17.6 16.9 16.85 14.5 16.5 C16.9 16.15 17.65 15.4 18 13 Z"/>' +
     "</svg>";
-  const next = h("button", { class: "btn-primary", disabled: "" }, [t("common.continue")]);
+  const next = h("button", { class: "btn-primary", disabled: "" }, [t("common.continueToCloudflare")]);
 
   let check: PasswordCheck | null = null;
   let debounce: number | undefined;
@@ -855,6 +873,26 @@ function statusWord(status: StepEvent["status"]): string {
   return t("progress.stepFailed");
 }
 
+/**
+ * A text node that is announced by an `aria-live` ancestor but takes no space
+ * on screen (#P0-7 follow-up). The checklists' only other DOM change on a step
+ * update is `.check-icon`'s glyph swap or an `aria-label` attribute — neither
+ * is a live-region trigger in VoiceOver/NVDA, so the running/done/failed
+ * sentence needs its own text node. Style is inline, not a class: this file
+ * does not own `style.css` this wave.
+ */
+function srOnly(text = ""): HTMLElement {
+  return h(
+    "span",
+    {
+      style:
+        "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);" +
+        "white-space:nowrap;border:0;padding:0;margin:-1px;",
+    },
+    [text],
+  );
+}
+
 /** The tagged half of `start_provisioning`'s error contract (RUST-1): a plain
  *  string is the legacy shape and falls through to the generic retry screen
  *  below unchanged. */
@@ -919,11 +957,27 @@ function existingBrainGuardScreen(err: GuardExistingBrainError) {
 /// that need to branch on it rather than just display it.
 function resourceConflictGuardScreen(err: GuardNameConflictError) {
   currentScreen = () => resourceConflictGuardScreen(err);
-  const chooseAnother = h("button", { class: "btn-primary" }, [t("guard.conflictChooseAnother")]);
-  chooseAnother.addEventListener("click", () => connectScreen());
-  const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
-    t("common.back"),
-  ]);
+  // Routing "choose another account" through `connectScreen` would re-run
+  // `connect_cloudflare`, whose sign-in handler short-circuits straight back to
+  // this same account when the login only has one (`main.ts:782-784`) —
+  // reproducing this exact conflict and looping forever for the common
+  // single-account login. With more than one account, the list already fetched
+  // this session is reused instead, so picking a different one never re-runs
+  // the OAuth grant.
+  const canChooseAnother = accounts.length > 1;
+  const chooseAnother = canChooseAnother
+    ? h("button", { class: "btn-primary" }, [t("guard.conflictChooseAnother")])
+    : "";
+  if (chooseAnother instanceof HTMLElement) {
+    chooseAnother.addEventListener("click", () =>
+      accountPickerScreen(progressScreen, undefined, undefined, () =>
+        resourceConflictGuardScreen(err),
+      ),
+    );
+  }
+  const back = canChooseAnother
+    ? h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [t("common.back")])
+    : h("button", { class: "btn-primary" }, [t("common.back")]);
   back.addEventListener("click", () => welcomeScreen());
   show(
     brand(),
@@ -938,6 +992,7 @@ function progressScreen() {
   currentScreen = progressScreen;
   const rows = new Map<StepId, HTMLLIElement>();
   const labels = new Map<StepId, string>();
+  const statusEls = new Map<StepId, HTMLElement>();
   const list = h("ul", {
     class: "checklist",
     role: "list",
@@ -945,9 +1000,11 @@ function progressScreen() {
     "aria-atomic": "false",
   });
   for (const step of progressSteps()) {
-    const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label]);
+    const status = srOnly();
+    const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label, status]);
     rows.set(step.id, li);
     labels.set(step.id, step.label);
+    statusEls.set(step.id, status);
     list.append(li);
   }
   const errorBox = h("div", { role: "alert" });
@@ -963,7 +1020,12 @@ function progressScreen() {
     const li = rows.get(ev.step);
     if (!li) return;
     li.className = ev.status;
-    li.setAttribute("aria-label", `${labels.get(ev.step)}: ${statusWord(ev.status)}`);
+    const sentence = `${labels.get(ev.step)}: ${statusWord(ev.status)}`;
+    li.setAttribute("aria-label", sentence);
+    // The live region only ever mutates `.check-icon`'s glyph and this text
+    // node — an attribute change alone (the `aria-label` above) does not
+    // trigger VoiceOver/NVDA (#P0-7).
+    statusEls.get(ev.step)!.textContent = sentence;
     const icon = li.querySelector<HTMLSpanElement>(".check-icon")!;
     if (ev.status === "running") icon.replaceChildren(h("span", { class: "spinner" }));
     if (ev.status === "done") icon.replaceChildren("✓");
@@ -972,10 +1034,11 @@ function progressScreen() {
 
   let unlisten: (() => void) | null = null;
   const start = async () => {
-    for (const li of rows.values()) {
+    for (const [id, li] of rows) {
       li.className = "";
       li.removeAttribute("aria-label");
       li.querySelector(".check-icon")!.replaceChildren("•");
+      statusEls.get(id)!.textContent = "";
     }
     errorBox.replaceChildren();
     if (!unlisten) unlisten = await listen<StepEvent>("setup-progress", (e) => applyEvent(e.payload));
@@ -999,12 +1062,17 @@ function progressScreen() {
         return;
       }
       const message = structured ? structured.message : String(e);
-      const retry = h("button", { class: "btn-primary" }, [t("common.tryAgain")]);
+      const retry = h("button", { class: "btn-primary" }, [t("common.trySetupAgain")]);
       retry.addEventListener("click", () => void start());
       errorBox.replaceChildren(
         h("div", { class: "notice error" }, ["⚠️", h("span", {}, [message])]),
         retry,
       );
+      // `errorBox` is mutated in place rather than re-rendered through `show()`
+      // (#P0-3/#P0-7): without this, the button the user just activated on the
+      // previous attempt is destroyed by the `replaceChildren()` above and
+      // focus falls back to `<body>`.
+      retry.focus();
     }
   };
   void start();
@@ -1013,7 +1081,7 @@ function progressScreen() {
 async function toolsScreen() {
   currentScreen = () => void toolsScreen();
   const tools = await invoke<ToolStatus>("detect_tools");
-  const next = h("button", { class: "btn-primary" }, [t("common.continue")]);
+  const next = h("button", { class: "btn-primary" }, [t("common.continueToConnectionDetails")]);
   next.addEventListener("click", detailsScreen);
   show(
     brand(),
@@ -1064,7 +1132,7 @@ async function workerUpdateScreen() {
   const start = h("button", { class: "btn-primary" }, [t("workerUpdate.signInUpdate")]);
   start.addEventListener("click", () => void runWorkerUpdate());
   const notNow = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
-    t("common.notNow"),
+    t("common.skipUpdateForNow"),
   ]);
   notNow.addEventListener("click", () => void invoke("open_dashboard"));
   show(
@@ -1083,7 +1151,7 @@ async function runWorkerUpdate(errorMsg?: string) {
     const retry = h("button", { class: "btn-primary" }, [t("common.tryAgain")]);
     retry.addEventListener("click", () => void runWorkerUpdate());
     const back = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
-      t("common.notNow"),
+      t("common.skipUpdateForNow"),
     ]);
     back.addEventListener("click", () => void invoke("open_dashboard"));
     show(
@@ -1115,6 +1183,7 @@ async function runWorkerUpdate(errorMsg?: string) {
 
   const rows = new Map<StepId, HTMLLIElement>();
   const labels = new Map<StepId, string>();
+  const statusEls = new Map<StepId, HTMLElement>();
   const list = h("ul", {
     class: "checklist",
     role: "list",
@@ -1122,9 +1191,11 @@ async function runWorkerUpdate(errorMsg?: string) {
     "aria-atomic": "false",
   });
   for (const step of updateProgressSteps()) {
-    const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label]);
+    const status = srOnly();
+    const li = h("li", {}, [h("span", { class: "check-icon" }, ["•"]), step.label, status]);
     rows.set(step.id, li);
     labels.set(step.id, step.label);
+    statusEls.set(step.id, status);
     list.append(li);
   }
   show(
@@ -1137,7 +1208,9 @@ async function runWorkerUpdate(errorMsg?: string) {
     const li = rows.get(e.payload.step);
     if (!li) return;
     li.className = e.payload.status;
-    li.setAttribute("aria-label", `${labels.get(e.payload.step)}: ${statusWord(e.payload.status)}`);
+    const sentence = `${labels.get(e.payload.step)}: ${statusWord(e.payload.status)}`;
+    li.setAttribute("aria-label", sentence);
+    statusEls.get(e.payload.step)!.textContent = sentence;
     const icon = li.querySelector<HTMLSpanElement>(".check-icon")!;
     if (e.payload.status === "running") icon.replaceChildren(h("span", { class: "spinner" }));
     if (e.payload.status === "done") icon.replaceChildren("✓");
@@ -1295,7 +1368,7 @@ function cloudflareWaitingScreen(lede: string) {
     brand(),
     h("h1", {}, [t("cloudflare.waitingTitle")]),
     h("p", { class: "lede" }, [lede]),
-    h("div", { class: "checklist" }, [
+    h("div", { class: "checklist", role: "status", "aria-live": "polite" }, [
       h("li", { class: "running" }, [
         h("span", { class: "check-icon" }, [h("span", { class: "spinner" })]),
         t("cloudflare.watchingSignIn"),
@@ -1752,6 +1825,9 @@ function rotationProgressScreen() {
     const li = h("li", status ? { class: status } : {}, [
       h("span", { class: "check-icon" }, [icon]),
       step.label,
+      // A real text node, not just the `aria-label` below: an attribute change
+      // is not a live-region trigger in VoiceOver/NVDA (#P0-7).
+      srOnly(status ? `${step.label}: ${statusWord(status)}` : ""),
     ]);
     if (status) li.setAttribute("aria-label", `${step.label}: ${statusWord(status)}`);
     list.append(li);

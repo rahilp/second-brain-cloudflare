@@ -169,6 +169,9 @@ pub enum Key {
     GuardExistingBrain,
     GuardNameConflict,
     ErrorInvalidLocale,
+    ResourceKindMemoryStorage,
+    ResourceKindSmartSearch,
+    ResourceKindWebApp,
 }
 
 pub fn t(locale: Locale, key: Key) -> &'static str {
@@ -363,11 +366,14 @@ would send your new password unprotected."
         }
         (Locale::En, Key::GuardExistingBrain) => "We found your existing Second Brain. Connect to it with its password or a team sign-in token.",
         (Locale::En, Key::GuardNameConflict) => {
-            "This Cloudflare account already has {kind} using the name this installer needs. Nothing was changed. Choose another account or go back."
+            "This Cloudflare account already contains {kind} with the name this installer needs. Nothing was changed. Choose another account or go back."
         }
         (Locale::En, Key::ErrorInvalidLocale) => {
             "We couldn't change the app language. Try again."
         }
+        (Locale::En, Key::ResourceKindMemoryStorage) => "a memory store",
+        (Locale::En, Key::ResourceKindSmartSearch) => "a smart-search index",
+        (Locale::En, Key::ResourceKindWebApp) => "a web app",
 
         // Menu / tray — IT
         (Locale::It, Key::MenuOpenDashboard) => "Apri dashboard",
@@ -569,6 +575,11 @@ sicuro del dispositivo."
         (Locale::It, Key::ErrorInvalidLocale) => {
             "Non è stato possibile cambiare la lingua dell'app. Riprova."
         }
+        (Locale::It, Key::ResourceKindMemoryStorage) => "un archivio ricordi",
+        (Locale::It, Key::ResourceKindSmartSearch) => {
+            "un indice di ricerca intelligente"
+        }
+        (Locale::It, Key::ResourceKindWebApp) => "un'app web",
     }
 }
 
@@ -728,6 +739,9 @@ mod tests {
             GuardExistingBrain,
             GuardNameConflict,
             ErrorInvalidLocale,
+            ResourceKindMemoryStorage,
+            ResourceKindSmartSearch,
+            ResourceKindWebApp,
         ]
     }
 

@@ -84,6 +84,61 @@ pub enum ResourceKind {
     WebApp,
 }
 
+/// Fixed-name Cloudflare resources created during this app process.
+///
+/// This is deliberately only an in-memory retry aid, not a transaction journal:
+/// the caller scopes each value to one Cloudflare account and drops it when the
+/// setup session ends. D1 and KV include the IDs returned by their create calls
+/// so a delete-and-recreate under the same name is not mistaken for our object.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CreatedResources {
+    d1: Option<CreatedResource>,
+    kv: Option<CreatedResource>,
+    vectorize_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CreatedResource {
+    name: String,
+    id: String,
+}
+
+impl CreatedResources {
+    fn record_d1(&mut self, name: &str, id: &str) {
+        self.d1 = Some(CreatedResource {
+            name: name.to_string(),
+            id: id.to_string(),
+        });
+    }
+
+    fn record_kv(&mut self, name: &str, id: &str) {
+        self.kv = Some(CreatedResource {
+            name: name.to_string(),
+            id: id.to_string(),
+        });
+    }
+
+    fn record_vectorize(&mut self, name: &str) {
+        self.vectorize_name = Some(name.to_string());
+    }
+
+    fn owns_d1(&self, name: &str, id: &str) -> bool {
+        self.d1
+            .as_ref()
+            .is_some_and(|created| created.name == name && created.id == id)
+    }
+
+    fn owns_kv(&self, name: &str, id: &str) -> bool {
+        self.kv
+            .as_ref()
+            .is_some_and(|created| created.name == name && created.id == id)
+    }
+
+    fn owns_vectorize(&self, name: &str) -> bool {
+        self.vectorize_name.as_deref() == Some(name)
+    }
+}
+
 /// The read-only result immediately before a fresh provisioning run mutates an
 /// account. A future transaction-journal variant can be added here without
 /// weakening the rule that an unmarked fixed-name resource is never reused.
@@ -321,12 +376,15 @@ pub fn build_update_metadata(
 /// names unless the conventional script's control-plane bindings prove that it
 /// is already a Second Brain.
 ///
-/// All fixed-name reads happen before a decision is returned. This is not a
-/// resume mechanism: without the transaction journal planned for Gate 4, a
-/// resource name is never evidence that this installer created the resource.
+/// All fixed-name reads happen before a decision is returned. The only allowed
+/// residue is an exact object recorded by this process for this account; an
+/// unrecorded name remains no evidence of ownership. Cross-process recovery
+/// still requires the transaction journal planned for Gate 4.
 pub async fn preflight_account<B: Backend>(
     backend: &B,
     manifest: &WorkerManifest,
+    brain_index_names: &[String],
+    created: &CreatedResources,
 ) -> Result<ProvisionPreflight, CfApiError> {
     let (subdomain, scripts, d1, kv, vectorize) = tokio::join!(
         backend.get_account_subdomain(),
@@ -361,9 +419,10 @@ pub async fn preflight_account<B: Backend>(
         None
     };
 
-    if script_bindings.as_deref().is_some_and(|bindings| {
-        discover::bindings_look_like_a_brain(bindings, &manifest.vectorize_name)
-    }) {
+    if script_bindings
+        .as_deref()
+        .is_some_and(|bindings| discover::bindings_look_like_a_brain(bindings, brain_index_names))
+    {
         if let Some(subdomain) = subdomain.filter(|name| discover::is_safe_dns_label(name)) {
             return Ok(ProvisionPreflight::ExistingBrain {
                 url: discover::workers_dev_url(&manifest.script_name, &subdomain),
@@ -384,12 +443,18 @@ pub async fn preflight_account<B: Backend>(
             kind: ResourceKind::WebApp,
         });
     }
-    if d1.is_some() || kv.is_some() {
+    let foreign_d1 = d1
+        .as_deref()
+        .is_some_and(|id| !created.owns_d1(&manifest.d1_name, id));
+    let foreign_kv = kv
+        .as_deref()
+        .is_some_and(|id| !created.owns_kv(KV_TITLE, id));
+    if foreign_d1 || foreign_kv {
         return Ok(ProvisionPreflight::NameConflict {
             kind: ResourceKind::MemoryStorage,
         });
     }
-    if vectorize {
+    if vectorize && !created.owns_vectorize(&manifest.vectorize_name) {
         return Ok(ProvisionPreflight::NameConflict {
             kind: ResourceKind::SmartSearch,
         });
@@ -431,6 +496,29 @@ pub async fn provision<B: Backend>(
     auth_token: &str,
     progress: impl Fn(StepEvent),
 ) -> Result<ProvisionOutcome, ProvisionError> {
+    let mut created = CreatedResources::default();
+    provision_recording(
+        backend,
+        manifest,
+        account_name,
+        auth_token,
+        &mut created,
+        progress,
+    )
+    .await
+}
+
+/// Runs provisioning while retaining every successful fixed-name create even
+/// when a later step fails. The caller owns the record so it survives the error
+/// return and can be supplied to the next preflight in the same setup session.
+pub async fn provision_recording<B: Backend>(
+    backend: &B,
+    manifest: &WorkerManifest,
+    account_name: &str,
+    auth_token: &str,
+    created: &mut CreatedResources,
+    progress: impl Fn(StepEvent),
+) -> Result<ProvisionOutcome, ProvisionError> {
     let emit = |step: Step, status: StepStatus| progress(StepEvent { step, status });
     let script = manifest.script_name.as_str();
 
@@ -458,11 +546,19 @@ pub async fn provision<B: Backend>(
     let (d1_id, kv_id) = step!(Step::Memory, async {
         let d1_id = match backend.find_d1(&manifest.d1_name).await? {
             Some(id) => id,
-            None => backend.create_d1(&manifest.d1_name).await?,
+            None => {
+                let id = backend.create_d1(&manifest.d1_name).await?;
+                created.record_d1(&manifest.d1_name, &id);
+                id
+            }
         };
         let kv_id = match backend.find_kv(KV_TITLE).await? {
             Some(id) => id,
-            None => backend.create_kv(KV_TITLE).await?,
+            None => {
+                let id = backend.create_kv(KV_TITLE).await?;
+                created.record_kv(KV_TITLE, &id);
+                id
+            }
         };
         Ok::<_, ProvisionError>((d1_id, kv_id))
     });
@@ -477,6 +573,7 @@ pub async fn provision<B: Backend>(
                     &manifest.vectorize_metric,
                 )
                 .await?;
+            created.record_vectorize(&manifest.vectorize_name);
         }
         Ok::<_, ProvisionError>(())
     });
@@ -828,6 +925,13 @@ mod tests {
         .unwrap()
     }
 
+    fn test_brain_indexes() -> Vec<String> {
+        vec![
+            "second-brain-vectors".to_string(),
+            "second-brain-vectors-768".to_string(),
+        ]
+    }
+
     #[derive(Default)]
     struct Fake {
         log: Mutex<Vec<String>>,
@@ -836,6 +940,10 @@ mod tests {
         existing_d1: Option<String>,
         existing_kv: Option<String>,
         existing_vectorize: bool,
+        created_d1: Mutex<Option<String>>,
+        created_kv: Mutex<Option<String>>,
+        created_vectorize: Mutex<Vec<String>>,
+        kv_create_failures: Mutex<u32>,
         /// Index names to report as absent even when `existing_vectorize` is
         /// true, so a test can bind a script to an index that has since been
         /// deleted.
@@ -915,23 +1023,45 @@ mod tests {
         }
         async fn find_d1(&self, _name: &str) -> Result<Option<String>, CfApiError> {
             self.log("find_d1");
-            Ok(self.existing_d1.clone())
+            Ok(self
+                .existing_d1
+                .clone()
+                .or_else(|| self.created_d1.lock().unwrap().clone()))
         }
         async fn create_d1(&self, name: &str) -> Result<String, CfApiError> {
             self.log(format!("create_d1:{name}"));
-            Ok("d1-uuid-new".into())
+            let id = "d1-uuid-new".to_string();
+            *self.created_d1.lock().unwrap() = Some(id.clone());
+            Ok(id)
         }
         async fn find_kv(&self, _title: &str) -> Result<Option<String>, CfApiError> {
             self.log("find_kv");
-            Ok(self.existing_kv.clone())
+            Ok(self
+                .existing_kv
+                .clone()
+                .or_else(|| self.created_kv.lock().unwrap().clone()))
         }
         async fn create_kv(&self, title: &str) -> Result<String, CfApiError> {
             self.log(format!("create_kv:{title}"));
-            Ok("kv-id-new".into())
+            let mut failures = self.kv_create_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(CfApiError::Other("scripted KV failure".into()));
+            }
+            let id = "kv-id-new".to_string();
+            *self.created_kv.lock().unwrap() = Some(id.clone());
+            Ok(id)
         }
         async fn vectorize_exists(&self, name: &str) -> Result<bool, CfApiError> {
             self.log("find_vectorize");
-            Ok(self.existing_vectorize && !self.missing_vectorize.iter().any(|n| n == name))
+            Ok((self.existing_vectorize
+                && !self.missing_vectorize.iter().any(|candidate| candidate == name))
+                || self
+                    .created_vectorize
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|candidate| candidate == name))
         }
         async fn delete_vectorize(&self, name: &str) -> Result<(), CfApiError> {
             self.log(format!("delete_vectorize:{name}"));
@@ -944,6 +1074,10 @@ mod tests {
             metric: &str,
         ) -> Result<(), CfApiError> {
             self.log(format!("create_vectorize:{name}:{dimensions}:{metric}"));
+            self.created_vectorize
+                .lock()
+                .unwrap()
+                .push(name.to_string());
             Ok(())
         }
         async fn upload_assets(&self, script: &str) -> Result<String, CfApiError> {
@@ -1066,7 +1200,12 @@ mod tests {
             ],
             ..Default::default()
         };
-        let guard = preflight_account(&&fake, &test_manifest())
+        let guard = preflight_account(
+            &&fake,
+            &test_manifest(),
+            &test_brain_indexes(),
+            &CreatedResources::default(),
+        )
             .await
             .unwrap();
         assert_eq!(
@@ -1103,6 +1242,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_brain_on_a_migrated_index_preflights_as_existing() {
+        let fake = Fake {
+            existing_subdomain: Some("already-there".into()),
+            existing_workers: vec!["second-brain".into()],
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "d1-existing" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors-768" }),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            preflight_account(
+                &&fake,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
+            ProvisionPreflight::ExistingBrain {
+                url: "https://second-brain.already-there.workers.dev".into()
+            },
+            "a migrated brain must not be downgraded to a web-app name conflict"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_accepts_the_d1_created_earlier_in_the_same_session() {
+        let fake = Fake {
+            kv_create_failures: Mutex::new(1),
+            ..Default::default()
+        };
+        let manifest = test_manifest();
+        let mut created = CreatedResources::default();
+
+        let first_error = provision_recording(
+            &&fake,
+            &manifest,
+            "Account",
+            "pw-123456789012",
+            &mut created,
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            first_error,
+            ProvisionError::Api(CfApiError::Other(_))
+        ));
+        assert!(created.owns_d1("second-brain-db", "d1-uuid-new"));
+
+        assert_eq!(
+            preflight_account(&&fake, &manifest, &test_brain_indexes(), &created)
+                .await
+                .unwrap(),
+            ProvisionPreflight::Clear,
+            "the exact D1 this session created must not lock out its retry"
+        );
+
+        provision_recording(
+            &&fake,
+            &manifest,
+            "Account",
+            "pw-123456789012",
+            &mut created,
+            |_| {},
+        )
+        .await
+        .expect("the retry proceeds past the guard and finishes provisioning");
+        assert_eq!(
+            fake.entries()
+                .iter()
+                .filter(|entry| entry.as_str() == "create_d1:second-brain-db")
+                .count(),
+            1,
+            "the retry must reuse only the D1 whose ID was recorded"
+        );
+    }
+
+    #[tokio::test]
+    async fn another_session_still_refuses_the_same_d1_residue() {
+        let fake = Fake {
+            kv_create_failures: Mutex::new(1),
+            ..Default::default()
+        };
+        let manifest = test_manifest();
+        let mut first_session = CreatedResources::default();
+        let _ = provision_recording(
+            &&fake,
+            &manifest,
+            "Account",
+            "pw-123456789012",
+            &mut first_session,
+            |_| {},
+        )
+        .await;
+
+        assert_eq!(
+            preflight_account(
+                &&fake,
+                &manifest,
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::MemoryStorage
+            },
+            "an unproven fixed-name D1 remains fail-closed in another session"
+        );
+    }
+
+    #[tokio::test]
     async fn a_worker_name_without_brain_bindings_is_a_web_app_conflict() {
         let fake = Fake {
             existing_subdomain: Some("account-name".into()),
@@ -1115,7 +1369,14 @@ mod tests {
         };
 
         assert_eq!(
-            preflight_account(&&fake, &test_manifest()).await.unwrap(),
+            preflight_account(
+                &&fake,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
             ProvisionPreflight::NameConflict {
                 kind: ResourceKind::WebApp
             },
@@ -1131,7 +1392,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            preflight_account(&&d1, &test_manifest()).await.unwrap(),
+            preflight_account(
+                &&d1,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
             ProvisionPreflight::NameConflict {
                 kind: ResourceKind::MemoryStorage
             }
@@ -1142,7 +1410,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            preflight_account(&&kv, &test_manifest()).await.unwrap(),
+            preflight_account(
+                &&kv,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
             ProvisionPreflight::NameConflict {
                 kind: ResourceKind::MemoryStorage
             }
@@ -1153,7 +1428,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            preflight_account(&&vectorize, &test_manifest()).await.unwrap(),
+            preflight_account(
+                &&vectorize,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
             ProvisionPreflight::NameConflict {
                 kind: ResourceKind::SmartSearch
             }

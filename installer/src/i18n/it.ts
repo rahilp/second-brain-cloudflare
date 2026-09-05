@@ -602,7 +602,7 @@ export const it: Messages = {
   guard: {
     existingBrainTitle: "Abbiamo trovato il tuo Second Brain esistente",
     existingBrainConnect: "Collegati",
-    conflictTitle: "Questo indirizzo è già in uso",
+    conflictTitle: "Questo nome è già in uso",
     conflictChooseAnother: "Scegli un altro account",
   },
   progress: {

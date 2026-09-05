@@ -622,7 +622,7 @@ export const en: Messages = {
   guard: {
     existingBrainTitle: "We found your existing Second Brain",
     existingBrainConnect: "Connect to it",
-    conflictTitle: "This address is already in use",
+    conflictTitle: "That name is already in use",
     conflictChooseAnother: "Choose another account",
   },
   progress: {
