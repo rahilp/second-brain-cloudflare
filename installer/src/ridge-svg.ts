@@ -29,9 +29,15 @@ export const RIDGE_SVG = `<svg viewBox="0 0 200 200" width="100%" height="100%" 
   </g>
 
   <g class="ridge-body">
-    <path class="ridge-body__fill" d="M100 40 C132 40 152 62 152 96 C152 132 132 158 100 158 C68 158 48 132 48 96 C48 62 68 40 100 40 Z" fill="var(--accent)" stroke="var(--ridge-ink)" stroke-width="4"/>
-    <path class="ridge-body__fold" d="M64 112 C80 122 120 122 136 112" fill="none" stroke="var(--ridge-ink)" stroke-width="3" opacity=".5"/>
-    <path class="ridge-body__fold" d="M70 128 C86 136 114 136 130 128" fill="none" stroke="var(--ridge-ink)" stroke-width="3" opacity=".5"/>
+    <path class="ridge-body__fill" d="M56 136A16 16 0 0 1 44 110A16 16 0 0 1 48 80A19 19 0 0 1 70 52A17 17 0 0 1 100 42A16 16 0 0 1 130 46A17 17 0 0 1 150 66A15 15 0 0 1 158 94A15 15 0 0 1 150 120A17 17 0 0 1 130 146A16 16 0 0 1 100 154A15 15 0 0 1 76 146A11 11 0 0 1 56 136Z" fill="var(--accent)" stroke="var(--ridge-ink)" stroke-width="5" stroke-linejoin="round"/>
+    <g class="ridge-body__folds" fill="none" stroke="var(--ridge-ink)" stroke-width="3.5" stroke-linecap="round">
+      <path class="ridge-body__fold" d="M100 45 C95 52 105 58 100 65"/>
+      <path class="ridge-body__fold" d="M70 55 C66 63 57 66 51 74"/>
+      <path class="ridge-body__fold" d="M130 49 C136 56 145 60 150 68"/>
+      <path class="ridge-body__fold" d="M47 87 C53 93 53 101 48 106"/>
+      <path class="ridge-body__fold" d="M155 99 C148 105 148 112 152 117"/>
+      <path class="ridge-body__fold" d="M78 127 C93 135 111 135 125 128"/>
+    </g>
 
     <g class="ridge-brow--neutral" stroke="var(--ridge-ink)" stroke-width="4" stroke-linecap="round" fill="none">
       <path d="M68 74 h18"/>
