@@ -810,4 +810,90 @@ export const en: Messages = {
     bodyAddress: "Your Second Brain address (your private dashboard):",
     bodyMcp: "Your connection link (paste into AI tools that support connectors):",
   },
+  mascot: {
+    dismiss: "Dismiss",
+    welcome: {
+      intro:
+        "Hey — I'm Ridge. Two doors here: build a brand-new memory, or plug into one that already exists — yours, or one someone invited you to. Either way I'll walk you through it.",
+      guard:
+        "One thing worth asking yourself first: do you already have a Second Brain running somewhere? If yes, this button isn't the one you want — \"Already have a Second Brain?\" below is safer. Building fresh in the same Cloudflare account as an existing one can knock out its password.",
+    },
+    password: {
+      intro: "This one's worth getting right — a password manager, the moment you pick it.",
+      breached:
+        "That one's shown up in a breach list somewhere, which means it isn't private anymore. Try a different one, or let the generator make a fresh one.",
+    },
+    cloudflare: {
+      why:
+        "This is the one real account you'll need — Cloudflare, free, and it's genuinely yours: your memories live in your own space there, not ours. Sign in if you've got one, or create one in the window that opens.",
+      waiting: "Take your time in the browser — I'll be here when you're back.",
+      pickerWhy:
+        "More than one Cloudflare account on that login. Pick carefully — once you continue, this starts building for real in that account.",
+    },
+    progress: {
+      intro:
+        "Building your space now — this is the only step that takes real time. I'll let you know the moment it's done.",
+    },
+    tools: {
+      intro:
+        "If Claude Code or Cursor turned up installed, one click connects them. Everything else takes copying one link. None of this is required right now — Connections has it all again later.",
+    },
+    details: {
+      allSetSolo:
+        "That's it — your Second Brain is live. These two links are worth keeping somewhere safe; everything else you can always find again in Connections.",
+      allSetTeam:
+        "Team brain's up. Grab those two links, then find the Team tab in your dashboard whenever you're ready to invite people — that part's on your own time.",
+      allSetMember:
+        "You're in. Your own memories stay private by default — anything you choose to share lands where the rest of the team can see it.",
+    },
+    connect: {
+      fork:
+        "Quick check before you pick one: is this Second Brain yours, or did someone invite you to theirs? Yours → Cloudflare sign-in below finds it fast. Invited → skip that, tap \"I have an address or team sign-in token,\" and use the token from your invite instead of a password.",
+    },
+    discover: {
+      searching:
+        "Looking through your Cloudflare account for anything that answers like a Second Brain — shouldn't take long.",
+    },
+    brainPicker: {
+      one: "Found one — is this it? If not, there's a manual option below.",
+      many: "A few turned up. The address is the only thing that tells them apart — pick the one you recognize.",
+    },
+    unlock: {
+      hint: "Password goes here — or, if this is a team you were invited to, the token from your invite email goes in the same box.",
+    },
+    manualEntry: {
+      combined:
+        "Paste the address exactly as you have it — from Connection details on another computer, an invite email, or wherever you saved it. If a token came with it, that goes in the password box below. Paste rather than retype — tokens are long, and a clipped copy reads to the brain as a wrong password.",
+      insecureHttp:
+        "That address starts with http, not https — this app will still try it, but your password would travel unencrypted to get there. Almost certainly a typo; add the 's'.",
+    },
+    existingTeam: {
+      repeatQuestion:
+        "Seeing this again? You may have already answered it on another computer — this brain hasn't recorded a choice yet. Answering doesn't undo anything you picked before.",
+    },
+    rotation: {
+      intro:
+        "Nothing's lost — a new password gets you back in. I'll stay out of your way for the rest of this; these screens say exactly what's true at each step.",
+    },
+    error: {
+      provisioningHonest:
+        "That stopped partway through. Setup may have already created some of your Second Brain in your Cloudflare account. Retrying is usually fine once; if it keeps happening, it's worth checking your Cloudflare dashboard before trying again.",
+      wrongCredentialMemberAware:
+        "That didn't match — worth knowing, this same message shows up whether it's a typo, or a token your admin has since replaced. If you're using an invite token rather than a password you chose, \"I don't have my password\" below won't help; that's for the brain's owner. The real fix for a dead token is asking your admin for a new one.",
+      cfSignIn: "Cloudflare didn't come back with a yes. Sign in again — this hasn't touched anything yet.",
+      discoverFailed:
+        "Couldn't search automatically, but that's not a dead end — the manual box below works exactly the same way.",
+      rotateNotSent: "Nothing changed — your old password's still good. Safe to retry.",
+      rotateUnsure:
+        "This one honestly isn't settled yet. Save the password on screen before anything else, then try again — that either finishes the job or confirms it already did.",
+      rotateBlocked:
+        "A rebuild's using the brain right now, so the password has to wait. Advanced Settings is where to nudge that along.",
+      rotateLocal: "Your Second Brain already has the new password — this computer just needs to catch up.",
+      staleLocal:
+        "Your Second Brain got a new password somewhere else. Nothing broke — this computer just needs it too.",
+      disconnectPartial:
+        "Some of those didn't close out. The ones that did are staying closed, so trying again only chases what's left.",
+      clipboard: "Didn't copy — select the text and grab it by hand this once.",
+    },
+  },
 };

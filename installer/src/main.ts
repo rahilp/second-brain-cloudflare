@@ -31,6 +31,7 @@ import {
   type RotateOutcome,
   type RotationStepId,
 } from "./rotation-state";
+import { mount as mountRidge, ridgeSay, hasSeenLine } from "./ridge";
 import "./style.css";
 
 interface Account {
@@ -79,6 +80,11 @@ let connectionRole: ConnectionRole = "owner";
 /** Which setup screen is visible — used to re-render on locale change. */
 let currentScreen: (() => void) | null = null;
 
+/** welcomeScreen's row 1 → row 1b sequencing (plan §4.4), cleared on every
+ *  re-entry so a locale change mid-sequence cannot double the timers. */
+let welcomeIntroTimer: number | undefined;
+let welcomeGuardTimer: number | undefined;
+
 function show(...nodes: (Node | string)[]) {
   const screen = h("div", { class: "screen", tabindex: "-1" }, nodes);
   app.replaceChildren(screen);
@@ -91,6 +97,8 @@ function brand(): HTMLElement {
 
 function welcomeScreen() {
   currentScreen = welcomeScreen;
+  window.clearTimeout(welcomeIntroTimer);
+  window.clearTimeout(welcomeGuardTimer);
   const start = h("button", { class: "btn-primary" }, [t("welcome.getStarted")]);
   start.addEventListener("click", audienceScreen);
   const existing = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
@@ -105,6 +113,35 @@ function welcomeScreen() {
     existing,
     h("p", { class: "footnote" }, [t("welcome.footnote")]),
   );
+
+  // Row 1b is the safety line (plan §4.4) — it outranks the greeting and ships
+  // every visit. Row 1 only plays the first time this device has ever seen it;
+  // on every later visit 1b fires immediately, with no wait for a line that
+  // has already been said.
+  const showGuard = () =>
+    ridgeSay({
+      key: "mascot.welcome.guard",
+      text: t("mascot.welcome.guard"),
+      state: "talking",
+      anchor: () => start,
+      persist: "always",
+    });
+  if (hasSeenLine("mascot.welcome.intro")) {
+    showGuard();
+  } else {
+    welcomeIntroTimer = window.setTimeout(() => {
+      ridgeSay({
+        key: "mascot.welcome.intro",
+        text: t("mascot.welcome.intro"),
+        state: "talking",
+        anchor: () => start,
+        persist: "once",
+        dismissMs: 5200,
+        hero: true,
+      });
+      welcomeGuardTimer = window.setTimeout(showGuard, 5400);
+    }, 500);
+  }
 }
 
 /** A Worker in the user's account that answered like a Second Brain. */
@@ -119,13 +156,19 @@ interface DiscoveredBrain {
 /// welcome screen ranks its own two doors.
 function audienceScreen() {
   currentScreen = audienceScreen;
-  const justMe = h("button", { class: "btn-primary" }, [t("audience.justMe")]);
+  // Two co-equal choice cards, not a primary button over a secondary link:
+  // "just me" is not the default the other is a fallback from (user-requested
+  // promotion). Row 2's own Ridge line is deliberately skipped here — the
+  // `audience.lede` copy rewrite already covers the same gap (plan §4.4 note).
+  const justMe = h("button", { class: "choice-card" }, [
+    h("div", { class: "choice-card-title" }, [t("audience.justMe")]),
+  ]);
   justMe.addEventListener("click", () => {
     teamMode = false;
     passwordScreen();
   });
-  const aTeam = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
-    t("audience.aTeam"),
+  const aTeam = h("button", { class: "choice-card" }, [
+    h("div", { class: "choice-card-title" }, [t("audience.aTeam")]),
   ]);
   aTeam.addEventListener("click", () => {
     teamMode = true;
@@ -139,8 +182,7 @@ function audienceScreen() {
     brand(),
     h("h1", {}, [t("audience.title")]),
     h("p", { class: "lede" }, [t("audience.lede")]),
-    justMe,
-    aTeam,
+    h("div", { class: "choice-cards" }, [justMe, aTeam]),
     back,
     h("p", { class: "footnote" }, [t("audience.footnote")]),
   );
@@ -231,14 +273,16 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
   // "owner" whatever /team/me said. `connectionRole` is already "owner" and no
   // second request is made — a solo install pays nothing for any of this.
 
-  const justMe = h("button", { class: "btn-primary" }, [t("audience.justMe")]);
+  const justMe = h("button", { class: "choice-card" }, [
+    h("div", { class: "choice-card-title" }, [t("audience.justMe")]),
+  ]);
   justMe.addEventListener("click", async () => {
     teamMode = false;
     await invoke("set_team_mode", { teamMode: false }).catch(() => {});
     void toolsScreen();
   });
-  const aTeam = h("button", { class: "btn-ghost", style: "width:100%;margin-top:8px" }, [
-    t("audience.aTeam"),
+  const aTeam = h("button", { class: "choice-card" }, [
+    h("div", { class: "choice-card-title" }, [t("audience.aTeam")]),
   ]);
   aTeam.addEventListener("click", async () => {
     teamMode = true;
@@ -254,11 +298,18 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
     brand(),
     h("h1", {}, [t("audience.existingTitle")]),
     h("p", { class: "lede" }, [t("audience.existingLede")]),
-    justMe,
-    aTeam,
+    h("div", { class: "choice-cards" }, [justMe, aTeam]),
     backBtn,
     h("p", { class: "footnote" }, [t("audience.existingFootnote")]),
   );
+  // Row F (plan §4.4): only this fallthrough branch reaches here — both
+  // earlier branches in this function return before rendering anything.
+  ridgeSay({
+    key: "mascot.existingTeam.repeatQuestion",
+    text: t("mascot.existingTeam.repeatQuestion"),
+    state: "talking",
+    persist: "once",
+  });
 }
 
 function notice(message: string, tone: "error" | "info" = "error"): HTMLElement {
@@ -300,6 +351,14 @@ function connectExistingScreen(errorMsg?: string) {
     // that follows says so in Cloudflare's words. Say it in ours first.
     h("p", { class: "footnote" }, [t("connectExisting.signInFootnote")]),
   );
+  // Row A (plan §4.4): no spotlight on purpose — either door is legitimate,
+  // and lighting one up would bias the fork.
+  ridgeSay({
+    key: "mascot.connect.fork",
+    text: t("mascot.connect.fork"),
+    state: "talking",
+    persist: "always",
+  });
 }
 
 function searchingScreen() {
@@ -312,6 +371,15 @@ function searchingScreen() {
       t("connectExisting.searchingStep"),
     ]),
   );
+  // Row B (plan §4.4). Shared by the connect-existing scan and the "I don't
+  // have my password" rediscovery — the searching UX is identical either way.
+  ridgeSay({
+    key: "mascot.discover.searching",
+    text: t("mascot.discover.searching"),
+    state: "thinking",
+    persist: "always",
+    dismissMs: 8000,
+  });
 }
 
 async function discoverScreen() {
@@ -353,7 +421,7 @@ async function runDiscovery() {
     }
     brainPickerScreen(found);
   } catch (e) {
-    manualEntryScreen(String(e));
+    manualEntryScreen(String(e), undefined, "error", true);
   }
 }
 
@@ -388,6 +456,14 @@ function brainPickerScreen(found: DiscoveredBrain[]) {
     manual,
     back,
   );
+  // Rows C / C′ (plan §4.4).
+  ridgeSay({
+    key: one ? "mascot.brainPicker.one" : "mascot.brainPicker.many",
+    text: t(one ? "mascot.brainPicker.one" : "mascot.brainPicker.many"),
+    state: "talking",
+    anchor: () => list,
+    persist: "once",
+  });
 }
 
 /**
@@ -533,6 +609,26 @@ function unlockBrainScreen(
     lost,
     memberHelp,
   );
+  // Row D, or the member-aware wrong-credential error (plan §4.4/§4.5) — never
+  // both: a member steered toward their admin should not also be told where
+  // the token goes, which they have already found.
+  if (isCredentialError(errorMsg)) {
+    ridgeSay({
+      key: "mascot.error.wrongCredentialMemberAware",
+      text: t("mascot.error.wrongCredentialMemberAware"),
+      state: "concerned",
+      anchor: () => password,
+      persist: "always",
+    });
+  } else {
+    ridgeSay({
+      key: "mascot.unlock.hint",
+      text: t("mascot.unlock.hint"),
+      state: "talking",
+      anchor: () => password,
+      persist: "once",
+    });
+  }
   password.focus();
 }
 
@@ -542,8 +638,11 @@ function manualEntryScreen(
   errorMsg?: string,
   prefillAddress?: string,
   tone: "error" | "info" = "error",
+  /** Set only by runDiscovery's catch: the scan itself failed, rather than
+   *  simply finding nothing (plan §4.5's discoverFailed vs. plan §4.4's row E). */
+  discoveryFailed = false,
 ) {
-  currentScreen = () => manualEntryScreen(errorMsg, prefillAddress, tone);
+  currentScreen = () => manualEntryScreen(errorMsg, prefillAddress, tone, discoveryFailed);
   const addressLabel = t("connectExisting.addressPlaceholder");
   const address = h("input", {
     type: "text",
@@ -554,6 +653,20 @@ function manualEntryScreen(
     spellcheck: "false",
   });
   if (prefillAddress) address.value = prefillAddress;
+  // Row E″ (plan §4.4/§4.5): a soft, pre-submit hint only — `connect_existing`
+  // already rejects http:// server-side, so this is advisory, not the safety
+  // net.
+  address.addEventListener("blur", () => {
+    if (/^http:\/\//i.test(address.value.trim())) {
+      ridgeSay({
+        key: "mascot.manualEntry.insecureHttp",
+        text: t("mascot.manualEntry.insecureHttp"),
+        state: "concerned",
+        anchor: () => address,
+        persist: "always",
+      });
+    }
+  });
   const passwordLabel = t("connectExisting.passwordPlaceholder");
   const password = h("input", {
     type: "password",
@@ -620,6 +733,32 @@ function manualEntryScreen(
     lost,
     memberHelp,
   );
+  if (isCredentialError(errorMsg)) {
+    ridgeSay({
+      key: "mascot.error.wrongCredentialMemberAware",
+      text: t("mascot.error.wrongCredentialMemberAware"),
+      state: "concerned",
+      anchor: () => password,
+      persist: "always",
+    });
+  } else if (discoveryFailed) {
+    // Row error.discoverFailed (plan §4.5) — talking, not concerned: landing
+    // here is not a dead end, so it must not read like one.
+    ridgeSay({
+      key: "mascot.error.discoverFailed",
+      text: t("mascot.error.discoverFailed"),
+      state: "talking",
+      persist: "always",
+    });
+  } else {
+    ridgeSay({
+      key: "mascot.manualEntry.combined",
+      text: t("mascot.manualEntry.combined"),
+      state: "talking",
+      anchor: () => address,
+      persist: "once",
+    });
+  }
   address.focus();
 }
 
@@ -687,6 +826,17 @@ function passwordScreen() {
     if (breached) {
       hint.textContent = t("password.breachHint");
       hint.className = "hint error";
+      // Row 3b (plan §4.4). Almost always queued rather than shown
+      // immediately — the password field is focused while this fires — which
+      // is exactly the typing() gate doing its job: it settles the moment the
+      // user tabs or clicks away.
+      ridgeSay({
+        key: "mascot.password.breached",
+        text: t("mascot.password.breached"),
+        state: "concerned",
+        anchor: () => generate,
+        persist: "always",
+      });
     } else if (pw.value && confirm.value && !match) {
       hint.textContent = t("password.mismatch");
       hint.className = "hint error";
@@ -767,6 +917,18 @@ function passwordScreen() {
     back,
     h("p", { class: "footnote" }, [t("password.footnote")]),
   );
+  // Row 3 (plan §4.4). Wave 2 wired the Back button, so the original "no way
+  // back yet" sentence is dropped — the password-manager line stands alone.
+  // Spec calls this "pointing → talking"; simplified to "talking" with the
+  // spotlight ring doing the pointing, since RidgeState is one pose per line
+  // and "pointing" leaves the mouth static while a line is being read aloud.
+  ridgeSay({
+    key: "mascot.password.intro",
+    text: t("mascot.password.intro"),
+    state: "talking",
+    anchor: () => generate,
+    persist: "once",
+  });
   pw.focus();
 }
 
@@ -795,6 +957,14 @@ function connectScreen(errorMsg?: string) {
         ]),
       ]),
     );
+    // Row 4b (plan §4.4).
+    ridgeSay({
+      key: "mascot.cloudflare.waiting",
+      text: t("mascot.cloudflare.waiting"),
+      state: "thinking",
+      persist: "always",
+      dismissMs: 6000,
+    });
     try {
       accounts = await invoke<Account[]>("connect_cloudflare");
       if (accounts.length === 1) {
@@ -820,6 +990,25 @@ function connectScreen(errorMsg?: string) {
     back,
     h("p", { class: "footnote" }, [t("cloudflare.footnote")]),
   );
+  // Row 4, or the CF sign-in error (plan §4.4/§4.5) when this render is a
+  // retry after a failed sign-in.
+  if (errorMsg) {
+    ridgeSay({
+      key: "mascot.error.cfSignIn",
+      text: t("mascot.error.cfSignIn"),
+      state: "concerned",
+      anchor: () => signIn,
+      persist: "always",
+    });
+  } else {
+    ridgeSay({
+      key: "mascot.cloudflare.why",
+      text: t("mascot.cloudflare.why"),
+      state: "talking",
+      anchor: () => signIn,
+      persist: "once",
+    });
+  }
 }
 
 /// `next` is what runs once an account is chosen. Provisioning goes straight to
@@ -854,6 +1043,19 @@ function accountPickerScreen(
     list,
     backBtn,
   );
+  // Row 4c (plan §4.4): only the provisioning path's picker (`next` defaults
+  // to, or is explicitly, `progressScreen`) — the discovery/lost-password
+  // pickers ask the same visual question for a reason Ridge must not warn
+  // about ("this starts building for real"), since nothing is being built.
+  if (next === progressScreen && accounts.length > 1) {
+    ridgeSay({
+      key: "mascot.cloudflare.pickerWhy",
+      text: t("mascot.cloudflare.pickerWhy"),
+      state: "talking",
+      anchor: () => list,
+      persist: "always",
+    });
+  }
 }
 
 function progressSteps(): { id: StepId; label: string }[] {
@@ -1015,6 +1217,15 @@ function progressScreen() {
     h("div", { class: "card" }, [list]),
     errorBox,
   );
+  // Row 5 (plan §4.4). No spotlight while things are progressing normally —
+  // the "Try again" target only exists once a failure has actually happened.
+  ridgeSay({
+    key: "mascot.progress.intro",
+    text: t("mascot.progress.intro"),
+    state: "thinking",
+    persist: "always",
+    dismissMs: 6000,
+  });
 
   const applyEvent = (ev: StepEvent) => {
     const li = rows.get(ev.step);
@@ -1073,6 +1284,18 @@ function progressScreen() {
       // previous attempt is destroyed by the `replaceChildren()` above and
       // focus falls back to `<body>`.
       retry.focus();
+      // plan §4.5's provisioningHonest, replacing row 5's optimistic line —
+      // stops short of endorsing unlimited retries. Softened from the
+      // original spec text: wave 1 dropped the "nothing is lost" claim and
+      // the fix wave added in-session retry recovery, so this no longer
+      // frames the app as contradicting its own "failed" message.
+      ridgeSay({
+        key: "mascot.error.provisioningHonest",
+        text: t("mascot.error.provisioningHonest"),
+        state: "concerned",
+        anchor: () => retry,
+        persist: "always",
+      });
     }
   };
   void start();
@@ -1083,31 +1306,74 @@ async function toolsScreen() {
   const tools = await invoke<ToolStatus>("detect_tools");
   const next = h("button", { class: "btn-primary" }, [t("common.continueToConnectionDetails")]);
   next.addEventListener("click", detailsScreen);
+  const rows = toolRows(details!, tools);
   show(
     brand(),
     h("h1", {}, [t("tools.title")]),
     h("p", { class: "lede" }, [t("tools.lede")]),
-    toolRows(details!, tools),
+    rows,
     next,
   );
+  // Row 6 (plan §4.4). Spotlights the whole card rather than surgically the
+  // first ready row — `toolRows` (shared.ts) doesn't expose individual rows,
+  // and this wave's file ownership doesn't extend to changing it.
+  ridgeSay({
+    key: "mascot.tools.intro",
+    text: t("mascot.tools.intro"),
+    state: "talking",
+    anchor: () => rows,
+    persist: "once",
+  });
 }
 
 function detailsScreen() {
   currentScreen = detailsScreen;
   const done = h("button", { class: "btn-primary" }, [t("details.openDashboard")]);
   done.addEventListener("click", () => void invoke("open_dashboard"));
+  const cards = h("div", {}, detailCards(details!));
+  const team = teamMode ? teamCard(connectionRole) : null;
   show(
     brand(),
     h("h1", {}, [t("details.allSetTitle")]),
     h("p", { class: "lede" }, [t(teamMode ? "details.allSetTeamLede" : "details.allSetLede")]),
     // Before the URL cards: it is the one thing a team owner is expected to do
     // next, and the links below it are for keeping, not acting on.
-    ...(teamMode ? [teamCard(connectionRole)] : []),
-    ...detailCards(details!),
+    ...(team ? [team] : []),
+    cards,
     h("div", { class: "actions-spread" }, [copyBothButton(details!), emailButton(details!)]),
     h("div", { style: "height:14px" }),
     done,
   );
+  // Rows 7 / 7b / 7c (plan §4.4). 7c (member) is talking, deliberately NOT
+  // celebrating — the clearest opposite-behaviour case: an owner built
+  // something, a member joined something.
+  if (!teamMode) {
+    ridgeSay({
+      key: "mascot.details.allSetSolo",
+      text: t("mascot.details.allSetSolo"),
+      state: "celebrating",
+      anchor: () => cards,
+      persist: "once",
+      hero: true,
+    });
+  } else if (connectionRole === "member") {
+    ridgeSay({
+      key: "mascot.details.allSetMember",
+      text: t("mascot.details.allSetMember"),
+      state: "talking",
+      anchor: () => team,
+      persist: "once",
+    });
+  } else {
+    ridgeSay({
+      key: "mascot.details.allSetTeam",
+      text: t("mascot.details.allSetTeam"),
+      state: "celebrating",
+      anchor: () => team,
+      persist: "once",
+      hero: true,
+    });
+  }
 }
 
 interface WorkerUpdateInfo {
@@ -1464,6 +1730,15 @@ function lostPasswordIntroScreen(address: string | null, errorMsg?: string) {
     // a password alters that bargain.
     signedIn ? "" : h("p", { class: "footnote" }, [t("connectExisting.signInFootnote")]),
   );
+  // Row G (plan §4.4): one line, then silent — no other screen in this flow
+  // calls ridgeSay, by design (plan §4.7's delight budget: rotation gets less
+  // Ridge, not more).
+  ridgeSay({
+    key: "mascot.rotation.intro",
+    text: t("mascot.rotation.intro"),
+    state: "concerned",
+    persist: "once",
+  });
 }
 
 async function lostDiscovery() {
@@ -1927,6 +2202,13 @@ function rotateBlockedScreen(detail: string) {
     settings,
     leave,
   );
+  ridgeSay({
+    key: "mascot.error.rotateBlocked",
+    text: t("mascot.error.rotateBlocked"),
+    state: "concerned",
+    anchor: () => settings,
+    persist: "always",
+  });
 }
 
 function failDetailLine(detail: string): HTMLElement | string {
@@ -1954,6 +2236,12 @@ function rotateFailNotSentScreen(detail: string) {
     retry,
     leave,
   );
+  ridgeSay({
+    key: "mascot.error.rotateNotSent",
+    text: t("mascot.error.rotateNotSent"),
+    state: "concerned",
+    persist: "always",
+  });
 }
 
 /// The change went out and never confirmed. Never says "failed": the heading is
@@ -2000,11 +2288,12 @@ function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
     unreachable: "changePassword.recheckUnreachable",
   };
 
+  const secret = secretCard(t("changePassword.passwordLabel"), rotationPassword);
   show(
     brand(),
     h("h1", {}, [t("changePassword.failUnsureTitle")]),
     notice(t("changePassword.failUnsureBody")),
-    secretCard(t("changePassword.passwordLabel"), rotationPassword),
+    secret,
     recheck ? notice(t(recheckKey[recheck]), "info") : "",
     h("p", { class: "lede" }, [t("changePassword.failUnsureRetry")]),
     failDetailLine(detail),
@@ -2018,6 +2307,16 @@ function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
     // to be closed.
     h("p", { class: "footnote" }, [t("changePassword.failUnsureFootnote")]),
   );
+  // Spotlights the password card first, per plan §4.5 — the line's own text
+  // says to save it before anything else, so the ring goes where the text
+  // points rather than at "Try again".
+  ridgeSay({
+    key: "mascot.error.rotateUnsure",
+    text: t("mascot.error.rotateUnsure"),
+    state: "concerned",
+    anchor: () => secret,
+    persist: "always",
+  });
 }
 
 /// The brain has the new password; something local did not get it. No "try
@@ -2054,6 +2353,12 @@ function rotateFailLocalScreen(outcome: RotateOutcome | null, detail = "") {
     failDetailLine(detail),
     exit,
   );
+  ridgeSay({
+    key: "mascot.error.rotateLocal",
+    text: t("mascot.error.rotateLocal"),
+    state: "concerned",
+    persist: "always",
+  });
 }
 
 /// Read correctly by two people: someone doing routine hygiene, who is
@@ -2177,6 +2482,13 @@ async function passwordChangedElsewhereScreen(errorMsg?: string) {
     h("p", { class: "footnote" }, [t("passwordChangedElsewhere.footnote")]),
     lost,
   );
+  ridgeSay({
+    key: "mascot.error.staleLocal",
+    text: t("mascot.error.staleLocal"),
+    state: "concerned",
+    anchor: () => password,
+    persist: "always",
+  });
   password.focus();
 }
 
@@ -2187,6 +2499,7 @@ function applyWindowTitle() {
 
 async function boot() {
   initI18n();
+  mountRidge();
   applyWindowTitle();
   window.addEventListener(LOCALE_CHANGE_EVENT, () => {
     applyWindowTitle();

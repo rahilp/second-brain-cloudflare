@@ -521,4 +521,40 @@ export type Messages = {
     bodyAddress: string;
     bodyMcp: string;
   };
+  /**
+   * Ridge, the guided-experience mascot (plan.md §4.4). One line per screen
+   * (or contextual trigger), keyed the same way the screen tables are: a
+   * safety-relevant line always outranks a delightful one, and none of these
+   * repeat a fact the app has already proven false.
+   */
+  mascot: {
+    dismiss: string;
+    welcome: { intro: string; guard: string };
+    password: { intro: string; breached: string };
+    cloudflare: { why: string; waiting: string; pickerWhy: string };
+    progress: { intro: string };
+    tools: { intro: string };
+    details: { allSetSolo: string; allSetTeam: string; allSetMember: string };
+    connect: { fork: string };
+    discover: { searching: string };
+    brainPicker: { one: string; many: string };
+    unlock: { hint: string };
+    manualEntry: { combined: string; insecureHttp: string };
+    existingTeam: { repeatQuestion: string };
+    rotation: { intro: string };
+    error: {
+      provisioningHonest: string;
+      wrongCredentialMemberAware: string;
+      cfSignIn: string;
+      discoverFailed: string;
+      rotateNotSent: string;
+      rotateUnsure: string;
+      rotateBlocked: string;
+      rotateLocal: string;
+      staleLocal: string;
+      /** v2: details.ts's Connections window is muted in v1 and never calls this. */
+      disconnectPartial: string;
+      clipboard: string;
+    };
+  };
 };
