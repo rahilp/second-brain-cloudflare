@@ -98,6 +98,14 @@ Second Brain can now be a team's memory without stopping being yours. Every pers
 - Routine "update your brain" keeps a migrated brain on its migrated search index instead of re-creating it.
 - Cost-picker notices are no longer contradictory for migration-level changes.
 
+**Installer onboarding redesign**
+
+- Every setup screen now opens with a real community quote (Product Hunt, Reddit) set at headline size in the installer's serif, attributed to its author and source, with a trust strip at the foot (two minute setup, free and open source, your data, your account). The quote rotates per screen and stays stable while you work.
+- A step rail on the left of the window shows numbered progress (Start, Password, Connect, Build, Tools, Details) and lets you jump back to completed steps. Under 900px of width it collapses to a compact strip above the content.
+- Ridge, the installer mascot, now uses the official animated art and reacts to what you do: speech anchored to the button you just pressed, live reactions on every screen, dismissible bubbles, and a warm register in English and Italian.
+- A full visual pass across every installer screen: consistent design tokens, Lucide icons throughout, no emojis, and copy rewritten to ninety characters per line or fewer.
+- The layout is responsive from a 760 by 560 window up and keeps the primary button reachable without scrolling; verified in English and Italian with measured DOM probes.
+
 **Bug fixes**
 
 - Admin lockout guards are atomic; email uniqueness and tombstone guards hardened.
