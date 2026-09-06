@@ -241,8 +241,20 @@ describe("follows edges", () => {
         if (result.status === "stored" || result.status === "flagged") seen.push(result.id);
       };
 
-      await runCapture("The first thought in the thread.");
-      await runCapture("The thought that follows on from it.");
+      // Both captures stamp `created_at: Date.now()`, and on any machine quick
+      // enough they land in the same millisecond — where `follows` correctly
+      // declines, since identical timestamps carry no order to read. That made
+      // this test pass or fail on machine speed alone. Drive the clock instead,
+      // so the pair has the real separation the scenario describes.
+      let clock = Date.now();
+      const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+      try {
+        await runCapture("The first thought in the thread.");
+        clock += 1000;
+        await runCapture("The thought that follows on from it.");
+      } finally {
+        nowSpy.mockRestore();
+      }
 
       // kind:episodic reached the DB via the first capture's own classification,
       // and the second capture's inference read it from there.
