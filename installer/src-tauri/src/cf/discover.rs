@@ -644,9 +644,20 @@ mod tests {
         assert!(ui.contains(r#"t("connectExisting.addressPlaceholder")"#));
         // Counting occurrences of the name would pass even with every button
         // deleted — the definition, the re-render closure and the error-retry
-        // recursion all mention it. Only a click handler makes it reachable.
+        // recursion all mention it. Only a click handler makes it reachable, so
+        // count handler bodies instead. The argument-less call is the load-
+        // bearing part: re-entries that carry an error or a prefill address
+        // (`manualEntryScreen(undefined, err.url)`) are reachable only once the
+        // user is already past the door, so they must not stand in for one.
+        // The chooser sets the rail path before calling, hence the body scan
+        // rather than a match on one exact spelling of the arrow.
         let clickable = ui
-            .matches(r#"addEventListener("click", () => manualEntryScreen())"#)
+            .split(r#"addEventListener("click","#)
+            .skip(1)
+            .filter(|body: &&str| {
+                let end = body.find(");").map_or(body.len(), |i| i + 2);
+                body[..end].contains("manualEntryScreen()")
+            })
             .count();
         assert!(
             clickable >= 2,
