@@ -10,12 +10,18 @@ CREATE TABLE IF NOT EXISTS entries (
   recall_count         INTEGER DEFAULT 0,
   importance_score     INTEGER DEFAULT 0,
   contradiction_wins   INTEGER DEFAULT 0,
-  contradiction_losses INTEGER DEFAULT 0
+  contradiction_losses INTEGER DEFAULT 0,
+  workspace_id     TEXT NOT NULL DEFAULT '',     -- owning workspace ('' = legacy owner-private rows pending backfill)
+  actor_id         TEXT NOT NULL DEFAULT ''      -- user who wrote it ('' = the owner, pre-team writes)
   -- Runtime ALTER columns (see src/db/init.ts): updated_at, staleness_checked_at
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source);
+-- Every scoped read filters on the workspace first, then orders by recency. This
+-- index is what keeps that shape a range search rather than a sort.
+CREATE INDEX IF NOT EXISTS idx_entries_workspace_created
+  ON entries(workspace_id, created_at DESC);
 
 -- Relationship graph (issue #16). One additive table — old code ignores it and
 -- rollback is a no-op. Designed to never need an ALTER: type/provenance are free
@@ -31,6 +37,7 @@ CREATE TABLE IF NOT EXISTS edges (
   metadata    TEXT NOT NULL DEFAULT '{}',          -- JSON escape-hatch for future per-edge fields
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT '',           -- denormalized from the source entry so graph walks scope without a join
   UNIQUE(source_id, target_id, type)
 );
 
@@ -63,3 +70,98 @@ CREATE TABLE IF NOT EXISTS insight_candidates (
 
 CREATE INDEX IF NOT EXISTS idx_insight_candidates_queue
   ON insight_candidates(status, score DESC);
+
+-- Team edition tenancy (v3). Additive like edges/insight_candidates: a single-user
+-- brain never reads these tables and rollback is a no-op.
+--
+-- The bootstrap seeds one company workspace, one owner user, one personal workspace
+-- per user, and membership rows for both. Legacy entries keep workspace_id '' until
+-- the one-time backfill assigns them to the owner's personal workspace.
+CREATE TABLE IF NOT EXISTS workspaces (
+  id          TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL DEFAULT 'personal',  -- personal | company (validated in app code)
+  name        TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL
+);
+
+-- The bootstrap looks up the company workspace by kind on every identity path.
+CREATE INDEX IF NOT EXISTS idx_workspaces_kind ON workspaces(kind);
+
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL DEFAULT '',
+  email         TEXT,
+  role          TEXT NOT NULL DEFAULT 'member',    -- admin | member (validated in app code)
+  token_hash    TEXT NOT NULL,                     -- SHA-256 hex of the bearer token (the token itself is never stored)
+  suspended     INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL,
+  default_share TEXT NOT NULL DEFAULT '',          -- capture-visibility override ('' = inherit org TEAM_DEFAULT_WORKSPACE)
+  removed_at    INTEGER,                            -- soft offboarding, NULL/0 = active member
+  last_used_at  INTEGER                             -- last successful identity resolution (throttled; NULL = never seen since the column shipped)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token_hash ON users(token_hash);
+
+-- Email uniqueness among members. createMember's check-then-INSERT guard left a
+-- two-writer race (both SELECTs miss, both INSERTs land); this index is the real
+-- constraint and the app code maps the loser to the same 409 the winner's guard
+-- produced. SQLite counts NULLs as distinct, so members without an email are
+-- unaffected. Fresh installs only: an EXISTING brain gets the same index from
+-- src/db/init.ts, which resolves any duplicates it finds before building.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+CREATE TABLE IF NOT EXISTS memberships (
+  user_id      TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  role         TEXT NOT NULL DEFAULT 'member',   -- reserved for future per-workspace roles
+  created_at   INTEGER NOT NULL,
+  PRIMARY KEY (user_id, workspace_id)
+);
+
+-- listTeamWorkspaces (GET /team/roster) joins memberships on workspace_id; the
+-- composite PK above only serves user_id-first lookups. Same trade as
+-- idx_workspaces_kind: a tiny table, a cheap index, and the join stays a seek.
+CREATE INDEX IF NOT EXISTS idx_memberships_workspace ON memberships(workspace_id);
+
+-- Immutable audit trail. Application code only ever INSERTs here — no UPDATE or
+-- DELETE exists anywhere in src/, by design. Tamper evidence is absence of a way
+-- to rewrite it, not cryptography.
+CREATE TABLE IF NOT EXISTS entry_events (
+  id         TEXT PRIMARY KEY,
+  entry_id   TEXT NOT NULL,
+  actor_id   TEXT NOT NULL DEFAULT '',
+  event      TEXT NOT NULL,                      -- created | updated | appended | deleted | status_changed | shared | unshared | insight_confirmed | insight_dismissed
+  payload    TEXT NOT NULL DEFAULT '{}',         -- JSON escape hatch for per-event detail
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_entry_events_entry ON entry_events(entry_id, created_at DESC);
+-- The per-entry index above needs an entry_id to seek on. GET /team/activity has
+-- none: it orders the whole trail by time. Without this the feed scans
+-- entry_events and sorts all of it to return one page.
+CREATE INDEX IF NOT EXISTS idx_entry_events_created ON entry_events(created_at DESC);
+
+-- Immutable administration audit trail. Same contract as entry_events:
+-- application code only ever INSERTs here. Consumed by Phase 4.2.
+CREATE TABLE IF NOT EXISTS admin_events (
+  id             TEXT PRIMARY KEY,
+  actor_id       TEXT NOT NULL DEFAULT '',
+  target_user_id TEXT NOT NULL DEFAULT '',
+  workspace_id   TEXT NOT NULL DEFAULT '',
+  event          TEXT NOT NULL,
+  payload        TEXT NOT NULL DEFAULT '{}',
+  created_at     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_events_created ON admin_events(created_at DESC);
+
+-- Single-row table driving the nightly round-robin over workspaces so free-plan
+-- invocations stay inside their subrequest budget. P6 wires the readers.
+CREATE TABLE IF NOT EXISTS maintenance_cursor (
+  id           INTEGER PRIMARY KEY CHECK (id = 1),
+  workspace_id TEXT NOT NULL DEFAULT '',
+  advanced_at  INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO maintenance_cursor (id, workspace_id, advanced_at) VALUES (1, '', 0)
+  ON CONFLICT DO NOTHING;

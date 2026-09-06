@@ -43,20 +43,7 @@ State of "${tag}":`;
   return digest.trim();
 }
 
-/**
- * Mark the entries a digest was built from, so they stop being eligible for compression.
- *
- * One statement per source used to be issued serially, which was roughly 88% of the whole
- * nightly cron's D1 cost — all four jobs share one invocation and therefore one subrequest
- * budget (#278). A batch is a single subrequest whatever it carries.
- *
- * batch() is atomic, and that matters more than it looks here: the digest entry has already
- * been written by this point, so a source that misses its `rolled-up` mark stays eligible
- * and gets compressed again on a later night, producing a duplicate digest. Letting one bad
- * row roll back the whole batch would turn one duplicate into a tag's worth, so a failed
- * batch falls back to per-row writes — the behaviour this replaced, at the cost it used to
- * pay, on the path that used to be the only path.
- */
+/** Mark digest sources and retry individually if the batch fails. */
 async function markSourcesRolledUp(env: Env, ids: string[], digestId: string): Promise<void> {
   if (!ids.length) return;
   const note = `\n\n[Digest: ${digestId}]`;
@@ -78,62 +65,114 @@ async function markSourcesRolledUp(env: Env, ids: string[], digestId: string): P
   }
 }
 
+export interface CompressTagOptions {
+  /** When set, roll up only these workspaces and scope the 24h cooldown per workspace. */
+  workspaceIds?: string[];
+}
+
 export async function compressTag(
   tag: string,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  opts?: CompressTagOptions,
 ): Promise<{ synthesizedId: string | null; entriesUsed: number; text: string }> {
-  // Guard before resolveConfig: that is a KV read, and a system tag never compresses, so
-  // paying for it first is a wasted subrequest per skipped tag per night. The candidate
-  // query excludes these already; this is the backstop for a tag arriving another way, and
-  // GET /digest?tag= hands this function an arbitrary user string. isTopicTag rather than
-  // isReservedTag, because the bookkeeping tags are not "reserved" but are just as
-  // destructive to compress: `duplicate-candidate` has no row-level exclusion either.
+  // Reject bookkeeping tags before the configuration lookup.
   if (!isTopicTag(tag)) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
   }
   const cfg = await resolveConfig(env);
 
-  const recentSynth = await env.DB.prepare(`
-    SELECT id FROM entries
-    WHERE tags LIKE '%"synthesized"%'
-      AND tags LIKE ? ${TAG_LIKE_ESCAPE}
-      AND created_at > ?
-    LIMIT 1
-  `).bind(tagLikePattern(tag), Date.now() - 86400000).first();
-
-  if (recentSynth) {
-    return { synthesizedId: null, entriesUsed: 0, text: "" };
+  // Select and summarize one workspace at a time so private memories cannot be
+  // pooled into a digest visible from another workspace.
+  const scoped = Boolean(opts?.workspaceIds?.length);
+  let workspaces: string[];
+  if (scoped) {
+    workspaces = opts!.workspaceIds!;
+  } else {
+    const { results: workspaceRows } = await env.DB.prepare(
+      // scope-exempt: cron: workspace discovery for the partitioned rollup below; returns workspace ids, never a row's content
+      `SELECT DISTINCT workspace_id FROM entries`
+    ).all();
+    workspaces = (workspaceRows as { workspace_id?: string }[]).map(r => r.workspace_id ?? "");
+    if (!workspaces.length) workspaces.push("");
   }
 
-  const { results: rawEntries } = await env.DB.prepare(`
-    SELECT id, content FROM entries
-    WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}
-      AND tags NOT LIKE '%"synthesized"%'
-      AND tags NOT LIKE '%"auto-pattern"%'
-      AND tags NOT LIKE '%"auto-insight"%'
-      AND tags NOT LIKE '%"rolled-up"%'
-      AND ${compressionEligibilitySql("", cfg)}
-    ORDER BY created_at DESC
-    LIMIT 50
-  `).bind(tagLikePattern(tag), Date.now() - cfg.COMPRESSION_MIN_AGE_MS).all();
+  let synthesizedId: string | null = null;
+  let entriesUsed = 0;
+  let text = "";
 
-  if (rawEntries.length < 10) {
-    return { synthesizedId: null, entriesUsed: 0, text: "" };
+  for (const workspaceId of workspaces) {
+    // The 24h cooldown stays corpus-wide on purpose for the nightly cron: it gates
+    // repetition, not visibility, so checking it across workspaces can only ever
+    // postpone a digest by a day — it never moves one user's content into another
+    // user's row. Manual GET /digest passes workspaceIds and gets a per-workspace
+    // check instead, so one member's recent rollup does not block another's.
+    let recentSynth: { id?: string } | null;
+    if (scoped) {
+      recentSynth = await env.DB.prepare(`
+        SELECT id FROM entries
+        WHERE tags LIKE '%"synthesized"%'
+          AND tags LIKE ? ${TAG_LIKE_ESCAPE}
+          AND created_at > ?
+          AND workspace_id = ?
+        LIMIT 1
+      `).bind(tagLikePattern(tag), Date.now() - 86400000, workspaceId).first();
+    } else {
+      // scope-exempt: cron: corpus-wide 24h cooldown existence check — id only, never returned; couples tenants on tag name only, no content crosses
+      recentSynth = await env.DB.prepare(`
+        SELECT id FROM entries
+        WHERE tags LIKE '%"synthesized"%'
+          AND tags LIKE ? ${TAG_LIKE_ESCAPE}
+          AND created_at > ?
+        LIMIT 1
+      `).bind(tagLikePattern(tag), Date.now() - 86400000).first();
+    }
+
+    if (recentSynth) {
+      continue;
+    }
+
+    const { results: rawEntries } = await env.DB.prepare(`
+      SELECT id, content FROM entries
+      WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}
+        AND tags NOT LIKE '%"synthesized"%'
+        AND tags NOT LIKE '%"auto-pattern"%'
+        AND tags NOT LIKE '%"auto-insight"%'
+        AND tags NOT LIKE '%"rolled-up"%'
+        AND ${compressionEligibilitySql("", cfg)}
+        AND workspace_id = ?
+      ORDER BY created_at DESC
+      LIMIT 50
+    `).bind(tagLikePattern(tag), Date.now() - cfg.COMPRESSION_MIN_AGE_MS, workspaceId).all();
+
+    if (rawEntries.length < 10) {
+      continue;
+    }
+
+    const rows = rawEntries.map(r => ({ id: r.id as string, content: r.content as string }));
+    const digestText = await synthesizeDigest(tag, rows, env, cfg);
+    if (!digestText) continue;
+
+    const content = `[Synthesized from ${rows.length} entries tagged "${tag}"]\n\n${digestText}`;
+    // The digest inherits the partition's workspace and keeps actor "" — system-
+    // authored, like every pre-team pipeline row.
+    const result = await captureEntry(content, ["synthesized", tag], "system", env, ctx, cfg,
+      { workspaceId, actorId: "" });
+
+    if (result.status !== "stored") {
+      continue;
+    }
+
+    await markSourcesRolledUp(env, rows.map(r => r.id), result.id);
+
+    // First successful digest defines the returned text/id; counts accumulate across
+    // workspaces so a caller still learns how much was compressed tonight.
+    if (!synthesizedId) {
+      synthesizedId = result.id;
+      text = digestText;
+    }
+    entriesUsed += rows.length;
   }
 
-  const rows = rawEntries.map(r => ({ id: r.id as string, content: r.content as string }));
-  const text = await synthesizeDigest(tag, rows, env, cfg);
-  if (!text) return { synthesizedId: null, entriesUsed: 0, text: "" };
-
-  const content = `[Synthesized from ${rows.length} entries tagged "${tag}"]\n\n${text}`;
-  const result = await captureEntry(content, ["synthesized", tag], "system", env, ctx);
-
-  if (result.status !== "stored") {
-    return { synthesizedId: null, entriesUsed: 0, text };
-  }
-
-  await markSourcesRolledUp(env, rows.map(r => r.id), result.id);
-
-  return { synthesizedId: result.id, entriesUsed: rows.length, text };
+  return { synthesizedId, entriesUsed, text };
 }

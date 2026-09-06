@@ -213,6 +213,12 @@ describe("connect-ai-clients scripts", () => {
       expect(text).toContain("updated-legacy");
       expect(text).toContain(".bak");
     });
+
+    it(`${label}: reminds about Team Edition instruction sync`, () => {
+      expect(text).toMatch(/Team Edition/i);
+      expect(text).toContain("CHANGELOG.md");
+      expect(text).toContain("AI_Instructions");
+    });
   }
 
   it("powershell references CODEX_INSTRUCTIONS.md", () => {

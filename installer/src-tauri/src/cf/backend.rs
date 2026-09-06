@@ -20,6 +20,9 @@ impl Backend for LiveBackend {
     async fn register_account_subdomain(&self, name: &str) -> Result<String, CfApiError> {
         self.client.register_account_subdomain(name).await
     }
+    async fn list_workers(&self) -> Result<Vec<String>, CfApiError> {
+        self.client.list_workers().await
+    }
     async fn find_d1(&self, name: &str) -> Result<Option<String>, CfApiError> {
         self.client.find_d1(name).await
     }
@@ -180,6 +183,10 @@ impl Backend for DryRunBackend {
     async fn register_account_subdomain(&self, name: &str) -> Result<String, CfApiError> {
         self.pause().await;
         Ok(name.to_string())
+    }
+    async fn list_workers(&self) -> Result<Vec<String>, CfApiError> {
+        self.pause().await;
+        Ok(Vec::new())
     }
     async fn find_d1(&self, _name: &str) -> Result<Option<String>, CfApiError> {
         self.pause().await;

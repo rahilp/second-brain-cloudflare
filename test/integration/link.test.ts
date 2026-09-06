@@ -4,16 +4,31 @@ import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 import type { Env } from "../../src/env";
 import { D1Mock } from "../helpers/d1-mock";
+import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
+import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
+
+async function seedLinkEntries(env: Env, ids: string[]) {
+  resetDatabaseInit();
+  await initializeDatabase(env);
+  const roots = await ensureTenantBootstrap(env);
+  const now = Date.now();
+  for (const id of ids) {
+    await env.DB.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, workspace_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, `entry ${id}`, "[]", "test", now, now, "[]", roots.ownerPersonalWorkspaceId, roots.ownerUserId).run();
+  }
+}
 
 describe("POST /link", () => {
   let env: Env;
   let db: D1Mock;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = makeTestDb();
     env = makeTestEnv(db);
+    await seedLinkEntries(env, ["a", "b", "new", "old"]);
   });
 
   it("requires auth", async () => {

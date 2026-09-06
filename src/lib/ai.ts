@@ -77,7 +77,15 @@ export async function embed(
   env: Env,
   config: Readonly<Config> = DEFAULTS,
 ): Promise<number[]> {
+  // bge-m3 rejects input past its token limit unless told to truncate; the
+  // bge-en models have no such switch and reject unknown fields. Applied as a
+  // defensive default (controller ruling) — live measurement against
+  // Workers AI wasn't possible in the environment that authored this; see
+  // the #326 spec, §10.6.
+  const input = config.EMBEDDING_MODEL === "@cf/baai/bge-m3"
+    ? { text: [text], truncate_inputs: true }
+    : { text: [text] };
   // Workers AI requires `as any` here — the SDK types don't cover all models
-  const result = (await env.AI.run(config.EMBEDDING_MODEL as any, { text: [text] })) as any;
+  const result = (await env.AI.run(config.EMBEDDING_MODEL as any, input as any)) as any;
   return result.data[0] as number[];
 }

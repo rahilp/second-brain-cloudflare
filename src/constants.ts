@@ -64,6 +64,18 @@ export const MIRRORED_SOURCES: ReadonlySet<string> = new Set([
   "email-gmail", "email-icloud",
   "notion", "git-hook", "obsidian",
 ]);
+
+// Sources that record a conversation rather than a thought — a client pasting
+// in the tail of a session. A transcript restates whatever was said, including
+// memories the same session stored deliberately, so it will score as a near
+// duplicate or a contradiction of them. It must never be the thing that
+// rewrites or deprecates a memory another source wrote. Same-source collisions
+// (a resumed session superseding its own earlier capture) are still allowed.
+//
+// Not MIRRORED_SOURCES: those index the first chunk only because the record
+// leads with signal and trails with boilerplate; a transcript is the inverse.
+export const TRANSCRIPT_SOURCES: ReadonlySet<string> = new Set(["claude-code"]);
+
 // ── Embedding migration (#248) ───────────────────────────────────────────────
 // Budgeted in chunks rather than entries because storeEntry fires one model call
 // per chunk, all concurrently: 25 single-chunk entries is already ~75 binding
@@ -92,6 +104,12 @@ export const DIGEST_MAX_TOKENS = 400;
 
 export const VECTORIZE_FIX_HINT =
   "run `npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine`, or grant the build token Vectorize Edit and redeploy";
+
+// Durable marker written once, by src/recall/search.ts and src/capture/duplicate.ts,
+// the first time this isolate's workspace-filter latch (src/vectorize/scope.ts)
+// trips to unsupported. GET /health reads it back so the signal survives isolate
+// churn — the in-memory latch alone would look healthy again on every cold start.
+export const VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY = "vectorize:workspace-filter-unsupported";
 
 export const VECTORIZE_TOP_K_MULTIPLIER = 3;
 // getByIds batch size for tag-scoped recall — Vectorize rejects more than 20 IDs
@@ -132,4 +150,23 @@ export const KEYWORD_STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are", "was", "were", "be", "been",
   "i", "me", "my", "we", "you", "it", "this", "that", "these", "those", "with", "about", "from", "at", "as", "by",
   "do", "did", "does", "what", "when", "where", "who", "whom", "how", "why", "which",
+]);
+
+// Function words for the scripts Intl.Segmenter splits without spaces (#326).
+// KEYWORD_STOPWORDS never matches them, and without this a Japanese question
+// spends its keyword slots on auxiliaries and particles (した, ている, ため)
+// that occur in nearly every note. One-character particles (は, を, の) need no
+// entry: they fall to KEYWORD_MIN_TOKEN_LEN. Segmenter mis-splits of the most
+// common request forms (教えて → 教え|て, ください → くだ|さい) are listed so
+// they do not surface as content words.
+export const CJK_STOPWORDS = new Set([
+  // Japanese
+  "した", "して", "する", "します", "しました", "され", "された", "される", "です", "でした", "ます", "ません",
+  "ない", "なく", "ある", "あり", "いる", "いた", "ている", "ていた", "なる", "なった", "できる",
+  "こと", "もの", "これ", "それ", "あれ", "この", "その", "あの", "ここ", "そこ", "どこ",
+  "ため", "から", "まで", "など", "より", "また", "でも", "けど", "ので", "のに", "について", "という",
+  "ください", "くだ", "さい", "教えて", "教え", "なぜ", "どう", "どの", "いつ", "だれ", "なに", "ような", "ように",
+  // Chinese
+  "什么", "怎么", "为什么", "没有", "可以", "一个", "我们", "你们", "他们", "这个", "那个", "这些", "那些",
+  "因为", "所以", "但是", "如果", "已经", "还是", "或者", "以及", "关于",
 ]);

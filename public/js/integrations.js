@@ -16,6 +16,9 @@ const INTEGRATION_ICONS = {
   'calendar-icloud': 'ti-brand-apple',
 }
 
+/** Whether this caller may change connections; see loadIntegrations. */
+let integrationsAdmin = true
+
 function integrationCategoryName(id) {
   const keys = {
     knowledge: 'integrations.categoryKnowledge',
@@ -50,6 +53,10 @@ async function loadIntegrations() {
     const res = await fetch(`${WORKER_URL}/integrations`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
     const data = await res.json()
     integrationsInfo = data.integrations || []
+    // Connections are one per provider for the whole brain, so only an admin can
+    // change them. Absent (an older Worker) reads as admin, which is what a
+    // single-user brain is.
+    integrationsAdmin = data.admin !== false
     renderIntegrations()
   } catch {
     el.innerHTML = `<p class="digest-note">${escHtml(t('integrations.loadFailed'))}</p>`
@@ -163,15 +170,25 @@ function renderIntegrationCard(info) {
       )
       inputs = `<input type="password" id="tok-${p}" placeholder="${placeholder}" aria-label="${label}" autocomplete="off" />`
     }
+    const mirrorLayer = TEAM_MODE
+      ? `<span class="team-select-wrap"><select class="team-select" id="ws-${p}" title="${escAttr(t('integrations.mirrorLayerTitle'))}">
+          <option value="personal">${escHtml(t('team.sharePersonal'))}</option>
+          <option value="company">${escHtml(t('team.shareCompany'))}</option>
+        </select><i class="ti ti-chevron-down"></i></span>`
+      : ''
+    const connectRow = integrationsAdmin
+      ? `<div class="integration-connect-row${isEmail ? ' integration-connect-col' : ''}">
+          ${inputs}
+          ${mirrorLayer}
+          <button class="digest-btn" onclick="connectIntegration('${p}', this)">${escHtml(t('auth.connect'))}</button>
+        </div>
+        <div class="integration-error" id="err-${p}"></div>`
+      : `<p class="digest-note">${escHtml(t('integrations.adminsOnly'))}</p>`
     return `
       <div class="integration-row">
         <div class="integration-head"><i class="ti ${icon}"></i><span>${escHtml(info.name)}</span><span class="integration-state">${escHtml(t('integrations.notConnected'))}</span></div>
         <p class="digest-note">${hint}</p>
-        <div class="integration-connect-row${isEmail ? ' integration-connect-col' : ''}">
-          ${inputs}
-          <button class="digest-btn" onclick="connectIntegration('${p}', this)">${escHtml(t('auth.connect'))}</button>
-        </div>
-        <div class="integration-error" id="err-${p}"></div>
+        ${connectRow}
       </div>`
   }
   const last = info.lastSyncedAt
@@ -183,15 +200,44 @@ function renderIntegrationCard(info) {
   const err = info.lastSyncError
     ? `<div class="integration-error">${escHtml(t('integrations.lastSyncFailed', { error: info.lastSyncError }))}</div>`
     : ''
+  // Who to ask, where a synced page lands, and when it was connected — a member
+  // can read what the connection IS even though only an admin can act on it
+  // (adminsOnly below).
+  //
+  // THE WHOLE LINE is gated on TEAM_MODE, not merely its mirror-layer clause.
+  // Two of these three facts are not new data: `connectedAt` has been on the
+  // record since integrations shipped, and `connectedBy` resolves for any brain
+  // whose roster carries a name. Gating only the middle element would therefore
+  // grow a "Connected by Owner · Connected 3 Mar" line on a solo brain that did
+  // nothing but upgrade — new UI with no user action, which is exactly what the
+  // phase's backwards-compatibility constraint forbids. "Lands in the personal
+  // layer" is separately meaningless where no other layer exists. So: no team,
+  // no provenance line at all.
+  const provenance = !TEAM_MODE
+    ? ''
+    : [
+        info.connectedBy ? t('integrations.connectedByLabel', { name: info.connectedBy }) : null,
+        // The backticks below are load-bearing, not decorative: the i18n
+        // suite's call-site checker only resolves a ternary of quoted literals
+        // when it is the sole `${}` inside a template literal (the form
+        // public/js/auth.js uses) — the SAME ternary passed as a bare argument,
+        // with no surrounding template literal, is invisible to it and registers
+        // as an unpinned dynamic call site instead.
+        t(`${info.mirrorWorkspace === 'company' ? 'integrations.mirrorShared' : 'integrations.mirrorPersonal'}`),
+        info.connectedAt ? t('integrations.connectedOn', { when: new Date(info.connectedAt).toLocaleDateString(localeTag()) }) : null,
+      ].filter(Boolean).join(' · ')
   return `
     <div class="integration-row">
       <div class="integration-head"><i class="ti ${icon}"></i><span>${escHtml(info.name)}</span><span class="integration-state connected">${escHtml(info.workspaceName || t('integrations.connected'))}</span></div>
       <p class="digest-note" id="note-${p}">${escHtml(count)} &middot; ${escHtml(t('integrations.lastSync', { when: last }))}</p>
+      ${provenance ? `<p class="digest-note">${escHtml(provenance)}</p>` : ''}
       ${err}
-      <div class="integration-actions">
+      ${integrationsAdmin
+        ? `<div class="integration-actions">
         <button class="digest-btn" onclick="syncIntegration('${p}', this)"><i class="ti ti-refresh"></i> ${escHtml(t('integrations.syncNow'))}</button>
         <button class="digest-btn danger" onclick="disconnectIntegration('${p}', this)">${escHtml(t('menu.disconnect'))}</button>
-      </div>
+      </div>`
+        : `<p class="digest-note">${escHtml(t('integrations.adminsOnly'))}</p>`}
     </div>`
 }
 
@@ -207,6 +253,8 @@ async function connectIntegration(provider, btn) {
     token = (document.getElementById(`tok-${provider}`).value || '').trim()
     if (!token) { errEl.textContent = t('integrations.needSecret'); return }
   }
+  const wsEl = document.getElementById(`ws-${provider}`)
+  const workspace = wsEl && TEAM_MODE ? wsEl.value : 'personal'
   btn.disabled = true
   btn.textContent = t('auth.connectingEllipsis')
   errEl.textContent = ''
@@ -214,7 +262,7 @@ async function connectIntegration(provider, btn) {
     const res = await fetch(`${WORKER_URL}/integrations/${provider}/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token, workspace }),
     })
     const data = await res.json()
     if (!res.ok || !data.ok) throw new Error(data.error || t('integrations.couldNotConnectShort'))
@@ -270,32 +318,47 @@ async function syncIntegration(provider, btn) {
   }
 }
 
+/**
+ * Drop a connection, optionally taking what it synced with it.
+ *
+ * This used to ask twice in a row: disconnect?, then delete the memories?.
+ * Two stacked dialogs for one action is what teaches people to click through
+ * without reading, and the second question was never a second decision — it
+ * modifies the first. So it is a checkbox on the one sheet, and it is only
+ * offered when there is actually something to delete. A hidden checkbox
+ * reports false, which is the same default the second confirm had.
+ */
 async function disconnectIntegration(provider, btn) {
   const info = integrationsInfo.find((i) => i.provider === provider) || {}
-  if (!confirm(t('integrations.disconnectConfirm', { name: info.name || provider }))) return
-  let purge = false
-  if (info.itemCount > 0) {
-    purge = confirm(
-      tPlural('integrations.purgeConfirm', info.itemCount, {
-        noun: tPlural('integrations.nounMemory', info.itemCount),
-      }),
-    )
-  }
-  btn.disabled = true
-  btn.textContent = t('integrations.disconnecting')
-  try {
-    const res = await fetch(`${WORKER_URL}/integrations/${provider}/disconnect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ purge }),
-    })
-    const data = await res.json()
-    if (!res.ok || !data.ok) throw new Error(data.error || t('integrations.disconnectFailed'))
-    await loadIntegrations()
-    if (purge) refreshAll()
-  } catch (e) {
-    btn.disabled = false
-    btn.textContent = t('menu.disconnect')
-    alert(e.message || t('integrations.disconnectFailed'))
-  }
+  openDangerConfirm({
+    title: t('danger.disconnectTitle'),
+    body: t('integrations.disconnectConfirm', { name: info.name || provider }),
+    confirmLabel: t('menu.disconnect'),
+    checkboxLabel:
+      info.itemCount > 0
+        ? tPlural('integrations.purgeConfirm', info.itemCount, {
+            noun: tPlural('integrations.nounMemory', info.itemCount),
+          })
+        : '',
+    onConfirm: async (purge, done) => {
+      btn.disabled = true
+      btn.textContent = t('integrations.disconnecting')
+      try {
+        const res = await fetch(`${WORKER_URL}/integrations/${provider}/disconnect`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+          body: JSON.stringify({ purge }),
+        })
+        const data = await res.json()
+        if (!res.ok || !data.ok) throw new Error(data.error || t('integrations.disconnectFailed'))
+        await loadIntegrations()
+        if (purge) refreshAll()
+      } catch (e) {
+        btn.disabled = false
+        btn.textContent = t('menu.disconnect')
+        showToast(e.message || t('integrations.disconnectFailed'))
+      }
+      done()
+    },
+  })
 }

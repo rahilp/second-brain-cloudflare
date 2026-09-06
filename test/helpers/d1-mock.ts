@@ -34,28 +34,140 @@ const tagMatchesLike = (tags: string[], tag: string) =>
 
 /** What src/db/init.ts's probe sees on a migrated brain — see the handler in all(). */
 const SCHEMA_PROBE_RESULTS = [
-  ...["entries", "edges", "insight_candidates"].map(name => ({ kind: "table", name })),
-  ...["idx_entries_created_at", "idx_entries_source", "idx_edges_source", "idx_edges_target",
-    "idx_edges_weight", "idx_insight_candidates_queue"].map(name => ({ kind: "index", name })),
+  ...["entries", "edges", "insight_candidates", "workspaces", "users", "memberships",
+    "entry_events", "admin_events", "maintenance_cursor"].map(name => ({ kind: "table", name })),
+  ...["idx_entries_created_at", "idx_entries_source", "idx_entries_workspace_created",
+    "idx_edges_source", "idx_edges_target", "idx_edges_weight", "idx_insight_candidates_queue",
+    "idx_workspaces_kind", "idx_users_token_hash", "idx_users_email", "idx_memberships_workspace",
+    "idx_entry_events_entry", "idx_entry_events_created", "idx_admin_events_created"]
+    .map(name => ({ kind: "index", name })),
   ...["id", "content", "tags", "source", "created_at", "vector_ids", "recall_count",
     "importance_score", "contradiction_wins", "contradiction_losses", "updated_at",
     "staleness_checked_at"].map(name => ({ kind: "column", name })),
+  ...["workspace_id", "actor_id"].map(name => ({ kind: "column", name })),
+  // edges.workspace_id arrives by ALTER on upgraded brains and lives in the base
+  // CREATE on fresh ones — either way a migrated brain reports it.
+  { kind: "edge_column", name: "workspace_id" },
+  { kind: "user_column", name: "default_share" },
+  { kind: "user_column", name: "removed_at" },
+  { kind: "user_column", name: "last_used_at" },
+  // admin_events' subject columns arrive by ALTER on brains created before they
+  // existed and live in the base CREATE on fresh ones — a migrated brain reports
+  // both either way. Omitting them here would make this double claim a brain
+  // whose audit trail cannot record what an action was done TO.
+  { kind: "admin_event_column", name: "target_user_id" },
+  { kind: "admin_event_column", name: "workspace_id" },
 ];
 
 export class D1Mock {
   entries: any[] = [];
   edges: any[] = [];
+  // Tenancy rows, populated by the real ensureTenantBootstrap when a route's
+  // requireIdentity runs against this double. The statements it issues are
+  // modelled just faithfully enough for the owner identity to resolve; member
+  // provisioning is covered against real SQLite in test/integration/.
+  users: any[] = [];
+  workspaces: any[] = [];
+  memberships: any[] = [];
 
   prepare(sql: string) {
-    const s = sql.replace(/\s+/g, " ").trim();
+    let s = sql.replace(/\s+/g, " ").trim();
+
+    // Team-edition workspace scoping. Production appends `AND workspace_id IN (?, ?)`
+    // (or a bare `WHERE` form) whenever an Identity is in play. Every integration test
+    // in this file runs as the owner whose bootstrap backfill has already moved all
+    // seeded rows into the readable set, so filtering would change nothing — the honest
+    // move is to strip the clause AND its bound values so the legacy shape handlers
+    // keep matching. Workspace isolation itself is NOT modelled by this double; it is
+    // covered against real SQLite in test/integration/team-recall-scoping.test.ts and
+    // test/unit/team-scoping.test.ts.
+    const scopeDrop = new Set<number>();
+    if (/workspace_id IN \(/.test(s)) {
+      // The alias prefix is optional: a statement that joins another table
+      // qualifies the column (`e.workspace_id`), and missing that form would
+      // leave the clause in place AND its workspace ids in `args`, where the
+      // branch below reads them as entry ids.
+      const clauseRe = /(?:AND |WHERE )(?:[A-Za-z_][A-Za-z0-9_]*\.)?workspace_id IN \(((?:\?(?:, )?)+)\)/g;
+      for (const m of s.matchAll(clauseRe)) {
+        const offset = (s.slice(0, m.index!).match(/\?/g) ?? []).length;
+        const n = (m[1].match(/\?/g) ?? []).length;
+        for (let i = 0; i < n; i++) scopeDrop.add(offset + i);
+      }
+      s = s.replace(clauseRe, " ")
+        .replace(/\s{2,}/g, " ").trim()
+        // A clause that was the only condition leaves a dangling connector.
+        .replace(/^WHERE\s+(?=ORDER\b|LIMIT\b|GROUP\b|$)/i, "")
+        .replace(/\bAND\s+\)/g, ")")
+        .replace(/WHERE\s*\)/gi, ")");
+    }
+
     // Production pairs every tag LIKE clause with `ESCAPE '\\'` (see tagLikePattern). The
     // escape clause never changes which query a statement IS, so branches that identify a
     // query by its exact text compare against this form rather than each growing a suffix.
     const sBare = s.replace(/ ESCAPE '\\'/g, "");
     const db = this;
 
-    const makeStmt = (args: any[]) => ({
+    const makeStmt = (allArgs: any[]) => {
+      // Drop the bindings that belonged to the stripped scope clauses, positionally.
+      const args = scopeDrop.size ? allArgs.filter((_, i) => !scopeDrop.has(i)) : allArgs;
+      const stmt: any = {
       async run() {
+        // D1 returns each batched statement's rows as well as its meta, and a
+        // batch carries reads as well as writes: identity resolution pairs its
+        // SELECT with the throttled last_used_at write so the pair costs one
+        // subrequest. batch() below runs statements through run(), so a SELECT
+        // has to answer with its rows here. Additive — writes are untouched.
+        //
+        // all() then first(): the branches in this double are split across the
+        // two by what each query's only caller happened to use, so a
+        // single-row SELECT like IDENTITY_SQL is modelled in first() and
+        // answers all() with nothing. Asking both is what makes a batched read
+        // see the same row the unbatched one does.
+        if (/^\s*(SELECT|WITH)\b/i.test(s)) {
+          const many = await stmt.all();
+          if (many.results.length) return { ...many, meta: { changes: 0 } };
+          const one = await stmt.first();
+          return { results: one ? [one] : [], meta: { changes: 0 } };
+        }
+        if (s.startsWith("INSERT INTO workspaces")) {
+          db.workspaces.push({ id: args[0], kind: args[1], name: args[2], created_at: args[3] });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO users")) {
+          const [id, name, email, role, token_hash, suspended, created_at] = args;
+          db.users.push({ id, name, email, role, token_hash, suspended, created_at });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO memberships")) {
+          // INSERT ... SELECT ?, ?, ? WHERE NOT EXISTS (... user_id = ? AND workspace_id = ?):
+          // the id pair is bound twice, first to write, then to guard.
+          const [userId, wsId] = args;
+          if (!db.memberships.some((m: any) => m.user_id === userId && m.workspace_id === wsId)) {
+            db.memberships.push({ user_id: userId, workspace_id: wsId, created_at: args[2] });
+            return { meta: { changes: 1 } };
+          }
+          return { meta: { changes: 0 } };
+        }
+        if (s.startsWith("INSERT INTO maintenance_cursor")) {
+          return { meta: {} };
+        }
+        // ensureTenantBootstrap's one-time legacy backfill. Modelled for real so
+        // rows pushed by tests without a workspace_id still land in the owner's
+        // personal workspace before any scoped read sees them.
+        if (s.startsWith("UPDATE entries SET workspace_id = ? WHERE workspace_id = ''")) {
+          let n = 0;
+          for (const e of db.entries) {
+            if (!e.workspace_id) { e.workspace_id = args[0]; n++; }
+          }
+          return { meta: { changes: n } };
+        }
+        if (s.startsWith("UPDATE edges SET workspace_id = ? WHERE workspace_id = ''")) {
+          let n = 0;
+          for (const e of db.edges) {
+            if (!e.workspace_id) { e.workspace_id = args[0]; n++; }
+          }
+          return { meta: { changes: n } };
+        }
         if (s.startsWith("INSERT INTO entries")) {
           const colMatch = s.match(/INSERT INTO entries \(([^)]+)\)/i);
           if (!colMatch) throw new Error("INSERT INTO entries missing column list");
@@ -74,6 +186,12 @@ export class D1Mock {
           db.entries.push(row);
           return { meta: { changes: 1 } };
         }
+        if (s.startsWith("UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id")) {
+          const [content, vector_ids, tags, updated_at, workspace_id, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.content = content; row.vector_ids = vector_ids; row.tags = tags; row.updated_at = updated_at; row.workspace_id = workspace_id; }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
         if (s.startsWith("UPDATE entries SET content = ?, vector_ids = ?, tags = ?, updated_at = ? WHERE id")) {
           const [content, vector_ids, tags, updated_at, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
@@ -90,6 +208,12 @@ export class D1Mock {
           const [tags, vector_ids, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
           if (row) { row.tags = tags; row.vector_ids = vector_ids; }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET vector_ids = ?, workspace_id")) {
+          const [vector_ids, workspace_id, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.vector_ids = vector_ids; row.workspace_id = workspace_id; }
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("UPDATE entries SET vector_ids")) {
@@ -129,6 +253,12 @@ export class D1Mock {
           const [tags, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
           if (row) row.tags = tags;
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET content = ?, tags = ?, updated_at = ?, workspace_id = ? WHERE id")) {
+          const [content, tags, updated_at, workspace_id, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.content = content; row.tags = tags; row.updated_at = updated_at; row.workspace_id = workspace_id; }
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("UPDATE entries SET content = ?, tags = ?, updated_at = ? WHERE id")) {
@@ -211,6 +341,17 @@ export class D1Mock {
           if (placeholderCount !== args.length) {
             throw new Error(`INSERT INTO edges placeholder/bind mismatch: ${placeholderCount} vs ${args.length}`);
           }
+          // The guarded form (edgeInsertStatement's onlyIfNoTypedEdge): the row's
+          // ten values, then the pair the guard tests. Modelled here because the
+          // rule lives in the statement, so a mock that ignored it would report
+          // an insert production would have skipped.
+          if (s.includes("WHERE NOT EXISTS")) {
+            const [ga, gb, gc, gd] = args.slice(10);
+            const typed = db.edges.some((e: any) =>
+              ((e.source_id === ga && e.target_id === gb) || (e.source_id === gc && e.target_id === gd))
+              && e.type !== "relates_to");
+            if (typed) return { meta: { changes: 0 } };
+          }
           const [id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at] = args;
           const existing = db.edges.find((e: any) => e.source_id === source_id && e.target_id === target_id && e.type === type);
           if (existing) {
@@ -250,6 +391,60 @@ export class D1Mock {
         return { meta: {} };
       },
       async first() {
+        // ── ensureTenantBootstrap / resolveIdentity (tenancy) ──
+        if (s.startsWith("SELECT id FROM workspaces WHERE kind")) {
+          const kind = s.match(/kind = '(\w+)'/)?.[1];
+          const row = db.workspaces
+            .filter((w: any) => w.kind === kind)
+            .sort((a: any, b: any) => a.created_at - b.created_at)[0];
+          return row ? { id: row.id } : null;
+        }
+        if (s.includes("u.role = 'admin'")) {
+          // findOwner: oldest admin plus their personal workspace.
+          const admin = db.users
+            .filter((u: any) => u.role === "admin")
+            .sort((a: any, b: any) => a.created_at - b.created_at)[0];
+          if (!admin) return null;
+          const pm = db.memberships.find((m: any) =>
+            m.user_id === admin.id &&
+            db.workspaces.some((w: any) => w.id === m.workspace_id && w.kind === "personal"));
+          return pm ? { userId: admin.id, personalWorkspaceId: pm.workspace_id } : null;
+        }
+        if (s.startsWith("SELECT 1 AS ok FROM memberships")) {
+          // ownerHasPersonalWorkspace.
+          const ok = db.memberships.some((m: any) =>
+            m.user_id === args[0] &&
+            db.workspaces.some((w: any) => w.id === m.workspace_id && w.kind === "personal"));
+          return ok ? { ok: 1 } : null;
+        }
+        if (s.includes("u.token_hash = ?")) {
+          // resolveIdentity's IDENTITY_SQL: token hash to user + both workspaces.
+          const user = db.users.find((u: any) => u.token_hash === args[0] && !u.suspended);
+          if (!user) return null;
+          const wsAll = (kind: string) => db.memberships
+            .filter((mm: any) => mm.user_id === user.id)
+            .map((mm: any) => db.workspaces.find((w: any) => w.id === mm.workspace_id && w.kind === kind))
+            .filter(Boolean);
+          const personalWorkspaceId = wsAll("personal")[0]?.id ?? null;
+          // The real query aggregates every company membership into one packed
+          // `id@created_at` list, because a user may belong to more than one team
+          // (memberships is many-to-many). Returning a single id here would have
+          // let a mock-backed identity read as a member of one arbitrary team
+          // while the real one reads all of them — and the scope bindings that
+          // fall out of that list size the D1 batches, so the difference shows up
+          // as a subrequest count, not as a wrong row.
+          const companyWorkspaces = wsAll("company")
+            .map((w: any) => `${w.id}@${w.created_at ?? 0}`)
+            .join(",");
+          // Personal membership is what authenticates; a team is not required.
+          if (!personalWorkspaceId) return null;
+          return {
+            userId: user.id,
+            role: user.role,
+            personalWorkspaceId,
+            companyWorkspaces: companyWorkspaces || null,
+          };
+        }
         // GET /entry. Models the COALESCE alias: a row written before the
         // updated_at column exists carries no value, and the route must see
         // created_at rather than undefined.
@@ -266,13 +461,24 @@ export class D1Mock {
         // rather than a row — pre-existing, and those paths are covered against real SQLite
         // in test/integration/embedding-migration.test.ts. Worth knowing before adding a
         // fourth caller and trusting the double.
-        if (s.includes("COUNT(*) as count") && s.includes("AVG(importance_score)")) {
+        // GET /stats's summary. Matched on the two aggregate names that are stable
+        // across its scoped and unscoped halves: `count`/`avg_importance` carry a
+        // `CASE WHEN workspace_id IN (…)` so the admin's content totals agree with
+        // /count, while unvectorized/unclassified stay corpus-wide for the repair
+        // panel. This double ignores bindings, so it cannot see that scoping at all
+        // — the assertion that it works lives in test/integration/team-isolation.ts
+        // against real SQLite. Here the brain is single-user, where both halves
+        // agree, so counting every entry is the faithful answer.
+        if (s.includes("as unvectorized") && s.includes("as unclassified") && s.includes("AVG(")) {
           const count = db.entries.length;
           const scored = db.entries.filter((e: any) => typeof e.importance_score === "number");
           const avg_importance = scored.length > 0
             ? scored.reduce((sum: number, e: any) => sum + e.importance_score, 0) / scored.length
             : null;
-          const cutoff = args.length > 0 ? Number(args[0]) : undefined;
+          // The grace cutoff is the only numeric bind in this statement; the scope
+          // bindings around it are workspace-id strings.
+          const numeric = args.filter((a: any) => typeof a === "number");
+          const cutoff = numeric.length > 0 ? Number(numeric[numeric.length - 1]) : undefined;
           const unvectorized = cutoff !== undefined
             ? db.entries.filter((e: any) => e.vector_ids === '[]' && e.created_at < cutoff).length
             : 0;
@@ -373,8 +579,32 @@ export class D1Mock {
             })
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .slice(0, limit)
-            .map((e: any) => ({ id: e.id, content: e.content }));
+            .map((e: any) => ({ id: e.id, content: e.content, workspace_id: e.workspace_id ?? "" }));
           return { results: rows };
+        }
+        if (s.includes("SELECT id, workspace_id, tags, created_at, source FROM entries WHERE id IN")) {
+          // inferEdgesOnWrite's one endpoint read: the source row's workspace (to
+          // stamp the edge with), each candidate neighbour's (to refuse a pair that
+          // disagrees), and — piggybacked on the same statement — the tags and
+          // timestamps `follows` typing needs. Rows seeded without the column read
+          // as "", the pre-tenancy value, so a fixture that says nothing about
+          // workspaces still links exactly as it did.
+          //
+          // The projection is matched in full ON PURPOSE. When this branch listed
+          // only `id, workspace_id` it silently stopped matching the moment
+          // production widened the SELECT, and every mock-backed inference then saw
+          // ZERO endpoint rows — no workspace refusal, no kind, no timestamps —
+          // while the tests kept passing for the wrong reason.
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({
+              id: e.id,
+              workspace_id: e.workspace_id ?? "",
+              tags: e.tags ?? "[]",
+              created_at: e.created_at ?? 0,
+              source: e.source ?? "api",
+            }));
+          return { results };
         }
         if (s.includes("SELECT id FROM entries WHERE id IN")) {
           const results = db.entries
@@ -409,11 +639,25 @@ export class D1Mock {
             .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id }));
           return { results };
         }
-        if (s.includes("SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN")) {
-          // buildGraph node hydration.
+        if (s.includes("FROM entries e LEFT JOIN users u ON u.id = e.actor_id")) {
+          // buildGraph node hydration. workspace_id/actor_id/source are what the
+          // node's `workspace` layer and `actor_name` are derived from; a row
+          // seeded without them reads as "", the pre-tenancy value. The join is
+          // modelled rather than ignored — it is where the author's name comes
+          // from now, and a soft-removed member must resolve to no name at all
+          // so the caller falls through to "Former member".
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, importance_score: e.importance_score ?? 0, created_at: e.created_at }));
+            .map((e: any) => {
+              const author = db.users.find((u: any) =>
+                u.id === (e.actor_id ?? "") && !u.removed_at);
+              return {
+                id: e.id, content: e.content, tags: e.tags,
+                importance_score: e.importance_score ?? 0, created_at: e.created_at,
+                workspace_id: e.workspace_id ?? "", actor_id: e.actor_id ?? "",
+                source: e.source ?? "", actor_display_name: author?.name ?? null,
+              };
+            });
           return { results };
         }
         if (s.includes("SELECT id, tags FROM entries WHERE id IN")) {
@@ -496,7 +740,7 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags }));
           return { results };
         }
-        if (s.includes("SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN")) {
+        if (s.includes("SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN") || s.includes("SELECT id, content, tags, source, created_at, updated_at, workspace_id FROM entries WHERE id IN")) {
           const inMatch = s.match(/WHERE id IN \(([^)]*)\)/);
           const idCount = inMatch ? inMatch[1].split(",").length : 0;
           const ids = args.slice(0, idCount);
@@ -663,10 +907,15 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results: rows };
         }
-        if (s.startsWith("SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC")) {
-          // GET /export: every entry, newest first, no LIMIT. `last_updated` models the
-          // COALESCE, so a row that never had updated_at written exports its created_at.
+        if (s.startsWith("SELECT id, content, tags, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries") && s.includes("ORDER BY created_at DESC") && !s.includes("WHERE id = ?")) {
+          // GET /export: the caller's readable set, newest first, no LIMIT. The
+          // route appends `WHERE workspace_id IN (?, ?)` (bound to args), so
+          // rows outside those workspaces are withheld here too. `last_updated`
+          // models the COALESCE, so a row that never had updated_at written
+          // exports its created_at.
+          const workspaces: string[] = args.map((a: any) => String(a));
           const results = [...db.entries]
+            .filter((e: any) => !workspaces.length || workspaces.includes(e.workspace_id ?? ""))
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .map((e: any) => ({
               id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at,
@@ -676,12 +925,18 @@ export class D1Mock {
             }));
           return { results };
         }
-        if (s.startsWith("SELECT source_id, target_id, type, weight, provenance, created_at FROM edges")) {
-          // GET /export: the whole edges table.
-          const results = db.edges.map((e: any) => ({
-            source_id: e.source_id, target_id: e.target_id, type: e.type,
-            weight: e.weight, provenance: e.provenance, created_at: e.created_at,
-          }));
+        if (
+          s.startsWith("SELECT source_id, target_id, type, weight, provenance, created_at FROM edges") &&
+          !s.includes("WHERE source_id IN")
+        ) {
+          // GET /export: the readable set's edges. The scope clause (if any) has been
+          // stripped above along with its bindings; owner-scoped tests see the whole
+          // edge set either way, and isolation is covered against real SQLite.
+          const results = db.edges
+            .map((e: any) => ({
+              source_id: e.source_id, target_id: e.target_id, type: e.type,
+              weight: e.weight, provenance: e.provenance, created_at: e.created_at,
+            }));
           return { results };
         }
         if (s.includes("ORDER BY created_at DESC LIMIT")) {
@@ -706,8 +961,10 @@ export class D1Mock {
           return { results: rows.slice(0, limit) };
         }
         return { results: [] };
-      },
-    });
+      }
+      };
+      return stmt;
+    };
 
     return {
       bind(...args: any[]) { return makeStmt(args); },
@@ -717,5 +974,11 @@ export class D1Mock {
 
   async exec(_sql: string) { }
   async batch(stmts: any[]) { return Promise.all(stmts.map((s: any) => s.run())); }
-  reset() { this.entries = []; this.edges = []; }
+  reset() {
+    this.entries = [];
+    this.edges = [];
+    this.users = [];
+    this.workspaces = [];
+    this.memberships = [];
+  }
 }

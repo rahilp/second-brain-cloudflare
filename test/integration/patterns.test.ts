@@ -14,6 +14,8 @@ import { makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 import { setDbReady } from "../../src/runtime/state";
+import { ensureTenantBootstrap } from "../../src/lib/tenancy";
+import { createMember } from "../../src/lib/team-admin";
 import type { Env } from "../../src/env";
 
 const ctx = { waitUntil: (_: Promise<unknown>) => {} } as any;
@@ -25,13 +27,19 @@ function dbOf(s: SqliteD1) {
   return {
     prepare: (sql: string) => s.db.prepare(sql),
     exec: (sql: string) => s.db.exec(sql),
-    async batch(stmts: { run(): Promise<unknown> }[]) {
-      for (const st of stmts) await st.run();
+    async batch(stmts: { run(): Promise<any> }[]) {
+      const out: any[] = [];
+      for (const st of stmts) out.push(await st.run());
       // Collapsed to one entry in the issued log, because that is what D1 does:
       // a batch is a single subrequest however many statements it carries. The
       // per-statement rows would make a correctly batched write look like N.
       s.issued.splice(s.issued.length - stmts.length, stmts.length, `BATCH(${stmts.length})`);
-      return stmts.map(() => ({ meta: { changes: 1 } }));
+      // Each statement's rows are kept, not discarded: a batch carries reads as
+      // well as writes now — identity resolution pairs its SELECT with the
+      // throttled last_used_at stamp so the pair costs one subrequest — and D1
+      // returns a result per statement. `changes: 1` is preserved for the write
+      // paths that read it.
+      return out.map((r: any) => ({ ...r, meta: { changes: 1, ...r?.meta } }));
     },
   };
 }
@@ -281,17 +289,50 @@ describe("POST /patterns/resolve — in bulk", () => {
   it("costs a fixed number of round trips however many patterns are in it", async () => {
     // The reason bulk exists at all: a free-plan invocation gets roughly 50 D1
     // queries, so a per-id loop would put a ceiling on the batch size.
-    sq = await migrated();
-    for (let i = 0; i < 40; i++) seedPattern(sq, `p${i}`, `Pattern ${i}`);
-    sq.issued.length = 0;
+    //
+    // Measured at TWO id counts rather than pinned at one, because flatness is
+    // the property and a single number only pins it by implication. The audit
+    // trail is the case that made the difference matter: writing one
+    // entry_events row per resolution through a per-id auditEvent would have
+    // left this number correct for 5 ids and 40 over budget for 97, so the
+    // route hands the whole trail to ONE batch.
+    async function cost(n: number): Promise<{ total: number; unbatched: number }> {
+      sq?.close();
+      sq = await migrated();
+      for (let i = 0; i < n; i++) seedPattern(sq, `p${i}`, `Pattern ${i}`);
+      sq.issued.length = 0;
+      const pending: Promise<unknown>[] = [];
+      await worker.fetch(
+        req("POST", "/patterns/resolve", { body: { ids: Array.from({ length: n }, (_, i) => `p${i}`), action: "dismiss" } }),
+        envOf(sq),
+        { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as any,
+      );
+      // Settled, because the audit batch is handed to waitUntil and the double
+      // collapses a batch into its single log entry only once it resolves.
+      await Promise.all(pending);
+      return {
+        total: sq.issued.length,
+        unbatched: sq.issued.filter(x => !x.startsWith("BATCH")).length,
+      };
+    }
 
-    await worker.fetch(
-      req("POST", "/patterns/resolve", { body: { ids: Array.from({ length: 40 }, (_, i) => `p${i}`), action: "dismiss" } }),
-      envOf(sq), ctx,
-    );
-
-    // One SELECT and one batched write, regardless of the 40.
-    expect(sq.issued.filter(s => !s.startsWith("BATCH"))).toHaveLength(1);
+    // Seven round trips, flat in the id count, which is what this measures.
+    //
+    // Assert the TOTAL rather than only the unbatched statements. Both numbers
+    // are pinned below, but the total is the one that means something: a batch
+    // is a single subrequest however many statements it carries, so the split
+    // between the two moves whenever a read is paired with a write, without the
+    // cost changing at all. That is exactly what happened when identity
+    // resolution began carrying the throttled users.last_used_at stamp in the
+    // same batch as its read — unbatched went 4 -> 3, total stayed 6.
+    //
+    // MOVED 6 -> 7: the entry_events trail for the whole request, one batch.
+    // The route's own SELECT plus v3's fixed identity cost on this first
+    // request against a fresh database (the token→identity batch and the
+    // one-time tenant bootstrap: two lookups + a batch, memoised afterwards)
+    // keep the unbatched count at 3.
+    expect(await cost(40)).toEqual({ total: 7, unbatched: 3 });
+    expect(await cost(5)).toEqual({ total: 7, unbatched: 3 });
   });
 
   it("skips what someone else already ruled on rather than failing the batch", async () => {
@@ -315,13 +356,22 @@ describe("POST /patterns/resolve — in bulk", () => {
 
   it("refuses a batch larger than D1 can bind, rather than truncating it", async () => {
     // Silent truncation would report "resolved" for patterns still waiting.
+    //
+    // The cap is D1's 100 bound parameters MINUS the caller's workspace scope,
+    // which the SELECT binds alongside the ids — three for an admin (personal,
+    // company, and the '' legacy space), so 97 here. Asserted as the number the
+    // route reports rather than a literal, because the point is that the reply
+    // names the real limit: a client that trusted a hardcoded 100 would send a
+    // batch D1 rejects outright.
     sq = await migrated();
     const res = await worker.fetch(
       req("POST", "/patterns/resolve", { body: { ids: Array.from({ length: 101 }, (_, i) => `p${i}`), action: "dismiss" } }),
       envOf(sq), ctx,
     );
     expect(res.status).toBe(400);
-    expect((await res.json() as any).error).toMatch(/100/);
+    const limit = Number((await res.json() as any).error.match(/exceed (\d+) per request/)![1]);
+    expect(limit).toBeLessThanOrEqual(100);
+    expect(limit).toBe(100 - 3);
   });
 
   it("rejects a malformed ids list", async () => {
@@ -341,5 +391,315 @@ describe("POST /patterns/resolve — in bulk", () => {
       req("POST", "/patterns/resolve", { body: { ids: ["p1", "p1", "p1"], action: "dismiss" } }), envOf(sq), ctx,
     )).json() as any;
     expect(data).toMatchObject({ resolved: 1, skipped: 0 });
+  });
+});
+
+/**
+ * The queue's rows, and who the product says wrote them.
+ *
+ * Two keys join `sources` here: `workspace`, because the client holds no
+ * workspace ids and the one thing it could infer a layer from (`sources`) is
+ * about the INPUTS, not the insight; and `actor_name`, which comes from the
+ * same `resolveActorLabel` every other read surface calls. The label is the
+ * reach case below: one constant in one function, four surfaces following.
+ */
+describe("GET /patterns — the layer and the author of each row", () => {
+  async function teamFixture() {
+    const s = await migrated();
+    const env = envOf(s);
+    const roots = await ensureTenantBootstrap(env);
+    const alice = await createMember(env, { name: "Alice" });
+    return {
+      s, env,
+      companyWorkspaceId: roots.companyWorkspaceId,
+      personalWorkspaceId: alice.member.personalWorkspaceId,
+      token: alice.token,
+    };
+  }
+
+  /** An insight exactly as runWeeklyInsights writes one: source system, actor_id "". */
+  async function seedInsightIn(s: SqliteD1, id: string, workspaceId: string, content: string) {
+    seedPattern(s, id, content);
+    await s.db.prepare(`UPDATE entries SET workspace_id = ?, actor_id = '' WHERE id = ?`)
+      .bind(workspaceId, id).run();
+  }
+
+  const get = (env: Env, path: string, token: string) =>
+    worker.fetch(req("GET", path, { token }), env, ctx);
+
+  it("reports a company-workspace insight as the company layer, authored by Second Brain", async () => {
+    const fx = await teamFixture();
+    sq = fx.s;
+    await seedInsightIn(sq, "i-co", fx.companyWorkspaceId, "The team ships behind flags on Fridays");
+
+    const data = await (await get(fx.env, "/patterns", fx.token)).json() as any;
+
+    expect(data.patterns).toHaveLength(1);
+    expect(data.patterns[0]).toMatchObject({ workspace: "company", actor_name: "Second Brain" });
+  });
+
+  it("reports a personal-workspace insight as the personal layer, with the same author", async () => {
+    const fx = await teamFixture();
+    sq = fx.s;
+    await seedInsightIn(sq, "i-me", fx.personalWorkspaceId, "You tend to ship on Fridays");
+
+    const data = await (await get(fx.env, "/patterns", fx.token)).json() as any;
+
+    expect(data.patterns[0]).toMatchObject({ workspace: "personal", actor_name: "Second Brain" });
+  });
+
+  it("adds the two keys and renames or drops nothing", async () => {
+    // Exhaustive rather than a subset check, so test/ui/pattern-queue.test.ts
+    // cannot be surprised by a key appearing or a name changing under it.
+    const fx = await teamFixture();
+    sq = fx.s;
+    await seedInsightIn(sq, "i-co", fx.companyWorkspaceId, "The team ships behind flags on Fridays");
+    seedEdge(sq, "i-co", "gone", "drawn_from");
+
+    const data = await (await get(fx.env, "/patterns", fx.token)).json() as any;
+
+    const row = data.patterns[0];
+    expect(Object.keys(row).sort())
+      .toEqual(["actor_name", "content", "created_at", "id", "sources", "workspace"]);
+    expect(row.id).toBe("i-co");
+    expect(row.content).toBe("The team ships behind flags on Fridays");
+    expect(row.created_at).toBe(1000);
+    expect(row.sources).toEqual([{ id: "gone", missing: true }]);
+  });
+
+  it("issues the same number of statements whether or not the page has a company row", async () => {
+    // The layer is computed from a column already in the projection, and
+    // lookupActorLabels issues NO statement for an empty id list — which this
+    // queue's always is, because every auto-insight row is written with
+    // actor_id "". The call is made anyway rather than skipped: "every row
+    // here is system-authored" is an invariant of a different file, and the
+    // cost of not relying on it is zero. This is what proves that.
+    const personalOnly = await teamFixture();
+    sq = personalOnly.s;
+    await seedInsightIn(sq, "i-me", personalOnly.personalWorkspaceId, "You tend to ship on Fridays");
+    const beforeP = sq.issued.length;
+    await get(personalOnly.env, "/patterns?limit=50", personalOnly.token);
+    const personalCost = sq.issued.length - beforeP;
+    sq.close();
+
+    const withCompany = await teamFixture();
+    sq = withCompany.s;
+    await seedInsightIn(sq, "i-me", withCompany.personalWorkspaceId, "You tend to ship on Fridays");
+    await seedInsightIn(sq, "i-co", withCompany.companyWorkspaceId, "The team ships behind flags on Fridays");
+    const beforeC = sq.issued.length;
+    await get(withCompany.env, "/patterns?limit=50", withCompany.token);
+    const companyCost = sq.issued.length - beforeC;
+
+    expect(companyCost).toBe(personalCost);
+    // Pinned: identity, the page, the count and the source hydration. Unchanged
+    // by this task — the projection widened, no statement was added.
+    expect(companyCost).toBe(4);
+  });
+
+  it("names the same author on /patterns, /list and /entry from one fixture", async () => {
+    // THE REACH CASE. `resolveActorLabel` is one function with four callers, so
+    // renaming its system branch had to move every surface at once. Three of
+    // them are asserted here off a single row; the fourth (/graph node labels)
+    // is asserted in test/integration/graph-team-aware.test.ts. If any of these
+    // could disagree, the label was special-cased somewhere it should not have
+    // been.
+    const fx = await teamFixture();
+    sq = fx.s;
+    await seedInsightIn(sq, "i-co", fx.companyWorkspaceId, "The team ships behind flags on Fridays");
+
+    const patterns = await (await get(fx.env, "/patterns", fx.token)).json() as any;
+    const list = await (await get(fx.env, "/list?n=50", fx.token)).json() as any;
+    const entry = await (await get(fx.env, "/entry?id=i-co", fx.token)).json() as any;
+
+    expect(patterns.patterns[0].actor_name).toBe("Second Brain");
+    expect(list.find((r: any) => r.id === "i-co").actor_name).toBe("Second Brain");
+    expect(entry.entry.actor_name).toBe("Second Brain");
+  });
+});
+
+/**
+ * The record of a resolution.
+ *
+ * POST /patterns/resolve applies no author lock, and that is deliberate: an
+ * insight has `actor_id = ""` and no author, so it is a shared suggestion and
+ * any member acting on one is the feature working. What was missing is the
+ * other half — nothing recorded that it happened, so on a team brain a member
+ * could dismiss a company-layer insight for everyone and the compliance view
+ * built to watch exactly this was blind to it.
+ *
+ * Two names rather than one plus a payload flag, for the reason
+ * member_suspended and member_unsuspended are two names: an auditor scanning
+ * for one outcome should not have to parse a payload.
+ */
+describe("POST /patterns/resolve — the entry_events record", () => {
+  /** Collects waitUntil promises, so the fire-and-forget writes can be awaited. */
+  function collectingCtx() {
+    const pending: Promise<unknown>[] = [];
+    return {
+      ctx: { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as any,
+      async settle() {
+        while (pending.length) {
+          const batch = pending.splice(0, pending.length);
+          await Promise.all(batch);
+        }
+      },
+    };
+  }
+
+  async function eventsOf(s: SqliteD1): Promise<Record<string, any>[]> {
+    const { results } = await s.db
+      .prepare(`SELECT entry_id, actor_id, event, payload FROM entry_events ORDER BY rowid ASC`)
+      .all();
+    return (results ?? []) as Record<string, any>[];
+  }
+
+  async function ownerId(s: SqliteD1): Promise<string> {
+    const { results } = await s.db.prepare(`SELECT id FROM users WHERE role = 'admin' LIMIT 1`).all();
+    return (results as any)[0].id as string;
+  }
+
+  it("confirm writes one insight_confirmed row naming the actor and the entry", async () => {
+    sq = await migrated();
+    seedPattern(sq, "p1", "You tend to ship on Fridays");
+    const { ctx: c, settle } = collectingCtx();
+
+    const res = await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "p1", action: "confirm" } }), envOf(sq), c,
+    );
+    expect(res.status).toBe(200);
+    await settle();
+
+    const rows = await eventsOf(sq);
+    expect(rows.length).toBe(1);
+    expect(rows[0].event).toBe("insight_confirmed");
+    expect(rows[0].entry_id).toBe("p1");
+    expect(rows[0].actor_id).toBe(await ownerId(sq));
+  });
+
+  it("dismiss writes insight_dismissed, a different name and not a payload flag", async () => {
+    sq = await migrated();
+    seedPattern(sq, "p1", "You tend to dismiss patterns");
+    const { ctx: c, settle } = collectingCtx();
+
+    const res = await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "p1", action: "dismiss" } }),
+      envOf(sq, { VECTORIZE: makeVectorizeMock({ deleteByIds: vi.fn().mockResolvedValue({ mutationId: "m" }) }) }), c,
+    );
+    expect(res.status).toBe(200);
+    await settle();
+
+    const rows = await eventsOf(sq);
+    expect(rows.map(r => r.event)).toEqual(["insight_dismissed"]);
+    expect(rows[0].entry_id).toBe("p1");
+  });
+
+  it("writes one row per RESOLVED id in a bulk call, and none for the ones it skipped", async () => {
+    sq = await migrated();
+    seedPattern(sq, "still-pending", "Pattern A");
+    seedPattern(sq, "already-dismissed", "Pattern B", ["status:deprecated"]);
+    sq.seed({ id: "not-a-pattern", content: "Just a memory", createdAt: 1000, tags: ["work"] });
+    const { ctx: c, settle } = collectingCtx();
+
+    const data = await (await worker.fetch(
+      req("POST", "/patterns/resolve", {
+        body: { ids: ["still-pending", "already-dismissed", "not-a-pattern", "ghost"], action: "dismiss" },
+      }),
+      envOf(sq, { VECTORIZE: makeVectorizeMock({ deleteByIds: vi.fn().mockResolvedValue({ mutationId: "m" }) }) }), c,
+    )).json() as any;
+    expect(data).toMatchObject({ resolved: 1, skipped: 3 });
+    await settle();
+
+    // A skipped row was not ruled on, so recording one would be a false entry
+    // in an INSERT-only trail nothing can correct.
+    expect((await eventsOf(sq)).map(r => [r.entry_id, r.event])).toEqual([["still-pending", "insight_dismissed"]]);
+  });
+
+  it("a rejected resolution writes no row at all", async () => {
+    sq = await migrated();
+    const { ctx: c, settle } = collectingCtx();
+
+    expect((await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "ghost", action: "confirm" } }), envOf(sq), c,
+    )).status).toBe(404);
+    await settle();
+    expect(await eventsOf(sq)).toEqual([]);
+
+    sq.seed({ id: "normal", content: "Just a memory", createdAt: 1000, tags: ["work"] });
+    expect((await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "normal", action: "confirm" } }), envOf(sq), c,
+    )).status).toBe(400);
+    await settle();
+    expect(await eventsOf(sq)).toEqual([]);
+  });
+
+  it("an id outside the caller's scope writes no row", async () => {
+    sq = await migrated();
+    // Another workspace entirely: the route's own SELECT is scoped, so this id
+    // resolves to nothing and there is nothing to record.
+    sq.db.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id, actor_id)
+       VALUES ('foreign', 'Someone else''s insight', '["auto-insight"]', 'system', 1000, '[]', 'ws-elsewhere', 'usr-someone')`,
+    ).run();
+    const { ctx: c, settle } = collectingCtx();
+
+    expect((await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "foreign", action: "dismiss" } }), envOf(sq), c,
+    )).status).toBe(404);
+    await settle();
+    expect(await eventsOf(sq)).toEqual([]);
+    expect(tagsOf(sq, "foreign")).not.toContain("status:deprecated");
+  });
+
+  it("a failing audit write does not fail the resolution", async () => {
+    sq = await migrated();
+    seedPattern(sq, "p1", "You tend to ship on Fridays");
+    const { ctx: c, settle } = collectingCtx();
+
+    const base = dbOf(sq);
+    const db = {
+      ...base,
+      prepare: (sql: string) =>
+        sql.includes("INSERT INTO entry_events")
+          ? { bind: () => ({ run: () => Promise.reject(new Error("entry_events is on fire")) }) }
+          : base.prepare(sql),
+    };
+
+    const res = await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "p1", action: "confirm" } }),
+      makeTestEnv(db as any, {} as any), c,
+    );
+    // The resolution is the user-visible act; the trail must never be able to
+    // undo it.
+    expect(res.status).toBe(200);
+    expect(tagsOf(sq, "p1")).toContain("status:canonical");
+    await expect(settle()).resolves.toBeUndefined();
+    expect(await eventsOf(sq)).toEqual([]);
+  });
+
+  it("survives an audit write that throws SYNCHRONOUSLY, not just one that rejects", async () => {
+    // The rejection case above is covered by `.catch`. This one is not: prepare
+    // and batch run during the argument expression, so a synchronous throw
+    // escapes into the route and fails a resolution D1 has already committed.
+    sq = await migrated();
+    seedPattern(sq, "p1", "You tend to ship on Fridays");
+    const { ctx: c, settle } = collectingCtx();
+
+    const base = dbOf(sq);
+    const db = {
+      ...base,
+      prepare: (sql: string) => {
+        if (sql.includes("INSERT INTO entry_events")) throw new Error("entry_events is gone");
+        return base.prepare(sql);
+      },
+    };
+
+    const res = await worker.fetch(
+      req("POST", "/patterns/resolve", { body: { id: "p1", action: "confirm" } }),
+      makeTestEnv(db as any, {} as any), c,
+    );
+    expect(res.status).toBe(200);
+    expect(tagsOf(sq, "p1")).toContain("status:canonical");
+    await settle();
+    expect(await eventsOf(sq)).toEqual([]);
   });
 });

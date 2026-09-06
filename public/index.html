@@ -41,6 +41,14 @@
           <button id="auth-connect" type="submit" data-i18n="auth.connect">Connect</button>
         </form>
         <div id="auth-error"></div>
+        <button type="button" class="auth-link" id="auth-invite-toggle" aria-expanded="false" aria-controls="auth-invite-help" onclick="toggleInviteHelp()" data-i18n="auth.haveInvite">I received a team invite</button>
+        <div class="auth-invite-help" id="auth-invite-help" style="display: none">
+          <ol>
+            <li data-i18n="auth.inviteStep1">Leave the address above as it is — it is already this team's Second Brain.</li>
+            <li data-i18n="auth.inviteStep2">Paste the one-time token your admin sent you into the field above.</li>
+            <li data-i18n="auth.inviteStep3">Press Connect. Everything you capture stays personal until you share it with the team.</li>
+          </ol>
+        </div>
       </div>
     </div>
 
@@ -52,6 +60,9 @@
           </div>
           <div>
             <div class="sb-brand-name">Second Brain</div>
+            <!-- Which company's shared layer this member writes into. Hidden on a
+                 solo brain, where there is no other layer to distinguish. -->
+            <div class="sb-brand-team" id="sb-team-name" style="display: none"></div>
             <div class="sb-brand-status" id="sb-status" data-i18n="nav.statusEmpty">always remembers</div>
           </div>
         </div>
@@ -61,6 +72,8 @@
         <nav class="sb-nav">
           <button class="sb-tab active" id="sb-tab-home" onclick="switchTab('home')"><i class="ti ti-home"></i><span data-i18n="nav.home">Home</span></button>
           <button class="sb-tab" id="sb-tab-memories" onclick="switchTab('memories')"><i class="ti ti-stack-2"></i><span data-i18n="nav.memories">Memories</span></button>
+          <!-- Hidden until GET /team/members answers 200 — see js/team.js. -->
+          <button class="sb-tab" id="sb-tab-team" onclick="switchTab('team')" style="display: none"><i class="ti ti-users-group"></i><span data-i18n="nav.team">Team</span></button>
         </nav>
         <div class="sb-footer">
           <!-- In the desktop app there is no address bar and no reload, so this
@@ -77,6 +90,10 @@
           </div>
           <div class="topbar-info">
             <div class="topbar-name">Second Brain</div>
+            <!-- Same line the sidebar carries. The sidebar is hidden on phone
+                 widths, so without this a member on their phone never learns
+                 which team they are sharing into. -->
+            <div class="topbar-team" id="topbar-team-name" style="display: none"></div>
             <div class="topbar-status" id="topbar-status" data-i18n="nav.statusEmpty">always remembers</div>
           </div>
           <button class="topbar-menu refresh-now" onclick="refreshAll()" aria-label="Refresh" data-i18n="nav.refresh" data-i18n-attr="aria-label"><i class="ti ti-refresh"></i></button>
@@ -107,9 +124,27 @@
                     <button class="home-mode" id="home-mode" onclick="toggleHomeMode()" title="Switch between asking and remembering" data-i18n="home.modeTitle" data-i18n-attr="title">
                       <span class="home-mode-dot"></span><span id="home-mode-label" data-i18n="home.willSearch">will search</span>
                     </button>
+                    <!-- Team-layer target for captures. Hidden on solo brains;
+                         Auto defers to the member's configured default. -->
+                    <span id="home-layer-wrap" style="display: none">
+                      <span class="team-select-wrap">
+                        <select class="team-select" id="home-layer" onchange="onHomeLayerChange(this.value)" title="Default uses your team's configured policy; Personal and Shared pin it for this memory">
+                          <option value="" data-i18n="home.layerAuto">Default</option>
+                          <option value="personal" data-i18n="home.layerPersonal">Personal</option>
+                          <option value="company" data-i18n="home.layerShared">Shared</option>
+                        </select><i class="ti ti-chevron-down"></i>
+                      </span>
+                    </span>
                     <button class="send-btn" onclick="submitHome()"><i class="ti ti-arrow-up"></i></button>
                   </div>
                 </div>
+                <!-- What Auto resolves to, or which layer is pinned for this capture.
+                     Hidden on solo brains and until /team/me answers. -->
+                <div class="home-layer-hint" id="home-layer-hint" style="display: none"></div>
+                <!-- First-run coach marks for the composer, written by
+                     renderComposerCoach() in js/home.js. Empty and hidden on a
+                     solo brain, and once both marks have been dismissed. -->
+                <div class="coach-mark" id="coach-home" hidden></div>
                 <!-- The one thing worth keeping from the deleted Remember tab:
                      it was the only place hashtags were ever taught. -->
                 <div class="home-hint" data-i18n="home.hintHtml" data-i18n-html>Add <span class="hashtag">#tags</span> anywhere to file it</div>
@@ -157,6 +192,13 @@
                   onkeydown="handleRecallKey(event)"
                   oninput="autoResize(this)"
                 ></textarea>
+                <span id="recall-layer-wrap" style="display: none">
+                  <span class="team-select-wrap"><select class="team-select" id="recall-layer" onchange="onRecallLayerChange(this.value)" title="Search everywhere, or just one layer">
+                    <option value="" data-i18n="memories.allLayers">All layers</option>
+                    <option value="personal" data-i18n="memories.personalLayer">Personal</option>
+                    <option value="company" data-i18n="memories.sharedLayer">Shared</option>
+                  </select><i class="ti ti-chevron-down"></i></span>
+                </span>
                 <button class="send-btn" onclick="sendRecall()"><i class="ti ti-arrow-up"></i></button>
               </div>
             </div>
@@ -181,7 +223,26 @@
                   <option value="30" data-i18n="memories.last30">Last 30 days</option>
                   <option value="month" data-i18n="memories.thisMonth">This month</option>
                 </select>
+                <span id="layer-filter-wrap" style="display: none">
+                  <span class="team-select-wrap"><select class="team-select" id="layer-filter-recent" onchange="onLayerFilterChange(this.value)">
+                    <option value="" data-i18n="memories.allLayers">All layers</option>
+                    <option value="personal" data-i18n="memories.personalLayer">Personal</option>
+                    <option value="company" data-i18n="memories.sharedLayer">Shared</option>
+                  </select><i class="ti ti-chevron-down"></i></span>
+                </span>
+                <!-- Only on the shared layer: on the personal layer every row is
+                     yours, so "who shared this" would be a list of one. -->
+                <span id="actor-filter-wrap" style="display: none">
+                  <span class="team-select-wrap"><select class="team-select" id="actor-filter-recent" onchange="onActorFilterChange(this.value)" title="Show only what one person shared" data-i18n="memories.authorFilterTitle" data-i18n-attr="title">
+                    <option value="" data-i18n="memories.allAuthors">All authors</option>
+                  </select><i class="ti ti-chevron-down"></i></span>
+                </span>
               </div>
+              <!-- Selection is a mode, entered deliberately: a checkbox on every
+                   card would permanently reframe the screen people READ as an
+                   editing surface. Team brains only — renderBulkBar() in
+                   js/recent.js sets this display in both branches. -->
+              <button class="digest-btn" id="mem-select-btn" type="button" style="display: none" onclick="toggleSelectMode()" data-i18n="bulk.select">Select</button>
               <!-- This used to read "Knowledge / Events / Unsorted", which stopped
                    being true when the canvas moved to per-cluster colours from a
                    palette (graph-canvas.js). The canvas draws its own legend with
@@ -198,11 +259,33 @@
               </div>
             </div>
 
+            <!-- Only in selection mode, and only in team mode. Both branches are set on
+                 every render by renderBulkBar() in js/recent.js. -->
+            <div class="mem-bulk-bar" id="mem-bulk-bar" style="display: none">
+              <span class="mem-bulk-count" id="mem-bulk-count"></span>
+              <button class="digest-btn digest-btn--quiet" type="button" onclick="selectAllVisible()" data-i18n="bulk.selectAll">Select all</button>
+              <button class="digest-btn digest-btn--quiet" type="button" onclick="clearSelection()" data-i18n="bulk.clear">Clear</button>
+              <button class="digest-btn" id="mem-bulk-share" type="button" onclick="confirmBulkLayerMove('company')" data-i18n="bulk.shareAction">Share with team</button>
+              <button class="digest-btn" id="mem-bulk-private" type="button" onclick="confirmBulkLayerMove('personal')" data-i18n="bulk.privateAction">Make private</button>
+            </div>
+
+            <!-- The author lock, written by renderMemoriesCoach() in
+                 js/recent.js once a shared memory is in the loaded list.
+                 Empty and hidden otherwise, and on a solo brain. -->
+            <div class="coach-mark" id="coach-memories" hidden></div>
+
             <div id="recent-list">
               <div class="empty-state"><i class="ti ti-clock"></i><span data-i18n="memories.loading">Loading memories...</span></div>
             </div>
 
             <div class="mem-graph" id="mem-graph" hidden>
+              <span id="graph-layer-wrap" class="graph-layer" style="display: none">
+                <span class="team-select-wrap"><select class="team-select" id="graph-layer" onchange="onGraphLayerChange(this.value)" title="Show one layer, or both" data-i18n="graph.layerTitle" data-i18n-attr="title">
+                  <option value="" data-i18n="graph.layerAll">All layers</option>
+                  <option value="personal" data-i18n="graph.layerPersonal">Personal</option>
+                  <option value="company" data-i18n="graph.layerShared">Shared</option>
+                </select><i class="ti ti-chevron-down"></i></span>
+              </span>
               <canvas id="graph-canvas"></canvas>
               <div class="graph-empty" id="graph-empty" style="display: none" data-i18n="graph.empty">No connections yet — link memories, or let them auto-connect as you add more.</div>
               <!-- Floating over the canvas rather than in the bar: the bar is
@@ -215,22 +298,187 @@
               </div>
             </div>
           </div>
+
+          <!-- Team administration. Both nav entries above ship hidden; they
+               appear only once GET /team/members has answered 200, which is
+               both the admin check and the roster. A personal install never
+               sees this screen exist. -->
+          <div class="screen" id="screen-team">
+            <div class="mem-bar">
+              <h3 style="margin: 0; font-family: var(--font-serif); font-size: 15px; font-weight: 500;" data-i18n="team.title">Team</h3>
+            </div>
+
+            <!-- Last resort, not the member's screen. Reached only when NEITHER
+                 /team/members nor /team/roster will answer: signed out, offline,
+                 or a Worker older than /team/roster — in which case the copy is
+                 still literally true. The nav entries stay hidden in that state,
+                 so this is a terminal state rather than a destination. -->
+            <div class="empty-state" id="team-admins-only" style="display: none">
+              <i class="ti ti-shield-lock"></i>
+              <span data-i18n="team.adminsOnly">Only workspace admins can manage team members.</span>
+            </div>
+
+            <!-- The member's Team screen: the team's name, who else is on it,
+                 and where their own captures land. Filled by renderTeamMember()
+                 in js/team.js from GET /team/roster, which returns userId, name
+                 and role and nothing else. Read-only on purpose — every write on
+                 this screen is behind requireAdmin on the Worker, so a control
+                 here would be a control the server refuses. -->
+            <div id="team-member-view" style="display: none; flex: 1; overflow-y: auto; padding: 24px 28px;"></div>
+
+            <div id="team-body" style="display: none; flex: 1; overflow-y: auto; padding: 24px 28px;">
+              <div style="display: flex; flex-direction: column; gap: 24px;">
+                <!-- One-time token reveal. A section rather than a dialog: the
+                     token must stay on screen until it has been copied, and a
+                     modal invites dismissing it by accident. -->
+                <div id="team-token-reveal" style="display: none; padding: 14px 16px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
+                  <div class="digest-section-label"><i class="ti ti-key"></i> <span data-i18n="team.tokenTitle">One-time sign-in token</span> <span id="team-token-for"></span></div>
+                  <p class="digest-note" data-i18n="team.tokenWarning">Copy it now — you will not see this again.</p>
+                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <code id="team-token-value" style="font-size: 12px; word-break: break-all;"></code>
+                    <button class="digest-btn" id="team-copy-btn" type="button" onclick="copyTeamToken()" data-i18n="team.copy">Copy</button>
+                    <button class="digest-btn" id="team-invite-copy-btn" type="button" onclick="copyInviteMessage()" data-i18n="invite.copy">Copy invite message</button>
+                    <button class="digest-btn" id="team-invite-mail-btn" type="button" onclick="emailInvite()" style="display: none" data-i18n="invite.email">Email invite</button>
+                    <button class="digest-btn danger" type="button" onclick="closeTeamTokenReveal()" data-i18n="team.done">Done</button>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.nameLabel">Team name</div>
+                  <form class="team-name-row" id="team-name-form" onsubmit="submitTeamName(); return false">
+                    <i class="ti ti-users-group team-name-icon"></i>
+                    <input class="filter-field team-name-input" id="team-name-input" maxlength="60"
+                           placeholder="Team name" data-i18n="team.namePlaceholderTeam" data-i18n-attr="placeholder" autocomplete="off" />
+                    <button class="digest-btn" id="team-name-btn" type="submit" data-i18n="team.nameSave">Save</button>
+                  </form>
+                  <p class="digest-note team-name-note" data-i18n="team.nameHint">Everyone on the team sees this name.</p>
+                </div>
+
+                <!-- Team mode. The ONE team control a solo owner sees, and a
+                     deliberate exception to "no team UI on a solo brain": it is
+                     how a solo owner turns the feature on, so gating it on
+                     TEAM_MODE would hide it exactly when it is needed. It
+                     therefore ships VISIBLE, unlike #team-insights-row below.
+                     A real <input type="checkbox"> under a styled track, not a
+                     div with a click handler — it has to be focusable, Space-
+                     toggleable and announced as a checkbox. renderTeamMode()
+                     in js/team.js sets checked, disabled and the hint on every
+                     render, in both branches. -->
+                <div id="team-mode-row">
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.modeTitle">Team mode</div>
+                  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
+                    <i class="ti ti-users-group" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                    <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.modeLabel">Shared team layer</span>
+                    <label class="sb-switch">
+                      <input type="checkbox" class="sb-switch-input" id="team-mode-toggle" onchange="setTeamMode(this.checked)" />
+                      <span class="sb-switch-track"><span class="sb-switch-knob"></span></span>
+                    </label>
+                  </div>
+                  <!-- Filled by renderTeamMode(), never by data-i18n: its copy
+                       depends on how many people are on the team, and a
+                       data-i18n key here would overwrite that on every locale
+                       change. -->
+                  <p class="digest-note" id="team-mode-hint" style="margin-top: 8px;"></p>
+                </div>
+
+                <div>
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.membersLabel">Members</div>
+                  <!-- Org-wide capture default. Its own pill, label and control
+                       on one centered line — this was the cramped pair. -->
+                  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
+                    <i class="ti ti-eye" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                    <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.orgDefaultLabel">New captures default to</span>
+                    <span class="team-select-wrap"><select class="team-select" id="team-org-default" onchange="setTeamOrgDefault(this.value)" title="Org-wide default; members with their own override ignore this">
+                      <option value="personal" data-i18n="team.sharePersonal">Personal (private)</option>
+                      <option value="company" data-i18n="team.shareCompany">Company (shared)</option>
+                    </select><i class="ti ti-chevron-down"></i></span>
+                  </div>
+                  <!-- Team brains only. Being inside #team-body is NOT a gate:
+                       this deployment's AUTH_TOKEN hashes into a users row with
+                       role 'admin', so a solo owner's GET /team/members answers
+                       200 and the panel opens for them exactly as it does for a
+                       team admin. Ships hidden; maybeRevealTeamInsights() in
+                       js/team.js sets this display in both branches on every
+                       render. The hint is inside the wrapper too — it is the
+                       half that says "everyone's review queue" out loud. -->
+                  <div id="team-insights-row" style="display: none">
+                    <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
+                      <i class="ti ti-bulb" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
+                      <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.insightsLabel">Weekly team insights</span>
+                      <span class="team-select-wrap"><select class="team-select" id="team-insights" onchange="setTeamInsights(this.value)">
+                        <option value="off" data-i18n="team.insightsOff">Off</option>
+                        <option value="on" data-i18n="team.insightsOn">On</option>
+                      </select><i class="ti ti-chevron-down"></i></span>
+                    </div>
+                    <p class="digest-note" data-i18n="team.insightsHint">When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone's review queue.</p>
+                  </div>
+                  <div id="team-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                </div>
+
+                <div>
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.addTitle">Add member</div>
+                  <form id="team-add-form" onsubmit="submitNewMember(); return false">
+                    <div class="filter-inner" style="flex-wrap: wrap;">
+                      <input class="filter-field" id="team-add-name" placeholder="Name" data-i18n="team.namePlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+                      <input class="filter-field" id="team-add-email" placeholder="Email (optional)" data-i18n="team.emailPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+                      <select class="filter-field" id="team-add-role" style="flex: 0 1 auto;">
+                        <option value="member" data-i18n="team.roleMember">Member</option>
+                        <option value="admin" data-i18n="team.roleAdmin">Admin</option>
+                      </select>
+                      <button class="digest-btn" id="team-add-btn" type="submit" data-i18n="team.addAction">Add member</button>
+                    </div>
+                    <p class="integration-error" id="team-add-error" style="display: none; margin-top: 8px;"></p>
+                  </form>
+                </div>
+
+                <!-- Recent activity. Admin-only by construction: this whole panel is
+                     #team-body, which only renders when GET /team/members answered 200.
+                     That answers "not a member"; it does not answer "not solo" —
+                     a solo owner holds AUTH_TOKEN, which is an admin row, so the
+                     panel opens for them too. Hence its own display:none:
+                     switchTab('team') shows the panel synchronously and only
+                     calls maybeRevealActivity (js/activity.js, both branches)
+                     once the roster probe answers, so without this the section
+                     and its Export CSV button are on screen for that whole round
+                     trip — and for good if the probe never settles. -->
+                <div id="team-activity" style="display: none">
+                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="activity.title">Recent activity</div>
+                  <p class="digest-note" data-i18n="activity.intro">Who changed what, newest first. Kept as a record — nothing here can be edited.</p>
+                  <div id="activity-list"></div>
+                  <div class="filter-inner" style="margin-top: 10px;">
+                    <button class="digest-btn" id="activity-export" type="button" onclick="exportActivityCsv(this)" data-i18n="activity.exportCsv">Export CSV</button>
+                    <button class="digest-btn" id="activity-more" type="button" hidden onclick="loadMoreActivity(this)" data-i18n="activity.more">Show more</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div id="navbar">
           <button class="nav-tab active" id="tab-home" onclick="switchTab('home')"><i class="ti ti-home"></i><span data-i18n="nav.home">Home</span></button>
           <button class="nav-tab" id="tab-memories" onclick="switchTab('memories')"><i class="ti ti-stack-2"></i><span data-i18n="nav.memories">Memories</span></button>
+          <button class="nav-tab" id="tab-team" onclick="switchTab('team')" style="display: none"><i class="ti ti-users-group"></i><span data-i18n="nav.team">Team</span></button>
         </div>
       </div>
     </div>
 
-    <div id="confirm-dialog">
+    <!-- The one destructive-action sheet, for six callers. It replaced native
+         confirm(), which was Escape-dismissable and announced as a dialog for
+         free; those two properties are restored here and in confirm-sheet.js
+         rather than lost in the swap. tabindex="-1" so opening can move focus
+         onto it, which is what makes the title and body get read out. -->
+    <div id="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body" tabindex="-1">
       <div class="confirm-sheet">
-        <h3 data-i18n="memories.confirmTitle">Forget this memory?</h3>
-        <p data-i18n="memories.confirmBody">This can't be undone. The memory will be removed from your brain.</p>
+        <h3 id="confirm-title" data-i18n="memories.confirmTitle">Forget this memory?</h3>
+        <p id="confirm-body" data-i18n="memories.confirmBody">This can't be undone. The memory will be removed from your brain.</p>
+        <label class="confirm-check" id="confirm-check-row" style="display: none">
+          <input type="checkbox" id="confirm-checkbox" />
+          <span id="confirm-check-label"></span>
+        </label>
         <div class="confirm-actions">
-          <button class="btn-cancel" onclick="closeConfirm()" data-i18n="memories.cancel">Cancel</button>
-          <button class="btn-delete" onclick="confirmForget()" data-i18n="memories.forget">Forget</button>
+          <button class="btn-cancel" id="confirm-cancel-btn" onclick="closeConfirm()" data-i18n="memories.cancel">Cancel</button>
+          <button class="btn-delete" id="confirm-accept-btn" onclick="runConfirmAction()" data-i18n="memories.forget">Forget</button>
         </div>
       </div>
     </div>
@@ -284,6 +532,7 @@
           <div class="view-content" id="view-content-text"></div>
           <div class="view-tags" id="view-tags-container"></div>
           <div class="view-brain" id="view-brain" style="display: none"></div>
+          <div class="view-timeline" id="view-timeline" style="display: none"></div>
           <div class="view-related" id="view-related" style="display: none"></div>
         </div>
         <div class="view-actions">
@@ -330,6 +579,14 @@
         <div class="menu-group">
           <div class="menu-group-label" data-i18n="menu.groupConnections">Connections</div>
           <button class="menu-item" onclick="openIntegrations()"><i class="ti ti-plug"></i> <span data-i18n="menu.integrations">Integrations</span></button>
+        </div>
+
+        <div class="menu-group" id="profile-group">
+          <div class="menu-group-label" data-i18n="team.profileTitle">Your display name</div>
+          <div style="display: flex; gap: 8px; padding: 0 4px 8px;">
+            <input class="filter-field" id="profile-name" autocomplete="name" data-i18n="team.namePlaceholder" data-i18n-attr="placeholder" placeholder="Name" />
+            <button class="digest-btn" type="button" onclick="saveProfileName()" data-i18n="team.profileSave">Save name</button>
+          </div>
         </div>
 
         <div class="menu-group">
@@ -403,7 +660,7 @@
           <h3 style="margin-bottom: 0" data-i18n="stale.title">May be out of date</h3>
           <button class="btn-close-icon" onclick="closeStaleSheet()"><i class="ti ti-x"></i></button>
         </div>
-        <p class="digest-note" id="stale-intro" data-i18n="stale.intro">These were true when you wrote them and carry a claim that ages. Update one to confirm it, add to it, or forget it.</p>
+        <p class="digest-note" id="stale-intro" data-i18n="stale.intro">These were true when you wrote them and carry a claim that ages. Update one to confirm it, add to it, keep it as still true, or forget it.</p>
         <div id="stale-list"><p class="digest-note" data-i18n="integrations.loading">Loading…</p></div>
         <button class="digest-more" id="stale-more" hidden onclick="loadMoreStale(this)"></button>
       </div>
@@ -413,6 +670,9 @@
     <script src="utils.js"></script>
     <script src="credits.js"></script>
     <script src="js/state.js"></script>
+    <script src="js/toast.js"></script>
+    <script src="js/coach.js"></script>
+    <script src="js/confirm-sheet.js"></script>
     <script src="js/api.js"></script>
     <script src="js/theme.js"></script>
     <script src="js/ui-chat.js"></script>
@@ -424,6 +684,8 @@
     <script src="js/patterns.js"></script>
     <script src="js/stale.js"></script>
     <script src="js/integrations.js"></script>
+    <script src="js/team.js"></script>
+    <script src="js/activity.js"></script>
     <script src="js/graph-canvas.js"></script>
     <script src="js/brief.js"></script>
     <script src="js/home.js"></script>

@@ -10,8 +10,16 @@ import {
   detailCards,
   emailButton,
   h,
+  icon,
+  teamCard,
 } from "./shared";
 import { integrationRows, toolRows } from "./shared";
+import {
+  canRotatePassword,
+  canUpdateWorker,
+  legacyWorkerFromDetailsProbe,
+  roleFromDetailsProbe,
+} from "./connection-role";
 import { initI18n, settingsSection, t } from "./i18n";
 import "./style.css";
 
@@ -39,6 +47,42 @@ async function boot() {
     renderNotSetup();
     return;
   }
+  /**
+   * Who this window is rendering for.
+   *
+   * Derived on every open, never stored: a member promoted to admin in the
+   * dashboard next month must not be looking at a card this app wrote on the
+   * day they installed it.
+   *
+   * This used to be a hardcoded constant naming the owner, on the reasoning
+   * that the webview never handles the token — it stays in the Rust core — so
+   * this window had nothing to call `/team/me` with. It now has:
+   * `connection_role` asks on its behalf. The constant meant every team member
+   * who opened this window from the menu or the tray read "You're signed in as
+   * this brain's owner-admin" and was offered a "Change my password" button
+   * that walks them through a Cloudflare sign-in and inventing a password
+   * before failing with ErrorWrongCfAccount — one click from a setup screen
+   * that had just called them a member.
+   *
+   * A solo brain asks nothing at all: `teamMode` comes from the keychain, and
+   * `roleFromDetailsProbe` short-circuits on it before any request. Any failure
+   * — the command erroring, an unreachable brain, a Worker too old for the
+   * route — is a `null` probe, which resolves to "member": the least-privileged
+   * answer, because the cost of under-claiming here is a hidden button and the
+   * cost of over-claiming is the sentence above.
+   */
+  const roleProbe =
+    details.teamMode ? await invoke<unknown>("connection_role").catch(() => null) : null;
+  const connectionRole = roleFromDetailsProbe(details.teamMode, roleProbe);
+  /**
+   * Whether the brain is too old to say who is asking.
+   *
+   * Read off the SAME probe, one round trip. It unlocks the Worker-update
+   * button and nothing else — see `canUpdateWorker` for why that one route, and
+   * why the password card below deliberately does not get the same treatment.
+   */
+  const legacyWorker = legacyWorkerFromDetailsProbe(roleProbe);
+
   const tools = await invoke<ToolStatus>("detect_tools");
   const update = await invoke<{ availableVersion: string } | null>(
     "worker_update_available",
@@ -87,10 +131,16 @@ async function boot() {
         h("h2", { class: "pane-title" }, [t("details.navConnection")]),
         h("p", { class: "pane-desc" }, [t("details.lede")]),
         ...detailCards(details),
-        // After both URL cards, never between them: "Copy both" copies exactly
-        // those two values, so anything inserted between them makes its label
-        // wrong.
-        passwordCard(rotationBlocked),
+        // Team setups only, and before the password card: it is what the owner
+        // is expected to do next. "Copy both" below still copies exactly the
+        // two URL cards above, so nothing lands between them.
+        ...(details.teamMode ? [teamCard(connectionRole)] : []),
+        // Absent, not disabled, for anyone who cannot rotate. `passwordCard`'s
+        // other branch already renders a greyed-out card with an escape hatch,
+        // and reusing that shape for a member would say "not right now" about
+        // something that is not theirs to do at all — and then dead-end them at
+        // a Cloudflare sign-in for an account they have no login to.
+        ...(canRotatePassword(connectionRole) ? [passwordCard(rotationBlocked)] : []),
         h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
         disconnectSection(),
       ];
@@ -111,7 +161,9 @@ async function boot() {
     }
     return [
       h("h2", { class: "pane-title" }, [t("details.navComputer")]),
-      ...(update ? [updateCard(update.availableVersion)] : []),
+      ...(update
+        ? [updateCard(update.availableVersion, canUpdateWorker(connectionRole, legacyWorker), legacyWorker)]
+        : []),
       settingsSection(() => render()),
       logoutSection(),
     ];
@@ -141,20 +193,65 @@ async function boot() {
       rail.append(button);
     }
 
+    // The pane's own heading, not the section wrapper: focusing it is what
+    // makes VoiceOver announce "Connection" → "AI tools" as a real navigation
+    // rather than leaving focus on the rail button that was just clicked (#P0-3).
+    // Every `paneFor` branch returns its `<h2 class="pane-title">` first, by
+    // construction, so this needs no per-branch plumbing to find it.
+    const paneEls = paneFor(active);
+    const heading = paneEls[0] as HTMLElement;
+    heading.setAttribute("tabindex", "-1");
     app.replaceChildren(
-      h("div", { class: "panel" }, [rail, h("section", { class: "pane" }, paneFor(active))]),
+      h("div", { class: "panel" }, [rail, h("section", { class: "pane" }, paneEls)]),
     );
+    heading.focus({ preventScroll: true });
   };
 
   render();
 }
 
-function updateCard(availableVersion: string): HTMLElement {
+/**
+ * Shown, but not always actionable.
+ *
+ * The update redeploys the Worker inside the Cloudflare account it lives in, so
+ * only the owner can complete it — `start_worker_update` matches the brain's
+ * workers.dev subdomain against the signed-in session and refuses anyone else.
+ * The card still renders for everybody on purpose: a member whose brain is
+ * behind sees features they have read about and do not have, and the honest
+ * answer is to say why and who can fix it. What they do not get is a button
+ * that walks them through a Cloudflare sign-in before failing.
+ *
+ * `ownerUnconfirmed` is the third case: the brain is too old to say who is
+ * asking, so the button is offered to whoever opened this window — otherwise
+ * the brain could never be updated to the version that can say (see
+ * `canUpdateWorker`). The copy has to be straight about that. Being offered a
+ * button because the app cannot tell who you are is a different sentence from
+ * being offered it because it knows you are the owner, and printing the second
+ * one would be the app guessing out loud.
+ */
+function updateCard(
+  availableVersion: string,
+  mayUpdate: boolean,
+  ownerUnconfirmed: boolean,
+): HTMLElement {
+  const label = h("div", { class: "url-label" }, [
+    t("details.updateLabel", { version: availableVersion }),
+  ]);
+  if (!mayUpdate) {
+    // Prose, not a disabled button: a greyed-out control reads as "not right
+    // now" about something that is not theirs to do at all.
+    return h("div", { class: "card card--feature" }, [
+      label,
+      h("div", { class: "url-desc" }, [t("details.updateDescOther")]),
+    ]);
+  }
   const button = h("button", { class: "btn-primary" }, [t("details.updateButton")]);
   button.addEventListener("click", () => void invoke("begin_worker_update"));
-  return h("div", { class: "card", style: "border-color: var(--accent);" }, [
-    h("div", { class: "url-label" }, [t("details.updateLabel", { version: availableVersion })]),
-    h("div", { class: "url-desc" }, [t("details.updateDesc")]),
+  return h("div", { class: "card card--feature" }, [
+    label,
+    h("div", { class: "url-desc" }, [
+      t(ownerUnconfirmed ? "details.updateDescLegacy" : "details.updateDesc"),
+    ]),
     button,
   ]);
 }
@@ -172,7 +269,7 @@ function passwordCard(blocked: boolean): HTMLElement {
   if (!blocked) {
     const change = h("button", { class: "btn-secondary" }, [t("details.passwordButton")]);
     change.addEventListener("click", () => void invoke("begin_password_change"));
-    card.append(h("div", { class: "row-actions", style: "justify-content:flex-end" }, [change]));
+    card.append(h("div", { class: "row-actions row-actions--end" }, [change]));
     return card;
   }
 
@@ -184,14 +281,14 @@ function passwordCard(blocked: boolean): HTMLElement {
   settings.addEventListener("click", () => void invoke("open_settings_window"));
   card.append(
     h("div", { class: "notice" }, [
-      "⚠️",
+      icon("alert"),
       h("div", {}, [
         h("div", { class: "url-label" }, [t("changePassword.blockedTitle")]),
         h("div", {}, [t("changePassword.blockedBody")]),
-        h("div", { style: "margin-top:8px" }, [t("changePassword.blockedEscape")]),
+        h("div", { class: "notice-escape" }, [t("changePassword.blockedEscape")]),
       ]),
     ]),
-    h("div", { class: "row-actions", style: "justify-content:flex-end" }, [settings]),
+    h("div", { class: "row-actions row-actions--end" }, [settings]),
   );
   return card;
 }

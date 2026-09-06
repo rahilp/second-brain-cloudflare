@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { resolveIdentityFromToken } from "../lib/identity";
 import { authorizeErrorHint, authorizeErrorHtml, loginHtml } from "./pages";
 
 export async function handleOAuthAuthorize(request: Request, env: Env): Promise<Response> {
@@ -17,16 +18,24 @@ export async function handleOAuthAuthorize(request: Request, env: Env): Promise<
   }
   if (request.method === "POST") {
     const form = await request.formData();
-    if (form.get("password") !== env.AUTH_TOKEN) {
-      return new Response(loginHtml("Invalid token"), {
-        status: 401, headers: { "Content-Type": "text/html" },
-      });
+    const password = String(form.get("password") ?? "").trim();
+    let grantUserId = "owner";
+    let propsUserId = "owner";
+    if (password !== env.AUTH_TOKEN) {
+      const identity = await resolveIdentityFromToken(password, env);
+      if (!identity) {
+        return new Response(loginHtml("Invalid token"), {
+          status: 401, headers: { "Content-Type": "text/html" },
+        });
+      }
+      grantUserId = identity.userId;
+      propsUserId = identity.userId;
     }
     const { redirectTo } = await (env as any).OAUTH_PROVIDER.completeAuthorization({
       request: oauthReq,
-      userId: "owner",
+      userId: grantUserId,
       scope: oauthReq.scope,
-      props: { userId: "owner" },
+      props: { userId: propsUserId },
     });
     return Response.redirect(redirectTo, 302);
   }

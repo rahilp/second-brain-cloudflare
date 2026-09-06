@@ -3,10 +3,13 @@
 // tokens stay in the Rust core.
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
+import { teamCardKeys, type ConnectionRole } from "./connection-role";
 
 export interface ConnectionDetails {
   workerUrl: string;
   mcpUrl: string;
+  /** True only when setup provisioned in team mode; absent reads as personal. */
+  teamMode: boolean;
 }
 
 export interface ToolStatus {
@@ -30,6 +33,34 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   }
   el.append(...children);
   return el;
+}
+
+import { ICON_PATHS, type IconName } from "./icons";
+// Re-exported: `shared.ts` stays the import site for everything icon-related.
+export type { IconName };
+
+/**
+ * One inline SVG, sized by class and coloured by whatever it sits in.
+ *
+ * Always `aria-hidden`: every icon in this app sits beside the sentence it
+ * illustrates, so announcing it would read the same idea twice — and the two
+ * places where the mark carries state on its own (the checklist rows) already
+ * publish that state as a live-region sentence of their own.
+ */
+export function icon(name: IconName, cls = "icon"): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  // Keeps the svg out of the tab order in the browsers that still put it in.
+  svg.setAttribute("focusable", "false");
+  svg.setAttribute("class", cls);
+  svg.innerHTML = ICON_PATHS[name];
+  return svg;
 }
 
 export async function copyText(text: string, button?: HTMLButtonElement) {
@@ -71,7 +102,11 @@ export function urlCard(label: string, desc: string, value: string): HTMLElement
 export function secretCard(label: string, value: string): HTMLElement {
   const copyBtn = h("button", { class: "btn-secondary" }, [t("common.copy")]);
   copyBtn.addEventListener("click", () => void copyText(value, copyBtn));
-  return h("div", { class: "card url-card" }, [
+  // The feature edge is not decoration here: on every screen this card appears
+  // on, it is the only thing that cannot be recovered if the window is closed,
+  // and it was previously indistinguishable from the two address cards beside
+  // it — which are both recoverable and not secret.
+  return h("div", { class: "card url-card card--feature" }, [
     h("div", { class: "url-label" }, [label]),
     h("div", { class: "url-line" }, [h("div", { class: "url-value" }, [value]), copyBtn]),
   ]);
@@ -83,6 +118,32 @@ export function detailCards(details: ConnectionDetails): HTMLElement[] {
     urlCard(t("details.addressLabel"), t("details.addressDesc"), details.workerUrl),
     urlCard(t("details.mcpLabel"), t("details.mcpDesc"), details.mcpUrl),
   ];
+}
+
+/// Shown when setup chose team mode — on the setup's last screen and in the
+/// Connection pane. Pure copy: what this role can do that the others cannot,
+/// and where to do it. Administration itself lives in the dashboard's Team
+/// panel, so there is nothing to invoke here.
+///
+/// The role is a parameter rather than something this function works out,
+/// because it is derived from a probe the caller makes and must never be
+/// cached: a member promoted to admin next month has to see the admin card the
+/// next time they connect, not the one written on install day.
+export function teamCard(role: ConnectionRole): HTMLElement {
+  const keys = teamCardKeys(role);
+  // `connection-role.ts` imports nothing — that is what makes it testable
+  // outside a webview — so it cannot name `t`'s key type and returns plain
+  // strings. Both keys are `details.*` by construction, and
+  // test/unit/connection-role.test.ts asserts that prefix on all three roles;
+  // the catalogs themselves are checked by test/unit/installer-i18n-parity.
+  const key = (path: string) => path as `details.${string}`;
+  // Both call sites deliberately place this above the address cards because it
+  // is what the reader is expected to act on; the feature edge makes that
+  // ordering visible instead of leaving it to be inferred from position.
+  return h("div", { class: "card url-card card--feature" }, [
+    h("div", { class: "url-label" }, [t(key(keys.label))]),
+    h("div", { class: "url-desc" }, [t(key(keys.body))]),
+  ]);
 }
 
 export function copyBothButton(details: ConnectionDetails): HTMLButtonElement {
@@ -118,7 +179,11 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
     ]);
     const actions = h("div", { class: "row-actions" });
     if (installed) {
-      const btn = h("button", { class: "btn-secondary" }, [t("common.connect")]);
+      const btn = h(
+        "button",
+        { class: "btn-secondary", "aria-label": `${t("common.connect")} ${title}` },
+        [t("common.connect")],
+      );
       btn.addEventListener("click", async () => {
         btn.disabled = true;
         btn.textContent = t("common.connecting");
@@ -134,7 +199,11 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
       });
       actions.append(btn);
     } else {
-      const copy = h("button", { class: "btn-ghost" }, [t("common.copyLink")]);
+      const copy = h(
+        "button",
+        { class: "btn-ghost", "aria-label": `${t("common.copyLink")} ${title}` },
+        [t("common.copyLink")],
+      );
       copy.addEventListener("click", () => void copyText(details.mcpUrl, copy));
       actions.append(copy);
     }
@@ -151,9 +220,14 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
   };
 
   const cliRow = () => {
+    const cliTitle = t("tools.cliTitle");
     const sub = h("div", { class: "row-sub" }, [t("tools.cliSub")]);
     const actions = h("div", { class: "row-actions" });
-    const setupBtn = h("button", { class: "btn-secondary" }, [t("tools.setupCli")]);
+    const setupBtn = h(
+      "button",
+      { class: "btn-secondary", "aria-label": `${t("tools.setupCli")} ${cliTitle}` },
+      [t("tools.setupCli")],
+    );
     actions.append(setupBtn);
 
     void (async () => {
@@ -210,15 +284,23 @@ export function toolRows(details: ConnectionDetails, tools: ToolStatus): HTMLEle
     })();
 
     return h("div", { class: "row" }, [
-      h("div", {}, [h("div", { class: "row-title" }, [t("tools.cliTitle")]), sub]),
+      h("div", {}, [h("div", { class: "row-title" }, [cliTitle]), sub]),
       actions,
     ]);
   };
 
   const webTool = (title: string, settingsUrl: string) => {
-    const copy = h("button", { class: "btn-secondary" }, [t("common.copyLink")]);
+    const copy = h(
+      "button",
+      { class: "btn-secondary", "aria-label": `${t("common.copyLink")} ${title}` },
+      [t("common.copyLink")],
+    );
     copy.addEventListener("click", () => void copyText(details.mcpUrl, copy));
-    const open = h("button", { class: "btn-ghost" }, [t("common.openSettings")]);
+    const open = h(
+      "button",
+      { class: "btn-ghost", "aria-label": `${t("common.openSettings")} ${title}` },
+      [t("common.openSettings")],
+    );
     open.addEventListener("click", () => void invoke("open_external", { url: settingsUrl }));
     return h("div", { class: "row" }, [
       h("div", {}, [

@@ -26,7 +26,7 @@ i18nCtx.initI18n("en");
 (globalThis as any).localeTag = i18nCtx.localeTag;
 (globalThis as any).getLocale = i18nCtx.getLocale;
 
-const { parseRecallResult, escHtml, escAttr, toDateStr, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner } = require("../../public/utils.js");
+const { parseRecallResult, escHtml, escAttr, toDateStr, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, csvCell, csvDocument, layerChipHtml } = require("../../public/utils.js");
 
 // Minimal fake document so the banner DOM glue can be tested in the node
 // environment without jsdom. appendChild registers the element by id so a later
@@ -371,5 +371,220 @@ describe("syncVectorizeBanner", () => {
     expect(res).toBeNull();
     expect(doc.getElementById("vectorize-banner")).toBeNull();
     expect(doc.body.style.paddingTop).toBe("");
+  });
+});
+
+describe("workspaceFilterChip", () => {
+  it("returns null when supported is true (filtering healthy)", () => {
+    expect(workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: true, degradedQueries: 0, latchedAt: null } } })).toBeNull();
+  });
+
+  it("returns null when supported is null (fresh isolate, never queried)", () => {
+    expect(workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: null, degradedQueries: 0, latchedAt: null } } })).toBeNull();
+  });
+
+  it("returns null when health, vectorize, or workspaceFilter is absent (no false alarm)", () => {
+    expect(workspaceFilterChip(null)).toBeNull();
+    expect(workspaceFilterChip(undefined)).toBeNull();
+    expect(workspaceFilterChip({})).toBeNull();
+    expect(workspaceFilterChip({ vectorize: {} })).toBeNull();
+  });
+
+  it("returns a chip with a title when supported is false (degraded) on a TEAM brain", () => {
+    const chip = workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } });
+    expect(chip).not.toBeNull();
+    expect(chip.title).toBeTruthy();
+    // Never implies data leakage — every hydration stays scoped at the SQL
+    // layer regardless of filter support.
+    expect(chip.title.toLowerCase()).not.toContain("leak");
+  });
+
+  it("returns null when supported is false but the brain is SOLO (team: false) — no layer UI exists to explain", () => {
+    expect(workspaceFilterChip({ team: false, vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } })).toBeNull();
+  });
+
+  it("returns null when supported is false and `team` is absent entirely (same as false)", () => {
+    expect(workspaceFilterChip({ vectorize: { workspaceFilter: { supported: false, degradedQueries: 3, latchedAt: 123 } } })).toBeNull();
+  });
+});
+
+describe("syncWorkspaceFilterChip", () => {
+  it("mounts the chip when given one, and does nothing (no element) when null", () => {
+    const doc = makeFakeDoc();
+    const chip = workspaceFilterChip({ team: true, vectorize: { workspaceFilter: { supported: false, degradedQueries: 1, latchedAt: null } } });
+    const el = syncWorkspaceFilterChip(doc, chip, 0);
+    expect(el).not.toBeNull();
+    expect(doc.getElementById("vectorize-filter-chip")).toBe(el);
+    expect(el.textContent).toBeTruthy();
+
+    const doc2 = makeFakeDoc();
+    const notDegraded = workspaceFilterChip({ vectorize: { workspaceFilter: { supported: true, degradedQueries: 0, latchedAt: null } } });
+    const el2 = syncWorkspaceFilterChip(doc2, notDegraded, 0);
+    expect(el2).toBeNull();
+    expect(doc2.getElementById("vectorize-filter-chip")).toBeNull();
+
+    const doc3 = makeFakeDoc();
+    const nullState = workspaceFilterChip({ vectorize: { workspaceFilter: { supported: null, degradedQueries: 0, latchedAt: null } } });
+    const el3 = syncWorkspaceFilterChip(doc3, nullState, 0);
+    expect(el3).toBeNull();
+    expect(doc3.getElementById("vectorize-filter-chip")).toBeNull();
+  });
+
+  it("stacks below whatever offsetTop it is given, so it never overlaps the vectorize banner", () => {
+    const doc = makeFakeDoc();
+    const chip = { title: "degraded" };
+    const el = syncWorkspaceFilterChip(doc, chip, 24);
+    expect(el.style.top).toBe("24px");
+  });
+
+  it("removes the chip and clears the body offset when chip is null", () => {
+    const doc = makeFakeDoc();
+    syncWorkspaceFilterChip(doc, { title: "degraded" }, 0);
+    expect(doc.getElementById("vectorize-filter-chip")).not.toBeNull();
+    const res = syncWorkspaceFilterChip(doc, null, 0);
+    expect(res).toBeNull();
+    expect(doc.getElementById("vectorize-filter-chip")).toBeNull();
+    expect(doc.body.style.paddingTop).toBe("");
+  });
+});
+
+/**
+ * The CSV primitives behind the activity export.
+ *
+ * Two properties are worth pinning. RFC 4180 quoting, which is what makes a
+ * comma or a newline inside a member's name survive the trip; and the leading
+ * apostrophe on a cell that starts =, +, - or @, which is not about CSV at all
+ * — those cells are FORMULAS to Excel, Numbers and Sheets, and this file is an
+ * audit log full of names and memory titles that people type.
+ */
+describe("csvCell", () => {
+  it("always quotes, and doubles an internal quote", () => {
+    expect(csvCell('a"b')).toBe('"a""b"');
+    expect(csvCell("plain")).toBe('"plain"');
+  });
+
+  it("carries a comma and a newline through intact", () => {
+    expect(csvCell("a,b")).toBe('"a,b"');
+    expect(csvCell("a\nb")).toBe('"a\nb"');
+  });
+
+  it("renders nothing as an empty cell, but zero as zero", () => {
+    expect(csvCell(null)).toBe('""');
+    expect(csvCell(undefined)).toBe('""');
+    // The falsy trap: 0 is a value, not an absence.
+    expect(csvCell(0)).toBe('"0"');
+    expect(csvCell(false)).toBe('"false"');
+    expect(csvCell("")).toBe('""');
+  });
+
+  it("defuses every cell a spreadsheet would run as a formula", () => {
+    expect(csvCell("=1+1")).toBe("\"'=1+1\"");
+    expect(csvCell("+1")).toBe("\"'+1\"");
+    expect(csvCell("-1")).toBe("\"'-1\"");
+    expect(csvCell("@SUM(A1)")).toBe("\"'@SUM(A1)\"");
+    expect(csvCell("\tcmd")).toBe("\"'\tcmd\"");
+    expect(csvCell("\rcmd")).toBe("\"'\rcmd\"");
+    // The real one: a memory someone titled to attack whoever opens the export.
+    expect(csvCell('=cmd|\' /C calc\'!A0')).toBe("\"'=cmd|' /C calc'!A0\"");
+  });
+
+  it("leaves a cell that merely contains one of those characters alone", () => {
+    expect(csvCell("a=b")).toBe('"a=b"');
+    expect(csvCell("Anne-Marie")).toBe('"Anne-Marie"');
+  });
+
+  it("defuses a formula that hides behind leading whitespace", () => {
+    // OWASP's set is about the FIRST character, and a spreadsheet that trims
+    // before it parses sees " =1+1" as the formula. Belt and braces on the one
+    // file the person with the most access opens.
+    expect(csvCell(" =1+1")).toBe("\"' =1+1\"");
+    expect(csvCell("  +1")).toBe("\"'  +1\"");
+    expect(csvCell("\n=1+1")).toBe("\"'\n=1+1\"");
+    expect(csvCell("\t @SUM(A1)")).toBe("\"'\t @SUM(A1)\"");
+    expect(csvCell(" -1")).toBe("\"' -1\"");
+  });
+
+  it("still leaves leading whitespace that leads nowhere alone", () => {
+    // Only whitespace-then-formula is guarded. An indented name is a name.
+    expect(csvCell(" Anne-Marie")).toBe('" Anne-Marie"');
+    expect(csvCell("  hello")).toBe('"  hello"');
+    expect(csvCell("   ")).toBe('"   "');
+    expect(csvCell("\n")).toBe('"\n"');
+  });
+});
+
+describe("csvDocument", () => {
+  it("puts the header first and separates rows with CRLF, per RFC 4180", () => {
+    expect(csvDocument(["a"], [["b"]])).toBe('"a"\r\n"b"');
+  });
+
+  it("keeps the columns in the order it was given and the rows in theirs", () => {
+    const doc = csvDocument(
+      ["when", "who"],
+      [
+        ["2026-08-01", "Ada"],
+        ["2026-08-02", "Bob"],
+      ],
+    );
+    expect(doc).toBe('"when","who"\r\n"2026-08-01","Ada"\r\n"2026-08-02","Bob"');
+  });
+
+  it("is a header alone when there are no rows", () => {
+    expect(csvDocument(["a", "b"], [])).toBe('"a","b"');
+  });
+});
+
+/**
+ * The "shared" badge, which is now ONE implementation with two callers.
+ *
+ * `makeRecentCard` built this expression inline and the review queue built
+ * nothing, so a member ruling on a pattern could not tell their own
+ * half-formed thought from something the whole team can read. The fix is not a
+ * second chip that looks like the first — it is this function, called from
+ * both, so a change to it changes both surfaces by construction.
+ *
+ * `teamMode` is a parameter and not the global, for the reason
+ * `workspaceFilterChip` takes `health`: this file loads before `api.js`
+ * declares TEAM_MODE, and a pure helper that reads a binding from three
+ * modules downstream is only pure by accident. It is also what lets these
+ * assertions call it directly instead of standing up a whole sandbox.
+ */
+describe("layerChipHtml", () => {
+  it("names the author on a shared row", () => {
+    const html = layerChipHtml({ workspace: "company", actor_name: "Second Brain" }, true);
+    expect(html).toContain("tag-chip--shared");
+    expect(html).toContain("shared · Second Brain");
+    expect(html).toContain("ti-users-group");
+    expect(html).toContain("Visible to the whole team");
+  });
+
+  it("renders the bare chip when there is no author, and never the word null", () => {
+    const html = layerChipHtml({ workspace: "company", actor_name: null }, true);
+    expect(html).toContain("tag-chip--shared");
+    expect(html).toContain("</i> shared</span>");
+    expect(html).not.toContain("null");
+    expect(html).not.toContain("·");
+  });
+
+  it("stays silent on a personal row, a system row, a legacy row, no row at all, and a solo brain", () => {
+    // Five branches, five assertions. The last is the one that matters most:
+    // a helper relying only on the DATA guard would badge a solo brain the day
+    // someone gave one of its rows a company workspace. The row projection
+    // emits `workspace` on every row, so all of these arrive in practice —
+    // "system" is what the rows nobody authored surface as, and a legacy row
+    // whose column was never backfilled arrives with the empty string.
+    expect(layerChipHtml({ workspace: "personal", actor_name: "Second Brain" }, true)).toBe("");
+    expect(layerChipHtml({ workspace: "system", actor_name: "Second Brain" }, true)).toBe("");
+    expect(layerChipHtml({ workspace: "", actor_name: "Second Brain" }, true)).toBe("");
+    expect(layerChipHtml(null, true)).toBe("");
+    expect(layerChipHtml({ workspace: "company", actor_name: "Second Brain" }, false)).toBe("");
+  });
+
+  it("escapes an author name in both the text and the title", () => {
+    const html = layerChipHtml({ workspace: "company", actor_name: "<script>" }, true);
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    // And the title attribute is still a single well-formed attribute.
+    expect(html).toContain('title="Visible to the whole team');
   });
 });

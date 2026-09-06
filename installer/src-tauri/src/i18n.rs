@@ -165,6 +165,13 @@ pub enum Key {
     ErrorRotateNeedsHttps,
     ErrorRotateNotConfirmed,
     ErrorRotateSecureStore,
+    ErrorNeedsHttps,
+    GuardExistingBrain,
+    GuardNameConflict,
+    ErrorInvalidLocale,
+    ResourceKindMemoryStorage,
+    ResourceKindSmartSearch,
+    ResourceKindWebApp,
 }
 
 pub fn t(locale: Locale, key: Key) -> &'static str {
@@ -186,8 +193,7 @@ pub fn t(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::SettingsButtonLabel) => "Advanced Settings",
         (Locale::En, Key::SettingsButtonTooltip) => "Tune how your Second Brain remembers and recalls",
         (Locale::En, Key::ErrorBrainNeedsUpdateForSettings) => {
-            "Your Second Brain is running an older version that has no settings yet. \
-             Update it from the Connections menu, then reopen this window."
+            "This Second Brain needs an update before settings are available. If you set it up, open Connections and update it. Otherwise, ask the person who set it up."
         }
         (Locale::En, Key::TrayOpen) => "Open Second Brain",
         (Locale::En, Key::TrayQuit) => "Quit",
@@ -233,8 +239,8 @@ pub fn t(locale: Locale, key: Key) -> &'static str {
              Update now? You'll sign in to Cloudflare once. Your memories, password, \
              and connected tools are kept."
         }
-        (Locale::En, Key::OpenDashboardFailed) => "Couldn't open your Second Brain window.",
-        (Locale::En, Key::OpenDashboardNotSetup) => "Setup hasn't finished yet.",
+        (Locale::En, Key::OpenDashboardFailed) => "We couldn't open the Second Brain dashboard. Try 'Open my Second Brain dashboard' again. If it still won't open, restart the app.",
+        (Locale::En, Key::OpenDashboardNotSetup) => "Setup is not finished yet. Return to the Second Brain app and complete setup.",
         // Window / injected UI — EN
         (Locale::En, Key::WindowSecondBrain) => "Second Brain",
         (Locale::En, Key::WindowConnections) => "Connections",
@@ -244,42 +250,42 @@ pub fn t(locale: Locale, key: Key) -> &'static str {
         }
         // Command errors — EN
         (Locale::En, Key::ErrorBadUrl) => {
-            "That doesn't look like a web address. It usually ends in .workers.dev."
+            "That doesn't look like a complete web address. Paste the full address from your other computer or team invitation."
         }
-        (Locale::En, Key::ErrorEmptyPassword) => "Enter the password you chose when you set it up.",
+        (Locale::En, Key::ErrorEmptyPassword) => "Enter the Second Brain password or the team sign-in token from your invitation.",
         (Locale::En, Key::ErrorWrongPassword) => {
-            "That password doesn't match this Second Brain. Check it and try again."
+            "That password or team sign-in token does not work for this Second Brain. Check the invitation or password and try again."
         }
         (Locale::En, Key::ErrorNotABrain) => {
-            "We couldn't find a Second Brain at that address. Double-check the link — it usually ends in .workers.dev."
+            "We couldn't find a Second Brain at that address. Check the link in your invitation or Connection details, then try again."
         }
         (Locale::En, Key::ErrorCantReach) => {
             "We couldn't reach that address. Check it and your internet connection, then try again."
         }
-        (Locale::En, Key::ErrorSetupNotFinished) => "Setup hasn't finished yet.",
+        (Locale::En, Key::ErrorSetupNotFinished) => "Setup is not finished yet. Return to the Second Brain app and complete setup.",
         (Locale::En, Key::ErrorPasswordTooShort) => "Your password needs at least {min} characters.",
         (Locale::En, Key::ErrorFriendlyRetry) => {
-            "That didn't work, but nothing is lost — your progress is saved, so it's safe to try again."
+            "Setup could not finish. You can try again; this app will not delete any Second Brain data already created."
         }
         (Locale::En, Key::ErrorSecureStoreSetup) => {
-            "Setup finished, but we couldn't save your details to this device's secure storage."
+            "Your Second Brain was created, but this computer could not save its connection details. Keep your address and password, then connect this computer again."
         }
         (Locale::En, Key::ErrorSecureStoreConnect) => {
-            "Connected, but we couldn't save your details to this device's secure storage."
+            "The connection worked, but this computer could not save it. Keep the address and password or team sign-in token, then connect again next time."
         }
-        (Locale::En, Key::ErrorUnknownTool) => "Unknown tool.",
-        (Locale::En, Key::ErrorNoHomeFolder) => "Couldn't find your home folder.",
+        (Locale::En, Key::ErrorUnknownTool) => "This AI tool is not available for automatic setup. Copy your connection link and add it in the tool's settings instead.",
+        (Locale::En, Key::ErrorNoHomeFolder) => "We couldn't find the folder this computer uses for app settings. Restart the app and try again.",
         (Locale::En, Key::ErrorMcpConfigFailed) => {
             "We couldn't update that tool's settings. You can paste the link manually instead."
         }
         (Locale::En, Key::ErrorCliConfigFailed) => {
-            "We couldn't write the CLI config. You can run `brain setup` yourself instead."
+            "We couldn't finish setting up the optional terminal command. Your Second Brain still works in the app."
         }
-        (Locale::En, Key::ErrorInstallInterrupted) => "The install was interrupted.",
-        (Locale::En, Key::ErrorClipboardFailed) => "Couldn't copy to the clipboard.",
-        (Locale::En, Key::ErrorOpenWindowFailed) => "Couldn't open the update window.",
+        (Locale::En, Key::ErrorInstallInterrupted) => "The installation stopped before it finished. Open the installer again and choose Try again.",
+        (Locale::En, Key::ErrorClipboardFailed) => "We couldn't copy that automatically. Select the link and copy it yourself.",
+        (Locale::En, Key::ErrorOpenWindowFailed) => "We couldn't open the update window. Try again from Connections.",
         (Locale::En, Key::ErrorCfNoAccount) => {
-            "That Cloudflare login has no account we can set up in."
+            "This Cloudflare sign-in does not have an account where a Second Brain can be created. Create or choose a Cloudflare account, then sign in again."
         }
         (Locale::En, Key::ErrorCfSignInFirst) => "Please sign in to Cloudflare first.",
         (Locale::En, Key::ErrorCfSignInExpired) => {
@@ -288,7 +294,7 @@ pub fn t(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::ErrorNotionSynced) => "Synced {count} change(s) from Notion.",
         (Locale::En, Key::ErrorNotionUpToDate) => "Notion is already up to date.",
         (Locale::En, Key::ErrorCfAccountListFailed) => {
-            "Signed in, but we couldn't read your account. Please try again."
+            "You signed in, but we couldn't read your Cloudflare accounts. Try signing in again."
         }
         (Locale::En, Key::ErrorMigrationHalfSwitched) => {
             "Your Second Brain has switched to the new way of reading, but finishing the \
@@ -296,7 +302,7 @@ switch didn't complete. Your memories are safe and nothing was deleted — reope
 window and carry on, or search will stay incomplete."
         }
         (Locale::En, Key::ErrorUnknownEmbeddingModel) => {
-            "That isn't a way of reading memories this app knows how to set up."
+            "This app can't change the current search setting. Update your Second Brain, then try again."
         }
         (Locale::En, Key::ErrorNoOldIndexToFree) => {
             "There's no leftover search data to free up. Nothing was changed."
@@ -310,31 +316,29 @@ freed up. Nothing was changed."
 Update it first, then try again."
         }
         (Locale::En, Key::ErrorCfNoSubdomain) => {
-            "We couldn't work out the web address for this Cloudflare space, so there's \
-nothing to search. You can still enter your Second Brain's address by hand."
+            "We couldn't find a web address for this Cloudflare account. Paste your Second Brain address instead."
         }
         (Locale::En, Key::ErrorCfDiscoverFailed) => {
-            "Couldn't look through your Cloudflare space just now. You can enter your \
-Second Brain's address by hand instead."
+            "We couldn't search this Cloudflare account right now. Paste your Second Brain address instead."
         }
         (Locale::En, Key::ErrorChoosePasswordFirst) => "Please choose a password first.",
-        (Locale::En, Key::ErrorLinkNotAllowed) => "That link can't be opened from here.",
-        (Locale::En, Key::ErrorOpenBrowserFailed) => "Couldn't open your browser.",
-        (Locale::En, Key::ErrorReachBrain) => "Couldn't reach your Second Brain.",
-        (Locale::En, Key::ErrorComputerNotSetup) => "This computer isn't set up yet.",
+        (Locale::En, Key::ErrorLinkNotAllowed) => "This link can't be opened from this part of the app. Copy it and open it in your web browser.",
+        (Locale::En, Key::ErrorOpenBrowserFailed) => "We couldn't open your web browser. Open your browser yourself, then try the sign-in again from the app.",
+        (Locale::En, Key::ErrorReachBrain) => "We couldn't reach your Second Brain. Check your internet connection and try again.",
+        (Locale::En, Key::ErrorComputerNotSetup) => "This computer is not connected to a Second Brain yet. Return to setup and choose Create or Connect.",
         (Locale::En, Key::ErrorCustomDomain) => {
-            "Your Second Brain is on a custom address — update it from your dashboard."
+            "This Second Brain uses a web address this app can't update. If you set it up, update it from the dashboard; otherwise ask the person who set it up."
         }
         (Locale::En, Key::ErrorWrongCfAccount) => {
-            "That Cloudflare account doesn't host this Second Brain. Sign in with the account you set it up in."
+            "This Cloudflare account does not host this Second Brain. Sign in with the account used to create it. If someone else created it, ask them to update it."
         }
         (Locale::En, Key::ErrorBrainRefusedPassword) => {
             "Your Second Brain wouldn't accept the password this computer has saved. If its \
              password was changed somewhere else, use that one instead."
         }
-        (Locale::En, Key::ErrorProvisioningDetail) => "What went wrong: {detail}",
-        (Locale::En, Key::ErrorBrainHttpStatus) => "Your Second Brain returned {status}.",
-        (Locale::En, Key::ErrorBrainUnexpected) => "Unexpected response from your Second Brain.",
+        (Locale::En, Key::ErrorProvisioningDetail) => "Setup stopped while creating your Second Brain. Try again. If it keeps happening, contact support and include the time of this attempt.",
+        (Locale::En, Key::ErrorBrainHttpStatus) => "Your Second Brain did not respond as expected. Try again in a moment.",
+        (Locale::En, Key::ErrorBrainUnexpected) => "Your Second Brain sent a response this app could not use. Try again in a moment.",
         (Locale::En, Key::ErrorNotionSyncFailed) => {
             "The sync didn't finish. Please try again from the dashboard."
         }
@@ -357,6 +361,19 @@ would send your new password unprotected."
         (Locale::En, Key::ErrorRotateSecureStore) => {
             "Your password was changed, but we couldn't save it to this device's secure storage."
         }
+        (Locale::En, Key::ErrorNeedsHttps) => {
+            "That address starts with http, not https. Your password would travel unencrypted. Check the address — it should begin with https://."
+        }
+        (Locale::En, Key::GuardExistingBrain) => "We found your existing Second Brain. Connect to it with its password or a team sign-in token.",
+        (Locale::En, Key::GuardNameConflict) => {
+            "This Cloudflare account already contains {kind} with the name this installer needs. Nothing was changed. Choose another account or go back."
+        }
+        (Locale::En, Key::ErrorInvalidLocale) => {
+            "We couldn't change the app language. Try again."
+        }
+        (Locale::En, Key::ResourceKindMemoryStorage) => "a memory store",
+        (Locale::En, Key::ResourceKindSmartSearch) => "a smart-search index",
+        (Locale::En, Key::ResourceKindWebApp) => "a web app",
 
         // Menu / tray — IT
         (Locale::It, Key::MenuOpenDashboard) => "Apri dashboard",
@@ -375,8 +392,7 @@ would send your new password unprotected."
         (Locale::It, Key::SettingsButtonLabel) => "Impostazioni avanzate",
         (Locale::It, Key::SettingsButtonTooltip) => "Regola come il tuo Second Brain ricorda e recupera",
         (Locale::It, Key::ErrorBrainNeedsUpdateForSettings) => {
-            "Il tuo Second Brain usa una versione più vecchia che non ha ancora le impostazioni. \
-             Aggiornalo dal menu Connessioni, poi riapri questa finestra."
+            "Questo Second Brain deve essere aggiornato prima che le impostazioni siano disponibili. Se lo hai configurato tu, apri Connessioni e aggiornalo. Altrimenti, chiedi alla persona che lo ha configurato."
         }
         (Locale::It, Key::TrayOpen) => "Apri Second Brain",
         (Locale::It, Key::TrayQuit) => "Esci",
@@ -422,9 +438,9 @@ would send your new password unprotected."
              Aggiornare ora? Accederai a Cloudflare una volta. Memorie, password e strumenti collegati restano."
         }
         (Locale::It, Key::OpenDashboardFailed) => {
-            "Impossibile aprire la finestra del Second Brain."
+            "Non è stato possibile aprire la dashboard del Second Brain. Riprova con 'Apri la dashboard del mio Second Brain'. Se ancora non si apre, riavvia l'app."
         }
-        (Locale::It, Key::OpenDashboardNotSetup) => "La configurazione non è ancora completata.",
+        (Locale::It, Key::OpenDashboardNotSetup) => "La configurazione non è ancora terminata. Torna all'app Second Brain e completa la configurazione.",
         // Window / injected UI — IT
         (Locale::It, Key::WindowSecondBrain) => "Second Brain",
         (Locale::It, Key::WindowConnections) => "Connessioni",
@@ -434,48 +450,48 @@ would send your new password unprotected."
         }
         // Command errors — IT
         (Locale::It, Key::ErrorBadUrl) => {
-            "Non sembra un indirizzo web valido. Di solito termina con .workers.dev."
+            "Non sembra un indirizzo web completo. Incolla l'indirizzo completo dall'altro computer o dall'invito del team."
         }
         (Locale::It, Key::ErrorEmptyPassword) => {
-            "Inserisci la password scelta durante la configurazione."
+            "Inserisci la password del Second Brain oppure il token di accesso del team presente nel tuo invito."
         }
         (Locale::It, Key::ErrorWrongPassword) => {
-            "La password non corrisponde a questo Second Brain. Controlla e riprova."
+            "Questa password o questo token di accesso del team non funziona per questo Second Brain. Controlla l'invito o la password e riprova."
         }
         (Locale::It, Key::ErrorNotABrain) => {
-            "Non abbiamo trovato un Second Brain a quell'indirizzo. Controlla il link — di solito termina con .workers.dev."
+            "Non abbiamo trovato un Second Brain a quell'indirizzo. Controlla il link nell'invito o in Dettagli connessione, poi riprova."
         }
         (Locale::It, Key::ErrorCantReach) => {
             "Impossibile raggiungere quell'indirizzo. Controlla il link e la connessione internet, poi riprova."
         }
-        (Locale::It, Key::ErrorSetupNotFinished) => "La configurazione non è ancora completata.",
+        (Locale::It, Key::ErrorSetupNotFinished) => "La configurazione non è ancora terminata. Torna all'app Second Brain e completa la configurazione.",
         (Locale::It, Key::ErrorPasswordTooShort) => {
             "La password deve avere almeno {min} caratteri."
         }
         (Locale::It, Key::ErrorFriendlyRetry) => {
-            "Non ha funzionato, ma nulla è perso — i progressi sono salvati, puoi riprovare in sicurezza."
+            "La configurazione non è riuscita a terminare. Puoi riprovare; questa app non eliminerà i dati del Second Brain già creati."
         }
         (Locale::It, Key::ErrorSecureStoreSetup) => {
-            "Configurazione completata, ma non è stato possibile salvare i dati nell'archivio sicuro del dispositivo."
+            "Il tuo Second Brain è stato creato, ma questo computer non ha potuto salvare i suoi dettagli di connessione. Conserva indirizzo e password, poi collega di nuovo questo computer."
         }
         (Locale::It, Key::ErrorSecureStoreConnect) => {
-            "Collegato, ma non è stato possibile salvare i dati nell'archivio sicuro del dispositivo."
+            "Il collegamento ha funzionato, ma questo computer non ha potuto salvarlo. Conserva indirizzo e password oppure il token di accesso del team, poi collegati di nuovo la prossima volta."
         }
-        (Locale::It, Key::ErrorUnknownTool) => "Strumento sconosciuto.",
-        (Locale::It, Key::ErrorNoHomeFolder) => "Impossibile trovare la cartella home.",
+        (Locale::It, Key::ErrorUnknownTool) => "Questo strumento AI non è disponibile per la configurazione automatica. Copia il tuo link di connessione e aggiungilo invece nelle impostazioni dello strumento.",
+        (Locale::It, Key::ErrorNoHomeFolder) => "Non è stato possibile trovare la cartella che questo computer usa per le impostazioni delle app. Riavvia l'app e riprova.",
         (Locale::It, Key::ErrorMcpConfigFailed) => {
             "Impossibile aggiornare le impostazioni dello strumento. Puoi incollare il link manualmente."
         }
         (Locale::It, Key::ErrorCliConfigFailed) => {
-            "Impossibile scrivere la configurazione CLI. Puoi eseguire `brain setup` manualmente."
+            "Non è stato possibile completare la configurazione del comando opzionale per il terminale. Il tuo Second Brain funziona comunque nell'app."
         }
-        (Locale::It, Key::ErrorInstallInterrupted) => "L'installazione è stata interrotta.",
-        (Locale::It, Key::ErrorClipboardFailed) => "Impossibile copiare negli appunti.",
+        (Locale::It, Key::ErrorInstallInterrupted) => "L'installazione si è fermata prima di terminare. Apri di nuovo l'installer e scegli Riprova.",
+        (Locale::It, Key::ErrorClipboardFailed) => "Non è stato possibile copiare automaticamente. Seleziona il link e copialo tu.",
         (Locale::It, Key::ErrorOpenWindowFailed) => {
-            "Impossibile aprire la finestra di aggiornamento."
+            "Non è stato possibile aprire la finestra di aggiornamento. Riprova da Connessioni."
         }
         (Locale::It, Key::ErrorCfNoAccount) => {
-            "Questo account Cloudflare non ha spazi configurabili."
+            "Questo accesso Cloudflare non ha un account in cui sia possibile creare un Second Brain. Crea o scegli un account Cloudflare, poi accedi di nuovo."
         }
         (Locale::It, Key::ErrorCfSignInFirst) => "Accedi prima a Cloudflare.",
         (Locale::It, Key::ErrorCfSignInExpired) => {
@@ -486,7 +502,7 @@ would send your new password unprotected."
         }
         (Locale::It, Key::ErrorNotionUpToDate) => "Notion è già aggiornato.",
         (Locale::It, Key::ErrorCfAccountListFailed) => {
-            "Accesso effettuato, ma non è stato possibile leggere l'account. Riprova."
+            "Hai effettuato l'accesso, ma non è stato possibile leggere i tuoi account Cloudflare. Prova ad accedere di nuovo."
         }
         (Locale::It, Key::ErrorMigrationHalfSwitched) => {
             "Il tuo Second Brain è passato al nuovo modo di leggere, ma il passaggio non è \
@@ -494,7 +510,7 @@ stato completato. I tuoi ricordi sono al sicuro e nulla è stato cancellato — 
 finestra e continua, altrimenti la ricerca resterà incompleta."
         }
         (Locale::It, Key::ErrorUnknownEmbeddingModel) => {
-            "Non è un modo di leggere i ricordi che questa app sappia configurare."
+            "Questa app non può cambiare l'impostazione di ricerca corrente. Aggiorna il tuo Second Brain, poi riprova."
         }
         (Locale::It, Key::ErrorNoOldIndexToFree) => {
             "Non ci sono vecchi dati di ricerca da liberare. Nulla è stato modificato."
@@ -508,31 +524,29 @@ quindi non possono essere liberati. Nulla è stato modificato."
 i ricordi. Aggiornalo, poi riprova."
         }
         (Locale::It, Key::ErrorCfNoSubdomain) => {
-            "Non siamo riusciti a determinare l'indirizzo web di questo spazio Cloudflare, \
-quindi non c'è nulla da cercare. Puoi comunque inserire a mano l'indirizzo del tuo Second Brain."
+            "Non è stato possibile trovare un indirizzo web per questo account Cloudflare. Incolla invece l'indirizzo del tuo Second Brain."
         }
         (Locale::It, Key::ErrorCfDiscoverFailed) => {
-            "Non è stato possibile esaminare il tuo spazio Cloudflare in questo momento. \
-Puoi inserire a mano l'indirizzo del tuo Second Brain."
+            "Non è stato possibile cercare in questo account Cloudflare in questo momento. Incolla invece l'indirizzo del tuo Second Brain."
         }
         (Locale::It, Key::ErrorChoosePasswordFirst) => "Scegli prima una password.",
-        (Locale::It, Key::ErrorLinkNotAllowed) => "Questo link non può essere aperto da qui.",
-        (Locale::It, Key::ErrorOpenBrowserFailed) => "Impossibile aprire il browser.",
-        (Locale::It, Key::ErrorReachBrain) => "Impossibile raggiungere il Second Brain.",
-        (Locale::It, Key::ErrorComputerNotSetup) => "Questo computer non è ancora configurato.",
+        (Locale::It, Key::ErrorLinkNotAllowed) => "Questo link non può essere aperto da questa parte dell'app. Copialo e aprilo nel browser web.",
+        (Locale::It, Key::ErrorOpenBrowserFailed) => "Non è stato possibile aprire il browser web. Aprilo tu, poi prova di nuovo l'accesso dall'app.",
+        (Locale::It, Key::ErrorReachBrain) => "Non è stato possibile raggiungere il tuo Second Brain. Controlla la connessione internet e riprova.",
+        (Locale::It, Key::ErrorComputerNotSetup) => "Questo computer non è ancora collegato a un Second Brain. Torna alla configurazione e scegli Crea o Collega.",
         (Locale::It, Key::ErrorCustomDomain) => {
-            "Il Second Brain è su un indirizzo personalizzato — aggiornalo dalla dashboard."
+            "Questo Second Brain usa un indirizzo web che questa app non può aggiornare. Se lo hai configurato tu, aggiornalo dalla dashboard; altrimenti chiedi alla persona che lo ha configurato."
         }
         (Locale::It, Key::ErrorWrongCfAccount) => {
-            "Questo account Cloudflare non ospita questo Second Brain. Accedi con l'account usato per la configurazione."
+            "Questo account Cloudflare non ospita questo Second Brain. Accedi con l'account usato per crearlo. Se lo ha creato qualcun altro, chiedi a quella persona di aggiornarlo."
         }
         (Locale::It, Key::ErrorBrainRefusedPassword) => {
             "Il tuo Second Brain non ha accettato la password salvata su questo computer. Se la \
              password è stata cambiata su un altro dispositivo, usa quella."
         }
-        (Locale::It, Key::ErrorProvisioningDetail) => "Cosa è andato storto: {detail}",
-        (Locale::It, Key::ErrorBrainHttpStatus) => "Il Second Brain ha risposto con {status}.",
-        (Locale::It, Key::ErrorBrainUnexpected) => "Risposta inattesa dal Second Brain.",
+        (Locale::It, Key::ErrorProvisioningDetail) => "La configurazione si è fermata durante la creazione del tuo Second Brain. Riprova. Se continua a succedere, contatta il supporto e indica l'ora di questo tentativo.",
+        (Locale::It, Key::ErrorBrainHttpStatus) => "Il tuo Second Brain non ha risposto come previsto. Riprova tra poco.",
+        (Locale::It, Key::ErrorBrainUnexpected) => "Il tuo Second Brain ha inviato una risposta che questa app non può usare. Riprova tra poco.",
         (Locale::It, Key::ErrorNotionSyncFailed) => {
             "La sincronizzazione non è terminata. Riprova dalla dashboard."
         }
@@ -551,6 +565,21 @@ invierebbe la tua nuova password senza protezione."
             "La password è stata cambiata, ma non è stato possibile salvarla nell'archivio \
 sicuro del dispositivo."
         }
+        (Locale::It, Key::ErrorNeedsHttps) => {
+            "L'indirizzo inizia con http, non https. La password viaggerebbe senza crittografia. Controlla l'indirizzo: deve iniziare con https://."
+        }
+        (Locale::It, Key::GuardExistingBrain) => "Abbiamo trovato il tuo Second Brain esistente. Collegati con la sua password o con un token di accesso del team.",
+        (Locale::It, Key::GuardNameConflict) => {
+            "Questo account Cloudflare contiene già {kind} con il nome richiesto dall'installer. Non è stato modificato nulla. Scegli un altro account oppure torna indietro."
+        }
+        (Locale::It, Key::ErrorInvalidLocale) => {
+            "Non è stato possibile cambiare la lingua dell'app. Riprova."
+        }
+        (Locale::It, Key::ResourceKindMemoryStorage) => "un archivio ricordi",
+        (Locale::It, Key::ResourceKindSmartSearch) => {
+            "un indice di ricerca intelligente"
+        }
+        (Locale::It, Key::ResourceKindWebApp) => "un'app web",
     }
 }
 
@@ -706,6 +735,13 @@ mod tests {
             ErrorRotateNeedsHttps,
             ErrorRotateNotConfirmed,
             ErrorRotateSecureStore,
+            ErrorNeedsHttps,
+            GuardExistingBrain,
+            GuardNameConflict,
+            ErrorInvalidLocale,
+            ResourceKindMemoryStorage,
+            ResourceKindSmartSearch,
+            ResourceKindWebApp,
         ]
     }
 

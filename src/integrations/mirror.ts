@@ -16,8 +16,15 @@ import { withKind } from "../memory/kind";
 import { withStatus } from "../memory/status";
 import { tagsAfterWrite } from "../memory/stale";
 import { rememberTags } from "../tags/vocabulary";
+import { OWNER_WRITE_CONTEXT, scopeWrite, type WriteContext } from "../lib/scope";
+import { resolveIdentityByUserId } from "../lib/identity";
+import { ensureTenantBootstrap } from "../lib/tenancy";
 
-export function makeMirrorStore(env: Env): MirrorStore {
+export function makeMirrorStore(env: Env, writeCtx: WriteContext = OWNER_WRITE_CONTEXT): MirrorStore {
+  // The write context is a property of the store rather than of each method because
+  // the MirrorStore interface (integrations/framework.ts) is shared with providers
+  // that must not learn about tenancy. A sync batch is one actor's work, so one
+  // context per store is the right granularity anyway.
   // One config read per store, not one per mirrored item. A store is built once
   // per sync batch, so this is still the per-request scope every other caller
   // resolves at (src/config.ts) — but the batch writes up to SYNC_EVENT_BATCH
@@ -54,8 +61,8 @@ export function makeMirrorStore(env: Env): MirrorStore {
         console.error("Mirror classify failed (non-fatal):", e);
       }
       await env.DB.prepare(
-        `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, importance_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(id, content, JSON.stringify(finalTags), source, now, now, "[]", importance).run();
+        `INSERT INTO entries (id, content, tags, source, created_at, updated_at, vector_ids, importance_score, workspace_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, content, JSON.stringify(finalTags), source, now, now, "[]", importance, writeCtx.workspaceId, writeCtx.actorId).run();
       // Promptness, not correctness (#288). Every tag inserted here is a compile-time
       // constant — a provider id from the registry in integrations/index.ts, plus
       // whatever kind:/status: the classifier added — so the vocabulary's age limit
@@ -65,9 +72,9 @@ export function makeMirrorStore(env: Env): MirrorStore {
       // Awaited because the scheduled sync has no ExecutionContext to defer to. Costs
       // one KV get per created entry; the put fires only on the first item of a newly
       // connected provider.
-      await rememberTags(env, finalTags);
+      await rememberTags(env, finalTags, writeCtx.workspaceId);
       try {
-        await storeEntry(env, id, content, finalTags, source, now, cfg);
+        await storeEntry(env, id, content, finalTags, source, now, cfg, writeCtx);
       } catch (e) {
         console.error("Vectorize insert failed (non-fatal):", e);
       }
@@ -75,6 +82,7 @@ export function makeMirrorStore(env: Env): MirrorStore {
     },
     async updateEntry(id, content) {
       const row = await env.DB.prepare(
+        // scope-exempt: by-id: the mirrored row this connector wrote
         `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
       if (!row) return false;
@@ -90,7 +98,7 @@ export function makeMirrorStore(env: Env): MirrorStore {
       const cfg = await config();
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, id, content, refreshedTags, row.source as string, now, cfg);
+        newVectorIds = (await storeEntry(env, id, content, refreshedTags, row.source as string, now, cfg, writeCtx)).vectorIds;
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }
@@ -182,7 +190,8 @@ export async function runScheduledIntegrationSync(env: Env): Promise<void> {
   if (!due) return;
 
   await initializeDatabase(env);
-  const store = makeMirrorStore(env);
+  const record = await loadIntegration(env, due.id);
+  const store = makeMirrorStore(env, await mirrorWriteContext(env, record));
   try {
     for (let i = 0; i < CRON_SYNC_MAX_BATCHES; i++) {
       const result = await due.sync(env, store);
@@ -191,6 +200,37 @@ export async function runScheduledIntegrationSync(env: Env): Promise<void> {
   } finally {
     await advanceRotationCursor(env, due.id);
   }
+}
+
+/**
+ * Where a mirrored item lands, for BOTH sync paths.
+ *
+ * An integration is one connection for the whole deployment
+ * (`integrations:<provider>` in KV), so the memories it mirrors have to have one
+ * home. This used to be decided in two places that disagreed: the cron resolved
+ * the owner and wrote to the owner's workspace, while POST
+ * /integrations/:provider/sync built a context from whoever called it. The same
+ * connection therefore mirrored into different people's private workspaces
+ * depending on who last pressed "Sync now" — and a member's manual sync put the
+ * org's Notion pages somewhere the admin could not see them.
+ *
+ * One function, called by both, resolving the owner either way. Falls back to
+ * OWNER_WRITE_CONTEXT's pre-team sentinel if identity cannot be resolved, which
+ * is the behaviour a v2 brain had.
+ */
+export async function mirrorWriteContext(
+  env: Env,
+  record: { config?: { mirrorWorkspace?: string } } | null,
+): Promise<WriteContext> {
+  const mirrorWorkspace = record?.config?.mirrorWorkspace === "company" ? "company" : "personal";
+  try {
+    const roots = await ensureTenantBootstrap(env);
+    const owner = await resolveIdentityByUserId(env, roots.ownerUserId);
+    if (owner) return { workspaceId: scopeWrite(owner, mirrorWorkspace), actorId: owner.userId };
+  } catch (e) {
+    console.error("Integration identity resolve failed (non-fatal):", e);
+  }
+  return OWNER_WRITE_CONTEXT;
 }
 
 /**

@@ -66,9 +66,21 @@ function feedChatStream(buffer, decodedChunk, onText) {
   return buffer
 }
 
-async function sendRecall() {
+function maybeRevealRecallLayer(health) {
+  const wrap = document.getElementById('recall-layer-wrap')
+  if (wrap) wrap.style.display = TEAM_MODE ? '' : 'none'
+}
+
+/** Layer filter changed: re-run the last query so the answer matches the filter. */
+function onRecallLayerChange(value) {
+  const last = [...document.querySelectorAll('#recall-messages .ex-q .q-text')]
+  const lastQuery = last.length ? last[last.length - 1].textContent.trim() : ''
+  if (lastQuery) sendRecall(lastQuery)
+}
+
+async function sendRecall(retryQuery) {
   const input = document.getElementById('recall-input')
-  const query = input.value.trim()
+  const query = (retryQuery || input.value).trim()
   if (!query) return
   const msgs = document.getElementById('recall-messages')
   const welcome = document.getElementById('recall-welcome')
@@ -87,6 +99,9 @@ async function sendRecall() {
     // of the snippet shortening that keeps API/agent responses small
     const params = new URLSearchParams({ query, topK: '5', hops: '1', full: '1' })
     if (selectedTag) params.set('tag', selectedTag)
+    const layerSel = document.getElementById('recall-layer')
+    const layer = layerSel ? layerSel.value : ''
+    if (layer) params.set('workspace', layer)
     const recallRes = await fetch(`${WORKER_URL}/recall?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
     const data = await recallRes.json()
     // Server/auth errors must not render as "no results" — let the catch handle them
@@ -108,6 +123,7 @@ async function sendRecall() {
         hop: m.hop || 0,
         created_at: m.created_at,
         source: m.source,
+        workspace: m.workspace || null,
       }))
       const answerBubble = document.createElement('div')
       answerBubble.className = 'ex-a-row'
@@ -225,7 +241,7 @@ function makeRecallCard(entry, citeIndex) {
     <div class="match-line">
 ${citeIndex ? `<span class="cite-badge" title="${escAttr(t('recall.citedAs', { n: citeIndex }))}">${citeIndex}</span>` : ''}
 <span class="match-pct">${entry.score}%</span>
-${entry.hop > 0 ? `<span class="tag-chip" style="background:var(--accent-soft);color:var(--accent);flex-shrink:0">${escHtml(tPlural('recall.relatedHop', entry.hop))}</span>` : ''}
+${entry.hop > 0 ? `<span class="tag-chip tag-chip--hop">${escHtml(tPlural('recall.relatedHop', entry.hop))}</span>` : ''}
 <div class="match-bar-bg"><div class="match-bar-fill" style="width:${entry.score}%"></div></div>
     </div>
     <div class="card-content" style="cursor: pointer;">${escHtml(stripToPlainText(entry.content))}</div>
@@ -243,7 +259,8 @@ ${entry.hop > 0 ? `<span class="tag-chip" style="background:var(--accent-soft);c
 <div class="card-actions">
   ${
     entry.id
-      ? `<button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> ${escHtml(t('memories.append'))}</button>`
+      ? `<button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> ${escHtml(t('memories.append'))}</button>
+      ${TEAM_MODE ? `<button class="card-action-btn" onclick="toggleEntryLayer('${escAttr(entry.id)}', '${escAttr(entry.workspace || '')}')"><i class="ti ti-users-group"></i> ${escHtml(entry.workspace === 'company' ? t('memories.makePrivate') : t('memories.shareWithTeam'))}</button>` : ''}`
       : `<button class="card-action-btn" onclick="openAppendFromContent('${escAttr(entry.content)}')"><i class="ti ti-writing"></i> ${escHtml(t('memories.append'))}</button>`
   }
 </div>

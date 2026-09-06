@@ -1,5 +1,7 @@
 import type { Env } from "../env";
-import { json, requireAuth } from "../lib/http";
+import { json } from "../lib/http";
+import { requireIdentity } from "../lib/identity";
+import { scopeWhere } from "../lib/scope";
 import { INDEXABLE_SQL } from "../capture/lifecycle";
 import { PENDING_INSIGHT_SQL } from "../memory/patterns";
 import { STALE_REVIEW_SQL } from "../memory/stale";
@@ -53,8 +55,13 @@ export async function handleBriefRoutes(
 ): Promise<Response | null> {
   if (url.pathname !== "/brief" || request.method !== "GET") return null;
 
-  const authErr = requireAuth(request, env);
-  if (authErr) return authErr;
+  const auth = await requireIdentity(request, env);
+  if (auth instanceof Response) return auth;
+  // Every panel below reads only what this caller can see: their personal
+  // workspace plus the company one. The clauses bind positionally, so each
+  // query's bindings below carry them in statement order.
+  const scope = scopeWhere(auth);
+  const entryScope = scopeWhere(auth, undefined, "entries.workspace_id");
 
   const now = Date.now();
   const since = now - RECENT_WINDOW_MS;
@@ -65,17 +72,17 @@ export async function handleBriefRoutes(
     // "your brain grew, from these places", not another feed of rows.
     env.DB.prepare(
       `SELECT source, COUNT(*) AS n FROM entries
-       WHERE created_at >= ? GROUP BY source ORDER BY n DESC`,
-    ).bind(since).all(),
+       WHERE created_at >= ? AND ${scope.clause} GROUP BY source ORDER BY n DESC`,
+    ).bind(since, ...scope.bindings).all(),
 
     // Insights the weekly pass proposed and nobody has ruled on. These are
     // excluded from recall until confirmed, so leaving them unseen in a menu
     // is the same as throwing them away.
     env.DB.prepare(
       `SELECT id, content FROM entries
-       WHERE ${PENDING_INSIGHT_SQL}
+       WHERE ${PENDING_INSIGHT_SQL} AND ${scope.clause}
        ORDER BY created_at DESC LIMIT 3`,
-    ).all(),
+    ).bind(...scope.bindings).all(),
 
     // One old, important memory. There is no last-recalled column and adding
     // one is not worth a migration for this, so the pick is deterministic per
@@ -93,14 +100,14 @@ export async function handleBriefRoutes(
     // test double use.
     env.DB.prepare(
       `SELECT id, content, created_at FROM entries
-       WHERE ${RESURFACE_FILTER}
+       WHERE (${RESURFACE_FILTER}) AND ${scope.clause}
        ORDER BY id
        LIMIT 1
-       OFFSET (? % MAX((SELECT COUNT(*) FROM entries WHERE ${RESURFACE_FILTER}), 1))`,
+       OFFSET (? % MAX((SELECT COUNT(*) FROM entries WHERE (${RESURFACE_FILTER}) AND ${scope.clause}), 1))`,
     ).bind(
-      resurfaceBefore, RESURFACE_MIN_IMPORTANCE,
+      resurfaceBefore, RESURFACE_MIN_IMPORTANCE, ...scope.bindings,
       dayNumber(now),
-      resurfaceBefore, RESURFACE_MIN_IMPORTANCE,
+      resurfaceBefore, RESURFACE_MIN_IMPORTANCE, ...scope.bindings,
     ).all(),
 
     // Captures per day. Bucketed in SQL rather than by shipping timestamps and
@@ -108,13 +115,19 @@ export async function handleBriefRoutes(
     // there is no reason to send two weeks of rows to count them.
     env.DB.prepare(
       `SELECT CAST(created_at / 86400000 AS INTEGER) AS day, COUNT(*) AS n
-       FROM entries WHERE created_at >= ?
+       FROM entries WHERE created_at >= ? AND ${scope.clause}
        GROUP BY day ORDER BY day`,
-    ).bind(now - ACTIVITY_DAYS * 86400000).all(),
+    ).bind(now - ACTIVITY_DAYS * 86400000, ...scope.bindings).all(),
 
     // What the brain has been about this week, in the user's own vocabulary.
     // Same exclusions as /stats: the reserved namespaces are bookkeeping, and
     // hex-shaped tags are commit SHAs and colour codes a #token scan collected.
+    // Scoped like every sibling query here. It was the one in this block that
+    // was not, and the omission was visible on the front page: the topic chips
+    // are rendered straight from this list, so a member's Home screen named
+    // their colleagues' private tags back at them — "job-hunting" and
+    // "confidential" alongside their own — while the counts beside them came
+    // from correctly scoped queries and said something different.
     env.DB.prepare(
       `SELECT value AS tag, COUNT(*) AS n FROM entries, json_each(entries.tags)
        WHERE entries.created_at >= ?
@@ -122,8 +135,9 @@ export async function handleBriefRoutes(
          AND value NOT LIKE 'volatility:%' AND value NOT LIKE 'stale:%'
          AND value NOT IN ('auto-pattern', 'auto-insight', 'synthesized', 'rolled-up', 'duplicate-candidate')
          AND value NOT GLOB '[0-9]*'
+         AND ${scope.clause}
        GROUP BY value ORDER BY n DESC LIMIT 6`,
-    ).bind(now - TOPIC_WINDOW_MS).all(),
+    ).bind(now - TOPIC_WINDOW_MS, ...scope.bindings).all(),
 
     // The two things that make recall quietly worse, counted together so they
     // cost one query: memories recall cannot see, and memories the staleness
@@ -145,8 +159,8 @@ export async function handleBriefRoutes(
          SUM(CASE WHEN vector_ids = '[]' AND ${INDEXABLE_SQL} THEN 1 ELSE 0 END) AS unindexed,
          SUM(CASE WHEN ${STALE_REVIEW_SQL} THEN 1 ELSE 0 END) AS stale,
          COUNT(*) AS total
-       FROM entries`,
-    ).first() as Promise<Record<string, any> | null>,
+       FROM entries WHERE ${scope.clause}`,
+    ).bind(...scope.bindings).first() as Promise<Record<string, any> | null>,
   ]);
 
   const bySource = (recentRows.results as { source: string | null; n: number }[]).map(r => ({

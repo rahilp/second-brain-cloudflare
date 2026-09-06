@@ -13,6 +13,7 @@ use crate::i18n::{self, AppLocale, Key, Locale};
 use crate::rotate::{self, RotateOutcome};
 use crate::worker_url::subdomain_of;
 use crate::{cli_config, mcp_config, password_check, secure_store, windows, worker_bundle};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -42,6 +43,11 @@ pub struct SetupSession {
     /// a brain is actually connected. Non-secret, but pointless — and possibly
     /// wrong — to persist for a scan the user abandoned.
     cf_hints: Mutex<Option<(String, String)>>,
+    /// Fixed-name resources created by this process, scoped to their Cloudflare
+    /// account. This is the in-session retry bridge for a provision that failed
+    /// after creating storage but before deploying the Worker; it is never
+    /// persisted and cannot authorize residue from another app session.
+    created_resources: Mutex<HashMap<String, provision::CreatedResources>>,
     /// Demo mode's stand-in for the outstanding-index note. Dry-run must never
     /// reach the keychain — every read there can raise an OS password prompt,
     /// which is #252 all over again — so the demo keeps its note in memory and
@@ -61,6 +67,7 @@ impl SetupSession {
             pending_rotation: Mutex::new(false),
             stale_password: Mutex::new(false),
             cf_hints: Mutex::new(None),
+            created_resources: Mutex::new(HashMap::new()),
             demo_previous_index: Mutex::new(None),
         }
     }
@@ -74,6 +81,7 @@ impl SetupSession {
         *self.pending_rotation.lock().unwrap() = false;
         *self.stale_password.lock().unwrap() = false;
         *self.cf_hints.lock().unwrap() = None;
+        self.created_resources.lock().unwrap().clear();
         *self.demo_previous_index.lock().unwrap() = None;
     }
 }
@@ -88,6 +96,116 @@ fn locale_of(app: &AppHandle) -> Locale {
 
 fn user_err(locale: Locale, key: Key) -> String {
     i18n::t(locale, key).to_string()
+}
+
+/// Errors from `start_provisioning` preserve the command's existing string
+/// shape for precondition/authentication failures while adding machine-readable
+/// objects for outcomes that need a different screen or recovery path.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(untagged)]
+pub enum StartProvisioningError {
+    Message(String),
+    Structured(ProvisioningErrorPayload),
+}
+
+/// Errors from `connect_existing` keep legacy paths as strings while giving
+/// credential failures stable keys for the member-token recovery branch.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(untagged)]
+pub enum ConnectExistingError {
+    Message(String),
+    Credential {
+        #[serde(rename = "errorKey")]
+        error_key: &'static str,
+        message: String,
+    },
+}
+
+impl From<String> for ConnectExistingError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+fn credential_error(locale: Locale, key: Key) -> ConnectExistingError {
+    let error_key = match key {
+        Key::ErrorWrongPassword => "ErrorWrongPassword",
+        Key::ErrorEmptyPassword => "ErrorEmptyPassword",
+        _ => unreachable!("credential_error only accepts credential keys"),
+    };
+    ConnectExistingError::Credential {
+        error_key,
+        message: user_err(locale, key),
+    }
+}
+
+impl From<String> for StartProvisioningError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+/// Tagged provisioning error contract consumed by the webview.
+///
+/// New journal-aware stages can be added as variants without changing existing
+/// fields or collapsing them back into an ambiguous display string.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProvisioningErrorPayload {
+    ExistingBrainFound {
+        #[serde(rename = "errorKey")]
+        error_key: &'static str,
+        message: String,
+        url: String,
+    },
+    ResourceNameConflict {
+        #[serde(rename = "errorKey")]
+        error_key: &'static str,
+        message: String,
+        #[serde(rename = "resourceKind")]
+        resource_kind: provision::ResourceKind,
+    },
+    ProvisioningFailed {
+        #[serde(rename = "errorKey")]
+        error_key: &'static str,
+        message: String,
+    },
+}
+
+fn existing_brain_error(locale: Locale, url: String) -> StartProvisioningError {
+    StartProvisioningError::Structured(ProvisioningErrorPayload::ExistingBrainFound {
+        error_key: "GuardExistingBrain",
+        message: user_err(locale, Key::GuardExistingBrain),
+        url,
+    })
+}
+
+fn resource_conflict_error(
+    locale: Locale,
+    resource_kind: provision::ResourceKind,
+) -> StartProvisioningError {
+    let resource_key = match resource_kind {
+        provision::ResourceKind::MemoryStorage => Key::ResourceKindMemoryStorage,
+        provision::ResourceKind::SmartSearch => Key::ResourceKindSmartSearch,
+        provision::ResourceKind::WebApp => Key::ResourceKindWebApp,
+    };
+    let message = i18n::t_fmt(
+        locale,
+        Key::GuardNameConflict,
+        &[("kind", i18n::t(locale, resource_key))],
+    );
+    StartProvisioningError::Structured(ProvisioningErrorPayload::ResourceNameConflict {
+        error_key: "GuardNameConflict",
+        message,
+        resource_kind,
+    })
+}
+
+fn provisioning_failed_error(locale: Locale) -> StartProvisioningError {
+    StartProvisioningError::Structured(ProvisioningErrorPayload::ProvisioningFailed {
+        error_key: "ErrorProvisioningDetail",
+        message: user_err(locale, Key::ErrorProvisioningDetail),
+    })
 }
 
 #[derive(serde::Serialize)]
@@ -265,10 +383,11 @@ pub async fn discover_brains(
     let client = CfClient::new(tokens.access_token.clone(), account_id.clone());
 
     let manifest = worker_bundle::manifest();
+    let known_brain_indexes = brain_index_names();
     let found = discover::discover_in_account(
         &client,
         &manifest.script_name,
-        &manifest.vectorize_name,
+        &known_brain_indexes,
     )
     .await
     .map_err(|e| match e {
@@ -294,9 +413,12 @@ pub async fn discover_brains(
 #[tauri::command]
 pub async fn start_provisioning(
     account_id: String,
+    // The wizard's personal/team fork. Provisioning is identical either way;
+    // this only decides what gets recorded alongside the credentials.
+    team_mode: Option<bool>,
     app: AppHandle,
     session: State<'_, SetupSession>,
-) -> Result<ProvisionOutcome, String> {
+) -> Result<ProvisionOutcome, StartProvisioningError> {
     let locale = locale_of(&app);
     let password = session
         .password
@@ -316,7 +438,7 @@ pub async fn start_provisioning(
             .await
             .map_err(|e| {
                 log::warn!("dry-run provision failed: {e}");
-                user_err(locale, Key::ErrorFriendlyRetry)
+                provisioning_failed_error(locale)
             })?
     } else {
         let account_name = session
@@ -344,21 +466,79 @@ pub async fn start_provisioning(
             *session.tokens.lock().unwrap() = Some(tokens.clone());
         }
 
-        // One transparent refresh+retry on auth expiry: provisioning is
-        // idempotent, so re-running the pipeline is safe.
+        // One transparent refresh+retry on auth expiry. A successful create is
+        // recorded before the pipeline can fail, so the next preflight may
+        // admit only this session's exact residue; unrecorded same-name objects
+        // remain conflicts.
+        let known_brain_indexes = brain_index_names();
+        let mut created = session
+            .created_resources
+            .lock()
+            .unwrap()
+            .get(&account_id)
+            .cloned()
+            .unwrap_or_default();
         let mut attempt = 0;
         loop {
             attempt += 1;
             let backend = LiveBackend {
                 client: CfClient::new(tokens.access_token.clone(), account_id.clone()),
             };
+
+            // Release-blocking ownership guard. Keep this immediately before
+            // `provision`: every call above is authentication/session setup and
+            // every operation below may mutate the selected account.
+            let preflight = match provision::preflight_account(
+                &backend,
+                manifest,
+                &known_brain_indexes,
+                &created,
+            )
+            .await
+            {
+                Ok(preflight) => preflight,
+                Err(CfApiError::Unauthorized) if attempt == 1 => {
+                    tokens = oauth::refresh(&tokens).await.map_err(|e| {
+                        log::warn!("token refresh failed: {e}");
+                        user_err(locale, Key::ErrorCfSignInExpired)
+                    })?;
+                    *session.tokens.lock().unwrap() = Some(tokens.clone());
+                    continue;
+                }
+                Err(e) => {
+                    log::warn!("provisioning preflight failed: {e}");
+                    return Err(provisioning_failed_error(locale));
+                }
+            };
+            match preflight {
+                provision::ProvisionPreflight::Clear => {}
+                provision::ProvisionPreflight::ExistingBrain { url } => {
+                    return Err(existing_brain_error(locale, url));
+                }
+                provision::ProvisionPreflight::NameConflict { kind } => {
+                    return Err(resource_conflict_error(locale, kind));
+                }
+            }
+
             let progress_app = app.clone();
             let progress = move |event: provision::StepEvent| {
                 let _ = progress_app.emit("setup-progress", &event);
             };
-            match provision::provision(&backend, manifest, &account_name, &password, progress)
-                .await
-            {
+            let result = provision::provision_recording(
+                &backend,
+                manifest,
+                &account_name,
+                &password,
+                &mut created,
+                progress,
+            )
+            .await;
+            session
+                .created_resources
+                .lock()
+                .unwrap()
+                .insert(account_id.clone(), created.clone());
+            match result {
                 Ok(outcome) => break outcome,
                 Err(ProvisionError::Api(CfApiError::Unauthorized)) if attempt == 1 => {
                     tokens = oauth::refresh(&tokens).await.map_err(|e| {
@@ -369,11 +549,7 @@ pub async fn start_provisioning(
                 }
                 Err(e) => {
                     log::warn!("provisioning failed: {e}");
-                    return Err(format!(
-                        "{}\n\n{}",
-                        user_err(locale, Key::ErrorFriendlyRetry),
-                        i18n::t_fmt(locale, Key::ErrorProvisioningDetail, &[("detail", &e.to_string())])
-                    ));
+                    return Err(provisioning_failed_error(locale));
                 }
             }
         }
@@ -381,6 +557,19 @@ pub async fn start_provisioning(
 
     if !session.dry_run {
         secure_store::save_setup(&outcome.worker_url, &password).map_err(|e| {
+            log::error!("secure store save failed: {e}");
+            user_err(locale, Key::ErrorSecureStoreSetup)
+        })?;
+        // The wizard's choice lands beside the credentials it describes, with
+        // the same failure handling: without it the Connection window would
+        // silently show the wrong surface. connect_existing deliberately never
+        // writes this key — a connected brain's mode is unknown.
+        let mode = if team_mode.unwrap_or(false) {
+            secure_store::MODE_TEAM
+        } else {
+            secure_store::MODE_PERSONAL
+        };
+        secure_store::save_team_mode(mode).map_err(|e| {
             log::error!("secure store save failed: {e}");
             user_err(locale, Key::ErrorSecureStoreSetup)
         })?;
@@ -404,7 +593,10 @@ fn normalize_worker_url(input: &str, locale: Locale) -> Result<String, String> {
         format!("https://{trimmed}")
     };
     let parsed = url::Url::parse(&with_scheme).map_err(|_| bad())?;
-    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+    if parsed.scheme() == "http" {
+        return Err(user_err(locale, Key::ErrorNeedsHttps));
+    }
+    if parsed.scheme() != "https" {
         return Err(bad());
     }
     // No legitimate Worker address carries credentials — this also catches
@@ -429,12 +621,12 @@ pub async fn connect_existing(
     password: String,
     app: AppHandle,
     session: State<'_, SetupSession>,
-) -> Result<ProvisionOutcome, String> {
+) -> Result<ProvisionOutcome, ConnectExistingError> {
     let locale = locale_of(&app);
     let worker_url = normalize_worker_url(&address, locale)?;
     let password = password.trim().to_string();
     if password.is_empty() {
-        return Err(user_err(locale, Key::ErrorEmptyPassword));
+        return Err(credential_error(locale, Key::ErrorEmptyPassword));
     }
 
     if !session.dry_run {
@@ -442,14 +634,14 @@ pub async fn connect_existing(
         match probe_worker(&worker_url, &password).await {
             Ok(WorkerProbe::Valid) => {}
             Ok(WorkerProbe::WrongPassword) => {
-                return Err(user_err(locale, Key::ErrorWrongPassword));
+                return Err(credential_error(locale, Key::ErrorWrongPassword));
             }
             Ok(WorkerProbe::NotABrain) => {
-                return Err(user_err(locale, Key::ErrorNotABrain));
+                return Err(user_err(locale, Key::ErrorNotABrain).into());
             }
             Err(e) => {
                 log::warn!("existing-brain probe failed: {e}");
-                return Err(user_err(locale, Key::ErrorCantReach));
+                return Err(user_err(locale, Key::ErrorCantReach).into());
             }
         }
         secure_store::save_setup(&worker_url, &password).map_err(|e| {
@@ -496,12 +688,61 @@ fn details_from_anywhere(session: &SetupSession) -> Option<ProvisionOutcome> {
     })
 }
 
+/// What the Connections window renders, plus whether this brain was set up for
+/// a team — the team card is gated on it. A separate response rather than
+/// `ProvisionOutcome`: the mode is read from secure storage at read time and
+/// provisioning itself knows nothing about it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionDetailsResponse {
+    pub worker_url: String,
+    pub mcp_url: String,
+    /// True only when setup provisioned in team mode. Absent/unknown reads as
+    /// false — brains connected without provisioning are personal by default.
+    pub team_mode: bool,
+}
+
+/// Records the personal/team choice for an ALREADY-CONNECTED brain. The new-
+/// brain path writes this inside start_provisioning; connect_existing
+/// deliberately does not (a connected brain's mode is unknown), so the wizard
+/// asks afterwards and lands here. Cosmetic by design: the v3 Worker
+/// provisions tenancy server-side on its own, this only decides what the
+/// Connection window tells the owner.
+#[tauri::command]
+pub fn set_team_mode(
+    team_mode: bool,
+    app: AppHandle,
+    session: State<'_, SetupSession>,
+) -> Result<(), String> {
+    // Dry-run never writes secure storage (#252).
+    if session.dry_run {
+        return Ok(());
+    }
+    let mode = if team_mode {
+        secure_store::MODE_TEAM
+    } else {
+        secure_store::MODE_PERSONAL
+    };
+    secure_store::save_team_mode(mode).map_err(|e| {
+        log::error!("secure store save failed: {e}");
+        user_err(locale_of(&app), Key::ErrorSecureStoreSetup)
+    })
+}
+
 #[tauri::command]
 pub fn get_connection_details(
     app: AppHandle,
     session: State<'_, SetupSession>,
-) -> Result<ProvisionOutcome, String> {
-    details_from_anywhere(&session).ok_or_else(|| user_err(locale_of(&app), Key::ErrorSetupNotFinished))
+) -> Result<ConnectionDetailsResponse, String> {
+    let outcome = details_from_anywhere(&session)
+        .ok_or_else(|| user_err(locale_of(&app), Key::ErrorSetupNotFinished))?;
+    // Dry-run never reads secure storage (#252): a demo brain is personal.
+    let team_mode = !session.dry_run && secure_store::is_team_mode();
+    Ok(ConnectionDetailsResponse {
+        worker_url: outcome.worker_url,
+        mcp_url: outcome.mcp_url,
+        team_mode,
+    })
 }
 
 #[derive(serde::Serialize)]
@@ -901,7 +1142,9 @@ pub async fn open_dashboard(
 
 #[tauri::command]
 pub fn set_locale(locale: String, app: AppHandle) -> Result<(), String> {
-    let locale = Locale::parse(&locale).ok_or_else(|| "Invalid locale".to_string())?;
+    let current_locale = locale_of(&app);
+    let locale =
+        Locale::parse(&locale).ok_or_else(|| user_err(current_locale, Key::ErrorInvalidLocale))?;
     if let Ok(config) = app.path().app_config_dir() {
         let _ = i18n::write_stored_locale(&config, locale);
     }
@@ -1014,6 +1257,59 @@ pub async fn worker_update_available(
     Ok(compute_worker_update(session.dry_run).await)
 }
 
+/// Whether the Worker-update prompt is this user's to see.
+///
+/// Pure, so the rule is testable without a keychain or a network — the two
+/// facts it needs are gathered by [`worker_update_is_offerable`] below.
+///
+/// The prompt leads to `start_worker_update`, which resolves the hosting
+/// account by matching the brain's workers.dev subdomain against the signed-in
+/// Cloudflare session and answers `ErrorWrongCfAccount` to anyone else. So the
+/// question is not "may this person administer the brain" — a team admin may,
+/// and still cannot do this — it is "does this person hold the Cloudflare
+/// account the Worker is deployed into". Only `owner` answers that.
+///
+/// A one-person brain is exempt and asks nothing: its owner is whoever holds
+/// the token, there is nobody else on it to mislead, and a Worker old enough to
+/// be behind may well predate `/team/me` entirely.
+///
+/// A LEGACY Worker — one that answered but predates the `owner` key — is the
+/// third case, and it is offered the prompt. On its own, `probe.owner` is a
+/// deadlock: this app self-updates from GitHub Releases and the Worker can only
+/// be updated FROM this app, so a brain deployed before the key would never be
+/// offered the update that adds the key. The prompt still dead-ends at
+/// `ErrorWrongCfAccount` for anyone who does not hold the hosting account, so
+/// the allowance costs a member one dismissible dialog until the owner updates
+/// once — and after that one update this arm is unreachable forever.
+fn update_prompt_is_offerable(team_brain: bool, probe: &ConnectionRoleProbe) -> bool {
+    if !team_brain {
+        return true;
+    }
+    // Not `role == "admin"`, and not "could not tell" either. Least privilege:
+    // being wrong this way costs an owner one click in the tray window; being
+    // wrong the other way nags every member on every launch, forever, for an
+    // action that cannot succeed.
+    //
+    // `legacy_worker` is the one documented exception, and it is NOT "could not
+    // tell": it is a brain that answered and whose answer is missing the key.
+    // A probe that failed leaves both of these false.
+    probe.owner || probe.legacy_worker
+}
+
+/// The two facts [`update_prompt_is_offerable`] needs, gathered.
+///
+/// A solo install makes no request at all, so its launch is what it always was.
+async fn worker_update_is_offerable() -> bool {
+    if !secure_store::is_team_mode() {
+        return true;
+    }
+    let Some(info) = secure_store::load_setup() else {
+        return false;
+    };
+    let probe = fetch_connection_role(&info.worker_url, &info.auth_token).await;
+    update_prompt_is_offerable(true, &probe)
+}
+
 /// Launch-time check on the brain this computer is connected to.
 ///
 /// Two outcomes are worth interrupting for: the Worker is behind the bundled
@@ -1032,6 +1328,16 @@ pub fn check_brain_at_launch(app: &AppHandle) {
             }
             LaunchCheck::Update(update) => update,
         };
+        // After the stale-password arm, deliberately: a password changed on
+        // another computer is a real problem and it is the member's own to
+        // fix, so that screen reaches everyone. This one does not.
+        if !worker_update_is_offerable().await {
+            log::info!(
+                "the deployed Worker is behind, but this computer's token does not own the \
+                 deployment — no update prompt"
+            );
+            return;
+        }
         let message = i18n::t_fmt(
             locale,
             Key::WorkerUpdateMessage,
@@ -1319,14 +1625,11 @@ fn for_log(detail: impl std::fmt::Display) -> String {
 
 /// Normalises an address typed into the rotation flow, and refuses cleartext.
 ///
-/// `normalize_worker_url` keeps a scheme the user typed, and `worker_url::labels`
-/// accepts `http` — both on purpose, for `http://localhost:8787` dev setups, and
-/// both wrong on this path. A rotation is the one operation that sends a password
-/// the user has never used before as a bearer token, and then *stores* the origin
-/// it sent it to: the keychain and the plaintext CLI config both take it, so a
-/// single mistyped `http://` makes every later request from the app and from the
-/// `brain` command cleartext too, indefinitely. `reqwest` does no HSTS, so nothing
-/// downstream will upgrade it.
+/// `normalize_worker_url` now rejects `http` for every user-entered connection.
+/// The second scheme check here deliberately remains as defence in depth for the
+/// password-changing path: if the shared normaliser is ever relaxed for a local
+/// development flow, rotation must continue to reject cleartext with its own
+/// established error key.
 ///
 /// Only the typed address goes through here. A Door A address came out of this
 /// app's own secure storage, where it was written after a successful connection,
@@ -1393,6 +1696,7 @@ fn brain_index_names() -> Vec<String> {
             &manifest.vectorize_name,
             choice.dimensions,
             manifest.vectorize_dimensions,
+            Some(choice.model),
         );
         if !names.contains(&name) {
             names.push(name);
@@ -1459,9 +1763,7 @@ async fn confirm_target_is_a_brain(
 /// `AUTH_TOKEN` overwritten while the user is told their brain's password
 /// changed.
 fn bindings_are_a_brains(bindings: &[serde_json::Value], locale: Locale) -> Result<(), String> {
-    brain_index_names()
-        .iter()
-        .any(|name| discover::bindings_look_like_a_brain(bindings, name))
+    discover::bindings_look_like_a_brain(bindings, &brain_index_names())
         .then_some(())
         .ok_or_else(|| user_err(locale, Key::ErrorNotABrain))
 }
@@ -2079,6 +2381,7 @@ pub async fn begin_embedding_migration(
         &manifest.vectorize_name,
         dimensions,
         manifest.vectorize_dimensions,
+        Some(&model),
     );
 
     let (worker_url, auth_token, _) = settings_target(&app)?;
@@ -2089,6 +2392,19 @@ pub async fn begin_embedding_migration(
     };
 
     if session.dry_run {
+        // What the demo brain reads NOW, before the switch — the live path reads
+        // the script binding for the same reason: afterwards the brain reports
+        // the new index as current. Derived through index_name_for, not assumed
+        // to be the shipped index: after a first demo migration the two differ,
+        // and recording the shipped name made finish_embedding_migration "free"
+        // an index that was never the leftover.
+        let current_model = crate::migration::fetch_status(&worker_url, &auth_token, locale)
+            .await?
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or_default()
+            .to_string();
+
         // The demo brain runs on a loopback address, which has no script or
         // subdomain to derive — `update_worker` would refuse it before doing
         // anything. The `.demo.workers.dev` stand-in exercises the same code path,
@@ -2103,7 +2419,7 @@ pub async fn begin_embedding_migration(
             // dry-run branch: the health poll is authenticated, and a demo
             // rotation has already moved this.
             &auth_token,
-            provision::VectorizeTarget { name: &target_index, dimensions },
+            provision::VectorizeTarget { name: &target_index, dimensions, keep_live_index: false },
             progress,
         )
         .await
@@ -2117,8 +2433,13 @@ pub async fn begin_embedding_migration(
         // which would leave the most consequential screen untested.
         crate::migration::patch_embedding_model(&worker_url, &auth_token, &model, locale).await?;
         // In memory, never the keychain — see demo_previous_index.
-        if target_index != manifest.vectorize_name {
-            *session.demo_previous_index.lock().unwrap() = Some(manifest.vectorize_name.clone());
+        if let Some(previous) = previous_index_to_record(
+            &manifest.vectorize_name,
+            &current_model,
+            manifest.vectorize_dimensions,
+            &target_index,
+        ) {
+            *session.demo_previous_index.lock().unwrap() = Some(previous);
         }
         return crate::migration::reset(&worker_url, &auth_token, locale).await;
     }
@@ -2152,7 +2473,7 @@ pub async fn begin_embedding_migration(
         manifest,
         &worker_url,
         &auth_token,
-        provision::VectorizeTarget { name: &target_index, dimensions },
+        provision::VectorizeTarget { name: &target_index, dimensions, keep_live_index: false },
         progress,
     )
     .await
@@ -2178,6 +2499,34 @@ pub async fn begin_embedding_migration(
     crate::migration::reset(&worker_url, &auth_token, locale)
         .await
         .map_err(half_switched)
+}
+
+/// Which index to record as freeable after a migration deploy, given the
+/// brain's model immediately before the switch.
+///
+/// Split out of `begin_embedding_migration`'s dry-run branch so it can be
+/// tested: a Tauri `AppHandle` cannot be constructed in a unit test, and the
+/// case this exists to guard — a second migration, where "current" is no
+/// longer the shipped index — is only observable by calling the thing that
+/// does the derivation. `previous_index_for` is split for the same reason.
+///
+/// `current_model` must be derived through `index_name_for`, not assumed to
+/// be the shipped model: after a first migration the two differ, and
+/// recording the shipped name would make `finish_embedding_migration` free an
+/// index that was never the leftover.
+fn previous_index_to_record(
+    base: &str,
+    current_model: &str,
+    shipped_dimensions: u32,
+    target_index: &str,
+) -> Option<String> {
+    let current_index = crate::migration::index_name_for(
+        base,
+        crate::migration::dimensions_for(current_model).unwrap_or(shipped_dimensions),
+        shipped_dimensions,
+        Some(current_model),
+    );
+    (target_index != current_index).then_some(current_index)
 }
 
 /// Abandons an unfinished rebuild so the next one starts from the beginning.
@@ -2259,6 +2608,7 @@ pub async fn finish_embedding_migration(
         &manifest.vectorize_name,
         crate::migration::dimensions_for(&live_model).unwrap_or(manifest.vectorize_dimensions),
         manifest.vectorize_dimensions,
+        Some(&live_model),
     );
     if old_index == live_index {
         return Err(user_err(locale, Key::ErrorCannotDeleteLiveIndex));
@@ -2300,6 +2650,119 @@ fn settings_target(app: &AppHandle) -> Result<(String, String, Locale), String> 
     Ok((url, token, locale))
 }
 
+/// What `GET /team/me` says about the token this machine is set up with.
+///
+/// Two fields and no verdict: the rules that turn this into a role live in
+/// `installer/src/connection-role.ts`, in one place, so the setup flow and the
+/// Connection details window cannot drift apart about the same person.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ConnectionRoleProbe {
+    /// `profile.role` — "admin" or "member", or absent if it could not be read.
+    pub role: Option<String>,
+    /// `profile.owner` — true only for the identity holding this deployment's
+    /// AUTH_TOKEN. `role` cannot say this: src/lib/tenancy.ts hashes AUTH_TOKEN
+    /// into a users row with role 'admin', so the owner and a promoted
+    /// colleague are the same value there.
+    pub owner: bool,
+    /// Whether `/team/me` answered with a profile that carried NO `owner` key —
+    /// a Worker deployed before the key existed, positively identified as such.
+    ///
+    /// Not the same fact as `owner: false`, and not the same fact as a probe
+    /// that failed. It licenses exactly one thing, the Worker update, because
+    /// that update is the only way OUT of this state; see
+    /// [`update_prompt_is_offerable`].
+    #[serde(rename = "legacyWorker")]
+    pub legacy_worker: bool,
+}
+
+/// How long to wait before answering without the brain.
+///
+/// Shorter than `migration::TIMEOUT` on purpose: this one runs while a window
+/// is drawing itself, and the answer it is waiting for only decides which of
+/// two paragraphs to show.
+const ROLE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Asks the brain who is holding this token. **Never fails.**
+///
+/// Every way of not getting an answer — a Worker too old to serve the route, a
+/// 401 from a revoked token, an unreachable brain, a body that will not parse —
+/// returns the default, which `roleFromProbe` reads as "member". Returning a
+/// `Result` here would push that decision onto every caller, and the one thing
+/// this must not do is claim more than it knows: over-claiming is the sentence
+/// the whole change exists to delete.
+///
+/// Split out from the command so a test can drive it — the command takes an
+/// `AppHandle` and nothing in this crate can build one.
+pub async fn fetch_connection_role(worker_url: &str, auth_token: &str) -> ConnectionRoleProbe {
+    let none = ConnectionRoleProbe::default();
+    let url = format!("{}/team/me", worker_url.trim_end_matches('/'));
+    let resp = match reqwest::Client::new()
+        .get(url)
+        .bearer_auth(auth_token)
+        .timeout(ROLE_PROBE_TIMEOUT)
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            log::warn!("/team/me answered {} — claiming nothing about this token", r.status());
+            return none;
+        }
+        Err(e) => {
+            log::warn!("could not ask who holds this token: {e}");
+            return none;
+        }
+    };
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("/team/me was not the expected shape: {e}");
+            return none;
+        }
+    };
+    role_probe_from_body(&body)
+}
+
+/// The parse, split from the request so a test can hand it a body no brain this
+/// app talks to would send.
+///
+/// A 200 is not a promise about shape. `as_bool() == Some(true)` rather than
+/// truthiness: a body carrying `owner: "yes"` or `owner: 1` is unexpected, and
+/// an unexpected body must not promote anyone. Same for `role`, which is only
+/// taken when it is genuinely a string.
+/// The absent `owner` key is read separately from an unreadable one. A body
+/// carrying `owner: "yes"` has the key and cannot be trusted, so it claims
+/// nothing at all; a body with no `owner` key AND a role it did manage to state
+/// is a Worker from before the key existed, which is a different fact and the
+/// one that opens the update.
+fn role_probe_from_body(body: &serde_json::Value) -> ConnectionRoleProbe {
+    let profile = body.get("profile").filter(|p| p.is_object());
+    let role = profile
+        .and_then(|p| p.get("role"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    ConnectionRoleProbe {
+        legacy_worker: role.is_some()
+            && profile.is_some_and(|p| p.get("owner").is_none()),
+        owner: body["profile"]["owner"].as_bool() == Some(true),
+        role,
+    }
+}
+
+/// The Connection details window asking who it is rendering for.
+///
+/// The webview never handles the token — it stays in this process — so this is
+/// the only way that window can know, and until it existed the window said
+/// "You're signed in as this brain's owner-admin" to every member who opened it.
+///
+/// Only ever called on a brain this machine recorded as a team brain; a solo
+/// install makes no request at all.
+#[tauri::command]
+pub async fn connection_role(app: AppHandle) -> Result<ConnectionRoleProbe, String> {
+    let (url, token, _locale) = settings_target(&app)?;
+    Ok(fetch_connection_role(&url, &token).await)
+}
+
 #[tauri::command]
 pub async fn get_brain_settings(app: AppHandle) -> Result<crate::settings::SettingsView, String> {
     let (url, token, locale) = settings_target(&app)?;
@@ -2337,10 +2800,15 @@ mod tests {
     use super::{
         app_mode, bindings_are_a_brains, blocked_by_migration, brain_index_names,
         clear_pending_rotation, cloudflare_client_for_brain, confirm_target_is_a_brain,
-        dashboard_credentials, for_log, normalize_worker_url, password_opens_brain,
-        previous_index_for, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
-        rotation_address, rotation_block, rotation_failure, rotation_target, RotateError,
-        SetupSession, LOG_DETAIL_MAX,
+        credential_error, dashboard_credentials, existing_brain_error, fetch_connection_role,
+        for_log, normalize_worker_url, provisioning_failed_error, resource_conflict_error,
+        role_probe_from_body, update_prompt_is_offerable,
+        password_opens_brain, ConnectionRoleProbe,
+        previous_index_for, previous_index_to_record, rebuild_blocks_rotation, revoke_all_tools, rotate_demo_password,
+        rotation_address, rotation_block, rotation_failure, rotation_target,
+        ConnectExistingError, ProvisioningErrorPayload, RotateError, SetupSession,
+        StartProvisioningError,
+        LOG_DETAIL_MAX,
     };
     use crate::cf::oauth::Tokens;
     use crate::cf::provision::{ProvisionError, ProvisionOutcome};
@@ -2443,10 +2911,150 @@ mod tests {
     }
 
     #[test]
-    fn keeps_explicit_http_and_ports_for_dev_setups() {
+    fn rejects_http_with_the_scheme_specific_error() {
+        for input in [
+            "http://second-brain.demo.workers.dev",
+            "HTTP://second-brain.demo.workers.dev/mcp",
+            "http://localhost:8787/mcp",
+        ] {
+            assert_eq!(
+                normalize_worker_url(input, Locale::En).unwrap_err(),
+                i18n::t(Locale::En, Key::ErrorNeedsHttps),
+                "input: {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn provisioning_errors_have_stable_machine_readable_shapes() {
+        let existing = serde_json::to_value(existing_brain_error(
+            Locale::En,
+            "https://second-brain.example.workers.dev".into(),
+        ))
+        .unwrap();
+        assert_eq!(existing["kind"], "existingBrainFound");
+        assert_eq!(existing["errorKey"], "GuardExistingBrain");
         assert_eq!(
-            normalize_worker_url("http://localhost:8787/mcp", Locale::En).unwrap(),
-            "http://localhost:8787"
+            existing["url"],
+            "https://second-brain.example.workers.dev"
+        );
+        assert!(existing["message"].is_string());
+
+        let conflict = serde_json::to_value(resource_conflict_error(
+            Locale::En,
+            crate::cf::provision::ResourceKind::MemoryStorage,
+        ))
+        .unwrap();
+        assert_eq!(conflict["kind"], "resourceNameConflict");
+        assert_eq!(conflict["errorKey"], "GuardNameConflict");
+        assert_eq!(conflict["resourceKind"], "memoryStorage");
+        assert!(conflict["message"].is_string());
+
+        let failed = serde_json::to_value(provisioning_failed_error(Locale::En)).unwrap();
+        assert_eq!(failed["kind"], "provisioningFailed");
+        assert_eq!(failed["errorKey"], "ErrorProvisioningDetail");
+        assert!(failed["message"].is_string());
+        assert!(failed.get("detail").is_none());
+
+        // Precondition/auth failures retain the command's pre-existing string
+        // payload, so introducing the structured variants is not a global break.
+        assert_eq!(
+            serde_json::to_value(StartProvisioningError::Message("plain".into())).unwrap(),
+            "plain"
+        );
+
+        let _shape_is_public: Option<ProvisioningErrorPayload> = None;
+    }
+
+    #[test]
+    fn connect_existing_credential_errors_have_stable_machine_readable_shapes() {
+        for (locale, key, expected_error_key) in [
+            (Locale::En, Key::ErrorEmptyPassword, "ErrorEmptyPassword"),
+            (Locale::En, Key::ErrorWrongPassword, "ErrorWrongPassword"),
+            (Locale::It, Key::ErrorEmptyPassword, "ErrorEmptyPassword"),
+            (Locale::It, Key::ErrorWrongPassword, "ErrorWrongPassword"),
+        ] {
+            let value = serde_json::to_value(credential_error(locale, key)).unwrap();
+            let object = value.as_object().expect("credential error is an object");
+            assert_eq!(object.len(), 2, "the credential wire shape changed: {value}");
+            assert_eq!(value["errorKey"], expected_error_key);
+            assert_eq!(value["message"], i18n::t(locale, key));
+        }
+
+        assert_eq!(
+            serde_json::to_value(ConnectExistingError::Message("plain".into())).unwrap(),
+            "plain",
+            "non-credential connect errors retain their legacy string shape"
+        );
+
+        let src = include_str!("commands.rs");
+        let body = fn_body(src, "pub async fn connect_existing(");
+        for key in ["Key::ErrorEmptyPassword", "Key::ErrorWrongPassword"] {
+            assert!(
+                body.contains(&format!("credential_error(locale, {key})")),
+                "connect_existing no longer returns a structured error for {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn credential_copy_is_pinned_in_both_rust_locales() {
+        let catalog = include_str!("i18n.rs");
+        for (key, message) in [
+            (
+                "ErrorEmptyPassword",
+                "Enter the Second Brain password or the team sign-in token from your invitation.",
+            ),
+            (
+                "ErrorWrongPassword",
+                "That password or team sign-in token does not work for this Second Brain. Check the invitation or password and try again.",
+            ),
+            (
+                "ErrorEmptyPassword",
+                "Inserisci la password del Second Brain oppure il token di accesso del team presente nel tuo invito.",
+            ),
+            (
+                "ErrorWrongPassword",
+                "Questa password o questo token di accesso del team non funziona per questo Second Brain. Controlla l'invito o la password e riprova.",
+            ),
+        ] {
+            assert!(
+                catalog.contains(message),
+                "the pinned EN/IT {key} copy changed or disappeared: {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn provisioning_preflight_is_after_auth_and_immediately_before_mutation() {
+        let src = include_str!("commands.rs");
+        let body = fn_body(src, "pub async fn start_provisioning(");
+        let preflight = at(body, "provision::preflight_account");
+        assert!(
+            preflight > at(body, "let account_name = session"),
+            "the account must be authenticated before its resources are inspected"
+        );
+        assert!(
+            preflight > at(body, "if tokens.expires_at"),
+            "an expired token must be refreshed before the ownership preflight"
+        );
+        assert!(
+            preflight < at(body, "provision::provision_recording("),
+            "the ownership preflight must run before the first mutating pipeline"
+        );
+    }
+
+    #[test]
+    fn an_invalid_locale_uses_the_localized_error_key() {
+        let src = include_str!("commands.rs");
+        let body = fn_body(src, "pub fn set_locale(");
+        assert!(
+            body.contains("Key::ErrorInvalidLocale"),
+            "set_locale must localize invalid locale errors"
+        );
+        assert!(
+            !body.contains("\"Invalid locale\""),
+            "set_locale must not expose a raw hardcoded error"
         );
     }
 
@@ -2459,7 +3067,6 @@ mod tests {
             );
         }
     }
-
 
     /// #252 fixed launch raising a Keychain prompt in dry-run. Every command
     /// that resolves a brain must go through dashboard_credentials for the same
@@ -2527,6 +3134,64 @@ mod tests {
         assert_never_reads_the_keychain("an unconnected demo session", || {
             let _ = dashboard_credentials(&fresh, Locale::En);
         });
+    }
+
+    // ── Which index a migration leaves behind (#? two-hop dry-run) ───────────
+
+    /// The ordinary case: a first migration off the shipped model. The index
+    /// to free is the shipped name, exactly as before this function existed —
+    /// no regression for the common path.
+    #[test]
+    fn first_migration_frees_the_shipped_index() {
+        assert_eq!(
+            previous_index_to_record(
+                "second-brain-vectors",
+                "@cf/baai/bge-small-en-v1.5",
+                384,
+                "second-brain-vectors-1024",
+            ),
+            Some("second-brain-vectors".to_string())
+        );
+    }
+
+    /// The case this function exists for: a SECOND migration, where "current"
+    /// is no longer the shipped model. The brain already moved shipped → 1024
+    /// once, and is now moving 1024 → m3. The index to free is the 1024 index
+    /// the brain is actually on right now — not the shipped 384 index, which
+    /// was already freed (or never existed on this brain) a migration ago.
+    /// Recording the shipped name here is the exact bug this split-out
+    /// function is a regression test against.
+    #[test]
+    fn second_migration_frees_the_current_index_not_the_shipped_one() {
+        assert_eq!(
+            previous_index_to_record(
+                "second-brain-vectors",
+                "@cf/baai/bge-large-en-v1.5",
+                384,
+                &crate::migration::index_name_for(
+                    "second-brain-vectors",
+                    1024,
+                    384,
+                    Some(crate::migration::BGE_M3_MODEL),
+                ),
+            ),
+            Some("second-brain-vectors-1024".to_string())
+        );
+    }
+
+    /// Migrating to the index already in use — e.g. re-selecting the current
+    /// model, or two models that share an index — frees nothing.
+    #[test]
+    fn same_index_has_nothing_to_free() {
+        assert_eq!(
+            previous_index_to_record(
+                "second-brain-vectors",
+                "@cf/baai/bge-large-en-v1.5",
+                384,
+                "second-brain-vectors-1024",
+            ),
+            None
+        );
     }
 
     // ── Changing the password (#235) ─────────────────────────────────────────
@@ -2813,6 +3478,294 @@ mod tests {
                  a state users stay in deliberately, and rotation does not care."
             );
         }
+    }
+
+    /// Who is holding the token this machine is set up with — asked of the
+    /// brain, because nothing local can answer it.
+    ///
+    /// The Connection details window used to hardcode "owner". Every team member
+    /// who opened it read "You're signed in as this brain's owner-admin" and was
+    /// offered a password change that walks them through a Cloudflare sign-in
+    /// and a new password before failing with ErrorWrongCfAccount. The webview
+    /// never handles the token — it stays here — so the window could not ask
+    /// until this command existed.
+    ///
+    /// `owner`, not `role`: src/lib/tenancy.ts hashes AUTH_TOKEN into a users
+    /// row with role 'admin', so the person who created the brain and a
+    /// colleague they promoted are indistinguishable by role alone.
+    #[tokio::test]
+    async fn connection_role_reads_what_the_brain_says_about_this_token() {
+        let brain = crate::demo_brain::scoped_brain();
+        const PASSWORD: &str = "the-password-this-role-probe-test-sets";
+        crate::demo_brain::rotate_to(PASSWORD);
+
+        let probe = fetch_connection_role(brain.base_url(), PASSWORD).await;
+        assert_eq!(probe.role.as_deref(), Some("admin"), "the profile role is read");
+        assert!(probe.owner, "the AUTH_TOKEN holder owns the deployment");
+        assert!(
+            !probe.legacy_worker,
+            "a brain serving the current /team/me is not a legacy Worker"
+        );
+    }
+
+    /// Least privilege, on every way of not getting an answer. Each of these
+    /// must reach `{ role: None, owner: false }`, which `roleFromProbe` in
+    /// installer/src/connection-role.ts turns into "member" — because the
+    /// failure this whole change exists to fix is the app claiming MORE than it
+    /// knows, and a probe that cannot be completed knows nothing.
+    #[tokio::test]
+    async fn a_probe_that_cannot_be_answered_claims_nothing() {
+        let brain = crate::demo_brain::scoped_brain();
+        const PASSWORD: &str = "the-password-this-least-privilege-test-sets";
+        crate::demo_brain::rotate_to(PASSWORD);
+
+        // A 401: the wrong token, which is what a member holding a token this
+        // brain has revoked would get.
+        let refused = fetch_connection_role(brain.base_url(), "not-the-password").await;
+        assert_eq!(refused, ConnectionRoleProbe::default(), "a 401 must not claim ownership");
+
+        // Nothing listening at all. Port 1 is reserved and never bound.
+        let unreachable = fetch_connection_role("http://127.0.0.1:1", PASSWORD).await;
+        assert_eq!(unreachable, ConnectionRoleProbe::default());
+
+        // A route that is not there — a Worker too old to serve /team/me, which
+        // is the ordinary state for anyone who updated the app first.
+        let old = fetch_connection_role(&format!("{}/nope", brain.base_url()), PASSWORD).await;
+        assert_eq!(old, ConnectionRoleProbe::default());
+    }
+
+    /// Who the launch-time Worker-update prompt is for.
+    ///
+    /// `check_for_updates` self-updates the DESKTOP app from GitHub Releases
+    /// with no Cloudflare involvement — correct, and it must keep working for
+    /// everyone. The consequence is that a team member's BUNDLED Worker version
+    /// races ahead of the team's DEPLOYED one purely by their keeping the app
+    /// current, `is_behind` goes true on every launch, and they were shown an
+    /// OK/Cancel dialog offering an update that resolves the hosting account by
+    /// matching the brain's workers.dev subdomain — and so dead-ends at
+    /// ErrorWrongCfAccount for anyone but the owner. Indefinitely, and
+    /// *because* they kept their app up to date.
+    ///
+    /// Owner, not admin: a promoted team admin has no more access to that
+    /// Cloudflare account than a member does.
+    #[test]
+    fn the_worker_update_prompt_is_the_owners_alone() {
+        let member =
+            ConnectionRoleProbe { role: Some("member".into()), owner: false, legacy_worker: false };
+        let promoted =
+            ConnectionRoleProbe { role: Some("admin".into()), owner: false, legacy_worker: false };
+        let owner =
+            ConnectionRoleProbe { role: Some("admin".into()), owner: true, legacy_worker: false };
+
+        assert!(update_prompt_is_offerable(true, &owner), "the owner still gets asked");
+        assert!(!update_prompt_is_offerable(true, &member), "a member must not be nagged");
+        assert!(
+            !update_prompt_is_offerable(true, &promoted),
+            "a promoted admin has no Cloudflare account here either"
+        );
+
+        // Least privilege: a brain that could not be asked is not a brain that
+        // said yes. The cost of being wrong this way is an owner who clicks
+        // Update in the tray window instead; the cost of the other way is the
+        // bug above.
+        assert!(
+            !update_prompt_is_offerable(true, &ConnectionRoleProbe::default()),
+            "an unanswerable probe must suppress the prompt, not raise it"
+        );
+
+        // And a one-person brain is unchanged in every case — including the
+        // unanswerable one. There is nobody on it to mislead, its owner is
+        // whoever holds the token by construction, and a Worker too old to
+        // answer /team/me is exactly the Worker most likely to be behind.
+        for probe in [ConnectionRoleProbe::default(), member.clone(), owner.clone()] {
+            assert!(update_prompt_is_offerable(false, &probe), "a solo install must not change");
+        }
+    }
+
+    /// The deadlock the gate above creates on its own, and the one exception.
+    ///
+    /// This app self-updates from GitHub Releases with no Cloudflare
+    /// involvement, and the deployed Worker can only be updated FROM this app.
+    /// So the app is always AHEAD of the deployment, never behind it — and on a
+    /// brain whose Worker predates the `owner` key that closes a circle:
+    /// `/team/me` answers without `owner`, so nothing establishes the role, so
+    /// least privilege suppresses the update prompt, so the Worker that would
+    /// add `owner` is never deployed. The way out was gated on a capability
+    /// only the version you are trying to reach reports.
+    ///
+    /// A Worker that ANSWERED and simply predates the key therefore opens this
+    /// one prompt. A probe that could not be answered does not, and that is the
+    /// whole distinction: `legacy_worker` is a positive identification, not a
+    /// shrug. Accepting it costs a member one dismissible dialog until the
+    /// owner updates once — `start_worker_update` still refuses anyone who does
+    /// not hold the hosting account — and the arm is unreachable after that.
+    #[test]
+    fn a_worker_too_old_to_say_who_is_asking_can_still_be_updated() {
+        let legacy = ConnectionRoleProbe {
+            role: Some("admin".into()),
+            owner: false,
+            legacy_worker: true,
+        };
+        assert!(
+            update_prompt_is_offerable(true, &legacy),
+            "a brain deployed before the owner key could never be offered the update that adds it"
+        );
+
+        // And the exception is exactly one state wide. A probe that failed
+        // leaves `legacy_worker` false and is still suppressed — an absent
+        // answer is not an old answer.
+        assert!(!update_prompt_is_offerable(true, &ConnectionRoleProbe::default()));
+        assert!(!update_prompt_is_offerable(
+            true,
+            &ConnectionRoleProbe { role: Some("member".into()), owner: false, legacy_worker: false }
+        ));
+    }
+
+    /// The flag has to survive the hop into the webview under the name the
+    /// webview reads.
+    ///
+    /// This struct is `snake_case` and the TypeScript that narrows it is
+    /// `camelCase`, so the rename is the only thing joining them — and dropping
+    /// it fails silently and in exactly the worst way: `legacyWorker` would be
+    /// `undefined` in the details window, every legacy brain would look like a
+    /// probe that failed, and the tray window's Update button — the surface an
+    /// owner actually opens — would be deadlocked again with every test still
+    /// green.
+    #[test]
+    fn the_details_window_reads_the_flag_this_struct_writes() {
+        let json = serde_json::to_value(ConnectionRoleProbe {
+            role: Some("admin".into()),
+            owner: false,
+            legacy_worker: true,
+        })
+        .expect("the probe serialises");
+        assert_eq!(
+            json.get("legacyWorker"),
+            Some(&serde_json::json!(true)),
+            "the details window reads `legacyWorker`; this is what it gets: {json}"
+        );
+
+        let ts = include_str!("../../src/connection-role.ts");
+        assert!(
+            ts.contains("?.legacyWorker === true"),
+            "installer/src/connection-role.ts must narrow the same key, strictly"
+        );
+    }
+
+    /// Which bodies are a legacy Worker, and which are merely unreadable.
+    ///
+    /// The line is the KEY's presence, not the value's truth. `owner: "yes"`
+    /// has the key and cannot be trusted, so it claims nothing; a body with no
+    /// `owner` at all, alongside a role it did state, is a Worker from before
+    /// the key existed. Collapsing those two would hand the update prompt to
+    /// anyone who can put a surprising body in front of this app.
+    #[test]
+    fn only_an_absent_owner_key_counts_as_a_legacy_worker() {
+        use serde_json::json;
+
+        // The shape src/routes/admin.ts sent before `owner` existed.
+        for body in [
+            json!({ "ok": true, "profile": { "userId": "usr-1", "role": "admin" } }),
+            json!({ "ok": true, "profile": { "userId": "usr-2", "role": "member" } }),
+        ] {
+            let probe = role_probe_from_body(&body);
+            assert!(probe.legacy_worker, "{body} is a Worker from before the owner key");
+            assert!(!probe.owner, "and it still claims no ownership");
+            assert!(update_prompt_is_offerable(true, &probe));
+        }
+
+        // Everything else. None of these is a legacy Worker: either the key is
+        // present (and unusable), or nothing was established at all.
+        for body in [
+            json!({}),
+            json!(null),
+            json!("not an object"),
+            json!({ "ok": true, "profile": {} }),
+            json!({ "ok": true, "profile": "admin" }),
+            json!({ "ok": true, "profile": { "role": 42 } }),
+            json!({ "ok": true, "profile": { "owner": {} } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": "yes" } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": 1 } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": null } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": false } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": true } }),
+            json!({ "ok": false, "error": "Unauthorized" }),
+        ] {
+            assert!(
+                !role_probe_from_body(&body).legacy_worker,
+                "{body} was read as a Worker predating the owner key"
+            );
+        }
+    }
+
+    /// The prompt is gated; the stale-password screen is not.
+    ///
+    /// A member's password going stale is genuinely theirs to fix, and routing
+    /// them to it needs no Cloudflare account. Gating both behind one check is
+    /// the easy mistake here, so it is asserted on the source: the scan runs
+    /// over the function body only, so this test's own text cannot satisfy it.
+    #[test]
+    fn a_dead_password_still_reaches_everyone() {
+        let src = include_str!("commands.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("the test module is the boundary of the scannable source")];
+        let start = code.find("pub fn check_brain_at_launch").expect("check_brain_at_launch");
+        let body = &code[start..];
+        let body = &body[..body.find("\n}\n").expect("end of fn")];
+
+        let stale = body.find("StalePassword").expect("the stale-password arm");
+        let gate = body.find("worker_update_is_offerable").expect("the update gate");
+        assert!(
+            stale < gate,
+            "the stale-password arm must return before the ownership gate — a member \
+             whose password was changed elsewhere has a real problem that is theirs to fix"
+        );
+        let stale_arm = &body[stale..gate];
+        assert!(
+            !stale_arm.contains("worker_update_is_offerable"),
+            "the stale-password screen must not be gated on owning the deployment"
+        );
+    }
+
+    /// A 200 is not a promise about shape.
+    ///
+    /// Every one of these is a body some Worker could send — an older one, a
+    /// proxy's error page rendered as JSON, a field that changed type — and none
+    /// of them is a reason to tell the person in front of the app that they own
+    /// this deployment. `owner: "yes"` is the one that matters: it is truthy,
+    /// and the natural way to write this check would take it.
+    #[test]
+    fn an_unexpected_body_promotes_nobody() {
+        use serde_json::json;
+        for body in [
+            json!({}),
+            json!(null),
+            json!({ "ok": true, "profile": {} }),
+            json!({ "ok": true, "profile": { "role": "member" } }),
+            json!({ "ok": true, "profile": { "role": "member", "owner": "yes" } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": 1 } }),
+            json!({ "ok": true, "profile": { "role": "admin", "owner": "true" } }),
+            json!({ "ok": true, "profile": { "owner": {} } }),
+            json!({ "ok": false, "error": "Unauthorized" }),
+        ] {
+            assert!(
+                !role_probe_from_body(&body).owner,
+                "{body} was read as ownership"
+            );
+        }
+
+        // A role that is not a string is no role at all, rather than a stringified one.
+        assert_eq!(role_probe_from_body(&json!({ "profile": { "role": 42 } })).role, None);
+
+        // And the shape src/routes/admin.ts actually sends still reads.
+        let real = role_probe_from_body(&json!({
+            "ok": true,
+            "profile": { "userId": "usr-1", "role": "admin", "owner": true }
+        }));
+        assert_eq!(real.role.as_deref(), Some("admin"));
+        assert!(real.owner);
+        assert!(!real.legacy_worker, "a body carrying the key is not a legacy Worker");
     }
 
     /// A rebuild that could not be asked about is not a rebuild in progress.
@@ -3105,11 +4058,11 @@ mod tests {
             );
         }
 
-        // The general normaliser still keeps http for the dev setups that need it,
-        // so this refusal has to live on the rotation path and cannot be delegated.
+        // The shared normaliser now closes the cleartext hole for every typed
+        // connection, including local-looking addresses.
         assert_eq!(
-            normalize_worker_url("http://localhost:8787/mcp", Locale::En).unwrap(),
-            "http://localhost:8787"
+            normalize_worker_url("http://localhost:8787/mcp", Locale::En).unwrap_err(),
+            i18n::t(Locale::En, Key::ErrorNeedsHttps)
         );
     }
 
@@ -3861,10 +4814,12 @@ mod tests {
         let refused = revoke_all_tools(brain.base_url(), "not-this-brains-password", Locale::En)
             .await
             .expect_err("a brain must not revoke anything for a password it refuses");
-        assert!(
-            refused.contains("401"),
-            "the status the brain gave is what makes this diagnosable: {refused}"
+        assert_eq!(
+            refused,
+            i18n::t(Locale::En, Key::ErrorBrainHttpStatus),
+            "a backend status is logged internally; the UI receives only its stable localized key"
         );
+        assert!(!refused.contains("401"), "leaked a raw status code: {refused}");
 
         // …and a brain that could not be reached at all says something else
         // again, because the two send the user to different places.

@@ -1,7 +1,15 @@
+function resetAppendSaveBtn() {
+  const btn = document.getElementById('append-save-btn')
+  if (!btn) return
+  btn.disabled = false
+  btn.textContent = t('memories.appendSave')
+}
+
 function openAppend(id, preview) {
   pendingAppendId = id
   document.getElementById('append-context-preview').textContent = preview + '...'
   document.getElementById('append-textarea').value = ''
+  resetAppendSaveBtn()
   document.getElementById('append-sheet').classList.add('open')
   setTimeout(() => document.getElementById('append-textarea').focus(), 100)
 }
@@ -20,6 +28,7 @@ function openAppendFromContent() {
 function closeAppend() {
   document.getElementById('append-sheet').classList.remove('open')
   pendingAppendId = null
+  resetAppendSaveBtn()
 }
 async function saveAppend() {
   const addition = document.getElementById('append-textarea').value.trim()
@@ -34,15 +43,22 @@ async function saveAppend() {
     notifyMemoryResolved(appendedId)
     refreshAll()
   } catch (e) {
-    btn.disabled = false
-    btn.textContent = t('memories.appendSave')
-    alert(t('memories.appendFailed', { message: e.message }))
+    showToast(t('memories.appendFailed', { message: e.message }))
+  } finally {
+    resetAppendSaveBtn()
   }
 }
 
 // The tags the sheet is currently offering to save. Held separately from the
 // entry so that removing one and then cancelling changes nothing.
 let pendingEditTags = []
+
+function resetEditSaveBtn() {
+  const btn = document.getElementById('edit-save-btn')
+  if (!btn) return
+  btn.disabled = false
+  btn.textContent = t('memories.editSave')
+}
 
 function openEdit(id, content, tags) {
   pendingEditId = id
@@ -56,6 +72,7 @@ function openEdit(id, content, tags) {
 
   const ta = document.getElementById('edit-textarea')
   ta.value = content
+  resetEditSaveBtn()
   document.getElementById('edit-sheet').classList.add('open')
   setTimeout(() => {
     ta.focus()
@@ -87,6 +104,7 @@ function closeEdit() {
   document.getElementById('edit-sheet').classList.remove('open')
   pendingEditId = null
   pendingEditTags = []
+  resetEditSaveBtn()
 }
 
 async function saveEdit() {
@@ -109,21 +127,33 @@ async function saveEdit() {
     notifyMemoryResolved(editedId)
     refreshAll()
   } catch (e) {
-    btn.disabled = false
-    btn.textContent = t('memories.editSave')
-    alert(t('memories.editFailed', { message: e.message }))
+    showToast(t('memories.editFailed', { message: e.message }))
+  } finally {
+    resetEditSaveBtn()
   }
 }
 
 function openConfirm(id, btnOrCard) {
+  const card = btnOrCard ? (btnOrCard.classList?.contains('memory-card') ? btnOrCard : btnOrCard.closest('.memory-card')) : null
+  // Opened BEFORE the state is set, not after: opening dismisses whatever sheet
+  // it replaces, and for a previous forget that dismissal is exactly what nulls
+  // these two. Setting them first would let the outgoing sheet wipe them.
+  //
+  // The shared sheet, driven like any other caller — the markup's cold copy is
+  // this same wording, but it is written in explicitly so whichever action
+  // opened the sheet last cannot leave its words behind.
+  openDangerConfirm({
+    title: t('memories.confirmTitle'),
+    body: t('memories.confirmBody'),
+    confirmLabel: t('memories.forget'),
+    onConfirm: confirmForget,
+    onClose: () => {
+      pendingForgetId = null
+      pendingForgetCard = null
+    },
+  })
   pendingForgetId = id
-  pendingForgetCard = btnOrCard ? (btnOrCard.classList?.contains('memory-card') ? btnOrCard : btnOrCard.closest('.memory-card')) : null
-  document.getElementById('confirm-dialog').classList.add('open')
-}
-function closeConfirm() {
-  document.getElementById('confirm-dialog').classList.remove('open')
-  pendingForgetId = null
-  pendingForgetCard = null
+  pendingForgetCard = card
 }
 /**
  * Tell any open list that this memory has been dealt with.
@@ -141,10 +171,16 @@ function notifyMemoryResolved(id) {
   if (typeof dropFromStaleQueue === 'function') dropFromStaleQueue(id)
 }
 
-async function confirmForget() {
+async function confirmForget(_checked, done) {
   if (!pendingForgetId) return
+  // Snapshot BEFORE closing: closing fires this sheet's onClose, which is what
+  // nulls these two. Anything read after the close reads null.
   const idToForget = pendingForgetId
   const cardElement = pendingForgetCard
+  // `done` closes this question and no other. It is absent only when something
+  // calls confirmForget() directly rather than through the sheet, and then
+  // "close whatever is open" is the honest reading.
+  const closeThis = done || closeConfirm
   const btn = document.querySelector('#confirm-dialog .btn-delete')
   if (btn) {
     btn.disabled = true
@@ -153,7 +189,7 @@ async function confirmForget() {
 
   try {
     await apiMcp('forget', { id: idToForget })
-    closeConfirm()
+    closeThis()
     if (cardElement) {
       cardElement.style.transition = 'none'
       cardElement.classList.add('explode-out')
@@ -166,7 +202,7 @@ async function confirmForget() {
     // from under its own exit animation.
     refreshAll({ list: false })
   } catch (e) {
-    alert(t('memories.forgetFailed', { message: e.message }))
+    showToast(t('memories.forgetFailed', { message: e.message }))
   } finally {
     if (btn) {
       btn.disabled = false
@@ -302,7 +338,121 @@ async function hydrateView(id) {
     if (viewOpenId !== id) return // the sheet moved on while this was in flight
     renderViewMeta(data.entry)
     renderViewBrain(data.entry)
+    renderViewTimeline(data.entry)
+    // openView rendered from whatever the caller happened to hold; /entry is
+    // the only source that knows whether this is the reader's to change.
+    applyAuthorLock(data.entry)
   } catch {}
+}
+
+/**
+ * The Worker's event name as a sentence.
+ *
+ * `src/lib/audit.ts` writes seven names and the timeline printed them raw, so
+ * the history of a shared memory read `Bob · status_changed · 3 Mar 2026`.
+ * An eighth name from a newer Worker returns unchanged rather than blank —
+ * degrading to today's behaviour beats rendering nothing.
+ */
+function timelineEventLabel(event) {
+  const keys = {
+    created: 'memories.evCreated',
+    updated: 'memories.evUpdated',
+    appended: 'memories.evAppended',
+    deleted: 'memories.evDeleted',
+    status_changed: 'memories.evStatusChanged',
+    shared: 'memories.evShared',
+    unshared: 'memories.evUnshared',
+  }
+  return keys[event] ? t(keys[event]) : event || ''
+}
+
+function renderViewTimeline(entry) {
+  const el = document.getElementById('view-timeline')
+  if (!el) return
+  const items = entry.timeline || []
+  if (!items.length && !entry.actor_name) {
+    el.style.display = 'none'
+    el.innerHTML = ''
+    return
+  }
+  const lines = []
+  if (entry.workspace === 'company' && entry.actor_name) {
+    lines.push(`<div class="view-timeline-item">${escHtml(t('memories.authorLabel', { name: entry.actor_name }))}</div>`)
+  }
+  for (const item of items) {
+    const when = item.created_at
+      ? formatDateUI(item.created_at, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : ''
+    lines.push(`<div class="view-timeline-item">${escHtml(item.actor_name || '')} · ${escHtml(timelineEventLabel(item.event))}${when ? ` · ${escHtml(when)}` : ''}</div>`)
+  }
+  // Two greyed-out buttons with no explanation read as a broken screen, so the
+  // reason sits at the end of the history that establishes it.
+  if (entry.can_edit === false && entry.actor_name) {
+    lines.push(`<div class="view-timeline-note">${escHtml(t('memories.authorLocked', { name: entry.actor_name }))}</div>`)
+  }
+  el.style.display = ''
+  el.innerHTML = `<div class="view-timeline-label">${escHtml(t('memories.timelineLabel'))}</div>${lines.join('')}`
+}
+
+/**
+ * Show whether this memory is the caller's to change.
+ *
+ * A member used to tap Edit on a colleague's shared memory, type, save, and
+ * only then be told the Worker refuses. Strictly `=== false`: a recall card
+ * that carries no flag, and any Worker from before the flag existed, are not
+ * locked — which is what keeps a solo brain identical to what it is today.
+ *
+ * Append is in this set because POST /append gates on `assertCanEditContent`,
+ * the same predicate POST /update uses (src/routes/capture.ts) — leaving it
+ * enabled reproduced the same 403-after-typing on a different button. The
+ * related-memory unlink control is deliberately NOT here: POST /unlink gates
+ * only on readability (src/routes/graph.ts), so a reader may remove a link.
+ */
+function applyAuthorLock(entry) {
+  lockAuthoredControls(entry, ['view-btn-append', 'view-btn-edit', 'view-btn-forget'].map((id) => document.getElementById(id)), 'view-btn--locked')
+}
+
+/**
+ * One reading of `can_edit`, for every surface that offers those controls.
+ *
+ * The detail sheet and the list card are two renderings of the same three
+ * buttons over the same row, and the moment they answer "may I edit this?"
+ * separately they can disagree - which is exactly the defect this phase has
+ * already shipped twice. So the predicate, the disabled state, the dimming,
+ * the `aria-disabled` and the explanatory title all live here once, and each
+ * surface supplies only its own buttons and its own dimming class.
+ *
+ * `locked` is strictly `=== false`. Absent means "this Worker does not report
+ * it", not "you may not", so an older Worker and a solo brain are untouched.
+ */
+function lockAuthoredControls(entry, buttons, lockedClass) {
+  const locked = entry.can_edit === false
+  for (const btn of buttons) {
+    if (!btn) continue
+    btn.disabled = locked
+    btn.classList.toggle(lockedClass, locked)
+    btn.title = locked ? t('memories.authorLockedTitle') : ''
+    btn.setAttribute('aria-disabled', String(locked))
+  }
+  return locked
+}
+
+/**
+ * The same lock on a list card.
+ *
+ * The card shows "Shared - Bob" already, so the user can see whose memory it
+ * is; what they could not see was that Append, Edit and Forget would 403. The
+ * set is deliberately the SAME three the detail sheet locks, for the same
+ * reason: those three routes gate on `assertCanMutateEntry`, the predicate
+ * `can_edit` reports. The share control is left alone here as unlink is left
+ * alone there - a different route with its own answer.
+ */
+function applyCardAuthorLock(entry, card) {
+  return lockAuthoredControls(
+    entry,
+    ['.append-btn', '.edit-btn', '.forget-btn'].map((sel) => card.querySelector(sel)),
+    'card-action-btn--locked',
+  )
 }
 
 /** Which memory the sheet is currently showing, so a late response can tell. */
@@ -360,6 +510,7 @@ function openView(entry, cardElement) {
   } else {
     editBtn.style.display = 'none'
   }
+  applyAuthorLock(entry)
   document.getElementById('view-sheet').classList.add('open')
 }
 function closeView() {
@@ -403,16 +554,25 @@ async function loadRelated(id, el) {
         const c = data.connections.find((x) => x.id === row.dataset.id)
         if (c) openView({ id: c.id, content: c.content, tags: c.tags }, null)
       }
-      row.querySelector('.related-unlink').onclick = async () => {
-        if (!confirm(t('memories.removeLinkConfirm'))) return
-        try {
-          await fetch(`${WORKER_URL}/unlink`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-            body: JSON.stringify({ source_id: id, target_id: row.dataset.id, type: row.dataset.type }),
-          })
-        } catch {}
-        loadRelated(id, el)
+      row.querySelector('.related-unlink').onclick = () => {
+        // The app's own sheet, not the browser's: this dialog is the only one
+        // on the page that could not be translated or styled.
+        openDangerConfirm({
+          title: t('danger.removeLinkTitle'),
+          body: t('memories.removeLinkConfirm'),
+          confirmLabel: t('danger.removeLinkAction'),
+          onConfirm: async (_checked, done) => {
+            try {
+              await fetch(`${WORKER_URL}/unlink`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+                body: JSON.stringify({ source_id: id, target_id: row.dataset.id, type: row.dataset.type }),
+              })
+            } catch {}
+            await loadRelated(id, el)
+            done()
+          },
+        })
       }
     })
   } catch {}

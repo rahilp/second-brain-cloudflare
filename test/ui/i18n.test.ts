@@ -1,8 +1,8 @@
 /**
  * Dashboard i18n: catalogs, DOM apply, and locale boot.
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve, relative } from "node:path";
 import vm from "node:vm";
 import { describe, it, expect } from "vitest";
 
@@ -50,6 +50,254 @@ function loadI18n(locale?: "en" | "it") {
   if (locale) ctx.initI18n(locale);
   else ctx.initI18n();
   return { ctx, makeEl, store };
+}
+
+/**
+ * Every i18n call site in `public/`, split into the ones whose key this can
+ * resolve to a literal and the ones it cannot.
+ *
+ * Hoisted to module scope because TWO tests need it and they read it in
+ * OPPOSITE directions: one walks call sites and checks each against the
+ * catalogs, the other walks the catalogs and checks each against the call
+ * sites. Sharing the scanner is what makes the second one's answer trustworthy
+ * — a key is "referenced" if and only if it is referenced by the same
+ * definition of "reference" the forward check uses.
+ */
+function scanCallSites() {
+  const PUBLIC_ROOT = resolve(ROOT, "public");
+
+  function listPublicFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) out.push(...listPublicFiles(full));
+      else if (/\.(js|html)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+
+  function lineOf(content: string, index: number): number {
+    return content.slice(0, index).split("\n").length;
+  }
+
+  // Scans forward from just after "t(" / "tPlural(" to find the end of the FIRST
+  // argument, respecting nested strings/template literals and nested (), [], {}. Returns
+  // null if the call never closes (shouldn't happen in well-formed source).
+  function extractFirstArg(content: string, startArgs: number): string | null {
+    let depth = 1;
+    let i = startArgs;
+    let inStr: string | null = null;
+    while (i < content.length) {
+      const ch = content[i];
+      if (inStr) {
+        if (ch === "\\") {
+          i += 2;
+          continue;
+        }
+        if (ch === inStr) inStr = null;
+        i++;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === "`") {
+        inStr = ch;
+        i++;
+        continue;
+      }
+      if (ch === "(" || ch === "[" || ch === "{") {
+        depth++;
+        i++;
+        continue;
+      }
+      if (ch === ")" || ch === "]" || ch === "}") {
+        depth--;
+        if (depth === 0) return content.slice(startArgs, i).trim();
+        i++;
+        continue;
+      }
+      if (ch === "," && depth === 1) return content.slice(startArgs, i).trim();
+      i++;
+    }
+    return null;
+  }
+
+  // A template literal with exactly one `${...}` splits cleanly into a static prefix,
+  // the interpolated expression, and a static suffix — as long as there's no second
+  // interpolation in what's left. Returns null for anything messier than that (multiple
+  // interpolations), which is left as an opaque dynamic call site.
+  function parseTemplateLiteral(
+    raw: string,
+  ): { prefix: string; expr: string; suffix: string } | null {
+    if (!raw.startsWith("`") || !raw.endsWith("`")) return null;
+    const inner = raw.slice(1, -1);
+    const idx = inner.indexOf("${");
+    if (idx === -1) return null;
+    const prefix = inner.slice(0, idx);
+    let depth = 1;
+    let i = idx + 2;
+    let inStr: string | null = null;
+    while (i < inner.length && depth > 0) {
+      const ch = inner[i];
+      if (inStr) {
+        if (ch === "\\") {
+          i += 2;
+          continue;
+        }
+        if (ch === inStr) inStr = null;
+        i++;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === "`") {
+        inStr = ch;
+        i++;
+        continue;
+      }
+      if (ch === "{") {
+        depth++;
+        i++;
+        continue;
+      }
+      if (ch === "}") {
+        depth--;
+        if (depth === 0) break;
+        i++;
+        continue;
+      }
+      i++;
+    }
+    if (depth !== 0) return null;
+    const expr = inner.slice(idx + 2, i);
+    const suffix = inner.slice(i + 1);
+    if (suffix.includes("${")) return null;
+    return { prefix, expr, suffix };
+  }
+
+  // Finds the TOP-LEVEL `?` and its matching `:` in a ternary expression (so nested
+  // ternaries in the falsy branch, e.g. `a ? b : c ? d : e`, split at the outer one).
+  function splitTopLevelTernary(expr: string): { truthy: string; falsy: string } | null {
+    let depth = 0;
+    let inStr: string | null = null;
+    let qIdx = -1;
+    let qCount = 0;
+    for (let i = 0; i < expr.length; i++) {
+      const ch = expr[i];
+      if (inStr) {
+        if (ch === "\\") {
+          i++;
+          continue;
+        }
+        if (ch === inStr) inStr = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === "`") {
+        inStr = ch;
+        continue;
+      }
+      if (ch === "(" || ch === "[" || ch === "{") {
+        depth++;
+        continue;
+      }
+      if (ch === ")" || ch === "]" || ch === "}") {
+        depth--;
+        continue;
+      }
+      if (depth !== 0) continue;
+      if (ch === "?" && expr[i + 1] !== "." && expr[i + 1] !== "?") {
+        if (qIdx === -1) qIdx = i;
+        qCount++;
+      } else if (ch === ":") {
+        qCount--;
+        if (qCount === 0 && qIdx !== -1) {
+          return { truthy: expr.slice(qIdx + 1, i), falsy: expr.slice(i + 1) };
+        }
+      }
+    }
+    return null;
+  }
+
+  // Resolves an expression to every literal string it can produce, IF it is built
+  // entirely out of quoted-string literals and ternaries over them (any condition is
+  // allowed — only the branches must bottom out in literals). A bare identifier like
+  // `shape` returns null and stays dynamic; `a ? 'x' : b ? 'y' : 'z'` resolves to
+  // ['x', 'y', 'z']. This is what lets `auth.${cond ? 'accountSuspended' : cond2 ?
+  // 'accountRemoved' : 'invalidToken'}` be checked directly instead of treated as opaque.
+  function resolveLiteralBranches(expr: string): string[] | null {
+    const trimmed = expr.trim();
+    const lit = trimmed.match(/^(['"])((?:(?!\1)[^\\]|\\.)*)\1$/);
+    if (lit) return [lit[2]];
+    const split = splitTopLevelTernary(trimmed);
+    if (split) {
+      const left = resolveLiteralBranches(split.truthy);
+      const right = resolveLiteralBranches(split.falsy);
+      if (left && right) return [...left, ...right];
+    }
+    return null;
+  }
+
+  type StaticHit = { file: string; line: number; key: string };
+  type DynamicHit = { file: string; line: number; fn: string; snippet: string };
+
+  const staticHits: StaticHit[] = [];
+  const dynamicHits: DynamicHit[] = [];
+
+  for (const file of listPublicFiles(PUBLIC_ROOT)) {
+    if (file.endsWith("/public/js/i18n.js")) continue; // the catalogs/engine, not a caller
+    const rel = relative(ROOT, file);
+    const content = readFileSync(file, "utf8");
+
+    // This scan runs over raw file text with no comment stripping, so it is deliberately
+    // naive: it matches calls to t() / tPlural() wherever they appear, including inside a
+    // // or /* */ comment that's merely talking ABOUT the i18n API. That's a false
+    // positive by design, not a bug to fix here — a real JS comment stripper would need
+    // to survive template literals, nested ${}, regex literals, and string literals, and
+    // this file's own stripper in scripts/check-scope.mjs isn't reusable for that (it
+    // blanks SQL comments inside template literals, a different job). A subtly wrong
+    // stripper would silently blank a region of real code, turning the closed set of
+    // dynamic call sites into an open one — trading this loud, file:line-diagnosable
+    // false positive for the quiet false negative this test exists to prevent. If you
+    // need to write prose about the i18n API in a comment, use the empty-parens form
+    // t() rather than writing out a call with a literal key argument — see the
+    // precedent at line 242 above, which already does this to stay out of the scan.
+    const callRe = /\b(t|tPlural)\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = callRe.exec(content))) {
+      const startArgs = m.index + m[0].length;
+      const arg = extractFirstArg(content, startArgs);
+      if (arg == null) continue;
+      const line = lineOf(content, m.index);
+      const lit = arg.match(/^(['"])((?:(?!\1)[^\\]|\\.)*)\1$/);
+      if (lit) {
+        staticHits.push({ file: rel, line, key: lit[2] });
+        continue;
+      }
+      const tmpl = parseTemplateLiteral(arg);
+      if (tmpl) {
+        const branches = resolveLiteralBranches(tmpl.expr);
+        if (branches) {
+          for (const b of branches) {
+            staticHits.push({ file: rel, line, key: `${tmpl.prefix}${b}${tmpl.suffix}` });
+          }
+          continue;
+        }
+      }
+      // Neither a literal nor a ternary-of-literals: a genuinely dynamic key (built by
+      // interpolating a runtime value) or an indirect one (a local variable/lookup we
+      // don't trace). Either way it can't be checked against the catalogs here, so it
+      // must be accounted for explicitly below instead of silently vanishing.
+      dynamicHits.push({ file: rel, line, fn: m[1], snippet: arg });
+    }
+
+    // data-i18n-attr's VALUE is an attribute name ("placeholder", "title|aria-label",
+    // ...) to copy the translation INTO, not an i18n key itself — the key always comes
+    // from the data-i18n attribute on the same element (see applyI18nDom in i18n.js).
+    // So only data-i18n carries keys to extract.
+    const dataI18nRe = /data-i18n="([^"]*)"/g;
+    let dm: RegExpExecArray | null;
+    while ((dm = dataI18nRe.exec(content))) {
+      staticHits.push({ file: rel, line: lineOf(content, dm.index), key: dm[1] });
+    }
+  }
+
+  return { staticHits, dynamicHits };
 }
 
 describe("dashboard i18n", () => {
@@ -111,5 +359,426 @@ describe("dashboard i18n", () => {
         en.t(`integrations.connect.${id}.hint`),
       );
     }
+  });
+
+  it("every key exists in both catalogs", () => {
+    const { ctx } = loadI18n("en");
+    const en = vm.runInContext("I18N_EN", ctx);
+    const it = vm.runInContext("I18N_IT", ctx);
+
+    function flatten(obj: any, prefix: string, out: string[]): string[] {
+      for (const key of Object.keys(obj)) {
+        const value = obj[key];
+        const path = prefix ? `${prefix}.${key}` : key;
+        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          flatten(value, path, out);
+        } else {
+          out.push(path);
+        }
+      }
+      return out;
+    }
+
+    const enKeys = flatten(en, "", []).sort();
+    const itKeys = flatten(it, "", []).sort();
+    const enSet = new Set(enKeys);
+    const itSet = new Set(itKeys);
+
+    expect(enKeys.length).toBeGreaterThan(400);
+    expect(enKeys.filter((k) => !itSet.has(k)), "keys missing from I18N_IT").toEqual([]);
+    expect(itKeys.filter((k) => !enSet.has(k)), "keys missing from I18N_EN").toEqual([]);
+  });
+
+  // The parity check above compares key SETS, which is blind to what the keys are
+  // WORTH. A key added to I18N_IT as `''` to make parity pass, or pasted across
+  // from English untranslated, satisfies it exactly. Both ship as a visibly broken
+  // Italian UI: the first renders nothing at all, the second renders English.
+  //
+  // Flattening is repeated here rather than hoisted: these read the catalogs the
+  // same way and share nothing else, and a shared helper would be one more thing
+  // to keep honest between two tests that must not drift together.
+  function flattenCatalog(obj: any, prefix = "", out: Record<string, unknown> = {}): Record<string, unknown> {
+    for (const key of Object.keys(obj)) {
+      const value = obj[key];
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) flattenCatalog(value, path, out);
+      else out[path] = value;
+    }
+    return out;
+  }
+
+  it("has no blank string in either catalog", () => {
+    const { ctx } = loadI18n("en");
+    const catalogs = {
+      I18N_EN: flattenCatalog(vm.runInContext("I18N_EN", ctx)),
+      I18N_IT: flattenCatalog(vm.runInContext("I18N_IT", ctx)),
+    };
+    const blank: string[] = [];
+    for (const [name, flat] of Object.entries(catalogs)) {
+      for (const [key, value] of Object.entries(flat)) {
+        // Whitespace-only counts: a single space is invisible on screen and
+        // passes any check that only asks whether the string is truthy.
+        if (typeof value !== "string" || value.trim() === "") blank.push(`${name}.${key}`);
+      }
+    }
+    expect(blank, "keys with no words in them").toEqual([]);
+  });
+
+  // Strings that are legitimately byte-identical in English and Italian, with the
+  // reason each one is. Three reasons qualify, and nothing else does:
+  //
+  //   PROPER NOUN — a name that is not translated in either language.
+  //   MACHINE TOKEN — a value the product prints verbatim from data, not prose.
+  //   FORMAT ONLY — punctuation and placeholders, with no words to translate.
+  //
+  // Adding a key here is a claim that one of those three applies. If you are
+  // reaching for it because a translation has not been written yet, the answer is
+  // to write the translation.
+  const IDENTICAL_BY_DESIGN = [
+    // PROPER NOUN
+    "auth.brand",
+    // ACCEPTED ITALIAN LOANWORD — used unchanged in everyday Italian, not a
+    // proper noun.
+    "nav.team",
+    "team.title",
+    "integrations.categoryEmail",
+    // MACHINE TOKEN — `source` values, printed as the capture recorded them.
+    "common.sourceCli",
+    "common.sourceEmail",
+    "common.sourceChat",
+    "common.sourceBrowser",
+    "common.sourceDashboard",
+    "common.sourceClaudeCode",
+    "integrations.nounEmail.one",
+    // FORMAT ONLY — URLs the user pastes, and punctuation around a placeholder.
+    "integrations.urlPlaceholder",
+    "integrations.connect.calendar-google.placeholder",
+    "integrations.connect.calendar-outlook.placeholder",
+    "integrations.connect.calendar-icloud.placeholder",
+    "brief.shapeSuffix",
+    "download.withTag",
+  ].sort();
+
+  it("has no Italian string left as a copy of its English twin", () => {
+    const { ctx } = loadI18n("en");
+    const en = flattenCatalog(vm.runInContext("I18N_EN", ctx));
+    const it = flattenCatalog(vm.runInContext("I18N_IT", ctx));
+
+    const identical = Object.keys(en)
+      .filter((k) => typeof en[k] === "string" && en[k] === it[k])
+      .sort();
+    const allowed = new Set(IDENTICAL_BY_DESIGN);
+
+    expect(
+      identical.filter((k) => !allowed.has(k)),
+      "Italian strings identical to English — translate them, or justify them in IDENTICAL_BY_DESIGN",
+    ).toEqual([]);
+    // The list is pruned as well as extended: an entry whose two catalogs have
+    // since diverged is a stale exemption, and leaving it would quietly excuse
+    // whatever key later takes that name.
+    expect(
+      IDENTICAL_BY_DESIGN.filter((k) => !identical.includes(k)),
+      "stale entries in IDENTICAL_BY_DESIGN",
+    ).toEqual([]);
+  });
+
+  // ── CATALOG → CALL SITE, the direction nothing checked ─────────────────────
+  //
+  // The check below this one walks CALL SITES and asks whether each key exists.
+  // Nine i18n tests did that, or a variant of it, and not one went the other
+  // way. So a key defined in BOTH catalogs and read by NOTHING passed every
+  // test in this file: parity is satisfied (it is in both), it is not blank, it
+  // is translated, and no call site names it because no call site exists.
+  //
+  // That is precisely the shape Phase 2 shipped twice — a backend with no
+  // consumer — and this phase's "name your consumer" rule was unenforced in the
+  // only direction a machine can enforce it. Two orphans were sitting in the
+  // catalogs when this was written (`common.cancel`, a duplicate of
+  // `memories.cancel`; and `recall.sugOutOfDate`, a suggestion pill that was
+  // never built); both were deleted rather than allowlisted, which is the
+  // resolution this test exists to force.
+
+  /**
+   * Every translation UNIT in a catalog.
+   *
+   * NOT the same as flattenCatalog: a plural entry is `{one, other}` and is
+   * named by its PARENT path, because `tPlural('nav.statusCount', n)` is what a
+   * call site writes. Flattening those to `nav.statusCount.one` would report
+   * every plural in the tree as an orphan and drown the real ones.
+   */
+  function catalogUnits(obj: any, prefix = "", out: string[] = []): string[] {
+    for (const key of Object.keys(obj)) {
+      const value = obj[key];
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        if (typeof value.one === "string" && typeof value.other === "string") out.push(path);
+        else catalogUnits(value, path, out);
+      } else {
+        out.push(path);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Keys no static call site can name, with the call site that DOES reach them.
+   *
+   * Every entry is a claim that a real consumer exists and that its key is
+   * assembled at runtime — from a provider id, an event name, a shape, a
+   * profile. `by` names that consumer, and it is the whole value of this list:
+   * an entry added because a key "looks used" is the orphan this test was
+   * written to catch, wearing a coat.
+   *
+   * Prefixes, not exact keys, only where the family is generated as a family
+   * (one per provider, one per shape). The staleness check below still requires
+   * each prefix to match at least one real key, so a family that disappears
+   * cannot leave its licence behind.
+   *
+   * `keys` is the other shape: an exact set, used where the runtime value is
+   * drawn from a small closed set the code enumerates (or is a single literal
+   * reached only through an indirection the scanner can't follow) rather than
+   * a generated family. A `prefix` there would license any future sibling key
+   * with the same stem and no consumer at all — exactly the hole this list
+   * exists to close.
+   */
+  const DYNAMICALLY_REFERENCED: Array<{ prefix?: string; keys?: string[]; by: string }> = [
+    {
+      prefix: "activity.ev",
+      by: "activityEventLabel() in public/js/activity.js, keyed by the audit event name",
+    },
+    {
+      prefix: "common.source",
+      by: "public/utils.js t(key), through the SOURCE_LABELS map keyed by the capture's `source` value",
+    },
+    {
+      prefix: "home.auto",
+      by: "captureDefaultKey() in public/utils.js, read by home.js t(key) and team.js t(defaultKey) — asserted verbatim in ui/composer-policy-hint.test.ts and ui/team-panel.test.ts",
+    },
+    {
+      prefix: "home.pinned",
+      by: "public/js/home.js renderCaptureHint(), which picks the key into `key` and calls t(key)",
+    },
+    {
+      prefix: "integrations.connect.",
+      by: "integrationConnectI18n() in public/js/integrations.js, keyed by provider id — covered by the registry-driven test above",
+    },
+    {
+      prefix: "integrations.category",
+      by: "public/js/integrations.js t(keys[id] || 'integrations.categoryOther')",
+    },
+    {
+      // NOT a prefix: `integrationNounKey` only ever returns one of these
+      // three literals (branching on whether the provider id starts with
+      // "calendar" or "email", falling through to nounItem otherwise).
+      // "integrations.nounMemory" also starts with "integrations.noun" but is
+      // never one of integrationNounKey's return values — it is reached by
+      // the separate, already-static `tPlural('integrations.nounMemory', …)`
+      // call in disconnectIntegration — so a prefix here would license a
+      // future nounWhatever sibling with no consumer at all.
+      keys: ["integrations.nounEvent", "integrations.nounEmail", "integrations.nounItem"],
+      by: "integrationNounKey(provider) in public/js/integrations.js, via tPlural",
+    },
+    {
+      // NOT a prefix: the fallbackKey argument at this call site is the single
+      // literal "integrations.appPassword", not a generated family.
+      // "integrations.appPasswordAria" also starts with "integrations.appPassword"
+      // but is reached by its own literal `t('integrations.appPasswordAria')`
+      // call right next to this one, so it is already static — a prefix here
+      // would license a future appPasswordWhatever sibling with no consumer.
+      keys: ["integrations.appPassword"],
+      by: "public/js/integrations.js, passed to integrationConnectI18n as the fallbackKey argument and reached through t(fallbackKey)",
+    },
+    {
+      prefix: "integrations.pasteSecret",
+      by: "public/js/integrations.js, integrationConnectI18n fallbackKey",
+    },
+    {
+      prefix: "integrations.notionPlaceholder",
+      by: "public/js/integrations.js, integrationConnectI18n fallbackKey (the notion arm of a ternary passed as an argument)",
+    },
+    {
+      prefix: "integrations.urlPlaceholder",
+      by: "public/js/integrations.js, integrationConnectI18n fallbackKey (the non-notion arm)",
+    },
+    {
+      prefix: "memories.ev",
+      by: "public/js/memory-crud.js t(keys[event]), keyed by the timeline event name",
+    },
+    {
+      prefix: "patterns.shapes.",
+      by: "t(`patterns.shapes.${shape}`) in public/js/brief.js and public/js/patterns.js",
+    },
+  ];
+
+  it("every key in I18N_EN is read by some call site", () => {
+    const { staticHits } = scanCallSites();
+    const { ctx } = loadI18n("en");
+    const units = catalogUnits(vm.runInContext("I18N_EN", ctx));
+
+    // Vacuous-success guard, the same one the forward check carries: a broken
+    // scanner that resolved nothing would make every key an orphan, and a
+    // broken catalogUnits that returned nothing would make none of them one.
+    expect(units.length).toBeGreaterThan(400);
+    expect(staticHits.length).toBeGreaterThan(300);
+
+    const referenced = new Set(staticHits.map((h) => h.key));
+    const licensed = (key: string) =>
+      DYNAMICALLY_REFERENCED.some((d) => (d.keys ? d.keys.includes(key) : key.startsWith(d.prefix!)));
+
+    const orphans = units.filter((k) => !referenced.has(k) && !licensed(k)).sort();
+    expect(
+      orphans,
+      "keys defined in the catalogs and read by nothing. Delete them, or — if a " +
+        "call site builds the key at runtime — add it to DYNAMICALLY_REFERENCED " +
+        "naming the consumer that reaches it.",
+    ).toEqual([]);
+  });
+
+  it("has no stale entry in DYNAMICALLY_REFERENCED", () => {
+    // The list is pruned as well as extended. An entry whose keys have since
+    // been deleted, or whose call site became static, is a standing licence for
+    // whatever key later takes that prefix — and a prefix licence is broad.
+    const { staticHits } = scanCallSites();
+    const { ctx } = loadI18n("en");
+    const units = catalogUnits(vm.runInContext("I18N_EN", ctx));
+    const referenced = new Set(staticHits.map((h) => h.key));
+
+    const stale: string[] = [];
+    for (const entry of DYNAMICALLY_REFERENCED) {
+      const label = entry.keys ? entry.keys.join(", ") : entry.prefix!;
+      const matched = entry.keys
+        ? entry.keys.filter((k) => units.includes(k))
+        : units.filter((k) => k.startsWith(entry.prefix!));
+      if (!matched.length) {
+        stale.push(`${label} — matches no key in I18N_EN`);
+        continue;
+      }
+      if (matched.every((k) => referenced.has(k))) {
+        stale.push(`${label} — every key it covers is now named by a static call site`);
+      }
+    }
+    expect(stale, "stale entries in DYNAMICALLY_REFERENCED").toEqual([]);
+  });
+
+  it("every translated string a call site asks for exists in both catalogs", () => {
+    // The previous test compares catalog to catalog: I18N_EN's key set against I18N_IT's.
+    // That structurally cannot see a call site whose key was deleted from BOTH catalogs at
+    // once — which is exactly what happens when one group removes a key it owns while
+    // another group's call site (in a different file) still uses it. Both catalogs stay
+    // symmetric, parity passes, and t() falls back to returning the raw key path, so a user
+    // sees a literal "team.shareConfirm" instead of a translated string. This test walks
+    // every real call site and checks it against both catalogs directly.
+
+    const { staticHits, dynamicHits } = scanCallSites();
+
+    // Guard against vacuous success: a broken extractor that silently matches nothing
+    // must not pass. Real count on the merged tree when this test was written: 542 call
+    // sites resolving to 408 unique keys (405 direct literals/data-i18n + 3 more from
+    // resolving the auth ternary below). 300 is comfortably below that.
+    expect(staticHits.length).toBeGreaterThan(300);
+
+    const { ctx } = loadI18n("en");
+    const en = vm.runInContext("I18N_EN", ctx);
+    const it_ = vm.runInContext("I18N_IT", ctx);
+
+    function resolvesToTranslation(catalog: any, path: string): boolean {
+      const node = path
+        .split(".")
+        .reduce((o: any, k: string) => (o == null ? undefined : o[k]), catalog);
+      if (typeof node === "string") return true;
+      return !!node && typeof node === "object" && typeof node.one === "string" && typeof node.other === "string";
+    }
+
+    const failures: string[] = [];
+    for (const hit of staticHits) {
+      const okEn = resolvesToTranslation(en, hit.key);
+      const okIt = resolvesToTranslation(it_, hit.key);
+      if (!okEn || !okIt) {
+        const missing = [!okEn && "en", !okIt && "it"].filter(Boolean).join("+");
+        failures.push(`${hit.file}:${hit.line} ${hit.key} (missing in: ${missing})`);
+      }
+    }
+    expect(failures, "call sites whose key is missing from a catalog").toEqual([]);
+
+    // Dynamic (unresolvable) call sites, as of the tree this test was written against.
+    // These build their key from a runtime value rather than a literal, so they can't be
+    // checked here — `patterns.shapes.${shape}` and `integrations.connect.${id}.*` (built
+    // one level up, in integrationConnectI18n) are exercised by the registry-driven test
+    // above ("resolves integration connect copy by provider id"); the rest resolve through
+    // a small local lookup table that's visible in a diff of the file it lives in. This
+    // list is a closed set on purpose: a NEW dynamic call site — whether a fresh
+    // interpolation or a fresh indirection — must land here deliberately, not vanish
+    // between this check and the catalog-parity check above.
+    //
+    // Entries are `file expression` — deliberately WITHOUT the line number. Pinning the
+    // line would make this assertion fire on an unrelated edit (anything added above that
+    // line in the same file), which trains people to update the list without reading it
+    // and defeats the point. The line number still appears in the failure message below,
+    // where it's the thing that makes a real failure actionable.
+    //
+    // This is a MULTISET, not a set: if the same file+expression pair legitimately occurs
+    // twice, list it twice. Today nothing collides (`t(key)` in home.js and utils.js are
+    // different files; integrations.js's `t(key)` and `t(fallbackKey)` are different
+    // expressions), but a same-file, same-expression duplicate must still force a decision
+    // rather than being silently absorbed into a set of one.
+    const EXPECTED_DYNAMIC_CALL_SITES = [
+      // activityEventLabel()'s map, keyed by the audit event name. Deliberately
+      // the same shape as memory-crud.js's timelineEventLabel below — one known
+      // form for this indirection is what keeps this list readable.
+      "public/js/activity.js t(keys[event])",
+      "public/js/brief.js t(`patterns.shapes.${shape}`)",
+      // Both of these resolve through captureDefaultKey() in public/utils.js, which
+      // returns one of exactly four literals — home.auto{Shared,Personal}{Yours,Org}.
+      // The composer and the Team screen's member readout share the helper precisely
+      // so one profile cannot be described two ways, which is also why neither site
+      // can spell the keys out. Asserted verbatim in ui/composer-policy-hint.test.ts
+      // and ui/team-panel.test.ts.
+      "public/js/home.js t(key)",
+      "public/js/team.js t(defaultKey)",
+      "public/js/integrations.js t(keys[id] || 'integrations.categoryOther')",
+      "public/js/integrations.js tPlural(integrationNounKey(provider))",
+      "public/js/integrations.js t(key)",
+      "public/js/integrations.js t(fallbackKey)",
+      "public/js/memory-crud.js t(keys[event])",
+      "public/js/patterns.js t(`patterns.shapes.${shape}`)",
+      "public/utils.js t(key)",
+    ].sort();
+
+    function dynamicIdentity(file: string, fn: string, snippet: string): string {
+      return `${file} ${fn}(${snippet})`;
+    }
+
+    const actualDynamicIdentities = dynamicHits
+      .map((d) => dynamicIdentity(d.file, d.fn, d.snippet))
+      .sort();
+
+    // Multiset diff, done by hand rather than expect(...).toEqual(...) on the raw lists,
+    // so a real failure can name the file:line of whatever's new — the identity above
+    // deliberately can't.
+    const remaining = new Map<string, number>();
+    for (const expected of EXPECTED_DYNAMIC_CALL_SITES) {
+      remaining.set(expected, (remaining.get(expected) ?? 0) + 1);
+    }
+    const mismatches: string[] = [];
+    for (const hit of dynamicHits) {
+      const id = dynamicIdentity(hit.file, hit.fn, hit.snippet);
+      const left = remaining.get(id) ?? 0;
+      if (left > 0) {
+        remaining.set(id, left - 1);
+      } else {
+        mismatches.push(`NEW dynamic call site not in EXPECTED_DYNAMIC_CALL_SITES: ${hit.file}:${hit.line} ${hit.fn}(${hit.snippet})`);
+      }
+    }
+    for (const [id, count] of remaining) {
+      for (let i = 0; i < count; i++) {
+        mismatches.push(`EXPECTED_DYNAMIC_CALL_SITES entry no longer found as a dynamic call site: ${id}`);
+      }
+    }
+    expect(mismatches, "dynamic call sites (file+expression, order-independent) drifted from EXPECTED_DYNAMIC_CALL_SITES").toEqual([]);
+
+    // Belt-and-suspenders: the multiset diff above already proves it, but keep a plain
+    // sorted-array equality too, since it's what a reader expects a "closed list" check to
+    // look like at a glance.
+    expect(actualDynamicIdentities).toEqual([...EXPECTED_DYNAMIC_CALL_SITES].sort());
   });
 });

@@ -30,10 +30,16 @@ function dbOf(s: SqliteD1) {
   return {
     prepare: (sql: string) => s.db.prepare(sql),
     exec: (sql: string) => s.db.exec(sql),
-    async batch(stmts: { run(): Promise<unknown> }[]) {
-      for (const st of stmts) await st.run();
+    async batch(stmts: { run(): Promise<any> }[]) {
+      const out: any[] = [];
+      for (const st of stmts) out.push(await st.run());
       s.issued.splice(s.issued.length - stmts.length, stmts.length, `BATCH(${stmts.length})`);
-      return stmts.map(() => ({ meta: { changes: 1 } }));
+      // Each statement's rows are kept, not discarded: a batch carries reads as
+      // well as writes now — identity resolution pairs its SELECT with the
+      // throttled last_used_at stamp so the pair costs one subrequest — and D1
+      // returns a result per statement. `changes: 1` is preserved for the write
+      // paths that read it.
+      return out.map((r: any) => ({ ...r, meta: { changes: 1, ...r?.meta } }));
     },
   };
 }
@@ -135,5 +141,41 @@ describe("GET /stale", () => {
 
     const ids = [...first.entries, ...second.entries].map((e: any) => e.id);
     expect(new Set(ids).size).toBe(20);
+  });
+});
+
+describe("POST /stale/keep", () => {
+  it("requires auth", async () => {
+    sq = await migrated();
+    const res = await worker.fetch(req("POST", "/stale/keep", { token: null, body: { id: "x" } }), envOf(sq), ctx);
+    expect(res.status).toBe(401);
+  });
+
+  it("clears stale:as-of without changing content", async () => {
+    sq = await migrated();
+    seedStale(sq, "old-1", "Our deploy target is the staging cluster");
+
+    const res = await worker.fetch(req("POST", "/stale/keep", { body: { id: "old-1" } }), envOf(sq), ctx);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+
+    const row = (await sq.db.prepare(
+      `SELECT content, tags, updated_at, staleness_checked_at FROM entries WHERE id = ?`,
+    ).bind("old-1").first()) as any;
+    expect(row.content).toBe("Our deploy target is the staging cluster");
+    expect(JSON.parse(row.tags)).not.toContain("stale:as-of");
+    expect(row.updated_at).toBeTypeOf("number");
+    expect(row.staleness_checked_at).toBeTypeOf("number");
+
+    const queue = await (await worker.fetch(req("GET", "/stale"), envOf(sq), ctx)).json() as any;
+    expect(queue.total).toBe(0);
+  });
+
+  it("refuses an entry that is not flagged", async () => {
+    sq = await migrated();
+    sq.seed({ id: "fresh", content: "Never flagged", createdAt: 1000, tags: ["work"] });
+
+    const res = await worker.fetch(req("POST", "/stale/keep", { body: { id: "fresh" } }), envOf(sq), ctx);
+    expect(res.status).toBe(400);
   });
 });

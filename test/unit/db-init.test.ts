@@ -11,9 +11,41 @@ const MIGRATION: [column: string, alter: string][] = [
   ["updated_at", `ALTER TABLE entries ADD COLUMN updated_at INTEGER`],
   ["staleness_checked_at", `ALTER TABLE entries ADD COLUMN staleness_checked_at INTEGER`],
 ];
+// Tenancy (v3) ALTERs exist for upgraded brains, but on fresh brains these columns
+// ship inside the base CREATE (see BASE_COLUMNS), so unlike MIGRATION they are not
+// part of the "columns a migrated brain carries beyond its base" fingerprint.
+const TENANCY_EDGE_ALTERS: [column: string, alter: string][] = [
+  ["workspace_id", `ALTER TABLE edges ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`],
+];
+const USERS_ALTERS: [column: string, alter: string][] = [
+  ["default_share", `ALTER TABLE users ADD COLUMN default_share TEXT NOT NULL DEFAULT ''`],
+  ["removed_at", `ALTER TABLE users ADD COLUMN removed_at INTEGER`],
+  ["last_used_at", `ALTER TABLE users ADD COLUMN last_used_at INTEGER`],
+];
+// admin_events shipped without its two subject columns; a brain that wrote a single
+// administration event before they existed has the narrow table, and the audit writer
+// binds all seven. Same shape as the users ALTERs above.
+const ADMIN_EVENTS_ALTERS: [column: string, alter: string][] = [
+  ["target_user_id", `ALTER TABLE admin_events ADD COLUMN target_user_id TEXT NOT NULL DEFAULT ''`],
+  ["workspace_id", `ALTER TABLE admin_events ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`],
+];
 const ALL_COLUMNS = MIGRATION.map(([column]) => column);
-const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue"];
-const BASE_COLUMNS = ["id", "content", "tags", "source", "created_at", "vector_ids"];
+const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue",
+  // Team edition (v3). idx_entries_workspace_created is deliberately last-applied
+  // (POST_COLUMN_OBJECTS): it indexes a column that arrives via ALTER.
+  "workspaces", "idx_workspaces_kind", "users", "idx_users_token_hash", "idx_users_email",
+  "memberships", "idx_memberships_workspace", "entry_events", "idx_entry_events_entry", "idx_entry_events_created",
+  "admin_events", "idx_admin_events_created", "maintenance_cursor", "idx_entries_workspace_created"];
+// Columns in the base CREATE of entries since v3 — present on every brain init touches.
+const BASE_COLUMNS = ["id", "content", "tags", "source", "created_at", "vector_ids", "workspace_id", "actor_id"];
+/** Every object + column a fully-migrated brain reports through the probe. */
+const FULLY_MIGRATED = {
+  objects: ALL_OBJECTS,
+  entryColumns: ALL_COLUMNS,
+  edgeColumns: TENANCY_EDGE_ALTERS.map(([c]) => c),
+  userColumns: USERS_ALTERS.map(([c]) => c),
+  adminEventColumns: ADMIN_EVENTS_ALTERS.map(([c]) => c),
+};
 
 /** The catalogue read that opens every init. Spelled out so tests can exclude it by name. */
 const PROBE = /^SELECT type AS kind, name FROM sqlite_master\b/;
@@ -30,8 +62,11 @@ type Row = { created_at: number; updated_at?: number | null };
 // `objects` defaults from the columns: a brain carrying migration columns necessarily has
 // the table they sit on, and a brain carrying none is the fresh case where nothing exists.
 // Pass it explicitly for anything in between.
-function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], existingObjects?: string[]) {
+function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], existingObjects?: string[], existingEdgeColumns: string[] = [], existingUserColumns: string[] = [], existingAdminEventColumns: string[] = []) {
   const columns = new Set(existingColumns.length ? [...BASE_COLUMNS, ...existingColumns] : []);
+  const edgeColumns = new Set(existingEdgeColumns);
+  const userColumns = new Set(existingUserColumns);
+  const adminEventColumns = new Set(existingAdminEventColumns);
   const objects = new Set(existingObjects ?? (existingColumns.length ? ALL_OBJECTS : []));
   const execd: string[] = [];
   const prepared: string[] = [];
@@ -39,17 +74,24 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
   const DB = {
     async exec(sql: string) {
       execd.push(sql);
-      const added = sql.match(/ALTER TABLE entries ADD COLUMN (\w+)/);
-      if (added) {
-        if (columns.has(added[1])) throw new Error(`D1_EXEC_ERROR: duplicate column name: ${added[1]}`);
-        columns.add(added[1]);
-        if (added[1] === "updated_at") rows.forEach(r => { r.updated_at = null; });
+      const altered = sql.match(/ALTER TABLE (\w+) ADD COLUMN (\w+)/);
+      if (altered) {
+        const [, table, column] = altered;
+        const target = table === "edges" ? edgeColumns
+          : table === "users" ? userColumns
+            : table === "admin_events" ? adminEventColumns : columns;
+        if (target.has(column)) throw new Error(`D1_EXEC_ERROR: duplicate column name: ${column}`);
+        target.add(column);
+        if (table === "entries" && column === "updated_at") rows.forEach(r => { r.updated_at = null; });
         return;
       }
-      const created = sql.match(/CREATE (?:TABLE|INDEX) IF NOT EXISTS (\w+)/);
+      const created = sql.match(/CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS (\w+)/);
       if (created) {
         objects.add(created[1]);
         if (created[1] === "entries") BASE_COLUMNS.forEach(c => columns.add(c));
+        if (created[1] === "edges") TENANCY_EDGE_ALTERS.forEach(([c]) => edgeColumns.add(c));
+        if (created[1] === "users") USERS_ALTERS.forEach(([c]) => userColumns.add(c));
+        if (created[1] === "admin_events") ADMIN_EVENTS_ALTERS.forEach(([c]) => adminEventColumns.add(c));
       }
     },
     prepare(sql: string) {
@@ -62,6 +104,9 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
             ? [
               ...[...objects].map(name => ({ kind: name.startsWith("idx_") ? "index" : "table", name })),
               ...[...columns].map(name => ({ kind: "column", name })),
+              ...[...edgeColumns].map(name => ({ kind: "edge_column", name })),
+              ...[...userColumns].map(name => ({ kind: "user_column", name })),
+              ...[...adminEventColumns].map(name => ({ kind: "admin_event_column", name })),
             ]
             : [],
         }),
@@ -114,7 +159,9 @@ describe("initializeDatabase updated_at migration", () => {
   // invocation free-plan budget that ensureDbReady spends inside the triggering request.
   describe("cost on a migrated brain", () => {
     it("costs one statement and issues no DDL when the schema is already complete", async () => {
-      const { env, execd, prepared } = makeMigrationDb(ALL_COLUMNS, rowsAged(1));
+      const { env, execd, prepared } = makeMigrationDb(
+        FULLY_MIGRATED.entryColumns, rowsAged(1), FULLY_MIGRATED.objects, FULLY_MIGRATED.edgeColumns, FULLY_MIGRATED.userColumns, FULLY_MIGRATED.adminEventColumns,
+      );
 
       await initializeDatabase(env);
 
@@ -134,7 +181,13 @@ describe("initializeDatabase updated_at migration", () => {
       resetDatabaseInit();
       await initializeDatabase(env);
 
-      expect(migrated).toBe(15); // the one-off cost of creating a brain: 9 objects + 6 columns
+      // MOVED 34 -> 35 by idx_entry_events_created, the compliance feed's index.
+      // One object, not one object plus an ALTER: it indexes created_at, which
+      // has been in entry_events' base CREATE since the table shipped.
+      // MOVED 35 -> 37 by idx_memberships_workspace and idx_users_email. The
+      // latter is one CREATE, not one CREATE plus a dedupe: a fresh brain holds
+      // no duplicates, so the repair path behind the email index never runs.
+      expect(migrated).toBe(37); // one-off cost of creating a brain: 21 objects + 14 ALTERs + 1 post-column index + the email-index CREATE
       expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
       expect(prepared).toHaveLength(3); // one probe each, and nothing else
       expect(touchesEntries(execd)).toEqual([]);
@@ -146,8 +199,13 @@ describe("initializeDatabase updated_at migration", () => {
 
       await initializeDatabase(env);
 
-      const missing = MIGRATION.filter(([column]) => !present.includes(column));
-      expect(execd).toEqual(missing.map(([, alter]) => alter));
+      const missingAlters: string[] = [
+        ...MIGRATION.filter(([column]) => !present.includes(column)),
+        ...TENANCY_EDGE_ALTERS,
+        ...USERS_ALTERS,
+        ...ADMIN_EVENTS_ALTERS,
+      ].map(([, alter]) => alter);
+      expect(execd).toEqual(missingAlters);
       expect(prepared).toHaveLength(1);
     });
   });
@@ -326,6 +384,10 @@ describe("initializeDatabase against real SQLite", () => {
     return results.map(r => r.name);
   }
 
+  /** Column PRESENCE is the invariant under test; SQLite's column order is not. */
+  const sameColumns = (actual: string[]) =>
+    [...actual].sort().join("\n") === [...BASE_COLUMNS, ...ALL_COLUMNS].sort().join("\n");
+
   it("migrates a genuinely empty database", async () => {
     d1 = makeSqliteD1({ schema: false });
     expect(await objectNames(d1)).toEqual([]); // nothing at all, the state a new brain is in
@@ -333,7 +395,7 @@ describe("initializeDatabase against real SQLite", () => {
     await initializeDatabase(envFor(d1));
 
     for (const name of ALL_OBJECTS) expect(await objectNames(d1)).toContain(name);
-    expect(d1.columns()).toEqual([...BASE_COLUMNS, ...ALL_COLUMNS]);
+    expect(sameColumns(d1.columns())).toBe(true);
   });
 
   it("leaves a migrated database usable, not merely present", async () => {
@@ -366,7 +428,9 @@ describe("initializeDatabase against real SQLite", () => {
     resetDatabaseInit(); // a second cold isolate against the brain the first one migrated
     await initializeDatabase(envFor(d1));
 
-    expect(cold).toBe(16); // one probe, then the fifteen statements a new brain needs
+    // MOVED 35 -> 36 by idx_entry_events_created; see the sibling pin above.
+    // MOVED 36 -> 38 by idx_memberships_workspace and idx_users_email.
+    expect(cold).toBe(38); // one probe, then the 37 statements a new brain needs (21 objects + 14 ALTERs + 1 post-column index + the email-index CREATE)
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });
@@ -384,8 +448,17 @@ describe("initializeDatabase against real SQLite", () => {
       `ALTER TABLE entries ADD COLUMN updated_at INTEGER`,
       `ALTER TABLE entries ADD COLUMN staleness_checked_at INTEGER`,
     ]);
+    // schema.sql ships the whole v3 tenancy set — users (with default_share,
+    // removed_at and last_used_at), workspaces, memberships, entry_events,
+    // maintenance_cursor — so
+    // init has no table left to create against a brain installed from it. This
+    // list read differently while a ";" inside a schema.sql comment was splitting
+    // the `users` DDL in half: the table never applied, init's narrower base
+    // CREATE stood in for it, and two ALTERs it should never have owed showed up
+    // here. Anything reappearing in this list means schema.sql and init.ts have
+    // drifted apart again.
     expect(d1.issued.filter(s => /^CREATE/.test(s))).toEqual([]);
-    expect(d1.columns()).toEqual([...BASE_COLUMNS, ...ALL_COLUMNS]);
+    expect(sameColumns(d1.columns())).toBe(true);
   });
 
   it("adds only the weight index to a brain migrated before #281", async () => {
@@ -406,6 +479,36 @@ describe("initializeDatabase against real SQLite", () => {
     expect(await objectNames(d1)).toContain("idx_edges_weight");
   });
 
+  it("adds the entry_events feed index to a brain that predates it, without touching its rows", async () => {
+    // GET /team/activity orders the WHOLE entry_events table by created_at with
+    // no entry_id predicate, and idx_entry_events_entry is (entry_id,
+    // created_at DESC) — the wrong shape for that, so the feed sorted the whole
+    // trail on every request. The index is additive and has to reach EXISTING
+    // brains: admin_events once shipped with no column map, every audit write
+    // failed silently on older databases, and the trail simply stopped. This is
+    // the path that stops that repeating for an index.
+    d1 = makeSqliteD1({ schema: false });
+    await initializeDatabase(envFor(d1));
+    await d1.db.prepare(
+      `INSERT INTO entry_events (id, entry_id, actor_id, event, payload, created_at)
+       VALUES ('ee-old', 'e-1', 'usr-1', 'shared', '{}', 42)`,
+    ).run();
+    await d1.db.exec(`DROP INDEX idx_entry_events_created`);
+    resetDatabaseInit();
+    d1.issued.length = 0;
+
+    await initializeDatabase(envFor(d1));
+
+    expect(d1.issued).toEqual([
+      expect.stringMatching(PROBE),
+      `CREATE INDEX IF NOT EXISTS idx_entry_events_created ON entry_events(created_at DESC)`,
+    ]);
+    expect(await objectNames(d1)).toContain("idx_entry_events_created");
+    // An index migration must not be a data migration.
+    const { results } = await d1.db.prepare(`SELECT id, created_at FROM entry_events`).all();
+    expect(results).toEqual([{ id: "ee-old", created_at: 42 }]);
+  });
+
   it("adds the edges table to a brain that predates it", async () => {
     // The other real intermediate state (issue #16 added edges to brains that already had
     // entries). Tables and indexes are probed independently of columns, so this is not
@@ -418,7 +521,84 @@ describe("initializeDatabase against real SQLite", () => {
 
     expect(await objectNames(d1)).toContain("edges");
     expect(d1.issued.filter(s => s.startsWith("CREATE TABLE IF NOT EXISTS entries"))).toEqual([]);
-    expect(d1.columns()).toEqual([...BASE_COLUMNS, ...ALL_COLUMNS]);
+    expect(sameColumns(d1.columns())).toBe(true);
+  });
+
+  it("adds last_used_at to a users table that predates it, keeping every member row", async () => {
+    // The upgrade path this column actually takes: a team brain provisioned
+    // before it existed, with members already in it. The ALTER must be the whole
+    // migration — no backfill, no rewrite of the rows that are already there.
+    d1 = makeSqliteD1({ schema: false });
+    await d1.db.exec(
+      `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT, role TEXT NOT NULL DEFAULT 'member', token_hash TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, default_share TEXT NOT NULL DEFAULT '', removed_at INTEGER)`,
+    );
+    await d1.db
+      .prepare(`INSERT INTO users (id, name, email, role, token_hash, suspended, created_at, default_share, removed_at) VALUES ('u1', 'Ada', 'ada@example.com', 'admin', 'hash-1', 0, 1000, 'company', NULL)`)
+      .run();
+    d1.issued.length = 0;
+
+    await initializeDatabase(envFor(d1));
+
+    const userColumns = (await d1.db.prepare(`SELECT name FROM pragma_table_info('users')`).all())
+      .results as { name: string }[];
+    expect(userColumns.map(c => c.name)).toContain("last_used_at");
+    // Exactly one users ALTER — the two columns already there are not re-added.
+    expect(d1.issued.filter(s => /^ALTER TABLE users/.test(s))).toEqual([
+      `ALTER TABLE users ADD COLUMN last_used_at INTEGER`,
+    ]);
+    // Nothing wrote to the row: every field survives and the new one reads NULL.
+    const row = await d1.db.prepare(`SELECT * FROM users WHERE id = 'u1'`).first() as Record<string, unknown>;
+    expect(row).toMatchObject({
+      id: "u1", name: "Ada", email: "ada@example.com", role: "admin",
+      token_hash: "hash-1", suspended: 0, created_at: 1000, default_share: "company", removed_at: null,
+    });
+    expect(row.last_used_at).toBeNull();
+    expect(d1.issued.some(s => /^(INSERT|UPDATE|DELETE)\b/i.test(s))).toBe(false);
+  });
+
+  it("adds target_user_id and workspace_id to an admin_events table that predates them", async () => {
+    // The upgrade path a real brain took: admin_events shipped with five columns
+    // and gained the two subject columns a release later, so an audit trail that
+    // was already being written to is missing exactly the columns the writer now
+    // binds. Nothing surfaces that — every write goes through ctx.waitUntil and
+    // ends in .catch(console.error) — so the trail simply stops recording.
+    d1 = makeSqliteD1({ schema: false });
+    await d1.db.exec(
+      `CREATE TABLE admin_events (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL DEFAULT '', event TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)`,
+    );
+    await d1.db
+      .prepare(`INSERT INTO admin_events (id, actor_id, event, payload, created_at) VALUES ('a1', 'u1', 'team_renamed', '{"name":"Acme"}', 1000)`)
+      .run();
+    d1.issued.length = 0;
+
+    await initializeDatabase(envFor(d1));
+
+    const columns = (await d1.db.prepare(`SELECT name FROM pragma_table_info('admin_events')`).all())
+      .results as { name: string }[];
+    expect(columns.map(c => c.name)).toEqual(
+      expect.arrayContaining(["target_user_id", "workspace_id"]),
+    );
+    expect(d1.issued.filter(s => /^ALTER TABLE admin_events/.test(s))).toEqual([
+      `ALTER TABLE admin_events ADD COLUMN target_user_id TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE admin_events ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`,
+    ]);
+    // The row already in the trail keeps every field, and the new columns read as
+    // the empty subject rather than NULL — an audit row is never rewritten.
+    expect(await d1.db.prepare(`SELECT * FROM admin_events WHERE id = 'a1'`).first()).toEqual({
+      id: "a1", actor_id: "u1", target_user_id: "", workspace_id: "",
+      event: "team_renamed", payload: '{"name":"Acme"}', created_at: 1000,
+    });
+    expect(d1.issued.some(s => /^(INSERT|UPDATE|DELETE)\b/i.test(s))).toBe(false);
+
+    // The claim that matters: the statement src/lib/admin-audit.ts issues now
+    // works against this brain. Existence of the columns is the mechanism; a
+    // write that lands is the behaviour.
+    await expect(
+      d1.db
+        .prepare(`INSERT INTO admin_events (id, actor_id, target_user_id, workspace_id, event, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .bind("a2", "u1", "u2", "ws-company", "member_suspended", "{}", 2000)
+        .run(),
+    ).resolves.toMatchObject({ success: true });
   });
 
   it("leaves existing rows untouched when it adds a column", async () => {
@@ -450,7 +630,7 @@ describe("initializeDatabase against real SQLite", () => {
 
     async function expectFullyMigrated() {
       for (const name of ALL_OBJECTS) expect(await objectNames(d1)).toContain(name);
-      expect(d1.columns()).toEqual([...BASE_COLUMNS, ...ALL_COLUMNS]);
+      expect([...d1.columns()].sort()).toEqual([...BASE_COLUMNS, ...ALL_COLUMNS].sort());
     }
 
     beforeEach(() => {
@@ -513,6 +693,6 @@ describe("initializeDatabase against real SQLite", () => {
     const second = initializeDatabase(envFor(d1));
 
     await expect(Promise.all([first, second])).resolves.toBeDefined();
-    expect(d1.columns()).toEqual([...BASE_COLUMNS, ...ALL_COLUMNS]);
+    expect(sameColumns(d1.columns())).toBe(true);
   });
 });

@@ -18,6 +18,7 @@ function load() {
   const els = new Map<string, any>();
   const store = new Map<string, string>();
   const calls: string[] = [];
+  const exits: string[] = [];
   const makeEl = () => ({
     hidden: false,
     innerHTML: "",
@@ -46,6 +47,10 @@ function load() {
     loadGraph: () => calls.push("graph"),
     loadRecent: () => calls.push("list"),
     renderRecent: () => {},
+    // Lives in recent.js, which this harness does not load: the memories
+    // list's selection mode, which cannot outlive the list it is over. Counted
+    // separately from `calls`, which is the FETCH log and is asserted whole.
+    exitSelectMode: () => exits.push(ctx.memoryView),
     refreshIfStale: () => calls.push("refresh"),
     localStorage: {
       getItem: (k: string) => store.get(k) ?? null,
@@ -65,10 +70,24 @@ function load() {
   vm.runInContext(readFileSync(resolve(ROOT, "public/js/nav.js"), "utf8"), ctx);
   ctx.__els = els;
   ctx.__store = store;
+  ctx.__exits = exits;
   return ctx;
 }
 
 describe("switching projection", () => {
+  it("drops the list's selection mode on the way to the graph", () => {
+    // The bulk bar and its Select button are siblings of #mem-filters, not
+    // children of it, so nothing hidden above takes them down — and a
+    // selection that outlived the list would be a bulk action over rows that
+    // are no longer on screen.
+    const ctx = load();
+    ctx.setMemoryView("graph");
+    expect(ctx.__exits).toEqual(["graph"]);
+    // And not on the way back: the list re-renders the bar itself.
+    ctx.setMemoryView("list");
+    expect(ctx.__exits).toEqual(["graph"]);
+  });
+
   it("shows one view at a time", () => {
     const ctx = load();
 
@@ -179,5 +198,51 @@ describe("arriving at a tab", () => {
     ctx.calls.length = 0;
     ctx.switchTab("home");
     expect(ctx.calls).toEqual(["refresh"]);
+  });
+});
+
+/**
+ * initMemoryView() runs from init() to restore the remembered projection before
+ * the first paint — and that happens BEFORE init() reads WORKER_URL and
+ * AUTH_TOKEN out of localStorage. So the load it triggers went out with an empty
+ * bearer token on every single page load, took a 401, and left one in every
+ * user's console; showApp() then re-issued the same request correctly, so the
+ * screen looked fine and nothing ever surfaced it.
+ */
+describe("nothing is fetched before the page has credentials", () => {
+  it("restores the projection without loading anything when there is no token", () => {
+    const ctx = load();
+    ctx.AUTH_TOKEN = "";
+    ctx.__store.set("sb_memory_view", "list");
+
+    ctx.initMemoryView();
+
+    expect(ctx.calls).toEqual([]);
+    // The restore itself still happened — that is what it is for.
+    expect(ctx.memoryView).toBe("list");
+    expect(ctx.__els.get("recent-list").hidden).toBe(false);
+  });
+
+  it("does not load the graph either", () => {
+    const ctx = load();
+    ctx.AUTH_TOKEN = "";
+    ctx.__store.set("sb_memory_view", "graph");
+
+    ctx.initMemoryView();
+
+    expect(ctx.calls).toEqual([]);
+    expect(ctx.memoryView).toBe("graph");
+    expect(ctx.__els.get("mem-graph").hidden).toBe(false);
+  });
+
+  it("loads normally once a token is in hand", () => {
+    // showApp() is what has credentials, and the toggle buttons run long after.
+    const ctx = load();
+    ctx.initMemoryView();
+    expect(ctx.calls).toEqual(["list"]);
+
+    ctx.calls.length = 0;
+    ctx.setMemoryView("graph");
+    expect(ctx.calls).toEqual(["graph"]);
   });
 });

@@ -7,6 +7,7 @@
 //! result. Progress is reported through a callback as coarse, user-friendly
 //! steps; raw error detail stays internal.
 
+use super::discover;
 use super::types::CfApiError;
 use crate::worker_bundle::WorkerManifest;
 use serde::Serialize;
@@ -70,6 +71,84 @@ pub struct ProvisionOutcome {
     pub mcp_url: String,
 }
 
+/// The fixed-name resource category that prevents a fresh installation.
+///
+/// These are deliberately user-facing concepts rather than Cloudflare product
+/// names. The webview uses the serialized value to choose recovery copy without
+/// learning what D1, KV, Vectorize, or a Worker script is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResourceKind {
+    MemoryStorage,
+    SmartSearch,
+    WebApp,
+}
+
+/// Fixed-name Cloudflare resources created during this app process.
+///
+/// This is deliberately only an in-memory retry aid, not a transaction journal:
+/// the caller scopes each value to one Cloudflare account and drops it when the
+/// setup session ends. D1 and KV include the IDs returned by their create calls
+/// so a delete-and-recreate under the same name is not mistaken for our object.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CreatedResources {
+    d1: Option<CreatedResource>,
+    kv: Option<CreatedResource>,
+    vectorize_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CreatedResource {
+    name: String,
+    id: String,
+}
+
+impl CreatedResources {
+    fn record_d1(&mut self, name: &str, id: &str) {
+        self.d1 = Some(CreatedResource {
+            name: name.to_string(),
+            id: id.to_string(),
+        });
+    }
+
+    fn record_kv(&mut self, name: &str, id: &str) {
+        self.kv = Some(CreatedResource {
+            name: name.to_string(),
+            id: id.to_string(),
+        });
+    }
+
+    fn record_vectorize(&mut self, name: &str) {
+        self.vectorize_name = Some(name.to_string());
+    }
+
+    fn owns_d1(&self, name: &str, id: &str) -> bool {
+        self.d1
+            .as_ref()
+            .is_some_and(|created| created.name == name && created.id == id)
+    }
+
+    fn owns_kv(&self, name: &str, id: &str) -> bool {
+        self.kv
+            .as_ref()
+            .is_some_and(|created| created.name == name && created.id == id)
+    }
+
+    fn owns_vectorize(&self, name: &str) -> bool {
+        self.vectorize_name.as_deref() == Some(name)
+    }
+}
+
+/// The read-only result immediately before a fresh provisioning run mutates an
+/// account. A future transaction-journal variant can be added here without
+/// weakening the rule that an unmarked fixed-name resource is never reused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvisionPreflight {
+    Clear,
+    ExistingBrain { url: String },
+    NameConflict { kind: ResourceKind },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProvisionError {
     #[error(transparent)]
@@ -100,6 +179,7 @@ pub enum ProvisionError {
 pub trait Backend {
     async fn get_account_subdomain(&self) -> Result<Option<String>, CfApiError>;
     async fn register_account_subdomain(&self, name: &str) -> Result<String, CfApiError>;
+    async fn list_workers(&self) -> Result<Vec<String>, CfApiError>;
     async fn find_d1(&self, name: &str) -> Result<Option<String>, CfApiError>;
     async fn create_d1(&self, name: &str) -> Result<String, CfApiError>;
     async fn find_kv(&self, title: &str) -> Result<Option<String>, CfApiError>;
@@ -238,6 +318,12 @@ pub fn binding_field<'a>(
 pub struct VectorizeTarget<'a> {
     pub name: &'a str,
     pub dimensions: u32,
+    /// Keep whatever index the deployed script is already bound to, when that
+    /// index exists. A routine update passes `true`: a brain moved to another
+    /// reading by an embedding migration must not be pointed back at the
+    /// shipped index by the next "update your brain". A migration passes
+    /// `false` — it is the one deploy whose job is to change the binding.
+    pub keep_live_index: bool,
 }
 
 impl<'a> VectorizeTarget<'a> {
@@ -247,6 +333,7 @@ impl<'a> VectorizeTarget<'a> {
         Self {
             name: &manifest.vectorize_name,
             dimensions: manifest.vectorize_dimensions,
+            keep_live_index: true,
         }
     }
 }
@@ -285,6 +372,97 @@ pub fn build_update_metadata(
     })
 }
 
+/// Refuses to provision over any object using one of this installer's fixed
+/// names unless the conventional script's control-plane bindings prove that it
+/// is already a Second Brain.
+///
+/// All fixed-name reads happen before a decision is returned. The only allowed
+/// residue is an exact object recorded by this process for this account; an
+/// unrecorded name remains no evidence of ownership. Cross-process recovery
+/// still requires the transaction journal planned for Gate 4.
+pub async fn preflight_account<B: Backend>(
+    backend: &B,
+    manifest: &WorkerManifest,
+    brain_index_names: &[String],
+    created: &CreatedResources,
+) -> Result<ProvisionPreflight, CfApiError> {
+    let (subdomain, scripts, d1, kv, vectorize) = tokio::join!(
+        backend.get_account_subdomain(),
+        backend.list_workers(),
+        backend.find_d1(&manifest.d1_name),
+        backend.find_kv(KV_TITLE),
+        backend.vectorize_exists(&manifest.vectorize_name),
+    );
+    let subdomain = subdomain?;
+    let scripts = scripts?;
+    let d1 = d1?;
+    let kv = kv?;
+    let vectorize = vectorize?;
+
+    let script_exists = scripts.iter().any(|name| name == &manifest.script_name);
+    let script_bindings = if script_exists {
+        match backend.get_script_bindings(&manifest.script_name).await {
+            Ok(bindings) => Some(bindings),
+            Err(CfApiError::Unauthorized) => return Err(CfApiError::Unauthorized),
+            Err(CfApiError::Network(error)) => return Err(CfApiError::Network(error)),
+            Err(error) => {
+                log::warn!(
+                    "could not prove ownership of fixed-name Worker {}: {error}",
+                    manifest.script_name
+                );
+                return Ok(ProvisionPreflight::NameConflict {
+                    kind: ResourceKind::WebApp,
+                });
+            }
+        }
+    } else {
+        None
+    };
+
+    if script_bindings
+        .as_deref()
+        .is_some_and(|bindings| discover::bindings_look_like_a_brain(bindings, brain_index_names))
+    {
+        if let Some(subdomain) = subdomain.filter(|name| discover::is_safe_dns_label(name)) {
+            return Ok(ProvisionPreflight::ExistingBrain {
+                url: discover::workers_dev_url(&manifest.script_name, &subdomain),
+            });
+        }
+
+        // The bindings prove what the script is, but without a safe workers.dev
+        // hostname the installer cannot offer a trustworthy address to connect.
+        return Ok(ProvisionPreflight::NameConflict {
+            kind: ResourceKind::WebApp,
+        });
+    }
+
+    // A script name alone is explicitly not ownership. Put it first because a
+    // subsequent deploy would overwrite executable code, bindings, and secrets.
+    if script_exists {
+        return Ok(ProvisionPreflight::NameConflict {
+            kind: ResourceKind::WebApp,
+        });
+    }
+    let foreign_d1 = d1
+        .as_deref()
+        .is_some_and(|id| !created.owns_d1(&manifest.d1_name, id));
+    let foreign_kv = kv
+        .as_deref()
+        .is_some_and(|id| !created.owns_kv(KV_TITLE, id));
+    if foreign_d1 || foreign_kv {
+        return Ok(ProvisionPreflight::NameConflict {
+            kind: ResourceKind::MemoryStorage,
+        });
+    }
+    if vectorize && !created.owns_vectorize(&manifest.vectorize_name) {
+        return Ok(ProvisionPreflight::NameConflict {
+            kind: ResourceKind::SmartSearch,
+        });
+    }
+
+    Ok(ProvisionPreflight::Clear)
+}
+
 async fn ensure_account_subdomain<B: Backend>(
     backend: &B,
     account_name: &str,
@@ -318,6 +496,29 @@ pub async fn provision<B: Backend>(
     auth_token: &str,
     progress: impl Fn(StepEvent),
 ) -> Result<ProvisionOutcome, ProvisionError> {
+    let mut created = CreatedResources::default();
+    provision_recording(
+        backend,
+        manifest,
+        account_name,
+        auth_token,
+        &mut created,
+        progress,
+    )
+    .await
+}
+
+/// Runs provisioning while retaining every successful fixed-name create even
+/// when a later step fails. The caller owns the record so it survives the error
+/// return and can be supplied to the next preflight in the same setup session.
+pub async fn provision_recording<B: Backend>(
+    backend: &B,
+    manifest: &WorkerManifest,
+    account_name: &str,
+    auth_token: &str,
+    created: &mut CreatedResources,
+    progress: impl Fn(StepEvent),
+) -> Result<ProvisionOutcome, ProvisionError> {
     let emit = |step: Step, status: StepStatus| progress(StepEvent { step, status });
     let script = manifest.script_name.as_str();
 
@@ -345,11 +546,19 @@ pub async fn provision<B: Backend>(
     let (d1_id, kv_id) = step!(Step::Memory, async {
         let d1_id = match backend.find_d1(&manifest.d1_name).await? {
             Some(id) => id,
-            None => backend.create_d1(&manifest.d1_name).await?,
+            None => {
+                let id = backend.create_d1(&manifest.d1_name).await?;
+                created.record_d1(&manifest.d1_name, &id);
+                id
+            }
         };
         let kv_id = match backend.find_kv(KV_TITLE).await? {
             Some(id) => id,
-            None => backend.create_kv(KV_TITLE).await?,
+            None => {
+                let id = backend.create_kv(KV_TITLE).await?;
+                created.record_kv(KV_TITLE, &id);
+                id
+            }
         };
         Ok::<_, ProvisionError>((d1_id, kv_id))
     });
@@ -364,6 +573,7 @@ pub async fn provision<B: Backend>(
                     &manifest.vectorize_metric,
                 )
                 .await?;
+            created.record_vectorize(&manifest.vectorize_name);
         }
         Ok::<_, ProvisionError>(())
     });
@@ -513,7 +723,7 @@ pub async fn update_worker<B: Backend>(
 
     // Memory — reuse the database + key-value namespace already bound to the
     // deployed script; fall back to find-or-create only if a binding is absent.
-    let (d1_id, kv_id) = step!(Step::Memory, async {
+    let (d1_id, kv_id, live_index) = step!(Step::Memory, async {
         let bindings = backend.get_script_bindings(script).await?;
         let d1_id = match binding_field(&bindings, "d1", "database_id") {
             Some(id) => id.to_string(),
@@ -529,32 +739,36 @@ pub async fn update_worker<B: Backend>(
                 None => backend.create_kv(KV_TITLE).await?,
             },
         };
-        Ok::<_, ProvisionError>((d1_id, kv_id))
+        let live_index = binding_field(&bindings, "vectorize", "index_name").map(str::to_string);
+        Ok::<_, ProvisionError>((d1_id, kv_id, live_index))
     });
 
-    // Recall — make sure the index this deploy is about to bind exists.
-    //
-    // Deliberately the *target*, not the manifest's index. A migration (#248)
-    // redeploys against a differently sized index, and checking the manifest here
-    // would recreate the index being abandoned while never creating the one the
-    // binding points at.
-    step!(Step::Recall, async {
+    // Recall — the index this deploy binds. A migrated brain keeps its index
+    // across routine updates (`keep_live_index`), provided that index still
+    // exists; otherwise the caller's target is created when missing and bound.
+    // The target is deliberately not the manifest's index: a migration (#248)
+    // redeploys against a differently sized index, and checking the manifest
+    // would recreate the index being abandoned.
+    let index_name: String = step!(Step::Recall, async {
+        if vectorize.keep_live_index {
+            if let Some(live) = live_index.as_deref() {
+                if live != vectorize.name && backend.vectorize_exists(live).await? {
+                    return Ok::<_, ProvisionError>(live.to_string());
+                }
+            }
+        }
         if !backend.vectorize_exists(vectorize.name).await? {
             backend
-                .create_vectorize(
-                    vectorize.name,
-                    vectorize.dimensions,
-                    &manifest.vectorize_metric,
-                )
+                .create_vectorize(vectorize.name, vectorize.dimensions, &manifest.vectorize_metric)
                 .await?;
         }
-        Ok::<_, ProvisionError>(())
+        Ok(vectorize.name.to_string())
     });
 
     // Finish — upload the newer assets + Worker (password preserved), then verify.
     step!(Step::Finish, async {
         let assets_jwt = backend.upload_assets(script).await?;
-        let metadata = build_update_metadata(manifest, &d1_id, &kv_id, &assets_jwt, vectorize.name);
+        let metadata = build_update_metadata(manifest, &d1_id, &kv_id, &assets_jwt, &index_name);
         backend.deploy_worker(script, &metadata).await?;
         backend.set_cron(script, &manifest.cron).await?;
         backend.enable_script_subdomain(script).await?;
@@ -711,13 +925,29 @@ mod tests {
         .unwrap()
     }
 
+    fn test_brain_indexes() -> Vec<String> {
+        vec![
+            "second-brain-vectors".to_string(),
+            "second-brain-vectors-768".to_string(),
+        ]
+    }
+
     #[derive(Default)]
     struct Fake {
         log: Mutex<Vec<String>>,
         existing_subdomain: Option<String>,
+        existing_workers: Vec<String>,
         existing_d1: Option<String>,
         existing_kv: Option<String>,
         existing_vectorize: bool,
+        created_d1: Mutex<Option<String>>,
+        created_kv: Mutex<Option<String>>,
+        created_vectorize: Mutex<Vec<String>>,
+        kv_create_failures: Mutex<u32>,
+        /// Index names to report as absent even when `existing_vectorize` is
+        /// true, so a test can bind a script to an index that has since been
+        /// deleted.
+        missing_vectorize: Vec<String>,
         subdomain_rejections: Mutex<u32>,
         health_failures: Mutex<u32>,
         /// Probes to answer with a 401 before anything else, standing in for a
@@ -787,22 +1017,51 @@ mod tests {
             self.log(format!("register_subdomain:{name}"));
             Ok(name.to_string())
         }
+        async fn list_workers(&self) -> Result<Vec<String>, CfApiError> {
+            self.log("list_workers");
+            Ok(self.existing_workers.clone())
+        }
         async fn find_d1(&self, _name: &str) -> Result<Option<String>, CfApiError> {
-            Ok(self.existing_d1.clone())
+            self.log("find_d1");
+            Ok(self
+                .existing_d1
+                .clone()
+                .or_else(|| self.created_d1.lock().unwrap().clone()))
         }
         async fn create_d1(&self, name: &str) -> Result<String, CfApiError> {
             self.log(format!("create_d1:{name}"));
-            Ok("d1-uuid-new".into())
+            let id = "d1-uuid-new".to_string();
+            *self.created_d1.lock().unwrap() = Some(id.clone());
+            Ok(id)
         }
         async fn find_kv(&self, _title: &str) -> Result<Option<String>, CfApiError> {
-            Ok(self.existing_kv.clone())
+            self.log("find_kv");
+            Ok(self
+                .existing_kv
+                .clone()
+                .or_else(|| self.created_kv.lock().unwrap().clone()))
         }
         async fn create_kv(&self, title: &str) -> Result<String, CfApiError> {
             self.log(format!("create_kv:{title}"));
-            Ok("kv-id-new".into())
+            let mut failures = self.kv_create_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(CfApiError::Other("scripted KV failure".into()));
+            }
+            let id = "kv-id-new".to_string();
+            *self.created_kv.lock().unwrap() = Some(id.clone());
+            Ok(id)
         }
-        async fn vectorize_exists(&self, _name: &str) -> Result<bool, CfApiError> {
-            Ok(self.existing_vectorize)
+        async fn vectorize_exists(&self, name: &str) -> Result<bool, CfApiError> {
+            self.log("find_vectorize");
+            Ok((self.existing_vectorize
+                && !self.missing_vectorize.iter().any(|candidate| candidate == name))
+                || self
+                    .created_vectorize
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|candidate| candidate == name))
         }
         async fn delete_vectorize(&self, name: &str) -> Result<(), CfApiError> {
             self.log(format!("delete_vectorize:{name}"));
@@ -815,6 +1074,10 @@ mod tests {
             metric: &str,
         ) -> Result<(), CfApiError> {
             self.log(format!("create_vectorize:{name}:{dimensions}:{metric}"));
+            self.created_vectorize
+                .lock()
+                .unwrap()
+                .push(name.to_string());
             Ok(())
         }
         async fn upload_assets(&self, script: &str) -> Result<String, CfApiError> {
@@ -924,26 +1187,259 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rerun_reuses_existing_resources() {
+    async fn rerun_is_stopped_before_redeploying_an_existing_brain() {
         let fake = Fake {
             existing_subdomain: Some("already-there".into()),
+            existing_workers: vec!["second-brain".into()],
             existing_d1: Some("d1-existing".into()),
             existing_kv: Some("kv-existing".into()),
             existing_vectorize: true,
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "d1-existing" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors" }),
+            ],
             ..Default::default()
         };
-        let outcome = provision(&&fake, &test_manifest(), "ignored", "pw-123456789012", |_| {})
+        let guard = preflight_account(
+            &&fake,
+            &test_manifest(),
+            &test_brain_indexes(),
+            &CreatedResources::default(),
+        )
             .await
             .unwrap();
         assert_eq!(
-            outcome.worker_url,
-            "https://second-brain.already-there.workers.dev"
+            guard,
+            ProvisionPreflight::ExistingBrain {
+                url: "https://second-brain.already-there.workers.dev".into()
+            }
         );
         let log = fake.entries();
-        assert!(!log.iter().any(|l| l.starts_with("create_")));
-        assert!(!log.iter().any(|l| l.starts_with("register_subdomain")));
-        // Deploy still runs (that's the idempotent redeploy path).
-        assert!(log.iter().any(|l| l.starts_with("deploy:")));
+        for read in [
+            "get_subdomain",
+            "list_workers",
+            "find_d1",
+            "find_kv",
+            "find_vectorize",
+            "get_script_bindings:second-brain",
+        ] {
+            assert!(
+                log.contains(&read.to_string()),
+                "preflight skipped the {read} ownership check: {log:?}"
+            );
+        }
+        assert!(
+            !log.iter().any(|entry| {
+                entry.starts_with("create_")
+                    || entry.starts_with("register_subdomain")
+                    || entry.starts_with("upload_assets")
+                    || entry.starts_with("deploy:")
+                    || entry.starts_with("set_cron")
+                    || entry.starts_with("enable_subdomain")
+            }),
+            "the guard must return before every mutation: {log:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_brain_on_a_migrated_index_preflights_as_existing() {
+        let fake = Fake {
+            existing_subdomain: Some("already-there".into()),
+            existing_workers: vec!["second-brain".into()],
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "d1-existing" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors-768" }),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            preflight_account(
+                &&fake,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
+            ProvisionPreflight::ExistingBrain {
+                url: "https://second-brain.already-there.workers.dev".into()
+            },
+            "a migrated brain must not be downgraded to a web-app name conflict"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_accepts_the_d1_created_earlier_in_the_same_session() {
+        let fake = Fake {
+            kv_create_failures: Mutex::new(1),
+            ..Default::default()
+        };
+        let manifest = test_manifest();
+        let mut created = CreatedResources::default();
+
+        let first_error = provision_recording(
+            &&fake,
+            &manifest,
+            "Account",
+            "pw-123456789012",
+            &mut created,
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            first_error,
+            ProvisionError::Api(CfApiError::Other(_))
+        ));
+        assert!(created.owns_d1("second-brain-db", "d1-uuid-new"));
+
+        assert_eq!(
+            preflight_account(&&fake, &manifest, &test_brain_indexes(), &created)
+                .await
+                .unwrap(),
+            ProvisionPreflight::Clear,
+            "the exact D1 this session created must not lock out its retry"
+        );
+
+        provision_recording(
+            &&fake,
+            &manifest,
+            "Account",
+            "pw-123456789012",
+            &mut created,
+            |_| {},
+        )
+        .await
+        .expect("the retry proceeds past the guard and finishes provisioning");
+        assert_eq!(
+            fake.entries()
+                .iter()
+                .filter(|entry| entry.as_str() == "create_d1:second-brain-db")
+                .count(),
+            1,
+            "the retry must reuse only the D1 whose ID was recorded"
+        );
+    }
+
+    #[tokio::test]
+    async fn another_session_still_refuses_the_same_d1_residue() {
+        let fake = Fake {
+            kv_create_failures: Mutex::new(1),
+            ..Default::default()
+        };
+        let manifest = test_manifest();
+        let mut first_session = CreatedResources::default();
+        let _ = provision_recording(
+            &&fake,
+            &manifest,
+            "Account",
+            "pw-123456789012",
+            &mut first_session,
+            |_| {},
+        )
+        .await;
+
+        assert_eq!(
+            preflight_account(
+                &&fake,
+                &manifest,
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::MemoryStorage
+            },
+            "an unproven fixed-name D1 remains fail-closed in another session"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_worker_name_without_brain_bindings_is_a_web_app_conflict() {
+        let fake = Fake {
+            existing_subdomain: Some("account-name".into()),
+            existing_workers: vec!["second-brain".into()],
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "other" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "unrelated-index" }),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            preflight_account(
+                &&fake,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::WebApp
+            },
+            "a conventional script name is never ownership proof"
+        );
+        assert!(!fake.entries().iter().any(|entry| entry.starts_with("deploy:")));
+    }
+
+    #[tokio::test]
+    async fn fixed_storage_and_search_names_report_plain_language_categories() {
+        let d1 = Fake {
+            existing_d1: Some("unowned-d1".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            preflight_account(
+                &&d1,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::MemoryStorage
+            }
+        );
+
+        let kv = Fake {
+            existing_kv: Some("unowned-kv".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            preflight_account(
+                &&kv,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::MemoryStorage
+            }
+        );
+
+        let vectorize = Fake {
+            existing_vectorize: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            preflight_account(
+                &&vectorize,
+                &test_manifest(),
+                &test_brain_indexes(),
+                &CreatedResources::default(),
+            )
+            .await
+            .unwrap(),
+            ProvisionPreflight::NameConflict {
+                kind: ResourceKind::SmartSearch
+            }
+        );
     }
 
     #[tokio::test]
@@ -1155,6 +1651,99 @@ mod tests {
         assert_eq!(meta["keep_bindings"], serde_json::json!(["secret_text", "secret_key"]));
     }
 
+    /// A brain moved to another reading by an embedding migration must stay
+    /// there across "update your brain". Before this, a routine update passed
+    /// the shipped index and keep_bindings preserved only secrets, so every
+    /// migrated brain was silently rebound to the 384-dimension index while KV
+    /// still named the migrated model.
+    #[tokio::test]
+    async fn update_keeps_a_migrated_index_bound() {
+        let fake = Fake {
+            script_bindings: vec![
+                serde_json::json!({ "type": "d1", "name": "DB", "database_id": "real-d1-id" }),
+                serde_json::json!({ "type": "kv_namespace", "name": "OAUTH_KV", "namespace_id": "real-kv-id" }),
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors-1024" }),
+            ],
+            existing_vectorize: true,
+            ..Default::default()
+        };
+        update_worker(
+            &&fake,
+            &test_manifest(),
+            "https://second-brain.acme.workers.dev",
+            "stored-token",
+            VectorizeTarget::shipped(&test_manifest()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        let meta = fake.last_deploy_metadata.lock().unwrap().clone().unwrap();
+        let bindings = meta["bindings"].as_array().unwrap();
+        let vectorize = bindings.iter().find(|b| b["type"] == "vectorize").unwrap();
+        assert_eq!(vectorize["index_name"], "second-brain-vectors-1024");
+        assert!(!fake.entries().iter().any(|l| l.starts_with("create_vectorize")));
+    }
+
+    /// The bound index can be gone (finish_embedding_migration deleted it and a
+    /// redeploy was rolled back). Then the shipped index is the only safe
+    /// target: recreating the suffixed name at the shipped size would produce
+    /// an index whose name promises one dimension count and holds another.
+    #[tokio::test]
+    async fn update_falls_back_to_the_shipped_index_when_the_bound_one_is_gone() {
+        let fake = Fake {
+            script_bindings: vec![
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors-1024" }),
+            ],
+            existing_vectorize: true,
+            missing_vectorize: vec!["second-brain-vectors-1024".into()],
+            ..Default::default()
+        };
+        update_worker(
+            &&fake,
+            &test_manifest(),
+            "https://second-brain.acme.workers.dev",
+            "stored-token",
+            VectorizeTarget::shipped(&test_manifest()),
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        let meta = fake.last_deploy_metadata.lock().unwrap().clone().unwrap();
+        let bindings = meta["bindings"].as_array().unwrap();
+        let vectorize = bindings.iter().find(|b| b["type"] == "vectorize").unwrap();
+        assert_eq!(vectorize["index_name"], "second-brain-vectors");
+    }
+
+    /// A migration is the one deploy whose job is to change the binding.
+    #[tokio::test]
+    async fn a_migration_deploy_moves_the_binding_off_the_live_index() {
+        let fake = Fake {
+            script_bindings: vec![
+                serde_json::json!({ "type": "vectorize", "name": "VECTORIZE", "index_name": "second-brain-vectors" }),
+            ],
+            existing_vectorize: false,
+            ..Default::default()
+        };
+        update_worker(
+            &&fake,
+            &test_manifest(),
+            "https://second-brain.acme.workers.dev",
+            "stored-token",
+            VectorizeTarget { name: "second-brain-vectors-768", dimensions: 768, keep_live_index: false },
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        let meta = fake.last_deploy_metadata.lock().unwrap().clone().unwrap();
+        let bindings = meta["bindings"].as_array().unwrap();
+        let vectorize = bindings.iter().find(|b| b["type"] == "vectorize").unwrap();
+        assert_eq!(vectorize["index_name"], "second-brain-vectors-768");
+        assert!(fake.entries().contains(&"create_vectorize:second-brain-vectors-768:768:cosine".to_string()));
+    }
+
     /// The inversion guard's other half. An update polls with the password the
     /// app already had, so a refusal means the redeploy dropped the secret and
     /// waiting cannot help — it fails on the first refusal, and names the
@@ -1277,7 +1866,7 @@ mod tests {
             &test_manifest(),
             "https://second-brain.acme.workers.dev",
             "tok",
-            VectorizeTarget { name: "second-brain-vectors-768", dimensions: 768 },
+            VectorizeTarget { name: "second-brain-vectors-768", dimensions: 768, keep_live_index: false },
             |_| {},
         )
         .await

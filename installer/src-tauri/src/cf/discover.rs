@@ -82,14 +82,17 @@ pub fn is_safe_dns_label(name: &str) -> bool {
 
 /// Whether a script's bindings are the ones this app provisions.
 ///
-/// The Vectorize index name is the distinguishing part: it is specific to this
-/// project, and a binding is account state rather than something the Worker's own
-/// code can assert.
+/// The Vectorize index names are the distinguishing part: they are specific to
+/// this project (including names created by embedding migrations), and a binding
+/// is account state rather than something the Worker's own code can assert.
 ///
 /// The `AUTH_TOKEN` secret is deliberately *not* required. Cloudflare does not
 /// promise to list secret bindings when reading a script's settings, and a check
 /// depending on one would risk silently matching nothing at all.
-pub fn bindings_look_like_a_brain(bindings: &[serde_json::Value], vectorize_name: &str) -> bool {
+pub fn bindings_look_like_a_brain(
+    bindings: &[serde_json::Value],
+    vectorize_names: &[String],
+) -> bool {
     let type_of = |b: &serde_json::Value| {
         b.get("type")
             .and_then(|t| t.as_str())
@@ -98,7 +101,10 @@ pub fn bindings_look_like_a_brain(bindings: &[serde_json::Value], vectorize_name
     };
     let vectorize_index_matches = bindings.iter().any(|b| {
         type_of(b) == "vectorize"
-            && b.get("index_name").and_then(|n| n.as_str()) == Some(vectorize_name)
+            && b
+                .get("index_name")
+                .and_then(|n| n.as_str())
+                .is_some_and(|name| vectorize_names.iter().any(|candidate| candidate == name))
     });
     let has_database = bindings.iter().any(|b| type_of(b) == "d1");
     vectorize_index_matches && has_database
@@ -125,12 +131,13 @@ pub enum DiscoverFailure {
 
 /// Scans one Cloudflare account for Second Brains.
 ///
-/// `conventional_name` and `vectorize_name` come from the bundled Worker
-/// manifest, so the check always describes what this build of the app deploys.
+/// `conventional_name` and `vectorize_names` come from the bundled Worker
+/// manifest plus its migration catalog, so the check recognises every index a
+/// brain managed by this build may legitimately use.
 pub async fn discover_in_account(
     client: &CfClient,
     conventional_name: &str,
-    vectorize_name: &str,
+    vectorize_names: &[String],
 ) -> Result<Discovery, DiscoverFailure> {
     let subdomain = client
         .get_account_subdomain()
@@ -147,7 +154,14 @@ pub async fn discover_in_account(
         .filter(|name| is_safe_dns_label(name))
         .collect();
 
-    let brains = find_brains(client, scripts, conventional_name, vectorize_name, &subdomain).await;
+    let brains = find_brains(
+        client,
+        scripts,
+        conventional_name,
+        vectorize_names,
+        &subdomain,
+    )
+    .await;
     Ok(Discovery { subdomain, brains })
 }
 
@@ -159,13 +173,13 @@ async fn find_brains(
     client: &CfClient,
     scripts: Vec<String>,
     conventional_name: &str,
-    vectorize_name: &str,
+    vectorize_names: &[String],
     subdomain: &str,
 ) -> Vec<Candidate> {
     if !scripts.iter().any(|s| s == conventional_name) {
         return Vec::new();
     }
-    if !is_brain(client, conventional_name, vectorize_name).await {
+    if !is_brain(client, conventional_name, vectorize_names).await {
         // A script squatting the name without the bindings is not a brain.
         return Vec::new();
     }
@@ -177,9 +191,9 @@ async fn find_brains(
 
 /// One script, one control-plane read. A failure counts as "not a brain": the
 /// scan must survive a single unreadable script rather than abandon the account.
-async fn is_brain(client: &CfClient, script: &str, vectorize_name: &str) -> bool {
+async fn is_brain(client: &CfClient, script: &str, vectorize_names: &[String]) -> bool {
     match client.get_script_bindings(script).await {
-        Ok(bindings) => bindings_look_like_a_brain(&bindings, vectorize_name),
+        Ok(bindings) => bindings_look_like_a_brain(&bindings, vectorize_names),
         Err(e) => {
             log::debug!("could not read a script's bindings: {e}");
             false
@@ -197,6 +211,9 @@ mod tests {
     fn d1() -> serde_json::Value {
         serde_json::json!({ "type": "d1", "name": "DB", "database_id": "abc" })
     }
+    fn index_names() -> Vec<String> {
+        vec!["second-brain-vectors".to_string()]
+    }
 
     #[test]
     fn recognises_the_bindings_this_app_provisions() {
@@ -206,7 +223,7 @@ mod tests {
             serde_json::json!({ "type": "kv_namespace", "name": "OAUTH_KV" }),
             serde_json::json!({ "type": "ai", "name": "AI" }),
         ];
-        assert!(bindings_look_like_a_brain(&bindings, "second-brain-vectors"));
+        assert!(bindings_look_like_a_brain(&bindings, &index_names()));
     }
 
     /// Cloudflare may or may not list secret bindings, so the check must not
@@ -214,7 +231,7 @@ mod tests {
     #[test]
     fn does_not_require_the_auth_token_secret_to_be_listed() {
         let bindings = vec![d1(), vectorize("second-brain-vectors")];
-        assert!(bindings_look_like_a_brain(&bindings, "second-brain-vectors"));
+        assert!(bindings_look_like_a_brain(&bindings, &index_names()));
     }
 
     /// The property that HTTP probing could not provide: a Worker cannot assert
@@ -236,7 +253,7 @@ mod tests {
             ],
         ] {
             assert!(
-                !bindings_look_like_a_brain(&bindings, "second-brain-vectors"),
+                !bindings_look_like_a_brain(&bindings, &index_names()),
                 "wrongly matched: {bindings:?}"
             );
         }
@@ -285,6 +302,15 @@ mod tests {
         scripts: &'static [&'static str],
         brains: &'static [&'static str],
     ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        spawn_cf_api_with_index(subdomain, scripts, brains, "second-brain-vectors")
+    }
+
+    fn spawn_cf_api_with_index(
+        subdomain: Option<&'static str>,
+        scripts: &'static [&'static str],
+        brains: &'static [&'static str],
+        brain_index: &'static str,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let port = server.server_addr().to_ip().unwrap().port();
         let settings_reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -305,9 +331,11 @@ mod tests {
                 counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let script = rest.trim_end_matches("/settings");
                 let bindings = if brains.contains(&script) {
-                    r#"[{"type":"d1","database_id":"x"},{"type":"vectorize","index_name":"second-brain-vectors"}]"#
+                    format!(
+                        r#"[{{"type":"d1","database_id":"x"}},{{"type":"vectorize","index_name":"{brain_index}"}}]"#
+                    )
                 } else {
-                    r#"[{"type":"kv_namespace","namespace_id":"y"}]"#
+                    r#"[{"type":"kv_namespace","namespace_id":"y"}]"#.to_string()
                 };
                 format!(r#"{{"success":true,"errors":[],"result":{{"bindings":{bindings}}}}}"#)
             } else {
@@ -328,12 +356,11 @@ mod tests {
     }
 
     const CONVENTIONAL: &str = "second-brain";
-    const INDEX: &str = "second-brain-vectors";
 
     #[tokio::test]
     async fn finds_the_brain_and_reports_the_subdomain_it_used() {
         let (base, _) = spawn_cf_api(Some("acme"), &["second-brain", "blog"], &["second-brain"]);
-        let found = discover_in_account(&client(base), CONVENTIONAL, INDEX)
+        let found = discover_in_account(&client(base), CONVENTIONAL, &index_names())
             .await
             .expect("scan runs");
         assert_eq!(found.subdomain, "acme");
@@ -346,6 +373,27 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn finds_a_brain_bound_to_a_migrated_index_name() {
+        let (base, _) = spawn_cf_api_with_index(
+            Some("acme"),
+            &["second-brain"],
+            &["second-brain"],
+            "second-brain-vectors-768",
+        );
+        let known_indexes = vec![
+            "second-brain-vectors".to_string(),
+            "second-brain-vectors-768".to_string(),
+        ];
+
+        let found = discover_in_account(&client(base), CONVENTIONAL, &known_indexes)
+            .await
+            .expect("scan runs");
+
+        assert_eq!(found.brains.len(), 1);
+        assert_eq!(found.brains[0].name, "second-brain");
+    }
+
     /// The conventional name is checked alone first, so the common case costs one
     /// settings read however large the account is.
     #[tokio::test]
@@ -355,7 +403,7 @@ mod tests {
             &["second-brain", "a", "b", "c", "d", "e", "f", "g", "h"],
             &["second-brain"],
         );
-        discover_in_account(&client(base), CONVENTIONAL, INDEX)
+        discover_in_account(&client(base), CONVENTIONAL, &index_names())
             .await
             .unwrap();
         assert_eq!(
@@ -376,7 +424,7 @@ mod tests {
     #[tokio::test]
     async fn a_brain_under_another_name_is_not_offered() {
         let (base, _) = spawn_cf_api(Some("acme"), &["notes", "my-memory"], &["my-memory"]);
-        let found = discover_in_account(&client(base), CONVENTIONAL, INDEX)
+        let found = discover_in_account(&client(base), CONVENTIONAL, &index_names())
             .await
             .unwrap();
         assert!(
@@ -390,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn a_script_squatting_the_name_without_the_bindings_is_not_offered() {
         let (base, _) = spawn_cf_api(Some("acme"), &["second-brain", "blog"], &[]);
-        let found = discover_in_account(&client(base), CONVENTIONAL, INDEX)
+        let found = discover_in_account(&client(base), CONVENTIONAL, &index_names())
             .await
             .unwrap();
         assert!(found.brains.is_empty());
@@ -399,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn an_account_with_no_brain_returns_an_empty_list_not_an_error() {
         let (base, _) = spawn_cf_api(Some("acme"), &["blog", "api"], &[]);
-        let found = discover_in_account(&client(base), CONVENTIONAL, INDEX)
+        let found = discover_in_account(&client(base), CONVENTIONAL, &index_names())
             .await
             .unwrap();
         assert!(found.brains.is_empty());
@@ -408,7 +456,7 @@ mod tests {
     #[tokio::test]
     async fn an_empty_account_scans_cleanly() {
         let (base, _) = spawn_cf_api(Some("acme"), &[], &[]);
-        let found = discover_in_account(&client(base), CONVENTIONAL, INDEX)
+        let found = discover_in_account(&client(base), CONVENTIONAL, &index_names())
             .await
             .unwrap();
         assert!(found.brains.is_empty());
@@ -419,7 +467,7 @@ mod tests {
     #[tokio::test]
     async fn an_unsafe_subdomain_never_becomes_an_address() {
         let (base, _) = spawn_cf_api(Some("evil.com?"), &["second-brain"], &["second-brain"]);
-        match discover_in_account(&client(base), CONVENTIONAL, INDEX).await {
+        match discover_in_account(&client(base), CONVENTIONAL, &index_names()).await {
             Err(DiscoverFailure::NoSubdomain) => {}
             other => panic!("expected the unsafe subdomain to be refused, got {other:?}"),
         }
@@ -430,7 +478,7 @@ mod tests {
     #[tokio::test]
     async fn an_account_without_a_subdomain_fails_distinctly() {
         let (base, _) = spawn_cf_api(None, &["second-brain"], &["second-brain"]);
-        match discover_in_account(&client(base), CONVENTIONAL, INDEX).await {
+        match discover_in_account(&client(base), CONVENTIONAL, &index_names()).await {
             Err(DiscoverFailure::NoSubdomain) => {}
             other => panic!("expected NoSubdomain, got {other:?}"),
         }
@@ -596,9 +644,20 @@ mod tests {
         assert!(ui.contains(r#"t("connectExisting.addressPlaceholder")"#));
         // Counting occurrences of the name would pass even with every button
         // deleted — the definition, the re-render closure and the error-retry
-        // recursion all mention it. Only a click handler makes it reachable.
+        // recursion all mention it. Only a click handler makes it reachable, so
+        // count handler bodies instead. The argument-less call is the load-
+        // bearing part: re-entries that carry an error or a prefill address
+        // (`manualEntryScreen(undefined, err.url)`) are reachable only once the
+        // user is already past the door, so they must not stand in for one.
+        // The chooser sets the rail path before calling, hence the body scan
+        // rather than a match on one exact spelling of the arrow.
         let clickable = ui
-            .matches(r#"addEventListener("click", () => manualEntryScreen())"#)
+            .split(r#"addEventListener("click","#)
+            .skip(1)
+            .filter(|body: &&str| {
+                let end = body.find(");").map_or(body.len(), |i| i + 2);
+                body[..end].contains("manualEntryScreen()")
+            })
             .count();
         assert!(
             clickable >= 2,

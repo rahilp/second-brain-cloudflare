@@ -60,7 +60,12 @@ pub const EMBEDDING_MODELS: &[EmbeddingChoice] = &[
     EmbeddingChoice { model: "@cf/baai/bge-small-en-v1.5", dimensions: 384, level: "standard" },
     EmbeddingChoice { model: "@cf/baai/bge-base-en-v1.5", dimensions: 768, level: "finer" },
     EmbeddingChoice { model: "@cf/baai/bge-large-en-v1.5", dimensions: 1024, level: "finest" },
+    EmbeddingChoice { model: BGE_M3_MODEL, dimensions: 1024, level: "multilingual" },
 ];
+
+/// The one offered model that is not a bge-en size. Multilingual, and a
+/// different vector space from bge-large despite the same dimension count.
+pub const BGE_M3_MODEL: &str = "@cf/baai/bge-m3";
 
 /// One offerable way of reading memories.
 ///
@@ -89,18 +94,36 @@ pub fn dimensions_for(model: &str) -> Option<u32> {
         .map(|c| c.dimensions)
 }
 
-/// The index a given dimension count lives in.
+/// The index a given reading lives in.
 ///
 /// The shipped index keeps its historical name so an existing brain is untouched
 /// by this feature; every other size gets a suffixed name. Deriving the name from
 /// the dimensions rather than the model means two models of the same size share
-/// an index, which is correct — the vectors are compatible.
-pub fn index_name_for(base: &str, dimensions: u32, shipped_dimensions: u32) -> String {
+/// an index, which is correct — the vectors are compatible. bge-m3 is the
+/// exception: it shares bge-large's dimension count but not its vector space,
+/// so it gets its own name. Every consumer derives through this function;
+/// rotation's brain detection and finish_embedding_migration's live-index guard
+/// both depend on there being exactly one derivation.
+pub fn index_name_for(base: &str, dimensions: u32, shipped_dimensions: u32, model: Option<&str>) -> String {
+    if model == Some(BGE_M3_MODEL) {
+        return format!("{base}-m3");
+    }
     if dimensions == shipped_dimensions {
         base.to_string()
     } else {
         format!("{base}-{dimensions}")
     }
+}
+
+/// Whether moving from the current reading to `target` stays on one index.
+pub fn same_index(
+    current_model: &str,
+    current_dimensions: u32,
+    target: &EmbeddingChoice,
+    shipped_dimensions: u32,
+) -> bool {
+    index_name_for("i", current_dimensions, shipped_dimensions, Some(current_model))
+        == index_name_for("i", target.dimensions, shipped_dimensions, Some(target.model))
 }
 
 fn base(worker_url: &str) -> &str {
@@ -141,8 +164,8 @@ pub struct ChoiceView {
 /// is what makes rollback possible — so the peak is the sum, not the larger.
 /// Returns the target's own cost when it is already the current one, since then
 /// there is nothing to move.
-pub fn peak_stored_dimensions(vectors: u64, current: u32, target: u32) -> u64 {
-    if current == target {
+pub fn peak_stored_dimensions(vectors: u64, current: u32, target: u32, same_index: bool) -> u64 {
+    if same_index {
         return vectors * u64::from(target);
     }
     vectors * u64::from(current) + vectors * u64::from(target)
@@ -151,8 +174,8 @@ pub fn peak_stored_dimensions(vectors: u64, current: u32, target: u32) -> u64 {
 /// Only this brain's own indexes are counted. An account may hold others from
 /// unrelated projects, so a `false` here means "this brain alone stays inside the
 /// allowance", not "you are definitely fine".
-pub fn exceeds_free_storage(vectors: u64, current: u32, target: u32) -> bool {
-    peak_stored_dimensions(vectors, current, target) > FREE_STORED_DIMENSIONS
+pub fn exceeds_free_storage(vectors: u64, current: u32, target: u32, same_index: bool) -> bool {
+    peak_stored_dimensions(vectors, current, target, same_index) > FREE_STORED_DIMENSIONS
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,6 +286,7 @@ pub async fn fetch_estimate(
                 body.chunks_at_least,
                 current_dimensions,
                 c.dimensions,
+                same_index(&body.model, current_dimensions, c, shipped_dimensions),
             ),
         })
         .collect();
@@ -380,7 +404,7 @@ mod tests {
     #[test]
     fn the_shipped_dimension_count_keeps_the_original_index_name() {
         assert_eq!(
-            index_name_for("second-brain-vectors", 384, 384),
+            index_name_for("second-brain-vectors", 384, 384, None),
             "second-brain-vectors"
         );
     }
@@ -388,11 +412,11 @@ mod tests {
     #[test]
     fn other_dimension_counts_get_their_own_index() {
         assert_eq!(
-            index_name_for("second-brain-vectors", 768, 384),
+            index_name_for("second-brain-vectors", 768, 384, None),
             "second-brain-vectors-768"
         );
         assert_eq!(
-            index_name_for("second-brain-vectors", 1024, 384),
+            index_name_for("second-brain-vectors", 1024, 384, None),
             "second-brain-vectors-1024"
         );
     }
@@ -402,9 +426,49 @@ mod tests {
     /// would double storage for nothing.
     #[test]
     fn models_of_the_same_size_share_an_index() {
-        let a = index_name_for("second-brain-vectors", 768, 384);
-        let b = index_name_for("second-brain-vectors", 768, 384);
+        let a = index_name_for("second-brain-vectors", 768, 384, None);
+        let b = index_name_for("second-brain-vectors", 768, 384, None);
         assert_eq!(a, b);
+    }
+
+    /// bge-m3 shares bge-large's dimension count but not its vector space.
+    /// Sharing the -1024 index would mix two spaces for the length of a rebuild
+    /// and make finish_embedding_migration's live-index guard compare the wrong
+    /// names.
+    #[test]
+    fn bge_m3_gets_its_own_index_despite_sharing_bge_large_s_size() {
+        let large = index_name_for("second-brain-vectors", 1024, 384, Some("@cf/baai/bge-large-en-v1.5"));
+        let m3 = index_name_for("second-brain-vectors", 1024, 384, Some(BGE_M3_MODEL));
+        assert_eq!(large, "second-brain-vectors-1024");
+        assert_eq!(m3, "second-brain-vectors-m3");
+    }
+
+    #[test]
+    fn m3_never_shares_an_index_with_any_other_offered_model() {
+        let m3 = index_name_for("b", 1024, 384, Some(BGE_M3_MODEL));
+        for choice in EMBEDDING_MODELS.iter().filter(|c| c.model != BGE_M3_MODEL) {
+            assert_ne!(m3, index_name_for("b", choice.dimensions, 384, Some(choice.model)));
+        }
+    }
+
+    /// 4,000 vectors: one 1024-dimension index is 4.1M (inside the 5M
+    /// allowance); both at once is 8.2M. Comparing dimensions alone would call
+    /// large → m3 a single-index move and stay silent on exactly the account the
+    /// warning exists for.
+    #[test]
+    fn a_large_to_m3_move_is_costed_as_two_indexes() {
+        let m3 = EMBEDDING_MODELS.iter().find(|c| c.model == BGE_M3_MODEL).unwrap();
+        assert!(!same_index("@cf/baai/bge-large-en-v1.5", 1024, m3, 384));
+        assert!(exceeds_free_storage(4_000, 1024, 1024, false));
+        assert!(!exceeds_free_storage(4_000, 1024, 1024, true));
+    }
+
+    #[test]
+    fn staying_on_the_same_model_is_a_single_index() {
+        let large = EMBEDDING_MODELS.iter().find(|c| c.dimensions == 1024 && c.model != BGE_M3_MODEL).unwrap();
+        assert!(same_index(large.model, 1024, large, 384));
+        let m3 = EMBEDDING_MODELS.iter().find(|c| c.model == BGE_M3_MODEL).unwrap();
+        assert!(same_index(BGE_M3_MODEL, 1024, m3, 384));
     }
 
     /// The webview reads these keys by name. Nothing else can catch a rename
@@ -502,9 +566,9 @@ mod tests {
     #[test]
     fn the_storage_peak_counts_both_indexes_at_once() {
         // 2,100 vectors moving 384 → 768.
-        assert_eq!(peak_stored_dimensions(2_100, 384, 768), 2_419_200);
+        assert_eq!(peak_stored_dimensions(2_100, 384, 768, false), 2_419_200);
         // Staying put stores one index, not two.
-        assert_eq!(peak_stored_dimensions(2_100, 384, 384), 806_400);
+        assert_eq!(peak_stored_dimensions(2_100, 384, 384, true), 806_400);
     }
 
     /// Rahil's brain: ~1,620 memories, ~2,100 vectors. Every option fits, which
@@ -513,7 +577,7 @@ mod tests {
     fn a_typical_brain_stays_inside_the_free_allowance() {
         for target in [384u32, 768, 1024] {
             assert!(
-                !exceeds_free_storage(2_100, 384, target),
+                !exceeds_free_storage(2_100, 384, target, target == 384),
                 "2,100 vectors → {target} dims should fit in the free allowance"
             );
         }
@@ -524,19 +588,19 @@ mod tests {
     #[test]
     fn a_large_brain_is_warned_before_choosing_the_finest_reading() {
         // ~6,000 vectors: 384 + 1024 = 8.4M dimensions at the peak, past 5M.
-        assert!(exceeds_free_storage(6_000, 384, 1024));
+        assert!(exceeds_free_storage(6_000, 384, 1024, false));
         // The same brain moving to the middle option: 384 + 768 = 6.9M, also past.
-        assert!(exceeds_free_storage(6_000, 384, 768));
+        assert!(exceeds_free_storage(6_000, 384, 768, false));
         // And staying put is fine, so the warning is about the move, not the size.
-        assert!(!exceeds_free_storage(6_000, 384, 384));
+        assert!(!exceeds_free_storage(6_000, 384, 384, true));
     }
 
     #[test]
     fn the_boundary_is_exclusive_so_exactly_the_allowance_is_allowed() {
         // 5,000,000 dimensions exactly: allowed. One more: not.
         // Same reading on both sides, so the peak is vectors × dimensions.
-        assert!(!exceeds_free_storage(5_000_000, 1, 1));
-        assert!(exceeds_free_storage(5_000_001, 1, 1));
+        assert!(!exceeds_free_storage(5_000_000, 1, 1, true));
+        assert!(exceeds_free_storage(5_000_001, 1, 1, true));
     }
 
     /// The window is told per choice, so it can mark the specific option that
@@ -644,11 +708,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_server_error_does_not_leak_a_raw_body() {
+    async fn a_server_error_uses_the_stable_key_without_raw_detail() {
         let (url, _) = spawn_worker(500);
         let err = fetch_estimate(&url, "tok", 384, Locale::En).await.unwrap_err();
-        assert!(err.contains("500"), "the status is useful here: {err}");
-        assert!(!err.contains("{"), "leaked a response body: {err}");
+        assert_eq!(err, i18n::t(Locale::En, Key::ErrorBrainHttpStatus));
+        assert!(!err.contains("500"), "leaked a raw status code: {err}");
+        assert!(!err.contains('{'), "leaked a response body: {err}");
     }
 
     #[tokio::test]

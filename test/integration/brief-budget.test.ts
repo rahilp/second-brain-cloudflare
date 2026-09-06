@@ -27,10 +27,16 @@ function dbOf(s: SqliteD1) {
   return {
     prepare: (sql: string) => s.db.prepare(sql),
     exec: (sql: string) => s.db.exec(sql),
-    async batch(stmts: { run(): Promise<unknown> }[]) {
-      for (const st of stmts) await st.run();
+    async batch(stmts: { run(): Promise<any> }[]) {
+      const out: any[] = [];
+      for (const st of stmts) out.push(await st.run());
       s.issued.splice(s.issued.length - stmts.length, stmts.length, `BATCH(${stmts.length})`);
-      return stmts.map(() => ({ meta: { changes: 1 } }));
+      // Each statement's rows are kept, not discarded: a batch carries reads as
+      // well as writes now — identity resolution pairs its SELECT with the
+      // throttled last_used_at stamp so the pair costs one subrequest — and D1
+      // returns a result per statement. `changes: 1` is preserved for the write
+      // paths that read it.
+      return out.map((r: any) => ({ ...r, meta: { changes: 1, ...r?.meta } }));
     },
   };
 }
@@ -74,10 +80,54 @@ describe("GET /brief", () => {
     const res = await worker.fetch(req("GET", "/brief"), envOf(sq), ctx);
     expect(res.status).toBe(200);
 
-    // Six reads, run concurrently. If this number goes up, the endpoint got
-    // more expensive for every user on every app open — that is the decision
-    // this assertion is asking you to make deliberately.
-    expect(sq.issued).toHaveLength(6);
+    // Six reads, run concurrently, plus v3's fixed identity cost on this first
+    // request against a fresh database: one token→identity join, and the
+    // one-time tenant bootstrap (two lookups + one provisioning batch — memoised
+    // per database, so later app opens pay only the join). 6 + 1 + 3 = 10. If
+    // this goes up further, the endpoint got more expensive for every user on
+    // every app open — that is the decision this assertion asks you to make
+    // deliberately.
+    //
+    // This is the COLD path: `users.last_used_at` is NULL on a brain nobody has
+    // authenticated against, so this request does owe the stamp. It is still 10,
+    // because the stamp is batched with the identity read rather than issued on
+    // its own — a D1 batch is one subrequest whatever it carries. The write
+    // really happens; the assertion below proves it landed.
+    expect(sq.issued).toHaveLength(10);
+    const stamped = await sq.db
+      .prepare(`SELECT last_used_at FROM users WHERE last_used_at IS NOT NULL`)
+      .first() as { last_used_at: number } | null;
+    expect(stamped?.last_used_at).toBeGreaterThan(0);
+  });
+
+  it("does not pay the last_used_at stamp again on the next app open", async () => {
+    // The throttle is what keeps the line above a once-an-hour cost rather than
+    // a permanent one. Without it every request in the deployment would carry
+    // an extra D1 write, which is the version of this feature that would not be
+    // worth shipping.
+    sq = await migrated();
+    sq.seed({ id: "id-0", content: "Memory", createdAt: Date.now() - HOUR });
+    // One env, so the tenant bootstrap memo (keyed on env.DB) survives between
+    // the two requests the way it does in production.
+    const env = envOf(sq);
+    const stampedAt = async () => ((await sq!.db
+      .prepare(`SELECT last_used_at FROM users WHERE last_used_at IS NOT NULL`)
+      .first()) as { last_used_at: number } | null)?.last_used_at;
+    await worker.fetch(req("GET", "/brief"), env, ctx);
+    const first = await stampedAt();
+    expect(first).toBeGreaterThan(0);
+    const cold = sq.issued.length;
+    sq.issued.length = 0;
+
+    const res = await worker.fetch(req("GET", "/brief"), env, ctx);
+
+    expect(res.status).toBe(200);
+    // Six reads and the identity batch. The bootstrap the first open paid for is
+    // gone, and the stamp inside that batch is now a no-op the throttle skips —
+    // the statement is still carried, but it matches no row and writes nothing.
+    expect(sq.issued).toHaveLength(7);
+    expect(cold).toBeGreaterThan(sq.issued.length);
+    expect(await stampedAt()).toBe(first);
   });
 
   it("reports what arrived and where it came from", async () => {

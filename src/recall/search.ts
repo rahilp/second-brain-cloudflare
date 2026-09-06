@@ -4,14 +4,17 @@ import {
   KEYWORD_MAX_TOKENS,
   VECTORIZE_GET_BY_IDS_BATCH,
   VECTORIZE_TOP_K_MULTIPLIER,
+  VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY,
 } from "../constants";
 import { resolveConfig, type Config } from "../config";
 import { embed } from "../lib/ai";
+import type { Identity } from "../lib/identity";
+import { lookupActorLabels, resolveActorLabel } from "../lib/actors";
+import { layerOf, scopeWhereForRead } from "../lib/scope";
 import { expandGraph } from "../graph/traverse";
 import type { GraphNeighbor } from "../graph/types";
 import { KIND_VALUES, type MemoryKind } from "../memory/kind";
 import { parseTimePhrase } from "../text/temporal";
-import { tokenizeQuery } from "../text/tokenize";
 import { distillToRareTerms, inferQueryTags, type DistilledQuery, type TimeBounds } from "./distill";
 import { synthesizeInsight } from "./insight";
 import { hasStaleAsOf } from "../memory/stale";
@@ -25,6 +28,7 @@ import { localEvidenceOf } from "./root-candidate";
 import { selectGraphRoots, type RootCandidate } from "./root-selector";
 import type { KeywordRow, RecallInternalOptions, RecallMatch, RecallSearchResult, RecallStage } from "./types";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
+import { workspaceFilter, queryVectorizeScoped } from "../vectorize/scope";
 import { observeRecallEnv } from "./diagnostics";
 import { chooseEvidenceSlot, type EvidenceSlotCandidate } from "./evidence-rescue";
 import { queryRelevantWindow } from "./snippet";
@@ -34,6 +38,9 @@ async function keywordSearch(
   env: Env,
   limit: number,
   bounds: Readonly<TimeBounds> = {},
+  identity?: Identity,
+  only?: "personal" | "company",
+  teamId?: string,
 ): Promise<KeywordRow[]> {
   if (!tokens.length) return [];
   // Capped here rather than at distillation's uncapped exits because this is
@@ -53,10 +60,14 @@ async function keywordSearch(
     timeWhere += " AND created_at < ?";
     timeBindings.push(bounds.before);
   }
+  // Scoped before ORDER BY so LIMIT ranks only readable rows, not readable rows
+  // plus strangers' rows truncated by the window.
+  const scope = identity ? scopeWhereForRead(identity, { layer: only, teamId }) : null;
+  const scopeSql = scope ? ` AND ${scope.clause}` : "";
   const tokenWhere = timeWhere ? `(${where})` : where;
   const { results } = await env.DB.prepare(
-    `SELECT id, content, tags, source, created_at FROM entries WHERE ${tokenWhere}${timeWhere} ORDER BY created_at DESC LIMIT ?`
-  ).bind(...terms.map(t => `%${t}%`), ...timeBindings, limit).all();
+    `SELECT id, content, tags, source, created_at FROM entries WHERE ${tokenWhere}${timeWhere}${scopeSql} ORDER BY created_at DESC LIMIT ?`
+  ).bind(...terms.map(t => `%${t}%`), ...timeBindings, ...(scope?.bindings ?? []), limit).all();
   return results as unknown as KeywordRow[];
 }
 
@@ -79,6 +90,10 @@ function fuseDenseAndKeyword(
 
   const kwLower = keywordRows.map(r => ({ row: r, lc: r.content.toLowerCase() }));
 
+  // Matched against lowercased content, so lowercased here too. Canonical
+  // tokens already are; raw-surface probes (#326) arrive as typed.
+  const needle = new Map(tokens.map(t => [t, t.toLowerCase()]));
+
   // IDF from the corpus-wide frequencies distillToRareTerms already computed,
   // when they cover every token; otherwise the old estimate from the fetched
   // rows. All-or-nothing rather than per-token, because the two denominators
@@ -91,7 +106,7 @@ function fuseDenseAndKeyword(
     idf = t => Math.log(1 + total / ((df.get(t) ?? 0) + 1));
   } else {
     const kwN = kwLower.length || 1;
-    const kwDf = new Map(tokens.map(t => [t, kwLower.reduce((n, x) => n + (x.lc.includes(t) ? 1 : 0), 0)]));
+    const kwDf = new Map(tokens.map(t => [t, kwLower.reduce((n, x) => n + (x.lc.includes(needle.get(t)!) ? 1 : 0), 0)]));
     idf = t => Math.log(1 + kwN / ((kwDf.get(t) ?? 0) + 1));
   }
 
@@ -99,9 +114,9 @@ function fuseDenseAndKeyword(
   // word ("cat" in "concatenate") it earns a configured fraction. Lookarounds
   // rather than \b so identifier-shaped tokens ("#149", "v1.9") keep matching —
   // \b treats their punctuation as the boundary itself.
-  const boundary = new Map(tokens.map(t => [t, new RegExp(`(?<![\\w])${escapeRegExp(t)}(?![\\w])`)]));
+  const boundary = new Map(tokens.map(t => [t, new RegExp(`(?<![\\w])${escapeRegExp(needle.get(t)!)}(?![\\w])`)]));
   const tokenWeight = (lc: string, t: string) => {
-    if (!lc.includes(t)) return 0;
+    if (!lc.includes(needle.get(t)!)) return 0;
     return boundary.get(t)!.test(lc) ? idf(t) : idf(t) * substringWeight;
   };
 
@@ -153,6 +168,14 @@ export async function recallEntries(
   const hops = Math.max(0, Math.min(cfg.GRAPH_MAX_HOPS, params.hops ?? cfg.DEFAULT_HOPS));
   const now = Date.now();
   let semanticUnavailable = false;
+  // One clause, computed once: every entries read below ANDs it in when an
+  // Identity rides along, and appends nothing — byte for byte — when one does
+  // not. workspaceFilter and teamId narrow the same clause further.
+  const readScope = internal.identity
+    ? { layer: internal.workspaceFilter, teamId: internal.teamId }
+    : undefined;
+  const scope = readScope ? scopeWhereForRead(internal.identity!, readScope) : null;
+  const identity = internal.identity;
 
   let semanticQuery = query;
   if (after === undefined && before === undefined) {
@@ -162,18 +185,26 @@ export async function recallEntries(
     semanticQuery = parsed.cleanQuery;
   }
   const bounds = { after, before };
-  const distilled = await distillToRareTerms(semanticQuery, env, cfg, bounds);
+  const distilled = await distillToRareTerms(semanticQuery, env, cfg, bounds, identity, internal.workspaceFilter, internal.teamId);
   const profile = buildQueryProfile(semanticQuery, distilled);
   const embeddingQueryMode = internal.embeddingQueryMode ?? DEFAULT_EMBEDDING_QUERY_MODE;
   const embedQuery = embeddingInput(profile, embeddingQueryMode);
   const lexicalQuery = profile.lexicalQuery;
-  internal.diagnostics && (internal.diagnostics.embeddingMode = embeddingQueryMode);
+  if (internal.diagnostics) {
+    internal.diagnostics.embeddingMode = embeddingQueryMode;
+    // #326 visibility: an empty keywordIds used to be indistinguishable from
+    // "the lexical arm never ran".
+    internal.diagnostics.retrievalTokenCount = profile.retrievalTokens.length;
+    internal.diagnostics.lexicalArmSkipped = profile.retrievalTokens.length === 0;
+    internal.diagnostics.corpusIdfUsed = !!distilled.df && !!distilled.total
+      && profile.lexicalTokens.every(t => distilled.df!.has(t));
+  }
   markStage("setup");
 
   const tokens = profile.lexicalTokens;
   const [values, queryTags] = await Promise.all([
     embed(embedQuery, env, cfg),
-    inferQueryTags(lexicalQuery, env, cfg, ctx),
+    inferQueryTags(lexicalQuery, env, cfg, ctx, identity, internal.workspaceFilter, internal.teamId),
   ]);
   markStage("querySignals");
 
@@ -184,9 +215,11 @@ export async function recallEntries(
     // the failure is over-broad results rather than the permanent rollup the same bug
     // caused in compressTag — but `?tag=%` silently defeats the filter entirely and
     // returns the whole brain, which is not a recoverable-looking answer either.
+    const tagScopeSql = scope ? ` AND ${scope.clause}` : "";
+    // scope-checked: the caller's clause IS applied — tagScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), which is the pre-v3 whole-corpus tag scan
     const { results: tagRows } = await env.DB.prepare(
-      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}`
-    ).bind(tagLikePattern(tag)).all();
+      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ? ${TAG_LIKE_ESCAPE}${tagScopeSql}`
+    ).bind(tagLikePattern(tag), ...(scope?.bindings ?? [])).all();
     if (!tagRows.length) return { matches: [], insight: "", semanticUnavailable };
     keywordRows = tagRows as unknown as KeywordRow[];
 
@@ -215,8 +248,27 @@ export async function recallEntries(
     };
   } else {
     const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
+    // Scoped when an Identity is in play: the workspace filter keeps foreign
+    // candidates out of the result slots. queryVectorizeScoped retries
+    // unfiltered if Vectorize rejects the filter; hydration below is scoped at
+    // the SQL layer either way, so correctness never rides on this.
+    const wsFilter = identity ? workspaceFilter(identity, internal.workspaceFilter, internal.teamId)?.filter : undefined;
+    // env-free code (src/vectorize/scope.ts) cannot reach KV itself, so the
+    // caller hands it this callback. It fires at most once per isolate — see
+    // queryVectorizeScoped's own transition guard — so it cannot move
+    // recall-free-tier-budget, which never rejects a filter.
+    const onDegrade = () => ctx.waitUntil(
+      env.OAUTH_KV.put(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY, String(Date.now()))
+        .catch((e: unknown) => console.error("Vectorize filter-degradation marker write failed (non-fatal):", e)),
+    );
     const denseQuery = async (): Promise<{ matches: VectorizeMatch[] }> => {
       try {
+        if (wsFilter) {
+          const { matches } = await queryVectorizeScoped<VectorizeMatch>(
+            env.VECTORIZE, values, { topK: vectorizeTopK, filter: wsFilter, onDegrade },
+          );
+          return { matches };
+        }
         return await env.VECTORIZE.query(values, { topK: vectorizeTopK, returnMetadata: "all", returnValues: true });
       } catch (e) {
         console.error("Vectorize query failed (degrading to keyword-only):", e);
@@ -226,7 +278,7 @@ export async function recallEntries(
     };
     const [denseResults, kwRows] = await Promise.all([
       denseQuery(),
-      keywordSearch(profile.retrievalTokens, env, cfg.KEYWORD_CANDIDATE_LIMIT, bounds),
+      keywordSearch(profile.retrievalTokens, env, cfg.KEYWORD_CANDIDATE_LIMIT, bounds, identity, internal.workspaceFilter, internal.teamId),
     ]);
     results = denseResults;
     keywordRows = kwRows;
@@ -236,7 +288,14 @@ export async function recallEntries(
     // retuned recall widening.
     if (!semanticUnavailable && results.matches.length && results.matches[0].score < cfg.RECALL_WIDEN_THRESHOLD) {
       try {
-        results = await env.VECTORIZE.query(values, { topK: 50, returnMetadata: "all", returnValues: true });
+        if (wsFilter) {
+          const { matches } = await queryVectorizeScoped<VectorizeMatch>(
+            env.VECTORIZE, values, { topK: 50, filter: wsFilter, onDegrade },
+          );
+          results = { matches };
+        } else {
+          results = await env.VECTORIZE.query(values, { topK: 50, returnMetadata: "all", returnValues: true });
+        }
       } catch (e) {
         console.error("Vectorize widen-query failed (non-fatal, keeping narrow results):", e);
       }
@@ -267,14 +326,22 @@ export async function recallEntries(
   type CandidateSignalRow = { id: string; content?: string; source?: string; created_at?: number; last_updated?: number; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number; tags: string };
   const rcRows: CandidateSignalRow[] = [];
   const candidateSignalProjection = hops > 0
-    ? `id, content, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses, tags`
-    : "id, recall_count, importance_score, contradiction_wins, contradiction_losses, tags";
-  for (let i = 0; i < candidateIds.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = candidateIds.slice(i, i + D1_MAX_BOUND_PARAMS);
+    ? `id, content, source, created_at, COALESCE(updated_at, created_at) AS last_updated, recall_count, importance_score, contradiction_wins, contradiction_losses, tags, workspace_id, actor_id`
+    : "id, recall_count, importance_score, contradiction_wins, contradiction_losses, tags, workspace_id, actor_id";
+  // Scoped too: this is the leak-catcher for unscoped Vectorize hits — until
+  // namespaces land (P3) the dense arm can surface a stranger's id, and the
+  // scope clause here is what stops that id from hydrating into signals. The
+  // scope's two bindings count toward D1's bound-parameter ceiling exactly as
+  // the ids do, so the batch shrinks by them rather than overrunning.
+  const rcScopeSql = scope ? ` AND ${scope.clause}` : "";
+  const rcBatchSize = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  for (let i = 0; i < candidateIds.length; i += rcBatchSize) {
+    const batch = candidateIds.slice(i, i + rcBatchSize);
     const rcPlaceholders = batch.map(() => "?").join(", ");
+    // scope-checked: the caller's clause IS applied — rcScopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results: rows } = await env.DB.prepare(
-      `SELECT ${candidateSignalProjection} FROM entries WHERE id IN (${rcPlaceholders})`
-    ).bind(...batch).all() as { results: CandidateSignalRow[] };
+      `SELECT ${candidateSignalProjection} FROM entries WHERE id IN (${rcPlaceholders})${rcScopeSql}`
+    ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: CandidateSignalRow[] };
     rcRows.push(...rows);
   }
   const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
@@ -329,7 +396,7 @@ export async function recallEntries(
 
   let expanded: GraphNeighbor[] = [];
   if (hops > 0) {
-    expanded = await expandGraph(graphSeedIds, { hops }, env, cfg);
+    expanded = await expandGraph(graphSeedIds, { hops, only: internal.workspaceFilter, teamId: internal.teamId }, env, cfg, identity);
   }
   markStage("graphExpansion");
   if (internal.diagnostics && hops > 0) internal.diagnostics.expandedIds = expanded.map(x => x.id);
@@ -354,18 +421,30 @@ export async function recallEntries(
   }
   if (after !== undefined) { d1Filters += ` AND created_at >= ?`; filterBindings.push(after); }
   if (before !== undefined) { d1Filters += ` AND created_at < ?`; filterBindings.push(before); }
+  // Last filter in, so the scope's bindings are already inside filterBindings
+  // when idBatchSize subtracts them from the bound-parameter ceiling — the same
+  // accounting every other filter's bindings get.
+  if (scope) {
+    d1Filters += ` AND ${scope.clause}`;
+    filterBindings.push(...scope.bindings);
+  }
   const d1Rows: Record<string, any>[] = [];
   const idBatchSize = D1_MAX_BOUND_PARAMS - filterBindings.length;
   for (let i = 0; i < allParentIds.length; i += idBatchSize) {
     const batch = allParentIds.slice(i, i + idBatchSize);
     const placeholders = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at, updated_at FROM entries WHERE id IN (${placeholders})${d1Filters}`
+      // scope-checked: the caller's clause IS applied — d1Filters is built from scope.clause above and appended here; the lexer cannot see into a JS-assembled fragment
+      `SELECT id, content, tags, source, created_at, updated_at, workspace_id, actor_id FROM entries WHERE id IN (${placeholders})${d1Filters}`
     ).bind(...batch, ...filterBindings).all() as { results: Record<string, any>[] };
     d1Rows.push(...results);
   }
 
   const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
+  // Which layer a memory lives in, resolved against the caller's own workspace
+  // ids: personal and company map to themselves, anything else ('' legacy rows,
+  // system insights) reads as "system". Clients use this to offer share/unshare
+  // and to badge results.
   const candidateSignalById = new Map(rcRows.map(row => [row.id, row]));
   markStage("finalHydration");
 
@@ -384,6 +463,7 @@ export async function recallEntries(
       source: row.source as string,
       isUpdate: !!meta?.isUpdate,
       hop: 0,
+      workspace: layerOf(identity, row.workspace_id),
       staleAsOf: hasStaleAsOf(JSON.parse(row.tags ?? "[]")),
     }];
   }).sort((a, b) => b.score - a.score);
@@ -443,6 +523,7 @@ export async function recallEntries(
         source: row.source as string,
         isUpdate: false,
         hop: e.hop,
+        workspace: layerOf(identity, row.workspace_id),
         staleAsOf: hasStaleAsOf(JSON.parse(row.tags ?? "[]")),
         viaProvenance: e.viaProvenance,
         viaType: e.viaType,
@@ -514,6 +595,7 @@ export async function recallEntries(
         source: row.source as string,
         isUpdate: false,
         hop: 0,
+        workspace: layerOf(identity, (row as Record<string, unknown>).workspace_id),
         staleAsOf: hasStaleAsOf(rowTags),
       };
       matchById.set(match.id, match);
@@ -570,6 +652,18 @@ export async function recallEntries(
 
   const maxScore = matches.reduce((mx, m) => Math.max(mx, m.score), 0);
   if (maxScore > 0) for (const m of matches) m.score = m.score / maxScore;
+
+  if (identity) {
+    const actorIdFor = (id: string): string =>
+      (d1Map.get(id)?.actor_id as string | undefined)
+      ?? (candidateSignalById.get(id) as { actor_id?: string } | undefined)?.actor_id
+      ?? "";
+    const companyMatches = matches.filter((m) => m.workspace === "company");
+    const labelMap = await lookupActorLabels(env, companyMatches.map((m) => actorIdFor(m.id)));
+    for (const m of companyMatches) {
+      m.actorName = resolveActorLabel(actorIdFor(m.id), labelMap, { viewerId: identity.userId, source: m.source });
+    }
+  }
 
   const compoundStale = computeCompoundStale(matches);
 

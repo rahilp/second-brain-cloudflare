@@ -20,7 +20,9 @@ const ROOT = resolve(import.meta.dirname, "../..");
 
 function load(pages: any[] = []) {
   const els = new Map<string, any>();
-  const makeEl = () => ({
+  const listeners = new Map<string, Map<string, Set<(ev: any) => void>>>();
+  const makeEl = (id?: string) => ({
+    id,
     hidden: false,
     disabled: false,
     innerHTML: "",
@@ -28,6 +30,21 @@ function load(pages: any[] = []) {
     style: {} as Record<string, string>,
     classList: { add() {}, remove() {}, contains: () => false },
     querySelectorAll: () => [],
+    querySelector: () => null,
+    closest(sel: string) {
+      return null;
+    },
+    dataset: {} as Record<string, string>,
+    addEventListener(type: string, fn: (ev: any) => void) {
+      if (!id) return;
+      if (!listeners.has(id)) listeners.set(id, new Map());
+      const byType = listeners.get(id)!;
+      if (!byType.has(type)) byType.set(type, new Set());
+      byType.get(type)!.add(fn);
+    },
+    dispatch(type: string, ev: any = {}) {
+      for (const fn of listeners.get(id!)?.get(type) ?? []) fn(ev);
+    },
   });
   let pageIndex = 0;
   const ctx: any = {
@@ -45,7 +62,7 @@ function load(pages: any[] = []) {
     },
     document: {
       getElementById: (id: string) => {
-        if (!els.has(id)) els.set(id, makeEl());
+        if (!els.has(id)) els.set(id, makeEl(id));
         return els.get(id);
       },
       createElement: () => makeEl(),
@@ -53,6 +70,7 @@ function load(pages: any[] = []) {
       querySelectorAll: () => [],
     },
   };
+  ctx.__listeners = listeners;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   installI18n(ctx, "en");
@@ -87,19 +105,66 @@ describe("the out-of-date queue", () => {
     expect(html).toContain("Our deploy target is the staging cluster 1");
   });
 
-  it("offers edit, append and forget on each flagged memory", async () => {
-    // The three actions the queue exists to make reachable. Without them it is a
+  it("offers edit, append, keep and forget on each flagged memory", async () => {
+    // The four actions the queue exists to make reachable. Without them it is a
     // list of problems with no way to resolve one.
     const ctx = load([page(1)]);
 
     await ctx.loadStaleQueue();
 
     const html = ctx.__els.get("stale-list").innerHTML;
-    expect(html).toContain("openEdit(");
-    expect(html).toContain("openAppend(");
-    expect(html).toContain("openConfirm(");
-    // Wired to the entry, not to the row index.
-    expect(html).toContain("s0");
+    expect(html).toContain('data-stale-action="edit"');
+    expect(html).toContain('data-stale-action="append"');
+    expect(html).toContain('data-stale-action="keep"');
+    expect(html).toContain('data-stale-action="forget"');
+    expect(html).toContain("stale-row-s0");
+  });
+
+  it("opens edit for content that contains quotes", async () => {
+    // Inline onclick used escAttr(JSON.stringify(...)), which turned embedded
+    // quotes into HTML entities and broke the handler — indistinguishable from a
+    // freeze when the edit sheet opened behind the queue.
+    const ctx = load([
+      {
+        ok: true,
+        total: 1,
+        entries: [
+          {
+            id: "q0",
+            content: 'Deploy target is "production" as of January',
+            tags: ["work", "stale:as-of"],
+            source: "claude-desktop",
+            created_at: 1,
+            last_updated: 1,
+          },
+        ],
+      },
+    ]);
+    let edited: unknown = null;
+    ctx.openEdit = (...args: unknown[]) => {
+      edited = args;
+    };
+
+    await ctx.loadStaleQueue();
+    const row = {
+      id: "stale-row-q0",
+      closest(sel: string) {
+        return sel === ".stale-row" ? this : null;
+      },
+    };
+    ctx.onStaleListClick({
+      target: {
+        closest(sel: string) {
+          if (sel === "[data-stale-action]") {
+            return { dataset: { staleAction: "edit" }, closest: (s: string) => (s === ".stale-row" ? row : null) };
+          }
+          if (sel === ".stale-row") return row;
+          return null;
+        },
+      },
+    });
+
+    expect(edited).toEqual(["q0", 'Deploy target is "production" as of January', ["work", "stale:as-of"]]);
   });
 
   it("says when the entry was last confirmed", async () => {
@@ -152,7 +217,9 @@ describe("the out-of-date queue", () => {
  */
 function loadWithCrud(entries: any[]) {
   const els = new Map<string, any>();
-  const makeEl = () => ({
+  const listeners = new Map<string, Map<string, Set<(ev: any) => void>>>();
+  const makeEl = (id?: string) => ({
+    id,
     hidden: false,
     disabled: false,
     value: "text",
@@ -165,6 +232,13 @@ function loadWithCrud(entries: any[]) {
     remove() {},
     focus() {},
     setSelectionRange() {},
+    addEventListener(type: string, fn: (ev: any) => void) {
+      if (!id) return;
+      if (!listeners.has(id)) listeners.set(id, new Map());
+      const byType = listeners.get(id)!;
+      if (!byType.has(type)) byType.set(type, new Set());
+      byType.get(type)!.add(fn);
+    },
   });
   const ctx: any = {
     console,
@@ -180,7 +254,7 @@ function loadWithCrud(entries: any[]) {
     fetch: async () => ({ ok: true, json: async () => ({ ok: true, entries, total: entries.length }) }),
     document: {
       getElementById: (id: string) => {
-        if (!els.has(id)) els.set(id, makeEl());
+        if (!els.has(id)) els.set(id, makeEl(id));
         return els.get(id);
       },
       querySelector: () => makeEl(),
@@ -192,7 +266,10 @@ function loadWithCrud(entries: any[]) {
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   installI18n(ctx, "en");
-  for (const f of ["public/utils.js", "public/js/memory-crud.js", "public/js/stale.js"]) {
+  // confirm-sheet.js drives the one `#confirm-dialog` the whole page shares;
+  // memory-crud.js is a caller of it, so the page's script list is what this
+  // has to mirror. Assertions below are unchanged — only the module list is.
+  for (const f of ["public/utils.js", "public/js/confirm-sheet.js", "public/js/memory-crud.js", "public/js/stale.js"]) {
     vm.runInContext(readFileSync(resolve(ROOT, f), "utf8"), ctx);
   }
   ctx.__els = els;
@@ -240,6 +317,22 @@ describe("acting on a row", () => {
     await ctx.saveAppend();
 
     expect(ctx.__els.get("stale-list").innerHTML).not.toContain("Second flagged claim");
+  });
+
+  it("takes a kept memory off the queue", async () => {
+    const ctx = loadWithCrud(twoEntries);
+    ctx.fetch = async (url: string, init?: any) => {
+      if (String(url).endsWith("/stale/keep")) {
+        return { ok: true, json: async () => ({ ok: true, id: JSON.parse(init.body).id }) };
+      }
+      return { ok: true, json: async () => ({ ok: true, entries: twoEntries, total: twoEntries.length }) };
+    };
+    await ctx.loadStaleQueue();
+
+    const btn = { disabled: false, textContent: "Keep", innerHTML: "" };
+    await ctx.keepStale("s0", btn);
+
+    expect(ctx.__els.get("stale-list").innerHTML).not.toContain("First flagged claim");
   });
 
   it("shows the empty state once the last row is resolved", async () => {

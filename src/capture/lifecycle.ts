@@ -7,6 +7,7 @@ export type ForgetResult =
 
 export async function forgetEntry(id: string, env: Env): Promise<ForgetResult> {
   const row = await env.DB.prepare(
+    // scope-exempt: by-id: routes gate with getReadableEntry before calling
     `SELECT vector_ids FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
 
@@ -14,9 +15,11 @@ export async function forgetEntry(id: string, env: Env): Promise<ForgetResult> {
 
   const vectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
 
+  // scope-exempt: by-id delete: routes gate with getReadableEntry before calling
   await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(id).run();
 
   try {
+    // scope-exempt: by-id cascade: edge endpoints of the row just deleted
     await env.DB.prepare(`DELETE FROM edges WHERE source_id = ? OR target_id = ?`).bind(id, id).run();
   } catch (e) {
     console.error("Edge cascade-delete failed (non-fatal):", e);
@@ -52,6 +55,7 @@ export const INDEXABLE_SQL = `tags NOT LIKE '%"status:deprecated"%'`;
 
 export async function deprecateEntry(id: string, env: Env): Promise<boolean> {
   const row = await env.DB.prepare(
+    // scope-exempt: by-id: routes gate with getReadableEntry before calling
     `SELECT tags, vector_ids FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
   if (!row) return false;
@@ -72,6 +76,7 @@ export async function deprecateEntry(id: string, env: Env): Promise<boolean> {
 
 export async function applyStatus(id: string, status: MemoryStatus, env: Env): Promise<boolean> {
   if (status === "deprecated") return deprecateEntry(id, env);
+  // scope-exempt: by-id: routes gate with getReadableEntry before calling
   const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
   if (!row) return false;
   const tags: string[] = JSON.parse(row.tags ?? "[]");

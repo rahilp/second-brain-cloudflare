@@ -6,7 +6,7 @@ use tauri::menu::{
     SubmenuBuilder,
 };
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// Handles to menu items so labels can be updated when the locale changes.
 pub struct AppMenus {

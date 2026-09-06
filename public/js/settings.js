@@ -1,9 +1,41 @@
 function openMenu() {
   document.getElementById('menu-sheet').classList.add('open')
   loadMenuStats()
+  loadProfileName()
 }
 function closeMenu() {
   document.getElementById('menu-sheet').classList.remove('open')
+}
+
+async function loadProfileName() {
+  const input = document.getElementById('profile-name')
+  if (!input || !WORKER_URL || !AUTH_TOKEN) return
+  try {
+    const res = await fetch(`${WORKER_URL}/team/me`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    if (data.profile?.name) input.value = data.profile.name
+  } catch {}
+}
+
+async function saveProfileName() {
+  const input = document.getElementById('profile-name')
+  const name = (input?.value || '').trim()
+  if (!name) return
+  try {
+    const res = await fetch(`${WORKER_URL}/team/profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ name }),
+    })
+    const data = await res.json()
+    if (!res.ok || !data.ok) throw new Error(data.error || t('team.actionFailed'))
+    showToast(t('team.profileSaved'))
+  } catch (e) {
+    showToast(e.message || t('team.actionFailed'))
+  }
 }
 
 function openIntegrations() {
@@ -482,14 +514,11 @@ async function exportMemories(format) {
       mime = 'text/markdown'
     }
 
-    const blob = new Blob([content], { type: mime })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
+    // The one downloader (public/utils.js), shared with the activity CSV
+    // export. Same content, same filename, same mime as when those five lines
+    // lived here — the BOM branch inside it is for text/csv only.
+    downloadTextFile(document, content, filename, mime)
   } catch (e) {
-    alert(t('menu.exportFailed', { message: e.message }))
+    showToast(t('menu.exportFailed', { message: e.message }))
   }
 }

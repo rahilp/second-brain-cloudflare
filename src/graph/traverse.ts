@@ -3,6 +3,9 @@ import { DEFAULTS, type Config } from "../config";
 import { D1_MAX_BOUND_PARAMS } from "../constants";
 import { getKind } from "../memory/kind";
 import { getStatus } from "../memory/status";
+import { layerOf, scopeWhereForRead } from "../lib/scope";
+import { resolveActorLabel } from "../lib/actors";
+import type { Identity } from "../lib/identity";
 import { edgeLabel } from "./edges";
 import type { Connection, EdgeProvenance, GraphNeighbor, GraphView } from "./types";
 
@@ -22,8 +25,28 @@ const GRAPH_MAX_NODES = 50;
 // a deterministically dead graph tab for every free-plan brain that large, and
 // runGraphPass backfills edges nightly, so a brain arrives there on its own.
 //
-// 47 is the WARM figure. On a cold isolate the budget is shared with
-// initializeDatabase, which fires under waitUntil and spends about 12 more on
+// That formula is the IDENTITY-LESS arithmetic — the cron callers. A scoped
+// caller costs more, and it always did: the scope bindings share each
+// statement's 100-parameter budget with the ids, so the batches shrink and the
+// batch COUNT rises. Measured at N=1500 by counting D1 calls (a batch counts
+// once, as the platform charges it):
+//
+//   identity-less                                    46
+//   member, any view — personal, company or both     48
+//   admin (reads the legacy '' layer too)            49
+//
+// Layer and author cost NOTHING on top of that: workspace_id and actor_id ride
+// in the hydration's projection and the author's name arrives through a LEFT
+// JOIN on it, so there is no per-view statement and no per-author bound
+// parameter. A whole served request adds the identity batch and the KV config
+// read: 50 for a member at N=1500, the entire free-plan budget with nothing
+// spare. THAT TOTAL IS PINNED by "costs exactly this many subrequests at
+// GRAPH_VIEW_MAX_NODES" in test/integration/graph-team-aware.test.ts — change it
+// deliberately or not at all, and remember a cold isolate still pays
+// initializeDatabase's DDL on top (#282).
+//
+// 47 is the WARM figure for the identity-less path. On a cold isolate the
+// budget is shared with initializeDatabase, which fires under waitUntil and spends about 12 more on
 // its DDL, so the first request against a fresh isolate costs ~59 and is over
 // the limit — 1500 buys margin on the warm path, it does not clear the cold one.
 // That is #282 (probe sqlite_master once instead of issuing twelve blind
@@ -55,33 +78,80 @@ export const GRAPH_VIEW_MAX_NODES = 1500;
  */
 const MACHINE_AUTHORED_TAGS = new Set(["auto-pattern", "auto-insight", "synthesized"]);
 export const GRAPH_HOP_DECAY = 0.6;
-const EDGE_QUERY_BATCH = Math.floor(D1_MAX_BOUND_PARAMS / 2);
+// Edge-fetch batches bind each id twice (source and target), so a batch's real
+// cost is 2 ids + any scope bindings against D1_MAX_BOUND_PARAMS — computed at
+// each loop rather than as a fixed constant, because scoping changes the budget.
 
-async function deprecatedIdsAmong(ids: string[], env: Env): Promise<Set<string>> {
+/**
+ * Two verdicts about a hop's candidate ids, from ONE scoped statement: which of
+ * them the caller may actually read, and which are deprecated.
+ *
+ * They come from the same query because they are the same query. The scope clause
+ * already restricts the rows to the caller's readable workspaces, so the ids that
+ * come back ARE the readable ones — reading that off costs nothing beyond the
+ * statement the deprecation check was issuing anyway, which is what keeps the
+ * per-endpoint check inside the subrequest budget GRAPH_VIEW_MAX_NODES is sized
+ * against. Absent an Identity there is nothing to be readable *to*, and the
+ * `readable` set is not consulted.
+ */
+async function readableAndDeprecatedAmong(
+  ids: string[],
+  env: Env,
+  identity?: Identity,
+  only?: "personal" | "company",
+  teamId?: string,
+): Promise<{ readable: Set<string>; deprecated: Set<string> }> {
+  const scope = identity ? scopeWhereForRead(identity, { layer: only, teamId }) : null;
+  const scopeSql = scope ? ` AND ${scope.clause}` : "";
+  // Scope bindings share the statement's bound-parameter budget with the ids.
+  const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  const readable = new Set<string>();
   const deprecated = new Set<string>();
-  for (let i = 0; i < ids.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
+  for (let i = 0; i < ids.length; i += take) {
+    const batch = ids.slice(i, i + take);
     const ph = batch.map(() => "?").join(", ");
+    // scope-checked: the caller's clause IS applied — scopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
-      `SELECT id, tags FROM entries WHERE id IN (${ph})`
-    ).bind(...batch).all() as { results: Record<string, any>[] };
+      `SELECT id, tags FROM entries WHERE id IN (${ph})${scopeSql}`
+    ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
     for (const r of results) {
+      readable.add(r.id as string);
       if (getStatus(JSON.parse(r.tags ?? "[]")) === "deprecated") deprecated.add(r.id as string);
     }
   }
-  return deprecated;
+  return { readable, deprecated };
 }
 
+/**
+ * When `identity` is present, the edge scan, the deprecation check and — since a
+ * scoped edge does not imply a readable endpoint — the candidate ids themselves
+ * are all restricted to the caller's readable workspaces (personal ∪ company via
+ * the IN-form, so a neighbour that legitimately lives in the other readable
+ * workspace is kept). Absent — the cron callers — the SQL is exactly what it was
+ * before tenancy, and so is the subrequest count.
+ *
+ * The endpoint check is what stops a walk travelling THROUGH a row the caller
+ * cannot read. `edges.workspace_id` is denormalized from the SOURCE entry, and
+ * moveEntry re-stamps every edge the moved entry is an endpoint of while the row
+ * on the FAR side stays put — so an edge can legitimately be readable while the
+ * row it points at is not: sharing one end of an existing link produces exactly
+ * that. Every consumer already dropped such a row at
+ * hydration, so nothing leaked — but an unread node still entered the frontier,
+ * and hop 2 walked out the other side of it, making the caller's reachable set a
+ * function of a colleague's private memory.
+ */
 export async function expandGraph(
   seedIds: string[],
-  opts: { hops: number; fanoutCap?: number; maxNodes?: number; includeDeprecated?: boolean },
+  opts: { hops: number; fanoutCap?: number; maxNodes?: number; includeDeprecated?: boolean; only?: "personal" | "company"; teamId?: string },
   env: Env,
   config: Readonly<Config> = DEFAULTS,
+  identity?: Identity,
 ): Promise<GraphNeighbor[]> {
   const hops = Math.max(0, Math.min(config.GRAPH_MAX_HOPS, opts.hops));
   if (hops === 0 || seedIds.length === 0) return [];
   const fanoutCap = opts.fanoutCap ?? GRAPH_FANOUT_CAP;
   const maxNodes = opts.maxNodes ?? GRAPH_MAX_NODES;
+  const scope = identity ? scopeWhereForRead(identity, { layer: opts.only, teamId: opts.teamId }) : null;
 
   const visited = new Set(seedIds);
   const out: GraphNeighbor[] = [];
@@ -89,12 +159,21 @@ export async function expandGraph(
 
   for (let hop = 1; hop <= hops && frontier.length && out.length < maxNodes; hop++) {
     const edgeRows: { source_id: string; target_id: string; type: string; weight: number; provenance: EdgeProvenance; created_at: number }[] = [];
-    for (let i = 0; i < frontier.length; i += EDGE_QUERY_BATCH) {
-      const batch = frontier.slice(i, i + EDGE_QUERY_BATCH);
+    // The double-sided IN binds each id twice, so scope bindings eat into the
+    // same bound-parameter budget — shrink the batch rather than overflow it.
+    const edgeTake = Math.max(1, Math.floor((D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0)) / 2));
+    for (let i = 0; i < frontier.length; i += edgeTake) {
+      const batch = frontier.slice(i, i + edgeTake);
       const ph = batch.map(() => "?").join(", ");
-      const { results } = await env.DB.prepare(
-        `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
-      ).bind(...batch, ...batch).all() as { results: any[] };
+      // The OR group is parenthesised only in the scoped form: appending a bare
+      // `AND workspace_id IN (...)` to the unparenthesised OR would bind to the
+      // right arm alone (`a OR b AND c` ≡ `a OR (b AND c)`).
+      const sql = scope
+        ? `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE (source_id IN (${ph}) OR target_id IN (${ph})) AND ${scope.clause} ORDER BY weight DESC`
+        // scope-exempt: identity-less branch: pre-tenancy callers; the scoped arm is the line above
+        : `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`;
+      const { results } = await env.DB.prepare(sql)
+        .bind(...batch, ...batch, ...(scope?.bindings ?? [])).all() as { results: any[] };
       edgeRows.push(...results);
     }
 
@@ -114,9 +193,16 @@ export async function expandGraph(
     }
 
     let allowed = candidates;
-    if (!opts.includeDeprecated && candidates.length) {
-      const deprecated = await deprecatedIdsAmong([...new Set(candidates.map(c => c.id))], env);
-      allowed = candidates.filter(c => !deprecated.has(c.id));
+    // Skipped only when neither verdict is wanted — an identity-less caller that
+    // also wants deprecated rows has nothing to filter, so it issues no statement
+    // and costs exactly what it did before tenancy.
+    if (candidates.length && (identity || !opts.includeDeprecated)) {
+      const { readable, deprecated } = await readableAndDeprecatedAmong(
+        [...new Set(candidates.map(c => c.id))], env, identity, opts.only, opts.teamId,
+      );
+      allowed = candidates.filter(c =>
+        (!identity || readable.has(c.id))
+        && (opts.includeDeprecated || !deprecated.has(c.id)));
     }
 
     const nextFrontier: string[] = [];
@@ -133,25 +219,30 @@ export async function expandGraph(
   return out;
 }
 
-async function hydrateGraphEntries(ids: string[], env: Env): Promise<Map<string, Record<string, any>>> {
+async function hydrateGraphEntries(ids: string[], env: Env, identity?: Identity, only?: "personal" | "company", teamId?: string): Promise<Map<string, Record<string, any>>> {
   const map = new Map<string, Record<string, any>>();
-  for (let i = 0; i < ids.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
+  const scope = identity ? scopeWhereForRead(identity, { layer: only, teamId }) : null;
+  const scopeSql = scope ? ` AND ${scope.clause}` : "";
+  // Scope bindings share the statement's bound-parameter budget with the ids.
+  const take = D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0);
+  for (let i = 0; i < ids.length; i += take) {
+    const batch = ids.slice(i, i + take);
     const ph = batch.map(() => "?").join(", ");
+    // scope-checked: the caller's clause IS applied — scopeSql is built as ` AND ${scope.clause}` above and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${ph})`
-    ).bind(...batch).all() as { results: Record<string, any>[] };
+      `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${ph})${scopeSql}`
+    ).bind(...batch, ...(scope?.bindings ?? [])).all() as { results: Record<string, any>[] };
     for (const r of results) map.set(r.id as string, r);
   }
   return map;
 }
 
-export async function getConnections(id: string, type: string | undefined, env: Env, config: Readonly<Config> = DEFAULTS): Promise<Connection[]> {
-  let neighbors = await expandGraph([id], { hops: 1 }, env, config);
+export async function getConnections(id: string, type: string | undefined, env: Env, config: Readonly<Config> = DEFAULTS, identity?: Identity): Promise<Connection[]> {
+  let neighbors = await expandGraph([id], { hops: 1 }, env, config, identity);
   if (type) neighbors = neighbors.filter(n => n.viaType === type);
   if (!neighbors.length) return [];
 
-  const rows = await hydrateGraphEntries(neighbors.map(n => n.id), env);
+  const rows = await hydrateGraphEntries(neighbors.map(n => n.id), env, identity);
   const out: Connection[] = [];
   for (const n of neighbors) {
     const row = rows.get(n.id);
@@ -172,7 +263,7 @@ export async function getConnections(id: string, type: string | undefined, env: 
   return out;
 }
 
-export async function buildGraph(opts: { seed?: string; limit?: number }, env: Env, config: Readonly<Config> = DEFAULTS): Promise<GraphView> {
+export async function buildGraph(opts: { seed?: string; limit?: number; only?: "personal" | "company"; teamId?: string }, env: Env, config: Readonly<Config> = DEFAULTS, identity?: Identity): Promise<GraphView> {
   // "No cap" resolves to GRAPH_VIEW_MAX_NODES, never to Infinity. Anything that
   // is not a positive finite number — absent, 0, negative, NaN — takes that
   // branch, so a caller who reaches here past the route's own validation still
@@ -189,13 +280,20 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
   const limit = Math.min(asked, GRAPH_VIEW_MAX_NODES);
 
   let nodeIds: string[];
+  // `only` narrows every one of the three scoped statements below — the edge
+  // scan, the seed walk and the node hydration. Narrowing one and not the rest
+  // would answer with nodes from one layer joined by edges from both.
+  const scope = identity ? scopeWhereForRead(identity, { layer: opts.only, teamId: opts.teamId }) : null;
   if (opts.seed) {
-    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true }, env, config);
+    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true, only: opts.only, teamId: opts.teamId }, env, config, identity);
     nodeIds = [opts.seed, ...neighbors.map(n => n.id)].slice(0, limit);
   } else {
     const { results } = await env.DB.prepare(
-      `SELECT source_id, target_id FROM edges ORDER BY weight DESC LIMIT ${limit * 4}`
-    ).all() as { results: { source_id: string; target_id: string }[] };
+      scope
+        ? `SELECT source_id, target_id FROM edges WHERE ${scope.clause} ORDER BY weight DESC LIMIT ${limit * 4}`
+        // scope-exempt: identity-less branch: pre-tenancy callers; the scoped arm is the line above
+        : `SELECT source_id, target_id FROM edges ORDER BY weight DESC LIMIT ${limit * 4}`
+    ).bind(...(scope?.bindings ?? [])).all() as { results: { source_id: string; target_id: string }[] };
     const ids: string[] = [];
     const seenIds = new Set<string>();
     for (const r of results) {
@@ -210,13 +308,53 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
   if (!nodeIds.length) return { nodes: [], edges: [] };
 
   const nodeRows = new Map<string, Record<string, any>>();
-  for (let i = 0; i < nodeIds.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = nodeIds.slice(i, i + D1_MAX_BOUND_PARAMS);
+  /**
+   * actor_id → display name, read off the join below rather than looked up.
+   *
+   * The author names cost NO statement and NO bound parameter: a second query
+   * would have to bind one parameter per distinct author against D1's hard
+   * ceiling of 100 (D1_MAX_BOUND_PARAMS), and this is the one caller that cannot
+   * promise to stay under it — GET /list is bounded by its page size and GET
+   * /entry by one row, but a GRAPH_VIEW_MAX_NODES view can span every author on
+   * the deployment. At 101 distinct authors that statement is rejected outright
+   * and the whole graph request 500s. node:sqlite has no such limit, so no test
+   * against it can show this; the join is what removes the possibility.
+   */
+  const actorNames = new Map<string, string>();
+  // Aliased, and the scope clause names the alias: once a second table is in the
+  // statement, an unqualified `workspace_id` is a clause a reader (and the scope
+  // checker) has to resolve by knowing which table has the column.
+  const nodeScope = identity ? scopeWhereForRead(identity, { layer: opts.only, teamId: opts.teamId }, "e.workspace_id") : null;
+  const nodeScopeSql = nodeScope ? ` AND ${nodeScope.clause}` : "";
+  // Scope bindings share the statement's bound-parameter budget with the ids.
+  const nodeTake = D1_MAX_BOUND_PARAMS - (nodeScope?.bindings.length ?? 0);
+  for (let i = 0; i < nodeIds.length; i += nodeTake) {
+    const batch = nodeIds.slice(i, i + nodeTake);
     const ph = batch.map(() => "?").join(", ");
+    // workspace_id, actor_id and source ride along in the projection the
+    // hydration was already issuing, and the author's name arrives with them
+    // through a join on the users primary key: same rows, same statement, no
+    // extra read. The join is soft-delete aware exactly as lookupActorLabels is,
+    // so a removed member still resolves to "Former member" rather than to a
+    // stale name.
+    //
+    // Keep the annotation below immediately above the statement: it is spent by
+    // the first query within five lines of it, and prose in between silently
+    // pushes the statement out of that window.
+    // scope-checked: the caller's clause IS applied — nodeScopeSql is built as ` AND ${nodeScope.clause}` above, against the `e` alias, and appended here; the lexer sees only the fragment name, and an allowlist on predicate position cannot see the leading AND inside it. The joined `users` rows are labels for the entries this clause already admitted, never a second source of rows. Empty for an identity-less caller (pre-tenancy and unit fixtures), where the ids come from the already-scoped walk above
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN (${ph})`
-    ).bind(...batch).all() as { results: Record<string, any>[] };
-    for (const r of results) nodeRows.set(r.id as string, r);
+      `SELECT e.id, e.content, e.tags, e.importance_score, e.created_at,
+              e.workspace_id, e.actor_id, e.source, u.name AS actor_display_name
+       FROM entries e
+       LEFT JOIN users u ON u.id = e.actor_id AND (u.removed_at IS NULL OR u.removed_at = 0)
+       WHERE e.id IN (${ph})${nodeScopeSql}`
+    ).bind(...batch, ...(nodeScope?.bindings ?? [])).all() as { results: Record<string, any>[] };
+    for (const r of results) {
+      nodeRows.set(r.id as string, r);
+      if (r.actor_id && r.actor_display_name) {
+        actorNames.set(String(r.actor_id), String(r.actor_display_name));
+      }
+    }
   }
 
   const nodes: GraphView["nodes"] = [];
@@ -225,6 +363,11 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     if (!r) continue;
     const tags: string[] = JSON.parse(r.tags ?? "[]");
     if (tags.some(t => MACHINE_AUTHORED_TAGS.has(t))) continue;
+    // Exactly GET /list's layer rule, because it is that function: the canvas
+    // and the list badge the same row the same way. Without an Identity there
+    // is no personal or company layer to be in — the cron and unit callers get
+    // "system" on every node and no author lookup at all.
+    const workspace = layerOf(identity, r.workspace_id);
     nodes.push({
       id,
       label: (r.content as string).slice(0, 80),
@@ -233,20 +376,37 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
       status: getStatus(tags),
       importance: (r.importance_score as number) ?? 0,
       created_at: r.created_at as number,
+      workspace,
+      // Named by the same resolver /list and /entry use, given the same inputs —
+      // including `source`, so a row the pipeline wrote reads SYSTEM_ACTOR_LABEL
+      // on the canvas exactly as it does in the list. Only company-layer nodes have an
+      // author to name; `viewerId` is what turns the caller's own into "You".
+      actor_name: workspace === "company"
+        ? resolveActorLabel(String(r.actor_id ?? ""), actorNames, {
+            viewerId: identity?.userId,
+            source: String(r.source ?? ""),
+          })
+        : null,
     });
   }
+
   const nodeIdSet = new Set(nodes.map(n => n.id));
   if (!nodeIdSet.size) return { nodes: [], edges: [] };
 
   const presentIds = [...nodeIdSet];
   const edgeSeen = new Set<string>();
   const edges: GraphView["edges"] = [];
-  for (let i = 0; i < presentIds.length; i += EDGE_QUERY_BATCH) {
-    const batch = presentIds.slice(i, i + EDGE_QUERY_BATCH);
+  // Same bound-parameter arithmetic as expandGraph: ids bound twice plus scope.
+  const edgeTake = Math.max(1, Math.floor((D1_MAX_BOUND_PARAMS - (scope?.bindings.length ?? 0)) / 2));
+  for (let i = 0; i < presentIds.length; i += edgeTake) {
+    const batch = presentIds.slice(i, i + edgeTake);
     const ph = batch.map(() => "?").join(", ");
-    const { results } = await env.DB.prepare(
-      `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
-    ).bind(...batch, ...batch).all() as { results: any[] };
+    const sql = scope
+      ? `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE (source_id IN (${ph}) OR target_id IN (${ph})) AND ${scope.clause} ORDER BY weight DESC`
+      // scope-exempt: identity-less branch: pre-tenancy callers; the scoped arm is the line above
+      : `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`;
+    const { results } = await env.DB.prepare(sql)
+      .bind(...batch, ...batch, ...(scope?.bindings ?? [])).all() as { results: any[] };
     for (const e of results) {
       if (!nodeIdSet.has(e.source_id) || !nodeIdSet.has(e.target_id)) continue;
       const key = `${e.source_id}|${e.target_id}|${e.type}`;

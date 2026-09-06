@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
+    "dev:demo": "wrangler dev -c wrangler.demo.jsonc --port 8799",
     "predeploy": "node scripts/predeploy-guard.mjs",
+    "check:scope": "node scripts/check-scope.mjs",
     "deploy": "wrangler deploy",
     "deploy:worker": "node scripts/release.mjs worker",
     "deploy:app": "node scripts/release.mjs app",
@@ -33,6 +35,7 @@
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.10",
+    "esbuild": "^0.28.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "wrangler": "^4.114.0"

@@ -326,6 +326,14 @@ impl Demo {
     fn handle(&self, method: &str, path: &str, body: &str) -> (u16, Value) {
         match (method, path) {
             ("GET", "/health") => (200, self.health()),
+            // The demo brain is its own owner: it answers to one token and that
+            // token is the deployment's. Shaped exactly like src/routes/admin.ts
+            // returns it, because the Connection details window reads this to
+            // decide whether to offer a password change.
+            ("GET", "/team/me") => (
+                200,
+                json!({ "ok": true, "profile": { "role": "admin", "owner": true } }),
+            ),
             ("POST", "/capture") => (200, json!({ "ok": true })),
             ("GET", "/config") => (200, self.config_body()),
             ("PATCH", "/config") => self.patch_config(body),
@@ -379,6 +387,7 @@ impl Demo {
                     &manifest.vectorize_name,
                     dimensions,
                     manifest.vectorize_dimensions,
+                    Some(&model),
                 ),
                 "dimensions": dimensions,
                 "vectorCount": self.options.chunks_at_least,

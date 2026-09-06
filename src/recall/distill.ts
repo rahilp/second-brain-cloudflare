@@ -2,12 +2,13 @@ import type { Env } from "../env";
 import { DEFAULTS, type Config } from "../config";
 import {
   KEYWORD_MAX_TOKENS,
-  KEYWORD_MIN_TOKEN_LEN,
-  KEYWORD_STOPWORDS,
   MAX_QUERY_TERMS,
   QUERY_SATURATION_FRACTION,
 } from "../constants";
 import { readStreamText } from "../lib/ai";
+import type { Identity } from "../lib/identity";
+import { scopeWhereForRead } from "../lib/scope";
+import { tokenizeQuery } from "../text/tokenize";
 import { extractHashtags } from "../text/hashtags";
 import { isTopicTag } from "../compression/eligibility";
 import { getTagVocabulary } from "../tags/vocabulary";
@@ -17,7 +18,7 @@ import { getTagVocabulary } from "../tags/vocabulary";
  * caller; pass it wherever there is one, or an aged-out vocabulary is rebuilt on the
  * request's own critical path instead of behind it.
  */
-export async function inferQueryTags(query: string, env: Env, config: Readonly<Config> = DEFAULTS, ctx?: ExecutionContext): Promise<string[]> {
+export async function inferQueryTags(query: string, env: Env, config: Readonly<Config> = DEFAULTS, ctx?: ExecutionContext, identity?: Identity, only?: "personal" | "company", teamId?: string): Promise<string[]> {
   const { hashtags } = extractHashtags(query);
   if (hashtags.length) return hashtags;
 
@@ -34,7 +35,7 @@ export async function inferQueryTags(query: string, env: Env, config: Readonly<C
   // count tags in a mature brain and exactly the ones that would crowd real topics
   // out of the 50 the LLM below is shown. The same predicate #278 used to keep them
   // out of digest candidates, so the two agree by construction.
-  const knownTags = (await getTagVocabulary(env, ctx)).filter(isTopicTag);
+  const knownTags = (await getTagVocabulary(env, ctx, identity)).filter(isTopicTag);
 
   const lowerQuery = query.toLowerCase();
   const keywordMatches = knownTags.filter(t =>
@@ -86,14 +87,21 @@ export async function distillToRareTerms(
   env: Env,
   config: Readonly<Config> = DEFAULTS,
   bounds: Readonly<TimeBounds> = {},
+  identity?: Identity,
+  only?: "personal" | "company",
+  teamId?: string,
 ): Promise<DistilledQuery> {
   const words = query.split(/\s+/).filter(Boolean);
-  const norm = (w: string) => w.toLowerCase().replace(/^[^\w#.]+|[^\w#.]+$/g, "");
-  const content = words.filter(w => {
-    const n = norm(w);
-    return n.length >= KEYWORD_MIN_TOKEN_LEN && !KEYWORD_STOPWORDS.has(n);
-  });
-  if (content.length <= 1) {
+  // One vocabulary for the whole pipeline (#326): the terms counted here are the
+  // ones the keyword arm binds, so corpus IDF covers everything fusion asks
+  // about — search.ts requires all-or-nothing coverage.
+  const tokensOf = new Map<string, string[]>();
+  for (const w of words) if (!tokensOf.has(w)) tokensOf.set(w, tokenizeQuery(w));
+  const content = words.filter(w => tokensOf.get(w)!.length > 0);
+  const uniq = [...new Set(content.flatMap(w => tokensOf.get(w)!))].slice(0, KEYWORD_MAX_TOKENS);
+  // Nothing to rank with at most one distinct term. A single whitespace word can
+  // carry several terms once it is CJK; that case goes on to the scan.
+  if (content.length <= 1 && uniq.length <= 1) {
     return { query: content.length ? content.join(" ") : query, df: null, total: null };
   }
 
@@ -101,7 +109,10 @@ export async function distillToRareTerms(
   // the same ceiling as the keyword clause it feeds. Sharing the constant is
   // what makes that true rather than coincidental: the widest set ranked here
   // is the widest set search.ts can carry, in either direction.
-  const uniq = [...new Set(content.map(norm))].slice(0, KEYWORD_MAX_TOKENS);
+  // The DF denominator is the caller's readable corpus, not the deployment's:
+  // another workspace's rows must not be able to saturate a term out of (or
+  // inflate a term's rarity within) this caller's query.
+  const scope = identity ? scopeWhereForRead(identity, { layer: only, teamId }) : null;
   try {
     const sums = uniq.map((_, i) => `SUM(CASE WHEN content LIKE ? THEN 1 ELSE 0 END) AS d${i}`).join(", ");
     let where = "";
@@ -114,8 +125,12 @@ export async function distillToRareTerms(
       where += `${where ? " AND" : ""} created_at < ?`;
       timeBindings.push(bounds.before);
     }
+    if (scope) {
+      where += `${where ? " AND" : ""} ${scope.clause}`;
+    }
+    // scope-checked: the caller's clause IS applied when an identity is present — it is appended into `where` above; the lexer cannot see into a JS-assembled fragment
     const row = await env.DB.prepare(`SELECT COUNT(*) AS total, ${sums} FROM entries${where ? ` WHERE${where}` : ""}`)
-      .bind(...uniq.map(t => `%${t}%`), ...timeBindings).first() as Record<string, number> | null;
+      .bind(...uniq.map(t => `%${t}%`), ...timeBindings, ...(scope?.bindings ?? [])).first() as Record<string, number> | null;
     if (!row || !row.total) return { query: content.join(" "), df: null, total: null };
     const total = row.total;
     const df = new Map(uniq.map((t, i) => [t, (row[`d${i}`] as number) ?? 0]));
@@ -124,7 +139,7 @@ export async function distillToRareTerms(
     const keep = new Set(
       [...candidates].sort((a, b) => (df.get(a) ?? 0) - (df.get(b) ?? 0)).slice(0, MAX_QUERY_TERMS)
     );
-    const rebuilt = [...new Set(content.filter(w => keep.has(norm(w))))];
+    const rebuilt = [...new Set(content.filter(w => tokensOf.get(w)!.some(t => keep.has(t))))];
     return { query: rebuilt.length ? rebuilt.join(" ") : content.join(" "), df, total };
   } catch {
     return { query: content.join(" "), df: null, total: null };

@@ -107,15 +107,25 @@ function condense(text: string): string {
     .trim();
 }
 
+const FULLWIDTH_ASCII = /[！-～]/g;
+// U+FF01–FF5E is the ASCII block shifted by 0xFEE0: one code unit in, one out,
+// so positions found on the folded text are positions in the stored text.
+const foldFullwidth = (s: string) => s.replace(FULLWIDTH_ASCII, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+const WIDE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
 // The window of `text` covering the most distinct query terms, or null when the
 // query does not appear. Keyword-in-context, the way a search result works.
+// Matching folds full-width Latin and lowercases both sides; the returned
+// window is always a slice of `text` as given.
 function bestMatchWindow(text: string, tokens: string[], width: number): string | null {
   if (!tokens.length || !text) return null;
-  const hay = text.toLowerCase();
+  const hay = foldFullwidth(text).toLowerCase();
 
   const hits: { pos: number; token: string }[] = [];
-  for (const t of tokens) {
-    if (t.length < 3) continue; // very short tokens match noise
+  for (const raw of tokens) {
+    const t = foldFullwidth(raw).toLowerCase();
+    // Very short ASCII tokens match noise; a two-character CJK word is a word.
+    if (t.length < 3 && !WIDE_SCRIPT.test(t)) continue;
     let from = 0;
     while (hits.length < 400) {
       const at = hay.indexOf(t, from);
@@ -136,11 +146,17 @@ function bestMatchWindow(text: string, tokens: string[], width: number): string 
   }
 
   // Back up slightly so the match is not flush against the left edge, then drop
-  // any partial leading word.
+  // a partial leading word — but only when a word boundary exists before the
+  // match. Unspaced scripts have none, and stripping to the first space would
+  // delete the passage the window was chosen for.
   const start = Math.max(0, best.start - Math.floor(width * 0.15));
   const window = text.slice(start, start + width);
   const startsInsideWord = start > 0 && /\S/.test(text[start - 1]) && /\S/.test(text[start]);
-  return startsInsideWord ? window.replace(/^\S*\s+/, "") : window;
+  if (!startsInsideWord) return window;
+  const firstSpace = window.search(/\s/);
+  return firstSpace !== -1 && firstSpace < best.start - start
+    ? window.slice(firstSpace).replace(/^\s+/, "")
+    : window;
 }
 
 export function queryRelevantWindow(content: string, queryTokens: string[], maxChars = 400): string {
@@ -166,6 +182,7 @@ function cutOnBoundary(text: string, budget: number): string {
   const sentence = Math.max(
     slice.lastIndexOf(". "), slice.lastIndexOf(".\n"),
     slice.lastIndexOf("! "), slice.lastIndexOf("? "), slice.lastIndexOf("\n"),
+    slice.lastIndexOf("。"), slice.lastIndexOf("！"), slice.lastIndexOf("？"),
   );
   if (sentence > floor) return slice.slice(0, sentence + 1).trim();
   const space = slice.lastIndexOf(" ");

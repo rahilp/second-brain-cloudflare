@@ -147,17 +147,21 @@ mod tests {
         assert_eq!(m.kv_binding, "OAUTH_KV");
         assert_eq!(m.ai_binding, "AI");
         assert!(m.compatibility_flags.contains(&"nodejs_compat".to_string()));
-        // Four schedules, and the app has to provision ALL of them: nightly
+        // Five schedules, and the app has to provision ALL of them: nightly
         // maintenance; the hourly integration sync that runs on its own budget
         // (#290); nightly insight candidate accrual, which runs on its own D1
-        // subrequest budget separate from maintenance; and weekly insight
-        // reasoning over the accrued candidates. A schedule missing from the
+        // subrequest budget separate from maintenance; weekly insight
+        // reasoning over the accrued candidates; and the weekly pass over the
+        // company workspace, which is a SEPARATE trigger rather than more work
+        // inside the personal one because a full slate already measures 45 of
+        // an invocation's 50 subrequests — two passes in one invocation is 90,
+        // and the second dies half-written. A schedule missing from the
         // manifest is a feature that silently never runs on a user's brain —
         // there is nothing in any log to say so. Order follows wrangler.jsonc,
         // which is what set_cron receives.
         assert_eq!(
             m.cron,
-            vec!["0 1 * * *", "30 * * * *", "45 1 * * *", "15 2 * * SUN"]
+            vec!["0 1 * * *", "30 * * * *", "45 1 * * *", "15 2 * * SUN", "45 2 * * SUN"]
         );
     }
 

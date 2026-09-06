@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn lines_land_in_the_file_and_keep_their_order() {
         let dir = std::env::temp_dir().join(format!("sb-log-test-{}", std::process::id()));
-        let (_target, path, contents) = written_target(&dir);
+        let (_target, _path, contents) = written_target(&dir);
         assert_eq!(contents, "first line\nsecond line\n", "append order is log order");
         fs::remove_dir_all(&dir).ok();
     }

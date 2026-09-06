@@ -154,6 +154,7 @@ async function runWrites(env: Env, writes: Write[]): Promise<number[]> {
 async function rereadSnapshots(env: Env, ids: string[]): Promise<Snapshot[] | null> {
   try {
     const { results } = await env.DB.prepare(
+      // scope-exempt: by-id: re-read of ids from this pass's own slice
       `SELECT id, tags, content FROM entries WHERE id IN (${ids.map(() => "?").join(", ")})`,
     ).bind(...ids).all() as { results: { id: string; tags: string; content: string }[] };
     return results.map(r => ({ id: r.id, tags: r.tags ?? "[]", content: r.content }));
@@ -163,7 +164,18 @@ async function rereadSnapshots(env: Env, ids: string[]): Promise<Snapshot[] | nu
   }
 }
 
-export async function runStalenessPass(env: Env, _ctx: ExecutionContext): Promise<void> {
+/**
+ * `workspaceId` narrows the candidate query to one workspace's slice of the ring (v3
+ * Team Edition, see src/runtime/rotation.ts). Undefined/null — every direct and manual
+ * caller — keeps the pre-v3 whole-corpus scan, whose SQL must stay byte-for-byte
+ * identical. The per-row CAS/cursor writes need no slice: they address rows by id, and
+ * a row already picked as a candidate belongs to the slice that picked it.
+ */
+export async function runStalenessPass(
+  env: Env,
+  _ctx: ExecutionContext,
+  workspaceId?: string | null,
+): Promise<void> {
   await initializeDatabase(env);
 
   const cutoff = Date.now() - STALENESS_AGE_MS;
@@ -171,13 +183,17 @@ export async function runStalenessPass(env: Env, _ctx: ExecutionContext): Promis
   let candidates: Snapshot[] = [];
 
   try {
+    // The slice clause goes after the cutoff placeholder so its bind follows it.
+    const sliceSql = workspaceId != null ? `\n         AND workspace_id = ?` : "";
     const { results } = await env.DB.prepare(
+      // scope-exempt: cron: nightly staleness pass, narrowed by the workspace slice in sliceSql
       `SELECT id, content, tags FROM entries
        WHERE COALESCE(updated_at, created_at) < ?
-         AND ${SYSTEM_TAG_EXCLUSIONS}
+         AND ${SYSTEM_TAG_EXCLUSIONS}${sliceSql}
        ORDER BY COALESCE(staleness_checked_at, 0) ASC
        LIMIT ${STALENESS_PASS_LIMIT}`,
-    ).bind(cutoff).all() as { results: { id: string; content: string; tags: string }[] };
+    ).bind(...(workspaceId != null ? [cutoff, workspaceId] : [cutoff]))
+      .all() as { results: { id: string; content: string; tags: string }[] };
     candidates = results.map(r => ({ id: r.id, tags: r.tags ?? "[]", content: r.content }));
   } catch (e) {
     console.error("Staleness pass query failed (non-fatal):", e);

@@ -704,6 +704,9 @@ describe("GET /recall — auto-pattern exclusion, against real SQLite", () => {
     return {
       prepare: (sql: string) => s.db.prepare(sql),
       exec: (sql: string) => s.db.exec(sql),
+      // ensureTenantBootstrap batches its provisioning statements; the facade
+      // underneath already implements this, the narrow wrapper just has to pass it.
+      batch: (stmts: never[]) => s.db.batch(stmts),
     };
   }
 

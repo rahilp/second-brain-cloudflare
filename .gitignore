@@ -1,14 +1,27 @@
 .DS_Store
 assets/*.gif
-node_modules/
+# NO trailing slash, deliberately. `node_modules/` matches a DIRECTORY only, so
+# a SYMLINK named node_modules — what a git worktree sharing the parent
+# checkout's install looks like — is a plain file to git and slips past the
+# rule. One was committed as a mode-120000 blob pointing outside the repository
+# root. Slashless matches both. test/unit/repo-hygiene.test.ts is the guard.
+node_modules
 coverage/
 .wrangler/
 .wrangler-dry-run/
 .worktrees/
-docs/
+# docs/* rather than docs/ — git does not descend into an excluded
+# DIRECTORY, so a negation under `docs/` can never re-include anything.
+# The two files below are meant to be tracked.
+docs/*
 !docs/dashboard-architecture.md
 .claude/
-.cursor/
+# .cursor/** rather than .cursor/* so anything else added anywhere under
+# .cursor stays ignored. Only the shipped memory rule is re-included:
+# scripts/connect-ai-clients.* fetch it from the repo's raw URL for users.
+.cursor/**
+!.cursor/rules/
+!.cursor/rules/second-brain-memory.mdc
 .dev.vars
 .env
 worker-configuration.d.ts
@@ -16,3 +29,23 @@ worker-configuration.d.ts
 # config users deploy from; these carry real account resource IDs and stay local.
 wrangler.*.jsonc
 deploy-personal.sh
+
+# Local end-to-end harness (wraps the real Worker with stub AI/Vectorize for
+# `wrangler dev`). Local tooling, like wrangler.*.jsonc above.
+devharness/
+
+# ── Anything that could hold somebody's memories ──────────────────────────────
+# `wrangler d1 export` writes every entry, in plaintext, to wherever --output
+# points; docs/local-testing.md sends it to /tmp, but the repo root is one
+# mistyped flag away. A local D1 is the same content in SQLite form. Neither is
+# ever something to commit, and both are large enough to be committed by
+# accident via `git add -A` and never noticed.
+#
+# db/schema.sql is the shipped schema, not a dump, and stays tracked.
+*.sql
+!db/schema.sql
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm

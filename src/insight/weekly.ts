@@ -15,8 +15,57 @@ import { initializeDatabase } from "../db/init";
 import { captureEntry } from "../capture/entry";
 import { reasonOverPair, restatesRecent } from "./reason";
 import { PENDING_INSIGHT_SQL, WRITTEN_INSIGHT_SQL } from "../memory/patterns";
-import { edgeInsertStatement } from "../graph/edges";
+import { edgeInsertStatement, kindsAllowEdge } from "../graph/edges";
+import { getKind } from "../memory/kind";
+import type { TypedRelationship } from "./reason";
 import { isEligiblePair, parseTags } from "./candidates";
+import { D1_MAX_BOUND_PARAMS } from "../constants";
+
+/**
+ * Weight for an edge the reasoning model proposed.
+ *
+ * Below an explicit link (1.0) and above ordinary vector inference (<=0.85):
+ * a model that read both memories in full is better evidence than cosine
+ * similarity, and worse evidence than a person saying so.
+ */
+const INSIGHT_EDGE_WEIGHT = 0.75;
+
+/**
+ * The typed edge a relationship verdict describes, or null when it may not be
+ * drawn at all.
+ *
+ * Direction for `follows` comes from `created_at` and never from the model:
+ * the prompt does not show it timestamps, so it cannot know which memory came
+ * first, and the candidate row's own a_id/b_id ordering is lexicographic on a
+ * UUID. Taking the ordering from the ids would produce a `follows` chain
+ * pointing whichever way the random ids happened to sort.
+ *
+ * `caused_by` and `decided` keep the model's answer, because for those the
+ * direction is a claim about meaning rather than about time.
+ */
+function typedEdgeFor(
+  candidate: CandidateRow,
+  relationship: TypedRelationship,
+  workspaceId: string,
+): { sourceId: string; targetId: string; type: TypedRelationship["type"]; workspaceId: string } | null {
+  const aKind = getKind(parseTags(candidate.a_tags));
+  const bKind = getKind(parseTags(candidate.b_tags));
+
+  const sourceIsA = relationship.type === "follows"
+    ? candidate.a_created_at > candidate.b_created_at
+    : relationship.source === "A";
+
+  const [sourceId, targetId] = sourceIsA
+    ? [candidate.a_id, candidate.b_id]
+    : [candidate.b_id, candidate.a_id];
+  const [sourceKind, targetKind] = sourceIsA ? [aKind, bKind] : [bKind, aKind];
+
+  // The same gate POST /link and capture-time inference use. An unclassified
+  // memory is refused for a kind-constrained type rather than assumed to fit.
+  if (!kindsAllowEdge(relationship.type, sourceKind, targetKind)) return null;
+
+  return { sourceId, targetId, type: relationship.type, workspaceId };
+}
 
 /** Pairs considered per run. Each costs one model call. */
 export const WEEKLY_CANDIDATE_LIMIT = 10;
@@ -39,14 +88,41 @@ export const MAX_INSIGHTS_PER_RUN = 3;
  */
 export const RECENT_INSIGHT_WINDOW = 10;
 
+/**
+ * The most candidate statements one run will spend on a workspace slice.
+ *
+ * Chunking the slice (below) trades the bound-parameter ceiling for a
+ * subrequest one: each statement past the first is one more of the invocation's
+ * 50, and the team invocation measures 47 of 50 at its worst slate on one
+ * workspace and 48 of 50 at 50 and at 98 — both MEASURED end to end through
+ * scheduled() in test/integration/insight-cron-budget.test.ts, not inferred
+ * from the 47 by adding one. The slack survives, and a regression past 50 is
+ * now a red test rather than a production incident. Two covers 98 company workspaces —
+ * far past any brain this ships to — and leaves the novelty floor's own slice
+ * (which binds each id ONCE, so 98 + 1 = 99) inside the bound-parameter
+ * ceiling without a second statement of its own.
+ *
+ * Past 98 the slice is TRUNCATED and the truncation is logged. Losing the tail
+ * of the list is a real loss, but it is a bounded and legible one, where
+ * overflowing the budget mid-loop throws, loses the whole run including the
+ * batch that settles the candidates, and is swallowed by the catch at the
+ * bottom of this file.
+ */
+export const MAX_SLICE_STATEMENTS = 2;
+
 interface CandidateRow {
   id: string;
+  score: number;
   a_id: string;
   b_id: string;
   a_content: string;
   b_content: string;
   a_tags: string;
   b_tags: string;
+  a_created_at: number;
+  b_created_at: number;
+  a_workspace_id: string;
+  b_workspace_id: string;
 }
 
 /**
@@ -68,12 +144,78 @@ export function rawInsightText(content: string): string {
   return footer === -1 ? content : content.slice(0, footer);
 }
 
-export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promise<void> {
+/**
+ * Every company workspace on the deployment. A cron has no caller to
+ * scope to; `kind` is the whole predicate and the result is a list of
+ * ids, never content.
+ */
+export async function companyWorkspaceIds(env: Env): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM workspaces WHERE kind = 'company'`,
+  ).all<{ id: string }>();
+  return (results ?? []).map(r => r.id);
+}
+
+/**
+ * `onlyWorkspaceIds` narrows the candidate slate to pairs whose BOTH sides sit
+ * in one of the named workspaces. Absent or empty means the whole corpus — the
+ * personal pass — so a solo brain's empty company list reads as "no
+ * restriction was asked for" rather than "restrict to nothing".
+ *
+ * One implementation, two invocations. Everything the personal and team passes
+ * do differs by this predicate and nothing else: the eligibility gate, the
+ * same-workspace gate, the novelty floor, the three-per-run cap, the
+ * drawn_from edges and the batch are behaviour both need and neither may drift
+ * on, so a second function would be two things to keep in step rather than one
+ * thing to get right.
+ */
+export async function runWeeklyInsights(
+  env: Env,
+  ctx: ExecutionContext,
+  opts?: { onlyWorkspaceIds?: string[] },
+): Promise<void> {
   try {
     const cfg = await resolveConfig(env);
     await initializeDatabase(env);
 
-    // One statement rather than a select-then-hydrate: the join is what keeps
+    const sliceIds = opts?.onlyWorkspaceIds ?? [];
+    // Chunked against the platform's bound-parameter ceiling, the way every
+    // other IN-list in src/ is (entries/import.ts, graph/traverse.ts,
+    // insight/candidates.ts). Each slice id is bound TWICE below — once per
+    // alias — so a statement costs 2N + 1 parameters for N workspaces, and the
+    // /2 here is the same arithmetic traverse.ts's edgeTake does for the same
+    // reason. Unchunked, a deployment with 50 company workspaces sends 101
+    // parameters, D1 rejects the statement outright, the catch at the bottom of
+    // this function swallows the rejection, and the team pass stops producing
+    // anything forever with no user-visible signal.
+    //
+    // ceil(N / 49) statements, capped at MAX_SLICE_STATEMENTS, so a brain with
+    // one or two teams — every brain that exists — pays exactly what it paid
+    // before: one subrequest. Each extra chunk is one more subrequest out of
+    // the same 50 the model calls come from, which is why the chunk is as
+    // large as the ceiling allows rather than a round number.
+    //
+    // One consequence worth naming: past 49 workspaces a candidate whose two
+    // sides sit in DIFFERENT chunks is no longer drawn at all, where before it
+    // was drawn and then discarded by the same-workspace gate below. It stays
+    // `pending` instead of being settled `used` — the same outcome the pass
+    // already gives a pair with only one side inside the slice.
+    const sliceChunkSize = Math.floor((D1_MAX_BOUND_PARAMS - 1) / 2);
+    const sliceCapacity = sliceChunkSize * MAX_SLICE_STATEMENTS;
+    if (sliceIds.length > sliceCapacity) {
+      console.error("[insight] weekly pass: slice truncated to fit the subrequest budget", {
+        workspaces: sliceIds.length, drawn: sliceCapacity, dropped: sliceIds.length - sliceCapacity,
+      });
+    }
+    const drawnSliceIds = sliceIds.slice(0, sliceCapacity);
+    const sliceChunks: string[][] = drawnSliceIds.length
+      ? Array.from(
+          { length: Math.ceil(drawnSliceIds.length / sliceChunkSize) },
+          (_, i) => drawnSliceIds.slice(i * sliceChunkSize, (i + 1) * sliceChunkSize),
+        )
+      : [[]];   // no slice asked for: one statement over the whole corpus
+
+    // One statement per chunk rather than a select-then-hydrate: the join is what keeps
     // this inside the subrequest budget, and a candidate whose entries have
     // since been forgotten drops out of the result rather than needing a guard.
     //
@@ -89,18 +231,40 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // only at accrual, or every candidate accrued before D1 existed keeps
     // being drawn under the old rule until the pool empties. Free: the JOIN
     // was already selecting these rows, this only widens the column list.
-    const { results } = await env.DB.prepare(
-      `SELECT c.id, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
-              a.tags AS a_tags, b.tags AS b_tags
-       FROM insight_candidates c
-       JOIN entries a ON a.id = c.a_id
-       JOIN entries b ON b.id = c.b_id
-       WHERE c.status = 'pending'
-         AND a.tags NOT LIKE '%"status:deprecated"%'
-         AND b.tags NOT LIKE '%"status:deprecated"%'
-       ORDER BY c.score DESC
-       LIMIT ?`,
-    ).bind(WEEKLY_CANDIDATE_LIMIT).all() as { results: CandidateRow[] };
+    const drawn: CandidateRow[] = [];
+    for (const chunk of sliceChunks) {
+      // Built here rather than inline in the template so the query carries a
+      // plain identifier: a conditional written inside `${…}` is unscoped on the
+      // arm that matters and scripts/check-scope.mjs refuses it on sight.
+      const slicePlaceholders = chunk.map(() => "?").join(", ");
+      const sliceClause = chunk.length
+        ? `AND a.workspace_id IN (${slicePlaceholders}) AND b.workspace_id IN (${slicePlaceholders})`
+        : "";
+      const { results: chunkRows } = await env.DB.prepare(
+        // scope-exempt: cron: no caller to scope to. Both workspaces are projected, and the loop below compares them BEFORE the pair reaches the model: a candidate whose two entries sit in different workspaces is skipped and settled, never reasoned over and never written anywhere. Accrual refuses to pair across workspaces (candidates.ts), so that only fires for pre-tenancy candidate rows. sliceClause is optionally present and is a list of workspace IDS read from the `workspaces` table (companyWorkspaceIds, below), never from a request — it narrows this cron's slate, it does not scope it to a caller, and there is no caller to scope to on either invocation
+        `SELECT c.id, c.score, c.a_id, c.b_id, a.content AS a_content, b.content AS b_content,
+                a.tags AS a_tags, b.tags AS b_tags,
+                a.created_at AS a_created_at, b.created_at AS b_created_at,
+                a.workspace_id AS a_workspace_id, b.workspace_id AS b_workspace_id
+         FROM insight_candidates c
+         JOIN entries a ON a.id = c.a_id
+         JOIN entries b ON b.id = c.b_id
+         WHERE c.status = 'pending'
+           AND a.tags NOT LIKE '%"status:deprecated"%'
+           AND b.tags NOT LIKE '%"status:deprecated"%'
+           ${sliceClause}
+         ORDER BY c.score DESC
+         LIMIT ?`,
+      ).bind(...chunk, ...chunk, WEEKLY_CANDIDATE_LIMIT).all() as { results: CandidateRow[] };
+      drawn.push(...chunkRows);
+    }
+    // Each chunk returned its own top WEEKLY_CANDIDATE_LIMIT, so the ordering
+    // the pass spends its three write slots by has to be re-established across
+    // chunks. A no-op on the one-chunk path every real deployment takes: the
+    // rows arrive ordered and there are at most LIMIT of them.
+    const results = drawn
+      .sort((x, y) => y.score - x.score)
+      .slice(0, WEEKLY_CANDIDATE_LIMIT);
 
     // Seeds the novelty floor with what a reader would already have seen: the
     // last RECENT_INSIGHT_WINDOW insights the pass has WRITTEN, not just what
@@ -113,10 +277,82 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // as fast as the queue is reviewed: measured on a real brain the day this
     // shipped, zero unreviewed insights meant zero comparisons and a guard that
     // could not fire at all. Reviewing promptly was switching it off.
-    const { results: recentInsightRows } = await env.DB.prepare(
-      `SELECT content FROM entries WHERE ${WRITTEN_INSIGHT_SQL}
-       ORDER BY created_at DESC LIMIT ?`,
-    ).bind(RECENT_INSIGHT_WINDOW).all() as { results: { content: string }[] };
+    //
+    // THE FLOOR IS PER-WORKSPACE, and that is the whole of what it is.
+    //
+    // The floor asks "has this reader already seen this?", so its answer is a
+    // property of ONE workspace: the reader of an insight filed in W is the
+    // people who can read W, and nobody else. Getting that wrong does not
+    // merely skip a pair — a suppressed candidate is settled `used`, so the
+    // insight is DESTROYED rather than deferred, and the loser cannot come
+    // back next week the way one that lost a write slot can.
+    //
+    // It was first written unsliced, which let a member's personal insight
+    // destroy a company one. Slicing it by the pass's own slice fixed that and
+    // introduced the same fault one level up: companyWorkspaceIds() returns
+    // EVERY company on the deployment and src/index.ts hands the whole list to
+    // one call, so on a two-company deployment company A's last ten insights
+    // sat in company B's floor. "The reader" was never the slice; both
+    // spellings were approximations of the workspace, so this reads the
+    // workspace.
+    //
+    // Keyed on the workspaces the DRAWN candidates can actually land in, not
+    // on the slice: `results` is already in hand, an insight inherits its
+    // inputs' workspace when they agree (the gate below), and a pair whose two
+    // sides disagree is settled without ever reaching the model. That is at
+    // most WEEKLY_CANDIDATE_LIMIT distinct workspaces however wide the slice
+    // is, so this stays ONE statement at 11 bound parameters at the very worst
+    // — no chunking, and strictly narrower than either earlier spelling. With
+    // nothing drawn there is nothing to compare and the statement is not
+    // issued at all.
+    //
+    // ROW_NUMBER over a partition rather than a bare LIMIT: a plain
+    // `ORDER BY created_at DESC LIMIT 10` across several workspaces is a
+    // shared window again by another name, and one busy workspace would crowd
+    // every other one's floor down to nothing. Each workspace gets its own
+    // RECENT_INSIGHT_WINDOW rows, which is what a solo brain — one workspace —
+    // has always had.
+    //
+    // `created_at DESC, id DESC` — the tiebreaker is not decoration. A run
+    // writes up to MAX_INSIGHTS_PER_RUN insights in one batch off one
+    // Date.now(), so tied timestamps are something this pass PRODUCES, and on
+    // created_at alone which of a tie group falls inside `rn <= ?` is whatever
+    // order the engine happens to emit. Two runs over identical data could
+    // then read different floors and destroy different candidates —
+    // suppression settles a pair `used`, so it does not defer the candidate,
+    // it ends it. `id` is entries' own primary key, unique in the table, which
+    // makes this a total order: arbitrary within a tie, but the SAME arbitrary
+    // order every run, exactly as `created_at DESC, event_id DESC` is for the
+    // activity feed.
+    const floorWorkspaces = [...new Set(
+      results
+        .filter(c => (c.a_workspace_id ?? "") === (c.b_workspace_id ?? ""))
+        .map(c => c.a_workspace_id ?? ""),
+    )];
+    const recentInsightRows: { workspace_id: string; content: string }[] = [];
+    if (floorWorkspaces.length) {
+      const { results: rows } = await env.DB.prepare(
+        // NOT caller-scoped, and it carries no licence saying it is: this is a
+        // cron, there is no caller, and check-scope.mjs is satisfied here on the
+        // merits because the `workspace_id IN (…)` predicate is literal in the
+        // source rather than interpolated the way its sliced predecessor was.
+        // What the list means is "which reader is this candidate measured
+        // against" — the drawn candidates' own workspace ids, read out of
+        // `entries` by the query above and never out of a request. The content
+        // is compared and never returned.
+        `SELECT workspace_id, content FROM (
+           SELECT workspace_id, content,
+                  ROW_NUMBER() OVER (PARTITION BY workspace_id
+                                     ORDER BY created_at DESC, id DESC) AS rn
+             FROM entries
+            WHERE ${WRITTEN_INSIGHT_SQL}
+              AND workspace_id IN (${floorWorkspaces.map(() => "?").join(", ")})
+         ) WHERE rn <= ?`,
+      ).bind(...floorWorkspaces, RECENT_INSIGHT_WINDOW).all() as {
+        results: { workspace_id: string; content: string }[]
+      };
+      recentInsightRows.push(...(rows ?? []));
+    }
 
     let written = 0;
     // D2 instrumentation (spec: "if it starts rejecting often, the corpus is
@@ -136,15 +372,35 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
     // rejected.map/used.map, immediately before env.DB.batch(statements),
     // keeps the whole batch's statements prepared together — which is what
     // lets it join the status updates as a single subrequest.
-    const drawnFromPairs: { insightId: string; targetId: string }[] = [];
-    // Texts to compare a new proposal against: insights still unreviewed from
-    // earlier runs, plus (appended below) whatever this run itself accepts.
-    // Two different candidate pairs — in this run, or one from weeks back —
-    // can reason to the same conclusion; a corpus full of near-duplicate
-    // memories makes that common, not rare, and each is a slot this run gets
-    // to spend only three of. Checked independently against each entry
-    // (restatesRecent), never concatenated.
-    const writtenThisRun: string[] = recentInsightRows.map(r => rawInsightText(r.content));
+    const drawnFromPairs: { insightId: string; targetId: string; workspaceId: string }[] = [];
+    // Typed edges the reasoning produced. Collected rather than written in the
+    // loop for the same reason drawnFromPairs is: one batch, one subrequest.
+    const typedEdges: { sourceId: string; targetId: string; type: TypedRelationship["type"]; workspaceId: string }[] = [];
+    // Texts to compare a new proposal against, PER WORKSPACE: the insights that
+    // workspace has already been given, plus (appended below) whatever this run
+    // itself writes into it. Two different candidate pairs — in this run, or one
+    // from weeks back — can reason to the same conclusion; a corpus full of
+    // near-duplicate memories makes that common, not rare, and each is a slot
+    // this run gets to spend only three of. Checked independently against each
+    // entry (restatesRecent), never concatenated.
+    //
+    // The within-run half is keyed the same way as the cross-run half on
+    // purpose: an insight this run writes for company A is no more visible to
+    // company B than one written last week, so letting it suppress B's
+    // candidate would reintroduce the same defect inside a single run.
+    const seenByWorkspace = new Map<string, string[]>();
+    for (const row of recentInsightRows) {
+      const list = seenByWorkspace.get(row.workspace_id ?? "");
+      if (list) list.push(rawInsightText(row.content));
+      else seenByWorkspace.set(row.workspace_id ?? "", [rawInsightText(row.content)]);
+    }
+    const seenIn = (workspaceId: string): string[] => {
+      const list = seenByWorkspace.get(workspaceId);
+      if (list) return list;
+      const fresh: string[] = [];
+      seenByWorkspace.set(workspaceId, fresh);
+      return fresh;
+    };
 
     for (const candidate of results) {
       if (written >= MAX_INSIGHTS_PER_RUN) break;
@@ -161,6 +417,45 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
         used.push(candidate.id);
         continue;
       }
+
+      // THE INSIGHT-WORKSPACE RULE, applied as a GATE on synthesis rather than as
+      // placement afterwards.
+      //
+      // reasonOverPair puts `a.content` and `b.content` in ONE prompt, and the
+      // insight's vocabulary floor requires the sentence that comes back to name
+      // something particular to each side — so a pair spanning two workspaces was
+      // synthesised into a sentence carrying specifics from both before anything
+      // looked at where it belonged. Filing that sentence in "" narrowed who could
+      // read it, but readableWorkspaces hands "" to admins, so it still reached a
+      // reader on /patterns. There is no correct place for it: it should never have
+      // been written.
+      //
+      // Free: the candidate join already projects both sides' workspace_id, so
+      // this needs no extra query. Marked `used` for the same reason the D1
+      // pair-rule rejection above is — the pair is disqualified outright, and
+      // re-accrual would re-insert the identical row, so leaving it `pending`
+      // would only have the pass re-draw and re-skip it every week.
+      //
+      // An insight inherits its inputs' workspace when they agree: the synthesis is
+      // then that workspace's own content turned back on itself, and hiding it from
+      // the people who wrote it would make insights unreadable by their owners.
+      //
+      // Accrual (src/insight/candidates.ts) already refuses to pair across
+      // workspaces in both paths, so this only fires for candidates that predate
+      // tenancy — which is every candidate an upgraded v2 brain carries in.
+      //
+      // It holds identically on the sliced (team) invocation, and it is not
+      // made redundant by the slice: `onlyWorkspaceIds` can name more than one
+      // company workspace, and a pair with one side in each passes both IN
+      // predicates. This gate is the only thing between such a pair and the
+      // model. Team insights (spec 4.5) are a company-SCOPED pass, not a
+      // cross-workspace one.
+      const inputWorkspaces = new Set([candidate.a_workspace_id ?? "", candidate.b_workspace_id ?? ""]);
+      if (inputWorkspaces.size !== 1) {
+        used.push(candidate.id);
+        continue;
+      }
+      const insightWorkspace = [...inputWorkspaces][0];
 
       candidatesReasoned++;
       const result = await reasonOverPair(
@@ -180,6 +475,16 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       // second chance is by never having been marked settled in the first
       // place.
       if (result.outcome === "failed") continue;
+
+      // Read before the decline is handled, and deliberately so. Declining to
+      // write a publishable sentence is not the same as having no view on how
+      // the pair relates, and declines are the common outcome — typing only the
+      // accepted ones would forfeit most of what this call already paid for.
+      if (result.relationship) {
+        const typed = typedEdgeFor(candidate, result.relationship, insightWorkspace);
+        if (typed) typedEdges.push(typed);
+      }
+
       if (result.outcome === "declined") {
         rejected.push(candidate.id);
         continue;
@@ -191,15 +496,20 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       // sitting unreviewed. `rejected` is reserved for a pair the model
       // itself declined; marking a restatement `rejected` would make the
       // pass re-propose and re-pay for it on a later run.
-      if (restatesRecent(result.text, writtenThisRun)) {
+      const seenHere = seenIn(insightWorkspace);
+      if (restatesRecent(result.text, seenHere)) {
         restatementsSuppressed++;
         used.push(candidate.id);
         continue;
       }
-      writtenThisRun.push(result.text);
+      seenHere.push(result.text);
 
+      // insightWorkspace was settled above, before the pair reached the model.
       const content = `${result.text}\n\n[Insight: ${result.shape} — drawn from 2 memories]`;
-      const captured = await captureEntry(content, ["auto-insight"], "system", env, ctx, cfg);
+      // actorId stays "": the insight is system-authored regardless of whose
+      // workspace it inherits.
+      const captured = await captureEntry(content, ["auto-insight"], "system", env, ctx, cfg,
+        { workspaceId: insightWorkspace, actorId: "" });
 
       // A non-stored result means the insight duplicated an earlier one. Mark it
       // used anyway, or the pass re-proposes and re-pays for this pair forever.
@@ -207,9 +517,10 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       if (captured.status === "stored") {
         written++;
         // Only on a real, created entry — an edge sourced from a capture that
-        // declined to store would point at a row that never exists.
+        // declined to store would point at a row that never exists. The edge
+        // carries the insight's own workspace so scoped graph walks can see it.
         for (const targetId of [candidate.a_id, candidate.b_id]) {
-          drawnFromPairs.push({ insightId: captured.id, targetId });
+          drawnFromPairs.push({ insightId: captured.id, targetId, workspaceId: insightWorkspace });
         }
       }
     }
@@ -234,13 +545,72 @@ export async function runWeeklyInsights(env: Env, ctx: ExecutionContext): Promis
       ...used.map(id => env.DB.prepare(
         `UPDATE insight_candidates SET status = 'used' WHERE id = ?`).bind(id)),
       ...drawnFromPairs
-        .map(({ insightId, targetId }) => edgeInsertStatement(
-          insightId, targetId, "drawn_from", { provenance: "system", weight: 1 }, env,
+        .map(({ insightId, targetId, workspaceId }) => edgeInsertStatement(
+          insightId, targetId, "drawn_from", { provenance: "system", weight: 1, workspaceId }, env,
         ))
+        .filter((stmt): stmt is D1PreparedStatement => stmt !== null),
+      ...typedEdges
+        .flatMap(({ sourceId, targetId, type, workspaceId }) => [
+          // Ordered insert -> inherit -> delete, and all three in this one batch.
+          //
+          // The generic edge has to still exist when the weight is read, which
+          // is why the DELETE comes last rather than first.
+          edgeInsertStatement(sourceId, targetId, type, {
+            provenance: "system", weight: INSIGHT_EDGE_WEIGHT,
+            metadata: { via: "insight-reasoning" }, workspaceId,
+          }, env),
+          // WEIGHTS ARE HIGH-WATER MARKS, and this step propagates that into
+          // typed edges. `max(weight, excluded.weight)` on the upsert (which
+          // predates this work) means a pair that once scored 0.90 keeps 0.90
+          // even after the content is rewritten and re-inference scores it 0.79;
+          // inheriting carries that figure onto the typed edge, and nothing ever
+          // lowers it — the nightly prune's `weight < 0.3` cannot match an
+          // inferred edge, whose floor is 0.78.
+          //
+          // Taken deliberately as the lesser of two errors. Weight here decides
+          // ORDERING under a fanout cap, not truth; an overstated ordering hint
+          // keeps a historically-strong pair reachable, whereas NOT inheriting
+          // drops a 0.85 pair to 0.75 and can push it out of the cap entirely —
+          // losing the memory rather than mis-ranking it. Letting the update
+          // path SET rather than MAX its inferred weight would fix the drift at
+          // the source; that is a change to pre-existing upsert semantics and is
+          // left as follow-up.
+          //
+          // Inherit the retired edge's weight when it was stronger. Inferred
+          // edges exist only at EDGE_INFER_THRESHOLD (0.78) and above, so the
+          // flat INSIGHT_EDGE_WEIGHT is BELOW every generic edge this replaces
+          // — and graph expansion sorts by weight under a per-node fanout cap.
+          // Without this, replacing a 0.85 edge with a 0.75 one can push a
+          // neighbour past the cap and make a reachable memory unreachable,
+          // which is the opposite of what typing it was for.
+          env.DB.prepare(
+            // scope-exempt: cron: by-id pair, both endpoints already confirmed to share one workspace before the pair reached the model
+            `UPDATE edges
+             SET weight = max(weight, COALESCE((
+                   SELECT MAX(g.weight) FROM edges g
+                   WHERE ((g.source_id = ? AND g.target_id = ?) OR (g.source_id = ? AND g.target_id = ?))
+                     AND g.type = 'relates_to' AND g.provenance = 'inferred'), 0))
+             WHERE source_id = ? AND target_id = ? AND type = ?`,
+          ).bind(sourceId, targetId, targetId, sourceId, sourceId, targetId, type),
+          // Typed replaces generic, and only the INFERRED generic: a relates_to
+          // the person drew themselves is a statement, not a guess this supersedes.
+          env.DB.prepare(
+            // scope-exempt: cron: by-id pair, both endpoints already confirmed to share one workspace before the pair reached the model
+            `DELETE FROM edges
+             WHERE ((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))
+               AND type = 'relates_to' AND provenance = 'inferred'`,
+          ).bind(sourceId, targetId, targetId, sourceId),
+        ])
         .filter((stmt): stmt is D1PreparedStatement => stmt !== null),
     ];
     if (statements.length) await env.DB.batch(statements);
   } catch (e) {
-    console.error("Weekly insight pass failed (non-fatal):", e);
+    // The ONLY signal either invocation ever failed. It carries the slice size
+    // because the personal and team passes share this implementation and this
+    // line: without it a rejected statement on the team pass reads exactly like
+    // one on the personal pass, and a pass that dies permanently and says
+    // nothing distinguishable is how the unchunked bind above stayed invisible.
+    console.error("Weekly insight pass failed (non-fatal):",
+      { sliceWorkspaces: opts?.onlyWorkspaceIds?.length ?? 0 }, e);
   }
 }

@@ -180,12 +180,27 @@ describe("inferEdgesOnWrite", () => {
   let env: Env;
   let db: D1Mock;
 
+  /**
+   * Inference refuses a neighbour with no `entries` row, so every id a case
+   * expects to be linked needs one. Seeded with no workspace and no kind, the
+   * pre-tenancy shape, so these cases still say only what they always said.
+   */
+  function present(...ids: string[]): void {
+    for (const id of ids) {
+      db.entries.push({
+        id, content: `entry ${id}`, tags: "[]", source: "api",
+        created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0,
+      });
+    }
+  }
+
   beforeEach(() => {
     db = makeTestDb();
     env = makeTestEnv(db);
   });
 
   it("auto-links only genuinely-related neighbors, not loose keyword-overlap ones", async () => {
+    present("new", "strong", "loose", "weak");
     await inferEdgesOnWrite("new", [
       { id: "strong", score: 0.84 }, // clearly related — link
       { id: "loose", score: 0.66 },  // shares a keyword but not really related — must NOT link
@@ -198,13 +213,30 @@ describe("inferEdgesOnWrite", () => {
     expect(db.edges[0].provenance).toBe("inferred");
   });
 
+  /**
+   * A neighbour with no `entries` row is a vector that outlived its entry. The
+   * edge it produces is unreachable — every graph read hydrates both endpoints
+   * and drops what is missing — and the nightly sweep deletes it, which returns
+   * the source to the backfill's slate to have it drawn again.
+   */
+  it("refuses a neighbour that has no entries row", async () => {
+    present("new", "real");
+
+    await inferEdgesOnWrite("new", [{ id: "ghost", score: 0.95 }, { id: "real", score: 0.84 }], env);
+
+    const linked = db.edges.flatMap((e: any) => [e.source_id, e.target_id]).filter((id: string) => id !== "new");
+    expect(linked).toEqual(["real"]);
+  });
+
   it("never links the new entry to itself", async () => {
+    present("new", "a");
     await inferEdgesOnWrite("new", [{ id: "new", score: 0.99 }, { id: "a", score: 0.8 }], env);
     expect(db.edges).toHaveLength(1);
     expect([db.edges[0].source_id, db.edges[0].target_id].sort()).toEqual(["a", "new"]);
   });
 
   it("caps at the top 3 strongest neighbors", async () => {
+    present("new", "a", "b", "c", "d", "e");
     await inferEdgesOnWrite("new", [
       { id: "a", score: 0.9 }, { id: "b", score: 0.85 }, { id: "c", score: 0.8 },
       { id: "d", score: 0.75 }, { id: "e", score: 0.7 },
@@ -215,11 +247,13 @@ describe("inferEdgesOnWrite", () => {
   });
 
   it("uses the similarity score as the edge weight", async () => {
+    present("new", "a");
     await inferEdgesOnWrite("new", [{ id: "a", score: 0.82 }], env);
     expect(db.edges[0].weight).toBeCloseTo(0.82);
   });
 
   it("writes nothing when there are no qualifying neighbors", async () => {
+    present("new", "a");
     await inferEdgesOnWrite("new", [{ id: "a", score: 0.3 }], env);
     expect(db.edges).toHaveLength(0);
   });

@@ -1,4 +1,5 @@
 import type { EdgeProvenance, EdgeType } from "../graph/types";
+import type { Identity } from "../lib/identity";
 import type { EmbeddingQueryMode } from "./query-profile";
 import type { RootView } from "./root-selector";
 
@@ -18,6 +19,10 @@ export interface RecallMatch {
   isUpdate: boolean;
   hop: number;
   staleAsOf?: boolean;
+  /** Which layer this memory lives in, so clients can show or act on it. */
+  workspace?: "personal" | "company" | "system";
+  /** Resolved author label on company-layer matches (shared memories). */
+  actorName?: string;
   // Set only on graph-expanded matches (hop > 0): why / when / whence the edge that surfaced this memory.
   viaProvenance?: EdgeProvenance; // "explicit" (you linked) / "inferred" (auto) / "system"
   viaType?: EdgeType;
@@ -50,6 +55,11 @@ export interface RecallDiagnostics {
   rejections?: { id: string; reason: string }[];
   operations?: RecallOperationDiagnostics;
   stageMs?: Partial<Record<RecallStage, number>>;
+  /** #326 visibility: how many tokens reached keywordSearch, and whether it was skipped for want of any. */
+  retrievalTokenCount?: number;
+  lexicalArmSkipped?: boolean;
+  /** Whether fusion could use corpus-wide DF for every lexical token (false = fetch-window estimate). */
+  corpusIdfUsed?: boolean;
 }
 
 export type RecallStage = "setup" | "querySignals" | "candidateGeneration" | "candidateHydration"
@@ -70,6 +80,20 @@ export interface RecallOperationDiagnostics {
 export interface RecallInternalOptions {
   embeddingQueryMode?: EmbeddingQueryMode;
   diagnostics?: RecallDiagnostics;
+  /**
+   * When present, every entries read in the pipeline is scoped to the caller's
+   * readable workspaces (personal ∪ company). Absent — internal callers and the
+   * pre-tenancy tests — the SQL is exactly what it was before v3.
+   */
+  identity?: Identity;
+  /**
+   * Narrows the read to ONE layer of the readable set ("personal" or "company")
+   * instead of the union. Only ever narrows: the ids still come from the
+   * identity, so this cannot name a workspace the caller does not belong to.
+   */
+  workspaceFilter?: "personal" | "company";
+  /** Narrows reads to one company team workspace (validated at the route edge). */
+  teamId?: string;
 }
 
 export interface KeywordRow {
