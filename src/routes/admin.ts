@@ -604,9 +604,7 @@ export async function handleAdminRoutes(
       // raised because the filter now discards rows the ORDER BY ranked first.
       env.DB.prepare(
         `SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags)
-         WHERE value NOT LIKE 'kind:%' AND value NOT LIKE 'status:%'
-           AND value NOT LIKE 'volatility:%' AND value NOT LIKE 'stale:%'
-           AND value NOT IN ('auto-pattern', 'auto-insight', 'synthesized', 'rolled-up', 'duplicate-candidate')
+         WHERE ${isTopicTagSql()}
            AND value NOT GLOB '[0-9]*'
            AND ${scope.clause}
          GROUP BY value ORDER BY n DESC LIMIT 5`,

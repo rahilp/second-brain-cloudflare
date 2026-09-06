@@ -35,12 +35,16 @@ const tagMatchesLike = (tags: string[], tag: string) =>
 /** What src/db/init.ts's probe sees on a migrated brain — see the handler in all(). */
 const SCHEMA_PROBE_RESULTS = [
   ...["entries", "edges", "insight_candidates", "workspaces", "users", "memberships",
-    "entry_events", "admin_events", "maintenance_cursor"].map(name => ({ kind: "table", name })),
+    "entry_events", "admin_events", "maintenance_cursor", "prompt_capsule_revisions"]
+    .map(name => ({ kind: "table", name })),
   ...["idx_entries_created_at", "idx_entries_source", "idx_entries_workspace_created",
     "idx_edges_source", "idx_edges_target", "idx_edges_weight", "idx_insight_candidates_queue",
     "idx_workspaces_kind", "idx_users_token_hash", "idx_users_email", "idx_memberships_workspace",
     "idx_entry_events_entry", "idx_entry_events_created", "idx_admin_events_created"]
     .map(name => ({ kind: "index", name })),
+  ...["prompt_capsule_entry_insert", "prompt_capsule_entry_update",
+    "prompt_capsule_entry_delete", "prompt_capsule_workspace_delete"]
+    .map(name => ({ kind: "trigger", name })),
   ...["id", "content", "tags", "source", "created_at", "vector_ids", "recall_count",
     "importance_score", "contradiction_wins", "contradiction_losses", "updated_at",
     "staleness_checked_at"].map(name => ({ kind: "column", name })),
@@ -824,6 +828,8 @@ export class D1Mock {
               const tags: string[] = JSON.parse(e.tags ?? "[]");
               if (!tagMatchesLike(tags, tag)) return false;
               if (tags.includes("synthesized") || tags.includes("auto-pattern") || tags.includes("auto-insight") || tags.includes("rolled-up")) return false;
+              // Capsule definitions are never digest members (digest.ts `tags NOT LIKE '%"capsule:%'`).
+              if (tags.some(t => t.toLowerCase().startsWith("capsule:"))) return false;
               if (!(e.importance_score == null || e.importance_score < COMPRESSION_IMPORTANCE_THRESHOLD)) return false;
               const rc = e.recall_count; // NULL/undefined → recall clause is falsy → protected (matches SQL)
               if (!(rc === 0 || (rc < COMPRESSION_MIN_RECALL && e.created_at < cutoff))) return false;

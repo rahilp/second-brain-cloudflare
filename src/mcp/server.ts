@@ -23,6 +23,8 @@ import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/vo
 import { recallEntries } from "../recall/search";
 import { renderRecallText, memoryHeader } from "../recall/render";
 import { RECALL_OUTPUT_BUDGET, SNIPPET_MAX_CHARS, snippetOf, truncationNote } from "../recall/snippet";
+import { buildPromptCapsule } from "../prompt-capsule/build";
+import { PROMPT_CAPSULE_MCP_SCHEMA } from "../prompt-capsule/types";
 
 // Asking the calling model for this is the whole point: it has already read the content
 // in order to decide to store it, so the judgment is free, and it is a far better
@@ -282,7 +284,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         return { content: [{ type: "text", text: `Stored. ID: ${result.id} — resolved contradiction with entry ${result.resolvedConflict}${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
       if (result.status === "contradiction_protected") {
-        return { content: [{ type: "text", text: `Stored as draft (ID: ${result.id}) — conflicts with a canonical memory (${result.canonicalId}), which was kept${result.reason ? `: ${result.reason}` : ""}.` }] };
+        const disposition = result.entryStatus
+          ? `Stored as ${result.entryStatus}`
+          : "Stored without a status pending classification";
+        return { content: [{ type: "text", text: `${disposition} (ID: ${result.id}) — conflicts with a canonical memory (${result.canonicalId}), which was kept${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
       if (result.status === "replaced") {
         return { content: [{ type: "text", text: `Memory updated — new content replaced outdated entry (ID: ${result.id}).` }] };
@@ -480,6 +485,63 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       ctx.waitUntil(restampVectorWorkspace(env, result.vectorIds, result.workspaceId));
       return { content: [{ type: "text", text: `Entry ${id} ${result.status} — now in the ${workspace ?? "company"} workspace.` }] };
     }
+  );
+
+  // ── prompt capsule ─────────────────────────────────────────────────────
+  server.registerTool(
+    "get_prompt_capsule",
+    {
+      description: "Return one deterministic Prompt Capsule and its strong ETag. This read-only tool is for gateways that construct stable prompt prefixes; use recall for query-specific context. Only entries with canonical status are included: give the entry canonical status in its tags at remember time, or call set_status canonical afterwards.",
+      inputSchema: {
+        kind: z.enum(["core", "project"]).describe("Capsule kind"),
+        project_id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional()
+          .describe("Required for project; omitted for core"),
+        workspace: z.enum(["personal", "company"]).default("personal")
+          .describe("Read exactly one private or shared workspace layer"),
+        team: z.string().max(128).optional()
+          .describe("Company workspace id from list_teams; required when company membership is ambiguous"),
+      },
+    },
+    async ({ kind, project_id, workspace, team }) => {
+      if (!identity) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: JSON.stringify({
+            ok: false,
+            schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            code: "unauthenticated",
+            status: 401,
+            error: "Prompt Capsule retrieval requires an authenticated identity.",
+          }) }],
+        };
+      }
+
+      const built = await buildPromptCapsule(env, identity, {
+        kind,
+        projectId: project_id,
+        workspace,
+        team,
+      });
+      if (!built.ok) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: JSON.stringify({
+            schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            status: built.status,
+            ...built.body,
+          }) }],
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          ok: true,
+          schema: PROMPT_CAPSULE_MCP_SCHEMA,
+          etag: built.etag,
+          capsule: built.payload,
+        }, null, 2) }],
+      };
+    },
   );
 
   // ── recall ───────────────────────────────────────────────────────────────

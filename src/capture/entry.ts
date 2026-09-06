@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { DEFAULTS, resolveConfig, type Config } from "../config";
 import { createEdge, inferEdgesOnWrite } from "../graph/edges";
-import { getStatus, withStatus } from "../memory/status";
+import { getStatus, withStatus, type MemoryStatus } from "../memory/status";
 import { extractHashtags } from "../text/hashtags";
 import { classifyThenInfer, scheduleClassifyAndTag } from "./classify";
 import { checkDuplicateAndContradiction } from "./duplicate";
@@ -11,6 +11,7 @@ import { tagsAfterWrite } from "../memory/stale";
 import { getVolatility, withVolatility } from "../memory/volatility";
 import { TAG_LIKE_ESCAPE, tagLikePattern } from "../memory/tag-sql";
 import { rememberTags } from "../tags/vocabulary";
+import { isCapsuleTag } from "../tags/system";
 import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
 import { TRANSCRIPT_SOURCES } from "../constants";
 
@@ -59,7 +60,7 @@ export type CaptureResult =
   | { status: "stored"; id: string; tags: string[] }
   | { status: "flagged"; id: string; matchId: string; score: number }
   | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string }
-  | { status: "contradiction_protected"; id: string; canonicalId: string; reason?: string }
+  | { status: "contradiction_protected"; id: string; canonicalId: string; entryStatus: MemoryStatus | null; reason?: string }
   | { status: "merged"; id: string }
   | { status: "replaced"; id: string };
 
@@ -87,7 +88,11 @@ export async function captureEntry(
     return { status: "blocked", matchId: dup.matchId, score: dup.score };
   }
 
-  if (dup.status === "flagged" && mergeAction && mergeAction.action !== "keep_both") {
+  // A capsule definition must land as its own row: a merge discards the
+  // incoming tags, and the slot tags are the whole point of the write.
+  const definesCapsule = t.some(isCapsuleTag);
+
+  if (dup.status === "flagged" && mergeAction && mergeAction.action !== "keep_both" && !definesCapsule) {
     const targetId = mergeAction.target_id;
     const newContent = mergeAction.action === "merge" ? mergeAction.merged_content : c;
 
@@ -203,8 +208,11 @@ export async function captureEntry(
 
     if (protectConflict) {
       const draftTags = finalTags.filter(t => t !== "contradiction-resolved");
+      // A capsule definition keeps the status its caller chose: demoting it to
+      // draft would silently drop it from the capsule.
+      const protectedTags = definesCapsule ? draftTags : withStatus(draftTags, "draft");
       await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`)
-        .bind(JSON.stringify(withStatus(draftTags, "draft")), id).run();
+        .bind(JSON.stringify(protectedTags), id).run();
       try {
         await env.DB.prepare(`UPDATE entries SET contradiction_wins = contradiction_wins + 1 WHERE id = ?`).bind(conflictId).run();
         await env.DB.prepare(`UPDATE entries SET contradiction_losses = contradiction_losses + 1 WHERE id = ?`).bind(id).run();
@@ -213,7 +221,13 @@ export async function captureEntry(
       }
       // This path draws no edges, so there is nothing to chain onto.
       scheduleClassifyAndTag(id, c, env, ctx, cfg);
-      return { status: "contradiction_protected", id, canonicalId: conflictId, reason: contradiction.reason };
+      return {
+        status: "contradiction_protected",
+        id,
+        canonicalId: conflictId,
+        entryStatus: getStatus(protectedTags),
+        reason: contradiction.reason,
+      };
     }
 
     try {

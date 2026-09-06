@@ -139,6 +139,8 @@ export async function compressTag(
         AND tags NOT LIKE '%"auto-pattern"%'
         AND tags NOT LIKE '%"auto-insight"%'
         AND tags NOT LIKE '%"rolled-up"%'
+        AND tags NOT LIKE '%"capsule:%'
+        AND tags NOT LIKE '%"capsule-slot:%'
         AND ${compressionEligibilitySql("", cfg)}
         AND workspace_id = ?
       ORDER BY created_at DESC

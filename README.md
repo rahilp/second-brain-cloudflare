@@ -75,6 +75,7 @@ If Vectorize is unavailable, captures and keyword recall continue working. Your 
 | `recall` | Find memories by meaning rather than exact wording |
 | `list_recent` | Browse recently saved memories |
 | `list_teams` | List shared teams you belong to (names and ids). In v3.0.0 this is one team; used by MCP clients for future multi-team support |
+| `get_prompt_capsule` | Read a deterministic core or project context projection for a gateway-controlled prompt prefix |
 | `get` | Read one memory by ID |
 | `forget` | Permanently delete a memory |
 | `set_status` | Mark a memory `canonical`, `draft`, or `deprecated` |
@@ -93,6 +94,66 @@ CLI example:
 brain remember --workspace company "We ship on Thursdays"
 brain recall --workspace company "when do we ship?"
 ```
+
+### Prompt Capsules
+
+Prompt Capsules are deterministic, read-only projections for gateways and
+custom agents that can place stable context before a changing user request.
+They complement query-specific `recall`; they do not inject every memory into
+every prompt.
+
+A Capsule entry is an ordinary canonical memory with one target tag and one
+slot tag. Core entries use `capsule:core`; project entries use
+`capsule:project:<opaque-project-id>`. Slots are emitted in this fixed order:
+
+- Core: `identity`, `preferences`, `constraints`, `principles`
+- Project: `current-state`, `decisions`, `open-questions`
+
+Tag the slot as `capsule-slot:<slot>` and keep at most one canonical entry per
+slot. Draft and deprecated entries are ignored. Ambiguous or malformed
+canonical definitions fail closed.
+
+An entry must carry `status:canonical` to be part of a Capsule. The easiest way
+is to include `status:canonical` in the tags at remember or capture time (it is
+stored verbatim, and the classifier then leaves it alone); otherwise call
+`set_status canonical` afterwards. To take an entry out of a Capsule, set its
+status to draft or deprecated, or forget it. Updating it with a different
+`capsule-slot:` tag moves the entry to that slot; it does not remove membership.
+
+Authenticated clients can use `GET|HEAD /prompt-capsules/core`,
+`GET|HEAD /prompt-capsules/projects/<opaque-project-id>`, or the
+`get_prompt_capsule` MCP tool. Responses include a strong `ETag`, a SHA-256 of
+the exact prompt-ready `text`, and whole-slot omission metadata for the
+12,000-character budget: once a slot does not fit, it and every later slot are
+omitted, so the emitted text is always a prefix of the slot order. A single
+entry longer than the whole budget fails closed with `409` rather than being
+silently dropped. Timestamps, entry ids, and ETags are excluded from
+`text`, so unrelated changes do not alter the reusable prefix. Provider cache
+keys, breakpoints, token budgets, and cache-hit measurement remain the
+gateway's responsibility.
+
+Capsule bodies are cached in KV per workspace and immutable D1 revision for up
+to one hour. Entry triggers advance that revision in the same D1 transaction
+as every capsule-tagged insert, id/content/tag update, workspace move, or delete.
+If a restore or import has no derived revision row, the first read seeds a new
+opaque revision instead of using a reusable sentinel.
+Each cached read therefore pays one indexed D1 row instead of scanning the whole
+workspace; KV eventual consistency can cause an extra rebuild, but cannot revive
+a pre-edit or pre-share body. Old keys become unreachable immediately and expire
+within the hour; after propagation settles, the longer TTL normally limits an
+unchanged, continuously read target to 24 refresh writes per day. Cold-fill races
+and revision changes can add attempts. Writes to ordinary entries do not advance
+the revision. Gateways should revalidate with `If-None-Match` once per session
+rather than on every request.
+
+An empty project Capsule is returned normally but not stored in KV. Project ids
+are caller-selected, so this prevents arbitrary nonexistent ids from consuming
+one KV write and key each. Empty core Capsules remain cached because core is one
+fixed target per workspace.
+
+After a D1 Time Travel restore, redeploy the Worker before resuming traffic so
+schema initialization recreates `prompt_capsule_revisions` and the four
+`prompt_capsule_*` triggers if the restore point predates part of this migration.
 
 ## Get started
 

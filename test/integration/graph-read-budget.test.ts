@@ -173,7 +173,16 @@ describe("edges schema drift", () => {
     const raw = new DatabaseSync(":memory:");
     try {
       resetDatabaseInit();
-      const DB = { exec: async (sql: string) => { raw.exec(sql); } } as unknown as D1Database;
+      const DB = {
+        exec: async (sql: string) => { raw.exec(sql); },
+        prepare: (sql: string) => ({
+          all: async () => ({ results: raw.prepare(sql).all() }),
+          run: async () => {
+            raw.prepare(sql).run();
+            return { meta: { changes: 0 } };
+          },
+        }),
+      } as unknown as D1Database;
       await initializeDatabase(makeTestEnv(undefined, { DB }));
       const fromInit = (raw.prepare(EDGE_INDEXES).all() as { name: string }[]).map(r => r.name);
 

@@ -433,7 +433,14 @@ function syncWorkspaceFilterChip(doc, chip, offsetTop) {
  */
 
 /** Namespaces the Worker owns. Anything `prefix:value` shaped and reserved. */
-const SYSTEM_TAG_PREFIXES = ['kind:', 'status:', 'volatility:', 'stale:']
+const SYSTEM_TAG_PREFIXES = [
+  'kind:',
+  'status:',
+  'volatility:',
+  'stale:',
+  'capsule:',
+  'capsule-slot:',
+]
 
 /**
  * Bare markers the Worker writes: compression, pattern mining, dedupe, and the

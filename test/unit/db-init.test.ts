@@ -30,12 +30,19 @@ const ADMIN_EVENTS_ALTERS: [column: string, alter: string][] = [
   ["workspace_id", `ALTER TABLE admin_events ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`],
 ];
 const ALL_COLUMNS = MIGRATION.map(([column]) => column);
+const PROMPT_CAPSULE_TRIGGERS = [
+  "prompt_capsule_entry_insert",
+  "prompt_capsule_entry_update",
+  "prompt_capsule_entry_delete",
+  "prompt_capsule_workspace_delete",
+];
 const ALL_OBJECTS = ["entries", "idx_entries_created_at", "idx_entries_source", "edges", "idx_edges_source", "idx_edges_target", "idx_edges_weight", "insight_candidates", "idx_insight_candidates_queue",
   // Team edition (v3). idx_entries_workspace_created is deliberately last-applied
   // (POST_COLUMN_OBJECTS): it indexes a column that arrives via ALTER.
-  "workspaces", "idx_workspaces_kind", "users", "idx_users_token_hash", "idx_users_email",
+  "workspaces", "prompt_capsule_revisions", "idx_workspaces_kind", "users", "idx_users_token_hash", "idx_users_email",
   "memberships", "idx_memberships_workspace", "entry_events", "idx_entry_events_entry", "idx_entry_events_created",
-  "admin_events", "idx_admin_events_created", "maintenance_cursor", "idx_entries_workspace_created"];
+  "admin_events", "idx_admin_events_created", "maintenance_cursor", "idx_entries_workspace_created",
+  ...PROMPT_CAPSULE_TRIGGERS];
 // Columns in the base CREATE of entries since v3 — present on every brain init touches.
 const BASE_COLUMNS = ["id", "content", "tags", "source", "created_at", "vector_ids", "workspace_id", "actor_id"];
 /** Every object + column a fully-migrated brain reports through the probe. */
@@ -56,7 +63,7 @@ type Row = { created_at: number; updated_at?: number | null };
 // This stand-in models what the migration path turns on, verified against real workerd
 // D1 via Miniflare: D1 rejects an ALTER for a column the table already has, a column
 // added to a populated table reads NULL on every pre-existing row, and the probe reports
-// exactly the tables, indexes and columns that are there. Every statement is recorded so
+// exactly the tables, indexes, triggers, and columns that are there. Every statement is recorded so
 // a test can assert what a cold start costs — ALTERs are recorded even when they throw.
 //
 // `objects` defaults from the columns: a brain carrying migration columns necessarily has
@@ -70,6 +77,16 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
   const objects = new Set(existingObjects ?? (existingColumns.length ? ALL_OBJECTS : []));
   const execd: string[] = [];
   const prepared: string[] = [];
+
+  const recordCreatedObject = (sql: string) => {
+    const created = sql.match(/CREATE (?:UNIQUE )?(?:TABLE|INDEX|TRIGGER) IF NOT EXISTS (\w+)/);
+    if (!created) return;
+    objects.add(created[1]);
+    if (created[1] === "entries") BASE_COLUMNS.forEach(c => columns.add(c));
+    if (created[1] === "edges") TENANCY_EDGE_ALTERS.forEach(([c]) => edgeColumns.add(c));
+    if (created[1] === "users") USERS_ALTERS.forEach(([c]) => userColumns.add(c));
+    if (created[1] === "admin_events") ADMIN_EVENTS_ALTERS.forEach(([c]) => adminEventColumns.add(c));
+  };
 
   const DB = {
     async exec(sql: string) {
@@ -85,14 +102,7 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
         if (table === "entries" && column === "updated_at") rows.forEach(r => { r.updated_at = null; });
         return;
       }
-      const created = sql.match(/CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS (\w+)/);
-      if (created) {
-        objects.add(created[1]);
-        if (created[1] === "entries") BASE_COLUMNS.forEach(c => columns.add(c));
-        if (created[1] === "edges") TENANCY_EDGE_ALTERS.forEach(([c]) => edgeColumns.add(c));
-        if (created[1] === "users") USERS_ALTERS.forEach(([c]) => userColumns.add(c));
-        if (created[1] === "admin_events") ADMIN_EVENTS_ALTERS.forEach(([c]) => adminEventColumns.add(c));
-      }
+      recordCreatedObject(sql);
     },
     prepare(sql: string) {
       prepared.push(sql);
@@ -102,7 +112,12 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
         all: async () => ({
           results: PROBE.test(sql)
             ? [
-              ...[...objects].map(name => ({ kind: name.startsWith("idx_") ? "index" : "table", name })),
+              ...[...objects].map(name => ({
+                kind: name.startsWith("idx_")
+                  ? "index"
+                  : PROMPT_CAPSULE_TRIGGERS.includes(name) ? "trigger" : "table",
+                name,
+              })),
               ...[...columns].map(name => ({ kind: "column", name })),
               ...[...edgeColumns].map(name => ({ kind: "edge_column", name })),
               ...[...userColumns].map(name => ({ kind: "user_column", name })),
@@ -110,7 +125,10 @@ function makeMigrationDb(existingColumns: string[] = [], rows: Row[] = [], exist
             ]
             : [],
         }),
-        run: async () => ({ meta: { changes: 0 } }),
+        run: async () => {
+          recordCreatedObject(sql);
+          return { meta: { changes: 0 } };
+        },
       });
       return make([]);
     },
@@ -139,7 +157,7 @@ describe("initializeDatabase updated_at migration", () => {
 
     await initializeDatabase(env);
 
-    expect(prepared.filter(s => !PROBE.test(s))).toEqual([]);
+    expect(prepared.filter(s => !PROBE.test(s) && !s.startsWith("CREATE TRIGGER"))).toEqual([]);
     expect(touchesEntries(execd)).toEqual([]);
     // The rows are left NULL on purpose — readers coalesce updated_at to created_at.
     expect(rows.every(r => r.updated_at === null)).toBe(true);
@@ -175,7 +193,7 @@ describe("initializeDatabase updated_at migration", () => {
 
       // Each reset stands in for a fresh isolate, which is what a cold start actually is.
       await initializeDatabase(env);
-      const migrated = execd.length;
+      const migrated = execd.length + prepared.length - 1; // exclude the first probe
       resetDatabaseInit();
       await initializeDatabase(env);
       resetDatabaseInit();
@@ -187,9 +205,11 @@ describe("initializeDatabase updated_at migration", () => {
       // MOVED 35 -> 37 by idx_memberships_workspace and idx_users_email. The
       // latter is one CREATE, not one CREATE plus a dedupe: a fresh brain holds
       // no duplicates, so the repair path behind the email index never runs.
-      expect(migrated).toBe(37); // one-off cost of creating a brain: 21 objects + 14 ALTERs + 1 post-column index + the email-index CREATE
-      expect(execd).toHaveLength(migrated); // the two later cold starts added nothing
-      expect(prepared).toHaveLength(3); // one probe each, and nothing else
+      // MOVED 37 -> 42 by the Prompt Capsule revision table and its four
+      // triggers, which make invalidation atomic with entry writes.
+      expect(migrated).toBe(42); // 22 base objects + 14 ALTERs + 5 post-column objects + the email-index CREATE
+      expect(execd.length + prepared.length).toBe(migrated + 3); // three probes total
+      expect(prepared).toHaveLength(7); // three probes plus four prepared trigger DDLs
       expect(touchesEntries(execd)).toEqual([]);
     });
 
@@ -222,7 +242,7 @@ describe("initializeDatabase updated_at migration", () => {
       await Promise.all([initializeDatabase(env), initializeDatabase(env), initializeDatabase(env)]);
 
       expect(execd).toHaveLength(once);
-      expect(prepared).toHaveLength(1); // not even the probe is re-issued
+      expect(prepared).toHaveLength(5); // one probe + four trigger DDLs; no repeat work
     });
 
     it("shares one in-flight promise across concurrent callers", async () => {
@@ -242,7 +262,7 @@ describe("initializeDatabase updated_at migration", () => {
       resetDatabaseInit();
       await initializeDatabase(env);
 
-      expect(prepared).toHaveLength(2); // the second call went back to the database
+      expect(prepared).toHaveLength(6); // first probe + four trigger DDLs + second probe
     });
   });
 
@@ -264,7 +284,10 @@ describe("initializeDatabase updated_at migration", () => {
           if (state.failing) fail();
           state.execd.push(sql);
         },
-        prepare: () => ({ all: async () => (state.failing ? fail() : { results: [] }) }),
+        prepare: () => ({
+          all: async () => (state.failing ? fail() : { results: [] }),
+          run: async () => (state.failing ? fail() : { meta: { changes: 0 } }),
+        }),
       } as unknown as D1Database;
       return { state, env: makeTestEnv(undefined, { DB }) };
     }
@@ -294,7 +317,10 @@ describe("initializeDatabase updated_at migration", () => {
           if (failEdges && sql.includes("CREATE TABLE IF NOT EXISTS edges")) throw new Error("D1_ERROR: Network connection lost.");
           execd.push(sql);
         },
-        prepare: () => ({ all: async () => ({ results: [] }) }),
+        prepare: () => ({
+          all: async () => ({ results: [] }),
+          run: async () => ({ meta: { changes: 0 } }),
+        }),
       } as unknown as D1Database;
       const env = makeTestEnv(undefined, { DB });
 
@@ -314,7 +340,10 @@ describe("initializeDatabase updated_at migration", () => {
         async exec(sql: string) {
           if (sql.startsWith("ALTER TABLE")) throw new Error("D1_EXEC_ERROR: duplicate column name: updated_at");
         },
-        prepare: () => ({ all: async () => ({ results: [] }) }),
+        prepare: () => ({
+          all: async () => ({ results: [] }),
+          run: async () => ({ meta: { changes: 0 } }),
+        }),
       } as unknown as D1Database;
 
       await expect(initializeDatabase(makeTestEnv(undefined, { DB }))).resolves.toBeUndefined();
@@ -327,7 +356,10 @@ describe("initializeDatabase updated_at migration", () => {
             throw new Error("D1_ERROR: database is locked");
           }
         },
-        prepare: () => ({ all: async () => ({ results: [] }) }),
+        prepare: () => ({
+          all: async () => ({ results: [] }),
+          run: async () => ({ meta: { changes: 0 } }),
+        }),
       } as unknown as D1Database;
 
       await expect(initializeDatabase(makeTestEnv(undefined, { DB }))).rejects.toThrow(/database is locked/);
@@ -379,7 +411,7 @@ describe("initializeDatabase against real SQLite", () => {
 
   async function objectNames(sqlite: SqliteD1): Promise<string[]> {
     const { results } = await sqlite.db
-      .prepare(`SELECT name FROM sqlite_master WHERE type IN ('table','index')`)
+      .prepare(`SELECT name FROM sqlite_master WHERE type IN ('table','index','trigger')`)
       .all() as { results: { name: string }[] };
     return results.map(r => r.name);
   }
@@ -396,6 +428,66 @@ describe("initializeDatabase against real SQLite", () => {
 
     for (const name of ALL_OBJECTS) expect(await objectNames(d1)).toContain(name);
     expect(sameColumns(d1.columns())).toBe(true);
+  });
+
+  it("advances Prompt Capsule revisions atomically on entry writes and workspace moves", async () => {
+    d1 = makeSqliteD1({ schema: false });
+    await initializeDatabase(envFor(d1));
+    await d1.db.exec(
+      `INSERT INTO workspaces (id, kind, name, created_at) VALUES ('ws-a', 'personal', 'A', 1);` +
+      `INSERT INTO workspaces (id, kind, name, created_at) VALUES ('ws-b', 'company', 'B', 1);`,
+    );
+
+    const revision = async (workspaceId: string) => {
+      const row = await d1.db.prepare(
+        `SELECT revision FROM prompt_capsule_revisions WHERE workspace_id = ?`,
+      ).bind(workspaceId).first() as { revision: string } | null;
+      return row?.revision ?? null;
+    };
+
+    await d1.db.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id) VALUES (?, ?, ?, 'api', 1, '[]', ?)`,
+    ).bind("ordinary", "Ordinary", '["work"]', "ws-a").run();
+    expect(await revision("ws-a")).toBeNull();
+
+    await d1.db.prepare(
+      `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, workspace_id) VALUES (?, ?, ?, 'api', 1, '[]', ?)`,
+    ).bind(
+      "capsule",
+      "Initial",
+      '["capsule:core","capsule-slot:identity","status:canonical"]',
+      "ws-a",
+    ).run();
+    const afterInsert = await revision("ws-a");
+    expect(afterInsert).toMatch(/^[0-9a-f]{32}$/);
+
+    await d1.db.prepare(`UPDATE entries SET content = ? WHERE id = ?`)
+      .bind("Updated", "capsule").run();
+    const afterContentUpdate = await revision("ws-a");
+    expect(afterContentUpdate).toMatch(/^[0-9a-f]{32}$/);
+    expect(afterContentUpdate).not.toBe(afterInsert);
+
+    await d1.db.prepare(`UPDATE entries SET id = ? WHERE id = ?`)
+      .bind("capsule-renamed", "capsule").run();
+    const afterIdUpdate = await revision("ws-a");
+    expect(afterIdUpdate).toMatch(/^[0-9a-f]{32}$/);
+    expect(afterIdUpdate).not.toBe(afterContentUpdate);
+
+    await d1.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`)
+      .bind("ws-b", "capsule-renamed").run();
+    const afterMoveFromA = await revision("ws-a");
+    const afterMoveToB = await revision("ws-b");
+    expect(afterMoveFromA).toMatch(/^[0-9a-f]{32}$/);
+    expect(afterMoveFromA).not.toBe(afterIdUpdate);
+    expect(afterMoveToB).toMatch(/^[0-9a-f]{32}$/);
+
+    await d1.db.prepare(`DELETE FROM entries WHERE id = ?`).bind("capsule-renamed").run();
+    const afterDelete = await revision("ws-b");
+    expect(afterDelete).toMatch(/^[0-9a-f]{32}$/);
+    expect(afterDelete).not.toBe(afterMoveToB);
+
+    await d1.db.prepare(`DELETE FROM workspaces WHERE id = ?`).bind("ws-b").run();
+    expect(await revision("ws-b")).toBeNull();
   });
 
   it("leaves a migrated database usable, not merely present", async () => {
@@ -430,7 +522,8 @@ describe("initializeDatabase against real SQLite", () => {
 
     // MOVED 35 -> 36 by idx_entry_events_created; see the sibling pin above.
     // MOVED 36 -> 38 by idx_memberships_workspace and idx_users_email.
-    expect(cold).toBe(38); // one probe, then the 37 statements a new brain needs (21 objects + 14 ALTERs + 1 post-column index + the email-index CREATE)
+    // MOVED 38 -> 43 by the Prompt Capsule revision table and its four triggers.
+    expect(cold).toBe(43); // one probe, then the 42 statements a new brain needs
     expect(d1.issued).toHaveLength(1);
     expect(d1.issued[0]).toMatch(PROBE);
   });
@@ -511,7 +604,7 @@ describe("initializeDatabase against real SQLite", () => {
 
   it("adds the edges table to a brain that predates it", async () => {
     // The other real intermediate state (issue #16 added edges to brains that already had
-    // entries). Tables and indexes are probed independently of columns, so this is not
+    // entries). Tables, indexes, and triggers are probed independently of columns, so this is not
     // the same path as the ALTERs above.
     d1 = makeSqliteD1({ schema: false });
     await d1.db.exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL, vector_ids TEXT NOT NULL DEFAULT '[]')`);
@@ -656,7 +749,7 @@ describe("initializeDatabase against real SQLite", () => {
     });
 
     it("does not accept a name held by the wrong kind of object", async () => {
-      // SQLite puts tables and indexes in one namespace. A user table that has taken an
+      // SQLite puts tables, indexes, and triggers in one namespace. A user table that has taken an
       // index's name is not that index, and matching on the name alone would resolve init
       // having silently never created it. Issuing the CREATE gets SQLite's collision
       // error instead — which is what happened before the probe existed.

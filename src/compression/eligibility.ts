@@ -6,6 +6,7 @@ import { STATUS_PREFIX } from "../memory/status";
 import { KIND_PREFIX } from "../memory/kind";
 import { VOLATILITY_PREFIX } from "../memory/volatility";
 import { STALE_AS_OF } from "../memory/stale";
+import { CAPSULE_SLOT_TAG_PREFIX, CAPSULE_TAG_PREFIX } from "../tags/system";
 
 export const COMPRESSION_IMPORTANCE_THRESHOLD = 4;   // importance >= this → protected
 export const COMPRESSION_MIN_RECALL = 2;             // recalled >= this many times → protected
@@ -38,7 +39,13 @@ export const COMPRESSION_MIN_AGE_MS = 60 * 86400000; // entries with fewer than 
  * The two directions are not symmetric. Wrongly reserving a user's `Status:Active` costs one
  * tag that never gets a digest. Wrongly admitting it costs up to 50 memories, irreversibly.
  */
-const RESERVED_TAG_PREFIXES = [STATUS_PREFIX, KIND_PREFIX, VOLATILITY_PREFIX];
+const RESERVED_TAG_PREFIXES = [
+  STATUS_PREFIX,
+  KIND_PREFIX,
+  VOLATILITY_PREFIX,
+  CAPSULE_TAG_PREFIX,
+  CAPSULE_SLOT_TAG_PREFIX,
+];
 const RESERVED_TAGS = [STALE_AS_OF];
 
 /** Bookkeeping tags that mark an entry's role in compression rather than its subject. */

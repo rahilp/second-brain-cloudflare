@@ -15,8 +15,19 @@
 // deliberately absent here: hiding a junk tag costs nothing, but treating it as
 // unowned would let an edit silently delete a tag that is genuinely stored.
 
+/** Prompt Capsule bookkeeping prefixes shared by selection and pipeline guards. */
+export const CAPSULE_TAG_PREFIX = "capsule:";
+export const CAPSULE_SLOT_TAG_PREFIX = "capsule-slot:";
+
 /** Namespaces the Worker writes and owns; `prefix:value` shaped. */
-const RESERVED_TAG_PREFIXES = ["kind:", "status:", "volatility:", "stale:"];
+const RESERVED_TAG_PREFIXES = [
+  "kind:",
+  "status:",
+  "volatility:",
+  "stale:",
+  CAPSULE_TAG_PREFIX,
+  CAPSULE_SLOT_TAG_PREFIX,
+];
 
 /**
  * Bare markers the Worker writes: compression, pattern mining, dedupe, and the
@@ -45,14 +56,32 @@ export function isWorkerOwnedTag(tag: string): boolean {
   return RESERVED_TAG_PREFIXES.some((p) => t.startsWith(p));
 }
 
+/** True for both Prompt Capsule namespaces, case-insensitively. */
+export function isCapsuleTag(tag: string): boolean {
+  const t = tag.trim().toLowerCase();
+  return t.startsWith(CAPSULE_TAG_PREFIX) || t.startsWith(CAPSULE_SLOT_TAG_PREFIX);
+}
+
+/** True when any tag in the list is a capsule tag; non-strings are ignored. */
+export function hasCapsuleTag(tags: readonly unknown[]): boolean {
+  return tags.some((t) => typeof t === "string" && isCapsuleTag(t));
+}
+
 /**
  * The tag set a replacement should start from: everything the Worker owns on the
  * entry today, with the caller's tags layered on top.
  *
  * Callers pass only the tags a person can see and edit, so anything they omit
  * was either removed on purpose or was never theirs to send.
+ *
+ * The capsule namespaces are the one exception: a replacement that names any
+ * `capsule:` or `capsule-slot:` tag redefines the whole capsule membership, so
+ * the existing tags in both namespaces are dropped first. A replacement that
+ * names none leaves the definition exactly as it was.
  */
 export function applyTagReplacement(existing: string[], replacement: string[]): string[] {
-  const kept = existing.filter(isWorkerOwnedTag);
-  return [...kept, ...replacement.map((t) => t.trim()).filter(Boolean)];
+  const cleaned = replacement.map((t) => t.trim()).filter(Boolean);
+  const redefinesCapsule = cleaned.some(isCapsuleTag);
+  const kept = existing.filter((t) => isWorkerOwnedTag(t) && !(redefinesCapsule && isCapsuleTag(t)));
+  return [...kept, ...cleaned];
 }

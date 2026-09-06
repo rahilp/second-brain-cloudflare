@@ -35,8 +35,8 @@ export function resetDatabaseInit(): void {
 }
 
 /**
- * Tables and indexes, keyed by the name each occupies in sqlite_master. Declaration order
- * is apply order: a table has to exist before the indexes over it.
+ * Tables, indexes, and triggers, keyed by the name each occupies in sqlite_master.
+ * Declaration order is apply order: a table has to exist before its indexes and triggers.
  */
 const SCHEMA_OBJECTS: Record<string, string> = {
   entries: `CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL, vector_ids TEXT NOT NULL DEFAULT '[]', workspace_id TEXT NOT NULL DEFAULT '', actor_id TEXT NOT NULL DEFAULT '')`,
@@ -96,6 +96,7 @@ const SCHEMA_OBJECTS: Record<string, string> = {
   // Team edition tenancy (v3). Additive: single-user brains never read these and
   // rollback is a no-op.
   workspaces: `CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'personal', name TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)`,
+  prompt_capsule_revisions: `CREATE TABLE IF NOT EXISTS prompt_capsule_revisions (workspace_id TEXT PRIMARY KEY, revision TEXT NOT NULL)`,
   idx_workspaces_kind: `CREATE INDEX IF NOT EXISTS idx_workspaces_kind ON workspaces(kind)`,
   users: `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT, role TEXT NOT NULL DEFAULT 'member', token_hash TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
   // Token lookup is the hottest new read (every request resolves identity); UNIQUE
@@ -224,12 +225,43 @@ const ADMIN_EVENTS_COLUMNS: Record<string, string> = {
  */
 const POST_COLUMN_OBJECTS: Record<string, string> = {
   idx_entries_workspace_created: `CREATE INDEX IF NOT EXISTS idx_entries_workspace_created ON entries(workspace_id, created_at DESC)`,
+  prompt_capsule_entry_insert: `CREATE TRIGGER IF NOT EXISTS prompt_capsule_entry_insert
+    AFTER INSERT ON entries
+    WHEN instr(lower(NEW.tags), '"capsule:') > 0 OR instr(lower(NEW.tags), '"capsule-slot:') > 0
+    BEGIN
+      INSERT INTO prompt_capsule_revisions (workspace_id, revision) VALUES (NEW.workspace_id, lower(hex(randomblob(16))))
+      ON CONFLICT(workspace_id) DO UPDATE SET revision = lower(hex(randomblob(16)));
+    END`,
+  prompt_capsule_entry_update: `CREATE TRIGGER IF NOT EXISTS prompt_capsule_entry_update
+    AFTER UPDATE OF id, content, tags, workspace_id ON entries
+    WHEN instr(lower(OLD.tags), '"capsule:') > 0 OR instr(lower(OLD.tags), '"capsule-slot:') > 0
+      OR instr(lower(NEW.tags), '"capsule:') > 0 OR instr(lower(NEW.tags), '"capsule-slot:') > 0
+    BEGIN
+      INSERT INTO prompt_capsule_revisions (workspace_id, revision) VALUES (OLD.workspace_id, lower(hex(randomblob(16))))
+      ON CONFLICT(workspace_id) DO UPDATE SET revision = lower(hex(randomblob(16)));
+      INSERT INTO prompt_capsule_revisions (workspace_id, revision)
+      SELECT NEW.workspace_id, lower(hex(randomblob(16))) WHERE NEW.workspace_id <> OLD.workspace_id
+      ON CONFLICT(workspace_id) DO UPDATE SET revision = lower(hex(randomblob(16)));
+    END`,
+  prompt_capsule_entry_delete: `CREATE TRIGGER IF NOT EXISTS prompt_capsule_entry_delete
+    AFTER DELETE ON entries
+    WHEN instr(lower(OLD.tags), '"capsule:') > 0 OR instr(lower(OLD.tags), '"capsule-slot:') > 0
+    BEGIN
+      INSERT INTO prompt_capsule_revisions (workspace_id, revision) VALUES (OLD.workspace_id, lower(hex(randomblob(16))))
+      ON CONFLICT(workspace_id) DO UPDATE SET revision = lower(hex(randomblob(16)));
+    END`,
+  prompt_capsule_workspace_delete: `CREATE TRIGGER IF NOT EXISTS prompt_capsule_workspace_delete
+    AFTER DELETE ON workspaces
+    BEGIN
+      DELETE FROM prompt_capsule_revisions WHERE workspace_id = OLD.id;
+    END`,
 };
 
 /**
- * One statement that reports every schema object this file knows how to create: table and
- * index names out of sqlite_master, and entries' columns out of the table-valued form of
- * PRAGMA table_info (SQLite rewrites neither list lazily — an ALTER shows up immediately).
+ * One statement that reports every schema object this file knows how to create: table,
+ * index, and trigger names out of sqlite_master, and entries' columns out of the
+ * table-valued form of PRAGMA table_info (SQLite rewrites neither list lazily — an
+ * ALTER shows up immediately).
  * `kind` is what stops a name that appears on both sides from being read as the wrong one.
  *
  * This exists because the fifteen statements it replaces cost fifteen subrequests to
@@ -251,23 +283,27 @@ const POST_COLUMN_OBJECTS: Record<string, string> = {
  * row here rather than one subrequest on every cold start.
  */
 const PROBE_SQL =
-  `SELECT type AS kind, name FROM sqlite_master WHERE type IN ('table','index') ` +
+  `SELECT type AS kind, name FROM sqlite_master WHERE type IN ('table','index','trigger') ` +
   `UNION ALL SELECT 'column' AS kind, name FROM pragma_table_info('entries')` +
   `UNION ALL SELECT 'edge_column' AS kind, name FROM pragma_table_info('edges')` +
   `UNION ALL SELECT 'user_column' AS kind, name FROM pragma_table_info('users')` +
   `UNION ALL SELECT 'admin_event_column' AS kind, name FROM pragma_table_info('admin_events')`;
 
-type ObjectKind = "table" | "index";
+type ObjectKind = "table" | "index" | "trigger";
 /**
- * `objects` maps name to kind rather than being a set of names, because SQLite puts tables
- * and indexes in one namespace: a name can be taken by the wrong kind of thing. Skipping on
+ * `objects` maps name to kind rather than being a set of names, because SQLite puts tables,
+ * indexes, and triggers in one namespace: a name can be taken by the wrong kind of thing. Skipping on
  * the name alone would let a user table called `idx_entries_source` stand in for the index,
  * which resolves init successfully and silently never creates it.
  */
 type ExistingSchema = { objects: Map<string, ObjectKind>; columns: Set<string>; edgeColumns: Set<string>; userColumns: Set<string>; adminEventColumns: Set<string> };
 
 /** Which kind of object a CREATE statement makes, so the probe can be asked about it. */
-const kindOf = (ddl: string): ObjectKind => (ddl.startsWith("CREATE TABLE") ? "table" : "index");
+const kindOf = (ddl: string): ObjectKind => {
+  if (ddl.startsWith("CREATE TABLE")) return "table";
+  if (ddl.startsWith("CREATE TRIGGER")) return "trigger";
+  return "index";
+};
 
 /**
  * What the database already has, or null if that could not be established.
@@ -275,7 +311,8 @@ const kindOf = (ddl: string): ObjectKind => (ddl.startsWith("CREATE TABLE") ? "t
  * The invariant, and the only one that matters here: this may report a thing PRESENT only
  * if it actually saw it, as the kind it is looking for. Everything else — the probe
  * throwing, a result shape it does not recognise, a row whose `kind` is not one of the
- * three, a name that exists as the other kind — resolves towards "missing", so the worst a
+ * recognised catalogue or column kinds, a name that exists as another kind — resolves
+ * towards "missing", so the worst a
  * confused probe can do is make applySchema pay the old whole-schema cost against DDL
  * that is idempotent anyway. The opposite error is the one that would hurt: a brand-new
  * brain talked out of migrating would then serve every request against tables that do not
@@ -308,7 +345,9 @@ async function probeSchema(env: Env): Promise<ExistingSchema | null> {
     else if (row.kind === "edge_column") edgeColumns.add(row.name);
     else if (row.kind === "user_column") userColumns.add(row.name);
     else if (row.kind === "admin_event_column") adminEventColumns.add(row.name);
-    else if (row.kind === "table" || row.kind === "index") objects.set(row.name, row.kind);
+    else if (row.kind === "table" || row.kind === "index" || row.kind === "trigger") {
+      objects.set(row.name, row.kind);
+    }
   }
   return { objects, columns, edgeColumns, userColumns, adminEventColumns };
 }
@@ -423,6 +462,10 @@ async function applySchema(env: Env): Promise<void> {
   }
   for (const [name, ddl] of Object.entries(POST_COLUMN_OBJECTS)) {
     if (existing?.objects.get(name) === kindOf(ddl)) continue;
-    await env.DB.exec(ddl);
+    // D1Database.exec splits on semicolons, including the statements inside a
+    // trigger body, and therefore sends an incomplete CREATE TRIGGER. Prepared
+    // DDL keeps the trigger as one SQLite statement.
+    if (kindOf(ddl) === "trigger") await env.DB.prepare(ddl).run();
+    else await env.DB.exec(ddl);
   }
 }

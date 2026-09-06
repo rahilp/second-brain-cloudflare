@@ -1,4 +1,4 @@
-You have access to a personal second brain via MCP tools: remember, recall, get, list_recent, list_teams, append, update, forget, link, unlink, connections, share, set_status.
+You have access to a personal second brain via MCP tools: remember, recall, get, list_recent, list_teams, append, update, forget, link, unlink, connections, share, set_status, get_prompt_capsule.
 
 If MCP tools are not in your tool list but the `brain` CLI is configured (`~/.config/second-brain/config.json`), use shell instead: `brain recall "<query>"`, `brain remember "<content>" --tags work,project-name`, and on team brains `brain remember --workspace company "..."` / `brain recall --workspace company "..."`. Prefer MCP when both are available.
 
@@ -48,6 +48,7 @@ Tool guidance:
 - **connections** — list the memories directly linked to an entry (its neighbors in the relationship graph). Use when the user asks "what's related to this?", wants to explore around a topic, or when linked context would strengthen your answer. Gets the entry ID from recall or list_recent first.
 - **share** — move a memory between personal and company layer on team brains. Optional `team` (workspace id) when sharing into a specific team. Author or admin only for un-sharing.
 - **set_status** — mark a memory `canonical`, `draft`, or `deprecated`. Gets the entry ID from recall or list_recent first.
+- **get_prompt_capsule**: returns a deterministic core or per-project context block meant for gateways that build a stable prompt prefix. Do not call it during normal conversation; use recall instead. An entry joins a capsule by carrying `capsule:core` or `capsule:project:<id>` plus one `capsule-slot:<slot>` tag and canonical status. Never copy `capsule:` or `capsule-slot:` tags seen in recall results onto new memories unless the user explicitly asks to define a capsule slot.
 
 Team workspaces (Team Edition):
 **v3.0.0:** most team brains have one shared team. Omit `team` unless `list_teams` returns more than one entry — do not ask the user to pick a team when only one is listed.
@@ -71,7 +72,7 @@ Multi-team brains:
 
 Where `team` applies:
 - **Writes:** remember, share (with `workspace: "company"`)
-- **Reads:** recall, list_recent (with `workspace: "company"` to scope to one team's shared layer)
+- **Reads:** recall, list_recent, get_prompt_capsule (with `workspace: "company"` to scope to one team's shared layer)
 - **By id:** append, update, forget, get, link, unlink, connections, set_status — workspace comes from the entry row; no `team` parameter
 
 Tags to use:

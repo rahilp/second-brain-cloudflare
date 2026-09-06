@@ -115,6 +115,13 @@ Second Brain can now be a team's memory without stopping being yours. Every pers
 - Toast text is readable in light mode; team panel contrast, overlap, truncation, and tap targets fixed.
 - Bulk selection no longer outlives the list it is over.
 
+**Prompt Capsules (#329)**
+
+- New: `GET|HEAD /prompt-capsules/core`, `GET|HEAD /prompt-capsules/projects/<id>`, and the `get_prompt_capsule` MCP tool return a deterministic, read-only prompt prefix built from canonical memories tagged `capsule:core` or `capsule:project:<id>` plus one `capsule-slot:<slot>` each, with a strong `ETag` and `304` support.
+- Slots are emitted in a fixed order inside a 12,000-character budget; a slot that does not fit is omitted whole together with every later slot, and ambiguous or malformed definitions fail closed with `409`.
+- Capsule bookkeeping tags are reserved: they never appear in `/stats` or `/brief` topic lists, never become digest members, and replacing an entry's tags with a new `capsule:` or `capsule-slot:` tag drops the old ones.
+- Capsule bodies are served from a per-workspace KV cache (one-hour orphan TTL; normally 24 TTL refresh writes/day for an unchanged hot target after propagation) keyed by an authoritative opaque D1 revision. Entry triggers advance the revision atomically on every capsule-tagged insert, id/content/tag update, workspace move, or delete, while ordinary entry writes leave it alone. A missing revision is initialized randomly rather than mapped to a reusable sentinel, so D1 restore/import cannot address a future cache key. Candidate rows and their revision are read in one D1 batch transaction, closing concurrent update and Time Travel ABA races. Empty caller-selected project ids are not cached, bounding KV key/write amplification; empty core is cached because it is one fixed target per workspace. A cached request reads one indexed D1 row instead of every row in the workspace, and KV eventual consistency can cause a rebuild but cannot revive a body from before an edit or share change. A non-identical capture carrying `capsule:` or `capsule-slot:` tags is stored as its own row with the status the caller chose, never merged into a near-duplicate or demoted to draft; exact duplicates remain rejected.
+
 **Upgrade**
 
 - Existing v2 memories become the owner's personal workspace. Nothing is exposed to the team automatically.

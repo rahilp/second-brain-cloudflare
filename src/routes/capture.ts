@@ -93,7 +93,13 @@ export async function handleCaptureRoutes(
       return json({ ok: true, id: result.id, resolved_conflict: result.resolvedConflict, reason: result.reason });
     }
     if (result.status === "contradiction_protected") {
-      return json({ ok: true, id: result.id, status: "draft", kept_canonical: result.canonicalId, reason: result.reason });
+      return json({
+        ok: true,
+        id: result.id,
+        status: result.entryStatus,
+        kept_canonical: result.canonicalId,
+        reason: result.reason,
+      });
     }
     if (result.status === "replaced") {
       return json({ ok: true, id: result.id, action: "replaced", message: "New memory replaced an outdated existing entry" });

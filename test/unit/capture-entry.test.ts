@@ -223,6 +223,7 @@ describe("captureEntry()", () => {
     if (result.status !== "contradiction_protected") return;
     expect(result.id).toBeDefined();
     expect(result.canonicalId).toBe("canonical-entry");
+    expect(result.entryStatus).toBe("draft");
     expect(result.reason).toBe("different city");
 
     // Canonical entry is UNCHANGED
@@ -713,5 +714,58 @@ describe("captureEntry()", () => {
     const result = await captureEntry("We moved off Vectorize to a KV index.", [], "claude", env, ctx);
     expect(result.status).toBe("contradiction");
     expect(JSON.parse(db.entries.find(e => e.id === "existing")!.tags)).toContain("status:deprecated");
+  });
+
+  // ── Prompt Capsule definitions (#329) ───────────────────────────────────────
+
+  const capsuleTags = ["capsule:core", "capsule-slot:identity", "status:canonical"];
+
+  it("a capsule-tagged capture judged a mergeable duplicate is stored as its own row with its tags intact", async () => {
+    db.entries = [existingNote("api", 2)];
+    env = makeTestEnv(db, {
+      VECTORIZE: nearMatch(),
+      AI: makeContradictionAI('{"action":"merge","target_id":"existing","merged_content":"merged"}'),
+    });
+    const { ctx } = makeCtx();
+    const result = await captureEntry("The user prefers concise answers.", capsuleTags, "api", env, ctx);
+    expect(result.status).toBe("flagged");
+    if (result.status !== "flagged") return;
+    expect(db.entries).toHaveLength(2);
+    expect(db.entries.find(e => e.id === "existing")!.content).toBe("We decided to use Vectorize for semantic search.");
+    const tags: string[] = JSON.parse(db.entries.find(e => e.id === result.id)!.tags);
+    expect(tags).toEqual(expect.arrayContaining(capsuleTags));
+  });
+
+  it("a capsule-tagged capture judged a contradiction keeps its status:canonical", async () => {
+    db.entries = [{ ...existingNote("api"), tags: '["status:canonical"]' }];
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [{ id: "existing", score: 0.7, metadata: { parentId: "existing" } }] }),
+      }),
+      AI: makeContradictionAI('{"contradicts": true, "conflicting_id": "existing", "reason": "reversed decision"}'),
+    });
+    const { ctx } = makeCtx();
+    const result = await captureEntry("We use keyword search only.", capsuleTags, "api", env, ctx);
+    expect(result.status).toBe("contradiction_protected");
+    if (result.status !== "contradiction_protected") return;
+    expect(result.entryStatus).toBe("canonical");
+    const tags: string[] = JSON.parse(db.entries.find(e => e.id === result.id)!.tags);
+    expect(tags).toContain("status:canonical");
+    expect(tags).not.toContain("status:draft");
+    expect(tags).not.toContain("contradiction-resolved");
+    expect(JSON.parse(db.entries.find(e => e.id === "existing")!.tags)).toContain("status:canonical");
+  });
+
+  it("an exact duplicate is still blocked even when it carries capsule tags", async () => {
+    db.entries = [existingNote("api")];
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [{ id: "existing", score: 0.97, metadata: { parentId: "existing" } }] }),
+      }),
+    });
+    const { ctx } = makeCtx();
+    const result = await captureEntry("We decided to use Vectorize for semantic search.", capsuleTags, "api", env, ctx);
+    expect(result.status).toBe("blocked");
+    expect(db.entries).toHaveLength(1);
   });
 });
