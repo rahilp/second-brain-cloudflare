@@ -1,3 +1,4 @@
+
 <p align="center">
   <a href="https://www.thesecondbrain.dev"><img src="https://www.thesecondbrain.dev/logos/sb-lockup.svg" alt="Second Brain" width="400"></a>
 </p>
