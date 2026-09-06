@@ -27,7 +27,7 @@ import {
   RIDGE_ANCHOR_GAP,
   RIDGE_EDGE_MARGIN,
   type AnchorRect,
-} from "../../installer/src/ridge";
+} from "../../installer/src/ridge-logic";
 
 function rect(partial: Partial<AnchorRect>): AnchorRect {
   return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, ...partial };

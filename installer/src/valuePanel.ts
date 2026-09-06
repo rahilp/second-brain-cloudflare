@@ -36,7 +36,7 @@
  * it, so `test/unit/valuePanel.test.ts` can check the mapping without a
  * webview. `main.ts` renders it.
  */
-import type { IconName } from "./shared";
+import type { IconName } from "./icons";
 import type { ScreenName } from "./steps";
 
 /** Where a quote was published. Both are proper nouns in either locale. */
