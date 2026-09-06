@@ -59,14 +59,20 @@ fn strength_score(password: &str) -> u8 {
     zxcvbn::zxcvbn(password, &[]).score() as u8
 }
 
-/// Breach count via the HIBP k-anonymity range API. `Ok(None)` means the
-/// service couldn't be reached (offline / timeout) — the caller fails open.
-async fn pwned_count(password: &str) -> Option<u64> {
+/// Breach count via the HIBP k-anonymity range API. `None` means the service
+/// couldn't be reached or refused (offline / timeout / rate limit) — the
+/// caller fails open. `base_url` is a seam so the fail-open and mapping paths
+/// can be exercised without a network.
+async fn pwned_count_at(base_url: &str, password: &str) -> Option<u64> {
     let hash = sha1_hex_upper(password);
     let (prefix, suffix) = hash.split_at(5);
-    let client = reqwest::Client::new();
+    // `Client::new` panics when the TLS backend won't initialise. A panic in
+    // an async command sends no response at all, and the password screen keeps
+    // Continue disabled until this call settles — so that panic would strand
+    // setup with no way forward. Build fallibly and fail open instead.
+    let client = reqwest::Client::builder().build().ok()?;
     let response = client
-        .get(format!("{HIBP_RANGE_URL}/{prefix}"))
+        .get(format!("{base_url}/{prefix}"))
         // Pads the response set so even its size can't fingerprint the query.
         .header("Add-Padding", "true")
         .timeout(HIBP_TIMEOUT)
@@ -84,8 +90,13 @@ async fn pwned_count(password: &str) -> Option<u64> {
 /// lookup in dry-run too — it's anonymous and touches no account — and fails
 /// open when the network is unavailable.
 pub async fn check(password: &str) -> PasswordCheck {
+    check_at(HIBP_RANGE_URL, password).await
+}
+
+/// `check` against an arbitrary range endpoint — the injectable form.
+async fn check_at(base_url: &str, password: &str) -> PasswordCheck {
     let score = strength_score(password);
-    let looked_up = pwned_count(password).await;
+    let looked_up = pwned_count_at(base_url, password).await;
     let count = looked_up.unwrap_or(0);
     PasswordCheck {
         breached: count > 0,
@@ -121,6 +132,8 @@ pub fn generate() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::Receiver;
+    use std::time::Instant;
 
     #[test]
     fn sha1_matches_known_vector() {
@@ -153,6 +166,89 @@ mod tests {
         assert!(strength_score("password") <= 1);
         assert!(strength_score("qwerty12345") <= 2);
         assert!(strength_score("mqkw3-vt8nj-p5xrd-h29fs") >= 3);
+    }
+
+    /// A one-shot stand-in for the HIBP range endpoint. Hands back its base
+    /// URL and a channel carrying the path it was asked for, so a test can
+    /// prove what left the machine as well as what came back.
+    fn stub_range_service(status: u16, body: &'static str) -> (String, Receiver<String>) {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("bind stub range service");
+        let port = server.server_addr().to_ip().expect("stub bound to an ip").port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok(request) = server.recv() {
+                let _ = tx.send(request.url().to_string());
+                let _ = request.respond(
+                    tiny_http::Response::from_string(body).with_status_code(status),
+                );
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    /// The k-anonymity promise in this module's header: the service learns a
+    /// 5-character hash prefix and nothing else. The suffix that identifies
+    /// the password among that range must never appear in the request.
+    #[tokio::test]
+    async fn only_the_hash_prefix_leaves_the_machine() {
+        let (base, paths) = stub_range_service(200, "");
+        let _ = check_at(&base, "password").await;
+        let path = paths.recv().expect("the stub was asked for something");
+        assert_eq!(path, "/5BAA6", "only the 5-character prefix may be sent");
+        assert!(
+            !path.contains("1E4C9B93F3F0682250B6CF8331B7EE68FD8"),
+            "the identifying suffix must stay on this machine"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_breached_password_comes_back_with_its_count() {
+        let (base, _paths) =
+            stub_range_service(200, "1E4C9B93F3F0682250B6CF8331B7EE68FD8:52372427\r\n");
+        let result = check_at(&base, "password").await;
+        assert!(result.online);
+        assert!(result.breached);
+        assert_eq!(result.count, 52372427);
+        assert!(result.score <= 1, "the offline estimate runs regardless");
+    }
+
+    #[tokio::test]
+    async fn a_password_absent_from_the_range_is_online_and_clean() {
+        let (base, _paths) = stub_range_service(200, "0018A45C4D1DEF81644B54AB7F969B88D65:3\r\n");
+        let result = check_at(&base, "password").await;
+        assert!(result.online, "the lookup did reach the service");
+        assert!(!result.breached);
+        assert_eq!(result.count, 0);
+    }
+
+    /// A refusal is not a clean bill of health. Reporting `online` here would
+    /// tell the user their password was checked against the breach corpus when
+    /// it never was.
+    #[tokio::test]
+    async fn a_refused_lookup_is_not_a_clean_bill_of_health() {
+        let (base, _paths) = stub_range_service(429, "rate limited");
+        let result = check_at(&base, "password").await;
+        assert!(!result.online);
+        assert!(!result.breached);
+        assert_eq!(result.count, 0);
+    }
+
+    /// The fail-open contract, and the reason it has to be bounded: the
+    /// password screen keeps Continue disabled until this call settles, so a
+    /// lookup that outlives its timeout strands setup with no way forward.
+    #[tokio::test]
+    async fn an_unreachable_service_fails_open_within_its_timeout() {
+        let started = Instant::now();
+        let result = check_at("https://10.255.255.1", "password").await;
+        assert!(!result.online, "an unreachable service is not a verdict");
+        assert!(!result.breached);
+        assert_eq!(result.count, 0);
+        assert!(result.score <= 1, "the offline estimate still stands alone");
+        assert!(
+            started.elapsed() < HIBP_TIMEOUT * 2,
+            "the check must not outlive its own timeout; took {:?}",
+            started.elapsed()
+        );
     }
 
     /// Hits the real HIBP API — run explicitly with `cargo test -- --ignored`.
