@@ -1,5 +1,7 @@
-/* Shares the dashboard and marketing site's visual language with system fonts
-   only — setup must render fully offline. */
+@font-face { font-family: "DM Sans"; src: url("/fonts/dm-sans-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "DM Sans"; src: url("/fonts/dm-sans-500.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "DM Sans"; src: url("/fonts/dm-sans-600.ttf") format("truetype"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Sora"; src: url("/fonts/sora.ttf") format("truetype"); font-weight: 100 800; font-display: swap; }
 *,
 *::before,
 *::after {
@@ -13,23 +15,23 @@
      Warm paper and near-black ink come directly from the product surfaces.
      Brand orange can carry control chrome and dark text; `--accent-press`
      remains the darker accessible orange for text on light backgrounds. */
-  --bg: #f7f4ef;
-  --bg-card: #fffdfa;
+  --bg: #ffffff;
+  --bg-card: #ffffff;
   --bg-sunken: #ffffff;
   --accent: #fd540a;
-  --accent-btn: #fa5208;
-  --accent-press: #a83200;
+  --accent-btn: #cc4109;
+  --accent-press: #a63508;
   --accent-soft: rgba(253, 84, 10, 0.1);
   --accent-strong: rgba(253, 84, 10, 0.17);
-  --on-accent: #161616;
-  --text-primary: #161616;
-  --text-secondary: #68635f;
-  --text-tertiary: #756f69;
+  --on-accent: #ffffff;
+  --text-primary: #202124;
+  --text-secondary: #61646c;
+  --text-tertiary: #74767d;
   --text: var(--text-primary);
   --text-dim: var(--text-secondary);
-  --border: rgba(22, 22, 22, 0.1);
-  --border-strong: rgba(22, 22, 22, 0.2);
-  --border-hover: rgba(22, 22, 22, 0.4);
+  --border: #e2e4e8;
+  --border-strong: #c9ccd2;
+  --border-hover: #9ca0a8;
   --danger: #b42318;
   --danger-soft: rgba(180, 35, 24, 0.08);
   --danger-strong: rgba(180, 35, 24, 0.16);
@@ -50,15 +52,16 @@
   --s-8: 40px;
 
   /* ── Radii ── product-card restraint, with pills reserved for badges. */
-  --r-sm: 6px;
-  --r-md: 9px;
+  --r-sm: 4px;
+  --r-md: 7px;
   --r-lg: 12px;
-  --r-xl: 16px;
+  --r-xl: 14px;
   --r-pill: 999px;
 
   /* ── Type ── serif for the one heading, sans for everything that is read. */
-  --font-serif: Georgia, "Times New Roman", serif;
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Sora", sans-serif;
+  --font-display: "Sora", sans-serif;
+  --font-sans: "DM Sans", sans-serif;
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
   --fs-display: 34px;
   --fs-title: 21px;
@@ -69,20 +72,80 @@
   --fs-2xs: 11px;
 
   /* ── Elevation ── almost flat, like the dashboard and site cards. */
-  --shadow-sm: 0 1px 2px rgba(22, 22, 22, 0.035);
-  --shadow-card: 0 1px 2px rgba(22, 22, 22, 0.035);
-  --shadow-lift: 0 2px 4px rgba(22, 22, 22, 0.045), 0 10px 24px rgba(22, 22, 22, 0.075);
-  --shadow-key: 0 2px 0 #c73e05;
+  --shadow-sm: 0 12px 32px #2021240b;
+  --shadow-card: 0 12px 32px #2021240b;
+  --shadow-lift: 0 12px 32px #2021240b;
+  --shadow-key: 0 12px 32px #2021240b;
 
   /* ── Focus ── one ring, stated once. A cream gap so it reads on a filled
      button too, then the darker orange against either surface. */
-  --focus-ring: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent-press);
-  --focus-ring-soft: 0 0 0 3px var(--accent-soft);
+  --focus-ring: 0 0 0 3px var(--accent-ink);
+  --focus-ring-soft: 0 0 0 3px var(--accent-ink);
 
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --brand-orange: #fd540a;
+  --action: #cc4109;
+  --action-hover: #a63508;
+  --accent-ink: #bd410e;
+  --line: #e2e4e8;
+  --border-soft: #e2e4e8;
+  --surface-muted: #f3f4f6;
+  --charcoal: #17181b;
+  --r-chip: 4px;
+  --r-input: 6px;
+  --r-button: 7px;
+  --r-card: 12px;
+  --r-panel: 14px;
+  --dur-feedback: 150ms;
+  --dur-state: 260ms;
+  --dur-layout: 420ms;
+  --dur-focal: 700ms;
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+  --ease: var(--ease-standard);
   /* Ridge, the pop-up mascot. The character reads ~200px wide; a short window
      (min height 560px) scales him down so he can't dominate a cramped screen. */
   --ridge-size: clamp(150px, 28.5vh, 200px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181b;
+    --bg-card: #202124;
+    --bg-sunken: #17181b;
+    --text-primary: #f7f7f8;
+    --text-secondary: #b7bac1;
+    --text-tertiary: #9498a1;
+    --border: #393c43;
+    --border-strong: #535761;
+    --border-hover: #737782;
+    --line: #393c43;
+    --border-soft: #393c43;
+    --surface-muted: #292b30;
+    --accent-soft: rgba(255, 154, 97, .15);
+    --accent-strong: rgba(255, 154, 97, .24);
+    --action: #e55a20;
+    --action-hover: #ff7840;
+    --accent-btn: var(--action);
+    --accent-press: var(--action-hover);
+    --accent-ink: #ff9a61;
+    --danger-soft: rgba(255, 122, 111, .16);
+    --ok-soft: rgba(75, 192, 135, .16);
+  }
+
+  body:has(.screen)::before {
+    border-right-color: rgba(255, 255, 255, .1);
+    background: radial-gradient(circle at 48% 66%, rgba(253, 84, 10, .2), transparent 39%), var(--charcoal);
+  }
+
+  .btn-ghost:hover:not(:disabled),
+  .row-tappable:hover {
+    background: var(--surface-muted);
+  }
+
+  .dry-run-badge {
+    border-color: var(--line);
+    box-shadow: none;
+  }
 }
 
 html,
@@ -268,7 +331,7 @@ h1 {
   width: 20px;
   height: 20px;
   /* Never squeezed by the sentence it sits beside, and no inline baseline gap
-     under it — an svg is replaced content and would otherwise sit on the text
+     under it - an svg is replaced content and would otherwise sit on the text
      baseline with a descender's worth of space below. */
   flex-shrink: 0;
   display: block;
@@ -306,7 +369,7 @@ h1 {
   box-shadow: var(--shadow-card);
 }
 
-/* The one card that is the point of its screen — a team owner's next move, an
+/* The one card that is the point of its screen - a team owner's next move, an
    available update, a password that exists nowhere else. An orange edge and
    a warm inner band, rather than a second border colour shouting alongside the
    first. */
@@ -337,23 +400,38 @@ button {
   font-size: var(--fs-body);
   font-weight: 600;
   border: 1px solid transparent;
-  border-radius: var(--r-md);
+  min-height: 44px;
+  border-radius: var(--r-button);
   cursor: pointer;
-  transition: background 0.18s, border-color 0.18s, color 0.18s,
-    box-shadow 0.18s, transform 0.12s var(--ease), opacity 0.18s;
+  transition: background var(--dur-feedback) var(--ease-standard), border-color var(--dur-feedback) var(--ease-standard), color var(--dur-feedback) var(--ease-standard), box-shadow var(--dur-feedback) var(--ease-standard), opacity var(--dur-feedback) var(--ease-standard);
 }
 
 button:focus-visible {
   outline: none;
-  box-shadow: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--accent-ink);
+  outline-offset: 4px;
+}
+
+/* The rail focuses a pane title programmatically after every tab switch
+   (details.ts sets tabindex="-1" and calls focus). A ring on focus-visible
+   keeps keyboard users oriented; the paired rule keeps a mouse click from
+   painting one on a programmatic ring the user never asked for. */
+.pane-title:focus-visible {
+  outline: 3px solid var(--accent-ink);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.pane-title:focus:not(:focus-visible) {
+  outline: none;
 }
 
 button:active:not(:disabled) {
-  transform: translateY(1px) scale(0.995);
+  transform: none;
 }
 
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.55;
   cursor: default;
   transform: none;
   box-shadow: none;
@@ -362,33 +440,48 @@ button:disabled {
 .btn-primary {
   display: block;
   width: 100%;
-  padding: 14px var(--s-4);
-  background: var(--accent-btn);
-  border-color: rgba(22, 22, 22, 0.22);
+  padding: 10px var(--s-4);
+  background: var(--action);
+  border-color: var(--action);
   color: var(--on-accent);
   letter-spacing: -0.005em;
-  box-shadow: var(--shadow-key);
+  box-shadow: none;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #ec4c08;
-  border-color: rgba(22, 22, 22, 0.36);
+  background: var(--action-hover);
+  border-color: var(--action-hover);
 }
 
 .btn-primary:active:not(:disabled) {
-  box-shadow: 0 1px 0 rgba(22, 22, 22, 0.14);
+  box-shadow: none;
+}
+
+/* A disabled primary is a real muted state, not a dimmed one: the shared
+   opacity wash turns the action fill to peach, which reads as pending rather
+   than unavailable. Both tokens flip in the dark block, so this one rule
+   covers both themes. Secondary buttons keep the dimmed treatment. */
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"] {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  border-color: transparent;
+  opacity: 1;
+  box-shadow: none;
+  cursor: not-allowed;
 }
 
 .btn-secondary {
-  padding: var(--s-2) var(--s-4);
-  background: var(--accent-soft);
-  color: var(--accent-press);
+  padding: 10px var(--s-4);
+  background: transparent;
+  border-color: var(--line);
+  color: var(--text-primary);
   font-size: var(--fs-sm);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--accent-strong);
-  border-color: var(--accent-btn);
+  background: var(--surface-muted);
+  border-color: var(--border-hover);
 }
 
 .btn-ghost {
@@ -400,26 +493,28 @@ button:disabled {
 }
 
 .btn-danger {
-  padding: var(--s-2) var(--s-4);
-  background: var(--danger-soft);
-  color: var(--danger);
+  padding: 10px var(--s-4);
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
   font-size: var(--fs-sm);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: var(--danger-strong);
+  background: #8f1d16;
   border-color: var(--danger);
 }
 
 /* The save gate's confirmation is a small danger pill everywhere else in the
    app and the whole screen here, so it takes the primary's metrics while
-   keeping the danger palette — an outline instead of a red fill, because the
+   keeping the danger palette - an outline instead of a red fill, because the
    act being confirmed is "I wrote it down", not "destroy this". */
 .btn-primary.btn-danger {
   padding: var(--s-4);
   font-size: var(--fs-body);
-  border-color: var(--danger);
-  box-shadow: var(--shadow-sm);
+  background: var(--danger);
+  color: #fff;
+  box-shadow: none;
 }
 
 /* A button stacked under the one above it, full width. Replaces the inline
@@ -455,18 +550,35 @@ input[type="text"] {
   width: 100%;
   padding: var(--s-4);
   background: var(--bg-card);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  border-radius: var(--r-input);
   font-family: var(--font-sans);
   font-size: var(--fs-body);
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
+  transition: border-color var(--dur-feedback) var(--ease-standard), box-shadow var(--dur-feedback) var(--ease-standard), background var(--dur-feedback) var(--ease-standard);
   user-select: text;
 }
 
 input::placeholder {
   color: var(--text-tertiary);
+}
+
+input[type="password"]:focus,
+input[type="text"]:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent-ink);
+  box-shadow: 0 0 0 3px var(--accent-ink);
+  outline: 0;
+  outline-offset: 4px;
+}
+
+a {
+  color: var(--text-primary);
+  text-decoration-color: var(--line);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 input:hover:not(:focus) {
@@ -851,8 +963,8 @@ li.error .check-icon {
 }
 
 /* The description's margin exists to separate it from the value line below.
-   On the cards that are prose all the way down — the team card, the "no value
-   to show" password card — there is nothing below it, and the margin read as
+   On the cards that are prose all the way down - the team card, the "no value
+   to show" password card - there is nothing below it, and the margin read as
    a card with a hole in the bottom of it. */
 .card > .url-desc:last-child {
   margin-bottom: 0;
@@ -877,7 +989,7 @@ li.error .check-icon {
 }
 
 /* Sunk into the card rather than sitting on it, with the same defined edge
-   every other control has — this is the value the whole card exists to hand
+   every other control has - this is the value the whole card exists to hand
    over, and it used to be the one box on screen with a hairline border. */
 .url-value {
   flex: 1;
@@ -902,7 +1014,7 @@ li.error .check-icon {
 }
 
 /* Picking a brain or a Cloudflare account is the same kind of act as picking a
-   door on the audience screen, so the list borrows that vocabulary outright —
+   door on the audience screen, so the list borrows that vocabulary outright -
    same surface, same edge, same chevron. */
 .account-list {
   list-style: none;
@@ -933,7 +1045,7 @@ li.error .check-icon {
   box-shadow: var(--shadow-lift);
 }
 
-/* Demo mode. A sticker, deliberately: ink outline, flat drop, brand orange —
+/* Demo mode. A sticker, deliberately: ink outline, flat drop, brand orange -
    it is the one label in the app that is allowed to look stuck on. Above
    Ridge's layer so the mascot never covers the "this is not real" flag. */
 .dry-run-badge {
@@ -981,7 +1093,7 @@ li.error .check-icon {
   margin-top: var(--s-2);
 }
 
-/* A ghost stacked above the primary — the reveal/open pair on the finished
+/* A ghost stacked above the primary - the reveal/open pair on the finished
    password change is the only one, and it had no gap at all. */
 .btn-stack + .btn-primary {
   margin-top: var(--s-3);
@@ -1071,12 +1183,12 @@ li.error .check-icon {
   color: var(--text-primary);
 }
 
-/* Selected reads as selected on its own — a warm fill and full-strength ink,
+/* Selected reads as selected on its own - a warm fill and full-strength ink,
    not a cream chip one shade off the cream page behind it. */
 .rail-btn.on {
-  background: var(--accent-soft);
-  border-color: transparent;
-  color: var(--accent-press);
+  background: var(--surface-muted);
+  border-color: var(--line);
+  color: var(--accent-ink);
   font-weight: 600;
 }
 
@@ -1128,7 +1240,7 @@ li.error .check-icon {
 
 
 /* #app centres a single card for the setup screens. This window is a scrolling
-   column of many cards, so that flex row has to be undone — otherwise every
+   column of many cards, so that flex row has to be undone - otherwise every
    control becomes a squeezed column and the last ones clip off the right edge. */
 body.settings-page {
   overflow-y: auto;
@@ -1187,8 +1299,8 @@ body.settings-page #app {
   align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.7rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
   font-size: 0.85rem;
   cursor: pointer;
   color: var(--text-primary);
@@ -1273,11 +1385,10 @@ body.settings-page #app {
   max-width: none;
   margin: 0 auto;
   padding: 0.85rem 56px 0.85rem 276px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
   /* Opaque: cards scroll underneath this bar. */
-  background: rgba(247, 244, 239, 0.96);
-  box-shadow: 0 -8px 24px rgba(22, 22, 22, 0.04);
-  backdrop-filter: blur(12px);
+  background: var(--bg);
+  box-shadow: none;
 }
 
 @media (max-width: 720px) {
@@ -1442,7 +1553,7 @@ body.settings-page #app {
    Absent by default: `[data-ridge-phase="hidden"]` is `display: none`, so he
    costs nothing and animates nothing until a screen has something for him to
    say (ridge.ts). When he does, he pops in beside the control he's commenting
-   on — never a fixed dock, never a spotlight ring; standing next to the
+   on - never a fixed dock, never a spotlight ring; standing next to the
    control *is* the pointing cue. His own expression-swap and ambient-bob
    animations live inside the SVG itself (ridge-svg.ts); this section only
    places him, gives him a bubble, and animates the pop in/out. */
@@ -1462,7 +1573,7 @@ body.settings-page #app {
 
 /* Only once he's settled (not mid pop-in, where the position is set fresh
    with nothing to animate from) does moving to a new anchor slide rather than
-   jump — the swap-in-place case, when a new line arrives while he's already
+   jump - the swap-in-place case, when a new line arrives while he's already
    on screen. */
 [data-ridge-phase="revealing"],
 [data-ridge-phase="lingering"] {
@@ -1494,11 +1605,7 @@ body.settings-page #app {
 @keyframes ridge-pop-in {
   0% {
     opacity: 0;
-    transform: translateY(20px) scale(0.7);
-  }
-  60% {
-    opacity: 1;
-    transform: translateY(-4px) scale(1.04);
+    transform: translateY(10px) scale(.96);
   }
   100% {
     opacity: 1;
@@ -1518,15 +1625,15 @@ body.settings-page #app {
 }
 
 [data-ridge-phase="popping"] .ridge-figure {
-  animation: ridge-pop-in 320ms var(--ease);
+  animation: ridge-pop-in var(--dur-state) var(--ease-standard);
 }
 
 [data-ridge-phase="popping-out"] {
-  animation: ridge-pop-out 250ms var(--ease) forwards;
+  animation: ridge-pop-out var(--dur-feedback) var(--ease-exit) forwards;
 }
 
-/* Ridge's bubble is a card like any other — same cream, same defined edge,
-   same radius step — so he reads as living in the app rather than pasted over
+/* Ridge's bubble is a card like any other - same cream, same defined edge,
+   same radius step - so he reads as living in the app rather than pasted over
    it. It hangs off his root by CSS, not by JS math: on the side placements it
    sits above his head (there is room above/below him there); directly below
    an anchor there is no room above without covering the anchor, so it sits
@@ -1538,10 +1645,10 @@ body.settings-page #app {
   pointer-events: auto;
   max-width: 260px;
   background: var(--bg-card);
-  border: 0.5px solid var(--border-strong);
-  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
   padding: var(--s-3) var(--s-7) var(--s-3) var(--s-4);
-  box-shadow: var(--shadow-lift);
+  box-shadow: var(--shadow-card);
   font-size: var(--fs-sm);
   line-height: 1.45;
   color: var(--text-primary);
@@ -1589,7 +1696,7 @@ body.settings-page #app {
   color: var(--text-primary);
 }
 
-/* A 12px square, half its border shown, rotated into a triangle — pointed at
+/* A 12px square, half its border shown, rotated into a triangle - pointed at
    whichever edge of the bubble faces him, since that flips with placement. */
 .ridge-bubble__tail {
   position: absolute;
@@ -1637,7 +1744,7 @@ body.settings-page #app {
 }
 
 /* The audience screen's two doors (main.ts audienceScreen) as co-equal choice
-   cards, rather than a primary button over a smaller ghost link — neither
+   cards, rather than a primary button over a smaller ghost link - neither
    "just me" nor "a team" is the default the other one is a fallback from.
    Same surface, edge and shadow as .card, so a door reads as a thing you can
    pick up rather than a field you can type in. */
@@ -1660,7 +1767,7 @@ body.settings-page #app {
   cursor: pointer;
 }
 
-/* One chevron, drawn in CSS, shared by both kinds of pickable row — it is what
+/* One chevron, drawn in CSS, shared by both kinds of pickable row - it is what
    says "this goes somewhere" without a word of copy. */
 .choice-card::after,
 .account-list button::after {
@@ -1711,8 +1818,8 @@ body.settings-page #app {
 /* ── Guard and help screens ──────────────────────────────────────────────────
    The three screens where the app has stopped and owes an explanation: a brain
    already exists, a name is taken, a team token no longer works. Nothing is
-   broken and nothing was touched, so they are composed as a calm statement —
-   mark, one sentence, one way on — rather than as an error stack. The panel is
+   broken and nothing was touched, so they are composed as a calm statement -
+   mark, one sentence, one way on - rather than as an error stack. The panel is
    what separates them from a screen that is merely asking a question. */
 .guard {
   background: var(--bg-card);
@@ -1757,8 +1864,8 @@ body.settings-page #app {
    that canvas stops being 30% of decoration and becomes exactly the rail; the
    content column moves off the right edge and over to sit beside it, and the
    reserved space Ridge used to have on the left is reserved on the right
-   instead. He was always meant to stand there first — `decideRidgePlacement`
-   tries "right" before "left" for reading order — and only ended up on the
+   instead. He was always meant to stand there first - `decideRidgePlacement`
+   tries "right" before "left" for reading order - and only ended up on the
    left because the column was pinned to the window's right edge.
 
    `--ridge-gutter` is that reservation, and it is not a round number: Ridge's
@@ -1778,7 +1885,7 @@ body.settings-page #app {
      `--task-inset` is the strip of that width Ridge can stand in: the gutter
      less the margin the band stops at. Everything here is restated per
      breakpoint rather than derived, because a custom property is substituted
-     where it is declared — a `calc()` written on `:root` would keep `:root`'s
+     where it is declared - a `calc()` written on `:root` would keep `:root`'s
      margin no matter what the breakpoint below says. */
   --band-margin: 48px;
   --task-inset: 200px;
@@ -1793,7 +1900,7 @@ body.settings-page #app {
 
 /* The screen's entrance animation moves to its children while the rail is up.
    `fade-in` uses a transform, and a transformed element is the containing
-   block for its `position: fixed` descendants — so for the 450ms it runs, a
+   block for its `position: fixed` descendants - so for the 450ms it runs, a
    rail asking for `left: 0` would be drawn at the content column's left edge
    and then snap back. Animating each child instead is visually identical (they
    all run on the same clock) and leaves the rail, which is shell rather than
@@ -1844,14 +1951,16 @@ body.has-steprail .screen > *:not(.steprail) {
 
 .steprail-mark {
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
   border: 1px solid currentColor;
-  font-size: var(--fs-2xs);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1874,8 +1983,8 @@ body.has-steprail .screen > *:not(.steprail) {
 
   /* The gutter stays as padding, so `.screen` stays exactly what it was: the
      task column, ending `--ridge-gutter` short of the window. That is what
-     Ridge measures against — the primary button when there is one and the
-     column itself when there is not — and the band spans the canvas by being
+     Ridge measures against - the primary button when there is one and the
+     column itself when there is not - and the band spans the canvas by being
      wider than this column rather than by widening it.
 
      The block padding is the one thing that gives way on a short window:
@@ -1922,7 +2031,7 @@ body.has-steprail .screen > *:not(.steprail) {
 
   /* Completion is the check, always: the mark says what happened and does not
      change with whether the step can be re-entered. Availability is the label
-     instead — a step that is still a door reads at full strength, one that is
+     instead - a step that is still a door reads at full strength, one that is
      behind the point of no return sits back with it. Without that split the
      two are identical until the pointer is already on them, and a rail where
      some completed steps are doors and others are not (the account picker
@@ -2006,7 +2115,7 @@ body.has-steprail .screen > *:not(.steprail) {
    What the rail gives up, the composition takes: at 760px there is not room
    for a 30% ink canvas, a reading column and Ridge's 248px all at once, so
    the canvas goes and the surface runs the full width with the same shape it
-   has at 940 — band across the top, task on the left, Ridge beside it. The
+   has at 940 - band across the top, task on the left, Ridge beside it. The
    logo comes off the ink and back onto paper with it. */
 @media (max-width: 899px) {
   body.has-steprail:has(.screen) {
@@ -2089,7 +2198,7 @@ body.has-steprail .screen > *:not(.steprail) {
 
 /* The gutter buys Ridge room on the right; his bubble is narrowed to fit
    inside it, rather than being nudged back over the column it is pointing at.
-   Only while the rail is up — every other flow keeps the wider bubble. */
+   Only while the rail is up - every other flow keeps the wider bubble. */
 body.has-steprail .ridge-bubble {
   max-width: 220px;
 }
@@ -2106,7 +2215,7 @@ body.has-steprail .ridge-bubble {
    and a rule under all of it before the task starts.
 
    Three things carry the responsive behaviour, and all three are the same
-   idea — the band is the first thing to give way when the window shrinks,
+   idea - the band is the first thing to give way when the window shrinks,
    because it is the only thing on screen nobody has to act on:
 
    1. `--value-quote` scales with the *smaller* of the window's width and its
@@ -2135,7 +2244,7 @@ body.has-steprail:has(.screen) {
 }
 
 /* Absent by default rather than shown by default: the band belongs to the
-   rail's layout, and outside it — a launch mode, the details screen — there
+   rail's layout, and outside it - a launch mode, the details screen - there
    is no composition for it to open. `display: none` takes it out of the
    layout and the accessibility tree together. */
 .value-panel,
@@ -2147,21 +2256,14 @@ body.has-steprail:has(.screen) .value-panel {
   display: block;
   width: var(--band-w);
   margin: 0 0 var(--value-rhythm);
-  padding-bottom: var(--value-rhythm);
-  border-bottom: 1px solid var(--border);
+  padding: var(--s-5);
+  background: var(--surface-muted);
+  border: 0;
+  border-radius: var(--r-card);
 }
 
 body.has-steprail:has(.screen) .value-panel.is-long {
   --value-quote: clamp(20px, min(3.15vw, 4.4vh), 40px);
-}
-
-.value-kicker {
-  margin: 0 0 clamp(6px, 1.4vh, 16px) var(--value-indent);
-  color: var(--accent-press);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
 }
 
 .value-quote-wrap {
@@ -2258,13 +2360,13 @@ body.has-steprail:has(.screen) .value-stats {
    would like. The band's own type and rhythm already scale with `vh`; this is
    the rest of the composition doing the same thing, in two steps.
 
-   The order things give way in is the order they matter in. Air goes first —
+   The order things give way in is the order they matter in. Air goes first -
    the gaps between blocks, the padding inside the controls, the display size
    of the heading. Then, below 620px, the two pieces of the band that are
    furniture rather than testimony: the kicker line (the oversized quotation
    mark already says what it says) and the three facts. The quote, the author,
    the fields, the notice, the primary button and the way back are never
-   touched — a window at its minimum still shows a real person's words and
+   touched - a window at its minimum still shows a real person's words and
    still shows every control that gets the user out of the screen. */
 @media (max-height: 720px) {
   body.has-steprail:has(.screen) {
@@ -2320,7 +2422,7 @@ body.has-steprail:has(.screen) .value-stats {
   /* The one place the band gives up the full width, and it is Ridge's doing.
      He stands beside the task and his bubble opens above his head; on a
      window this short the task is high enough that the top of that bubble
-     reaches the band's last line. Everywhere else it clears it — at 940x700
+     reaches the band's last line. Everywhere else it clears it - at 940x700
      the bubble passes under the attribution with room to spare, and only the
      hairline runs behind it.
 

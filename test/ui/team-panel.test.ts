@@ -82,6 +82,7 @@ const TEAM_ELEMENT_IDS = [
   "team-token-reveal",
   "team-token-for",
   "team-token-value",
+  "team-token-status",
   "team-copy-btn",
   "team-add-name",
   "team-add-email",
@@ -132,6 +133,14 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
     if (SHIPS_HIDDEN.has(id)) el.style.display = "none";
     elements.set(id, el);
   }
+  // makeEl()'s querySelector always returns null, fine for every other
+  // element here, but focusTeamTokenHeading() reads wrap.querySelector('h2')
+  // to find the heading it moves focus to: give that one element a fake
+  // heading with a spy-able focus() so the rotation-focus test can observe it.
+  const tokenHeading = makeEl();
+  const tokenHeadingFocusCalls: number[] = [];
+  tokenHeading.focus = () => { tokenHeadingFocusCalls.push(Date.now()); };
+  elements.get("team-token-reveal").querySelector = (sel: string) => (sel === "h2" ? tokenHeading : null);
   // Elements toast.js creates on demand (id "app-toast") are NOT pre-registered,
   // so getElementById must return null for them the first time — a fallback
   // dummy element here would silently swallow the toast's real DOM write and
@@ -181,7 +190,7 @@ function setup(fetchImpl: (url: string, init?: any) => Promise<any>) {
   // set as sandbox properties.
   vm.runInContext(`WORKER_URL = "http://localhost"; AUTH_TOKEN = "tok"; var TEAM_MODE = true`, ctx);
   ctx.initI18n("en");
-  return { ctx, els: elements, appended, copied };
+  return { ctx, els: elements, appended, copied, tokenHeadingFocusCalls };
 }
 
 const ADMIN_OK = {
@@ -244,6 +253,30 @@ describe("team panel", () => {
     // Only Bob is actionable — no Rotate/Suspend on your own row.
     expect(html.match(/rotateTeamToken\('u/g)?.length).toBe(1);
     expect(html).not.toContain("rotateTeamToken('u1')");
+  });
+
+  // Regression: the roster used to be plain divs (.team-table/.team-head/
+  // .team-row), zero table semantics, so a screen reader got a flat wall of
+  // text with no way to ask "whose row is this" or "which column am I in".
+  it("renders the roster as a real table with a caption, four column headers, and a labelled cell per row", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([{ match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) }]),
+    );
+    await ctx.loadTeam();
+    const html = els.get("team-list").innerHTML as string;
+    expect(html).toMatch(/<table class="team-table">/);
+    expect(html).toMatch(/<caption class="sr-only">[^<]+<\/caption>/);
+    const headings = [...html.matchAll(/<th scope="col">([^<]*)<\/th>/g)].map((m) => m[1]);
+    expect(headings).toEqual(["Member", "Role", "Captures", "Actions"]);
+    // One <tr> per member, and every <td> in it carries a data-label.
+    // Main.css's phone-width stacking (max-width: 700px) reads that
+    // attribute to show a heading beside a cell once the table stacks.
+    const rows = [...html.matchAll(/<tr class="team-row[^"]*">([\s\S]*?)<\/tr>/g)];
+    expect(rows).toHaveLength(2); // Ada and Bob
+    for (const [, rowHtml] of rows) {
+      const labels = [...rowHtml.matchAll(/data-label="([^"]*)"/g)].map((m) => m[1]);
+      expect(labels).toEqual(["Member", "Role", "Captures", "Actions"]);
+    }
   });
 
   describe("last used", () => {
@@ -461,6 +494,33 @@ describe("team panel", () => {
     expect(bodies).toEqual([]); // no POST until the sheet is confirmed
     await ctx.runConfirmAction();
     expect(bodies).toEqual([{ id: "u2", suspended: true }]);
+  });
+
+  // Tone per caller: suspend and remove are the sheet's default (danger,
+  // "btn-delete") because both cut a member off from something real (access,
+  // or their own private memories), with no undo button beside them.
+  // Rotating a token is neither: the old token still works until the new one
+  // is actually used, so it renders primary, the same treatment the bulk
+  // share/private move gets (bulk-select.test.ts).
+  it("renders the accept button as danger for suspend and remove", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([{ match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) }]),
+    );
+    await ctx.loadTeam();
+    await ctx.setTeamSuspended("u2", true);
+    expect(els.get("confirm-accept-btn").className).toBe("btn-delete");
+
+    await ctx.removeTeamMember("u2");
+    expect(els.get("confirm-accept-btn").className).toBe("btn-delete");
+  });
+
+  it("renders the accept button as primary for a token rotation", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([{ match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) }]),
+    );
+    await ctx.loadTeam();
+    await ctx.rotateTeamToken("u2");
+    expect(els.get("confirm-accept-btn").className).toBe("btn-primary confirm-accept-primary");
   });
 
   it("restoring posts immediately, opens no sheet, and reports success via toast", async () => {
@@ -1038,6 +1098,49 @@ describe("team panel", () => {
     ctx.closeTeamTokenReveal();
     expect(els.get("team-token-reveal").style.display).toBe("none");
     expect(els.get("team-token-value").textContent).toBe("");
+  });
+
+  /**
+   * Regression: rotateTeamToken used to reveal the token and focus its
+   * heading BEFORE calling done(), and done() -> dismissConfirmSheet()
+   * synchronously returns focus to whatever opened the sheet (the rotate
+   * icon button), so that return-focus ran second, in the same tick, and
+   * stole focus straight back off the heading it had just landed on.
+   * showTeamToken is now deferred a microtask past done() specifically so
+   * its focus call is the one that runs last.
+   */
+  it("moves focus to the token heading after the rotation confirm resolves, not before done()'s own focus-return", async () => {
+    const { ctx, els, tokenHeadingFocusCalls } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/token"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ ok: true, id: "u2", token: "rotated-secret" }) }),
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.rotateTeamToken("u2");
+    await ctx.runConfirmAction();
+    expect(tokenHeadingFocusCalls.length, "the heading should have received focus exactly once").toBe(1);
+    expect(els.get("team-token-reveal").style.display).toBe("");
+    expect(els.get("team-token-value").textContent).toBe("rotated-secret");
+  });
+
+  it("announces the token is ready on the status line, not on the static title", async () => {
+    const { ctx, els } = setup(
+      jsonFetch([
+        {
+          match: (u) => u.endsWith("/team/members/token"),
+          reply: () => ({ ok: true, status: 200, json: async () => ({ ok: true, id: "u2", token: "rotated-secret" }) }),
+        },
+        { match: (u) => u.endsWith("/team/members"), reply: () => ({ ok: true, status: 200, json: async () => ADMIN_OK }) },
+      ]),
+    );
+    await ctx.loadTeam();
+    await ctx.rotateTeamToken("u2");
+    await ctx.runConfirmAction();
+    expect(els.get("team-token-status").textContent).toBe("Your one-time token is ready. Copy it now.");
   });
 
   it("translates the panel in Italian", async () => {

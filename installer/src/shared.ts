@@ -1,5 +1,5 @@
 // Helpers shared by the setup flow (main.ts) and the Connection details
-// window (details.ts). The webview only ever handles URLs and booleans —
+// window (details.ts). The webview only ever handles URLs and booleans -
 // tokens stay in the Rust core.
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
@@ -43,7 +43,7 @@ export type { IconName };
  * One inline SVG, sized by class and coloured by whatever it sits in.
  *
  * Always `aria-hidden`: every icon in this app sits beside the sentence it
- * illustrates, so announcing it would read the same idea twice — and the two
+ * illustrates, so announcing it would read the same idea twice - and the two
  * places where the mark carries state on its own (the checklist rows) already
  * publish that state as a live-region sentence of their own.
  */
@@ -91,12 +91,12 @@ export function urlCard(label: string, desc: string, value: string): HTMLElement
   ]);
 }
 
-/// A password on screen, with a Copy button and no description — the label
+/// A password on screen, with a Copy button and no description - the label
 /// carries the whole meaning, and it changes with the state (see #235 §4.1,
 /// where the same value is "not in use").
 ///
 /// Deliberately separate from `urlCard`: once a password change lands, nothing
-/// can read that password back — not this app, not Cloudflare, not Wrangler —
+/// can read that password back - not this app, not Cloudflare, not Wrangler -
 /// so every screen that reports what happened has to carry it. This is the card
 /// that does that, and there is no Email button anywhere near it.
 export function secretCard(label: string, value: string): HTMLElement {
@@ -105,7 +105,7 @@ export function secretCard(label: string, value: string): HTMLElement {
   // The feature edge is not decoration here: on every screen this card appears
   // on, it is the only thing that cannot be recovered if the window is closed,
   // and it was previously indistinguishable from the two address cards beside
-  // it — which are both recoverable and not secret.
+  // it - which are both recoverable and not secret.
   return h("div", { class: "card url-card card--feature" }, [
     h("div", { class: "url-label" }, [label]),
     h("div", { class: "url-line" }, [h("div", { class: "url-value" }, [value]), copyBtn]),
@@ -120,7 +120,7 @@ export function detailCards(details: ConnectionDetails): HTMLElement[] {
   ];
 }
 
-/// Shown when setup chose team mode — on the setup's last screen and in the
+/// Shown when setup chose team mode - on the setup's last screen and in the
 /// Connection pane. Pure copy: what this role can do that the others cannot,
 /// and where to do it. Administration itself lives in the dashboard's Team
 /// panel, so there is nothing to invoke here.
@@ -131,8 +131,8 @@ export function detailCards(details: ConnectionDetails): HTMLElement[] {
 /// next time they connect, not the one written on install day.
 export function teamCard(role: ConnectionRole): HTMLElement {
   const keys = teamCardKeys(role);
-  // `connection-role.ts` imports nothing — that is what makes it testable
-  // outside a webview — so it cannot name `t`'s key type and returns plain
+  // `connection-role.ts` imports nothing - that is what makes it testable
+  // outside a webview - so it cannot name `t`'s key type and returns plain
   // strings. Both keys are `details.*` by construction, and
   // test/unit/connection-role.test.ts asserts that prefix on all three roles;
   // the catalogs themselves are checked by test/unit/installer-i18n-parity.

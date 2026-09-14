@@ -8,8 +8,10 @@ import { OWNER_WRITE_CONTEXT, type WriteContext } from "../lib/scope";
 /**
  * Default page size: array positions examined per call, inserts and skips alike.
  * Sized so a worst-case page (one existence lookup + one insert batch, then the
- * same again for edges) stays well inside the D1 free plan's ~50 queries per
- * invocation, with room for the schema-init probe on a cold isolate.
+ * same again for edges) stays well inside this codebase's self-imposed D1
+ * budget of ~50 calls per invocation (the platform's real ceiling is 1,000;
+ * this stays tight for cost and 10 ms-CPU reasons), with room for the
+ * schema-init probe on a cold isolate.
  */
 export const IMPORT_DEFAULT_LIMIT = 40;
 export const IMPORT_MAX_LIMIT = 1000;
@@ -408,8 +410,9 @@ async function flushEdgeBatch(
  * and a call examines exactly one page: entries[offset .. offset+limit), then — only
  * once the entries array is exhausted — edges[edgeOffset .. edgeOffset+limit).
  *
- * Positional paging is what keeps the cost flat on the D1 free plan (~50 queries per
- * invocation). Each page resolves only its own ids: one chunked existence lookup plus
+ * Positional paging is what keeps the cost flat against this codebase's
+ * self-imposed D1 budget (~50 calls per invocation; the platform's real
+ * ceiling is 1,000). Each page resolves only its own ids: one chunked existence lookup plus
  * one insert batch, so a default page costs 2-3 round trips whether the file holds
  * 40 entries or 50,000, and page 500 costs the same as page 1. The alternative —
  * scanning from the top and skipping — re-resolves every already-imported id on

@@ -387,9 +387,11 @@ describe("follows edges", () => {
    *   - ATOMICITY. Retiring the generic edge and writing the typed one are the
    *     two halves of a replacement. Issued separately, a failure between them
    *     leaves the pair with NO edge at all — strictly worse than either state.
-   *   - BUDGET. A Worker request may make 50 subrequests. Capture already spends
-   *     most of that on chunk embedding, and inference at one call per edge put
-   *     a large multi-chunk capture over the line.
+   *   - BUDGET. This codebase holds a Worker request to a self-imposed ~50-call
+   *     D1/AI budget (the platform's real ceiling is 1,000 D1/KV/Vectorize
+   *     calls per invocation). Capture already spends most of that self-imposed
+   *     budget on chunk embedding, and inference at one call per edge put a
+   *     large multi-chunk capture over that line.
    *
    * The sqlite facade counts a batch as one entry in `issued`, matching what the
    * platform actually charges.

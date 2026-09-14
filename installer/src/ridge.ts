@@ -1,4 +1,4 @@
-// Ridge, the pop-up helper mascot. Absent by default — mounted once outside
+// Ridge, the pop-up helper mascot. Absent by default - mounted once outside
 // `#app` (so `show()`'s `app.replaceChildren(...)` in main.ts never touches
 // it), but invisible and out of layout until a screen has something for him
 // to say. `ridgeSay(...)` pops him in beside whatever he's commenting on,
@@ -23,19 +23,19 @@ export * from "./ridge-logic";
 export type RidgeState = "idle" | "talking" | "thinking" | "celebrating" | "concerned" | "alarmed";
 
 export interface RidgeLine {
-  /** Stable and never reused for a different sentence — the `ridge.seen.v1` key. */
+  /** Stable and never reused for a different sentence - the `ridge.seen.v1` key. */
   key: string;
   text: string;
   /** Defaults to "talking": a line is, by construction, Ridge saying something. */
   state?: RidgeState;
-  /** Evaluated at render time, never cached — the element it points to may not
+  /** Evaluated at render time, never cached - the element it points to may not
    *  exist yet when `ridgeSay` is called (e.g. before `show()` runs). Omitted =
    *  the screen's primary button. */
   anchor?: () => HTMLElement | null;
   /** "once" = first time ever, tracked in localStorage. Omitted or "always" =
    *  every time this call site runs. Only consulted for `kind: "tour"`. */
   persist?: "once" | "always";
-  /** Auto-dismiss this many ms after the line first appears — a hard cap,
+  /** Auto-dismiss this many ms after the line first appears - a hard cap,
    *  measured from render, not from reveal completion. Omitted = the normal
    *  kind-based linger below. */
   dismissMs?: number;
@@ -44,7 +44,7 @@ export interface RidgeLine {
    *  triggered by something the user just did (a password going weak, a
    *  breach hit), never gated by the seen-set or focus, lingers ~5s. */
   kind?: RidgeLineKind;
-  /** A standout moment (first hello, "you're all set") — a slightly larger
+  /** A standout moment (first hello, "you're all set") - a slightly larger
    *  figure, nothing else. */
   hero?: boolean;
 }
@@ -82,7 +82,7 @@ function saveSeen(seen: string[]): void {
   try {
     localStorage.setItem(SEEN_KEY, serializeSeenSet(seen));
   } catch {
-    /* private mode / unavailable — the line just gets said again next launch */
+    /* private mode / unavailable - the line just gets said again next launch */
   }
 }
 
@@ -115,7 +115,7 @@ function resolveAnchorEl(anchorFn?: () => HTMLElement | null): HTMLElement | nul
 }
 
 /** Positions the (already-visible, already-sized) root against the anchor,
- *  then nudges the bubble back on-screen if it would run off an edge —
+ *  then nudges the bubble back on-screen if it would run off an edge -
  *  the bubble can be up to 260px wide against a 200px figure, so it is
  *  measured after the fact rather than assumed to fit. */
 function position(anchorFn?: () => HTMLElement | null): void {
@@ -199,7 +199,7 @@ function runTypedReveal(text: string, onDone: () => void): void {
 }
 
 /** Ends the current appearance. `event` distinguishes a natural linger
- *  timeout from an explicit dismissal only for the pure phase reduction above —
+ *  timeout from an explicit dismissal only for the pure phase reduction above -
  *  both end up in the same place: fade out, then fully hidden. */
 function beginPopOut(event: "dismiss" | "lingerDone"): void {
   if (phase === "hidden" || phase === "popping-out") return;
@@ -314,7 +314,7 @@ function flushPending(): void {
   present(line);
 }
 
-/** Mounted once outside `#app`. Idempotent — safe to call from `boot()` and
+/** Mounted once outside `#app`. Idempotent - safe to call from `boot()` and
  *  from `ridgeSay` itself, so no call site has to remember mount order. */
 export function mount(): void {
   if (mounted) return;
@@ -346,7 +346,7 @@ export function mount(): void {
     if (e.key === "Escape") ridgeDismiss();
   });
   // `focusout` fires before the next element takes focus, so the check runs on
-  // the next tick — otherwise moving focus from one field straight to another
+  // the next tick - otherwise moving focus from one field straight to another
   // would read as "nothing is focused" for one event and fire early.
   document.addEventListener("focusout", () => {
     window.setTimeout(flushPending, 0);
@@ -384,7 +384,7 @@ export function ridgeDismiss(): void {
   beginPopOut("dismiss");
 }
 
-/** A screen change never has a line of its own to say yet — the incoming
+/** A screen change never has a line of its own to say yet - the incoming
  *  screen's own `ridgeSay` call (if any) runs synchronously right after this,
  *  in the same tick, so this is a hard reset rather than a graceful pop-out:
  *  a screen with no line of its own (the two provisioning guards) must not be

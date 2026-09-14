@@ -53,7 +53,7 @@ export const en: Messages = {
     loadFailed: "We couldn't load Advanced Settings. Close this window and try again.",
     recency: {
       label: "How much recent memories outrank older ones",
-      desc: "Older memories gradually lose ground to newer ones. This sets how steeply — and how much protection settled, important memories get.",
+      desc: "Older memories gradually lose ground to newer ones. This sets how steeply older memories lose ground, and how much protection settled, important memories get.",
       levels: {
         timeless: {
           name: "Timeless",
@@ -142,15 +142,15 @@ export const en: Messages = {
     },
     model: {
       label: "Which AI model to use",
-      desc: "Used for sorting, summarizing, and spotting contradictions in your memories — not for the search itself, and not for the insights Second Brain draws between memories, which have their own model below. Every model here runs on your own Cloudflare account.",
+      desc: "Used for sorting, summarizing, and spotting contradictions in your memories. It is not used for search itself or for the insights Second Brain draws between memories, which have their own model below. Every model here runs on your own Cloudflare account.",
       sizeNote: "Larger models write better summaries and cost more neurons. Smaller ones are faster and cheaper.",
       neuronsNote: "Neurons are Cloudflare's usage unit for AI. Your plan includes a daily allowance.",
     },
     insightModel: {
       label: "Which AI model draws insights",
-      desc: "Used only when Second Brain compares two memories and writes an insight about how they connect. Everything else — sorting, summarizing, spotting contradictions — uses the model above instead.",
+      desc: "Used only when Second Brain compares two memories and writes an insight about how they connect. The model above handles sorting, summarizing, and spotting contradictions.",
       sizeNote: "Larger models draw sharper insights and cost more neurons. Smaller ones are faster and cheaper.",
-      defaultNote: "Comparing two memories is a harder judgment than summarizing one, so this defaults to a larger model than the one above — and since the comparison itself is short, it costs about the same.",
+      defaultNote: "Comparing two memories is a harder judgment than summarizing one, so this defaults to a larger model than the one above. Since the comparison itself is short, it costs about the same.",
     },
     migration: {
       lede: "How your Second Brain reads your memories and matches them to what you ask for.",
@@ -167,10 +167,11 @@ export const en: Messages = {
       entriesNone: "No memories saved yet, so there is nothing to read again.",
       pickLabel: "How to read your memories",
       inUse: "{name} (in use now)",
+      unknownValue: "Not yet known",
       storageWarning:
         "This is more than a free Cloudflare account can hold for a brain your " +
         "size. While the rebuild runs, both the old and new search data are kept " +
-        "so you can still change your mind — and that is when it would run out. " +
+        "so you can still change your mind. That is when it would run out. " +
         "Saving new memories would start failing. A coarser option, or a paid " +
         "Cloudflare plan, avoids it.",
       pickNote:
@@ -208,7 +209,7 @@ export const en: Messages = {
             "Standard; uses the same storage as Finest.",
         },
       },
-      sameAsCurrent: "That's the one in use now — nothing to do.",
+      sameAsCurrent: "That's the one in use now. Nothing to do.",
       dirtyNote: "Save or cancel your other changes first.",
       startButton: "Rebuild with this",
       confirmTitle: "Before you start",
@@ -216,12 +217,12 @@ export const en: Messages = {
       // grey block before a one-way operation does not get read.
       confirmLead: "Search will be incomplete until this finishes.",
       confirmBody:
-        "Your memories are safe — only what your Second Brain uses to search gets rebuilt.",
+        "Your memories are safe: only what your Second Brain uses to search gets rebuilt.",
       point1: "Memories not read again yet won't come back in results.",
       point2: "It uses your daily AI allowance, and pauses for the day if that runs out.",
       // How long, in the only unit the app can honestly promise: batches are
       // capped by pieces, and the rounds run one after another.
-      point3: "{chunks} pieces to read again — about {rounds} rounds, one after another.",
+      point3: "{chunks} pieces to read again: about {rounds} rounds, one after another.",
       point4: "Nothing is deleted until you choose to free the old search data at the end.",
       targetLine: "Switching to: {name}",
       // Secondary, and only here: the id earns its place on the screen that
@@ -232,11 +233,11 @@ export const en: Messages = {
       startingTitle: "Getting ready",
       startingBody:
         "Setting up the new way of reading your memories, then pointing your Second Brain " +
-        "at it. This takes a minute or two — leave this window open.",
+        "at it. This takes a minute or two. Leave this window open.",
       runningTitle: "Reading your memories again",
       runningBody:
         "Search is incomplete until this finishes. Leave this window open, or pause and " +
-        "come back — nothing already read again is lost either way. The total can go up " +
+        "come back. Nothing already read again is lost either way. The total can go up " +
         "if you save something new while this runs.",
       pauseButton: "Pause for now",
       pausing: "Pausing after this round…",
@@ -262,7 +263,7 @@ export const en: Messages = {
       stalledFailingTitle: "One memory is blocking the rebuild",
       stalledFailingBody:
         "The same memory keeps failing, so the last round got nothing done. Waiting won't " +
-        "change that — the next try would run the identical round. Try again in case it " +
+        "change that. The next try would run the identical round. Try again in case it " +
         "was a blip, or start over to forget where it got to and read everything from the " +
         "beginning.",
       resumeButton: "Carry on",
@@ -276,12 +277,12 @@ export const en: Messages = {
         "memory.",
       interruptedTitle: "A rebuild was left unfinished",
       interruptedBody:
-        "A rebuild stopped partway — {done} of {total} done. Search stays incomplete until " +
+        "A rebuild stopped partway: {done} of {total} done. Search stays incomplete until " +
         "it finishes, and carrying on costs nothing for what's already done.",
       failedTitle: "The rebuild stopped",
       failedBody:
         "Your memories are untouched and everything read again so far is saved. Carrying " +
-        "on picks up where it stopped — it won't start over.",
+        "on picks up where it stopped. It won't start over.",
       // Its own screen. Stacked under the failed copy this said the same thing
       // twice, in two voices, the second in red arguing with the first.
       stuckTitle: "The rebuild stopped making progress",
@@ -295,10 +296,10 @@ export const en: Messages = {
       freeLabel: "Free up the old search data",
       freeDesc:
         "The search data from before the rebuild is still taking up space. Your memories " +
-        "aren't touched — this only removes the leftover search data your Second Brain no " +
+        "aren't touched. This only removes the leftover search data your Second Brain no " +
         "longer uses. It is the one step here that can't be undone.",
       freeButton: "Free up the old data",
-      freeConfirm: "Yes, free it up — I know this can't be undone",
+      freeConfirm: "Yes, free it up. I know this can't be undone",
       freeKeep: "Keep it for now",
       freeing: "Freeing up the old search data",
       freeingBody: "This only takes a moment.",
@@ -309,7 +310,7 @@ export const en: Messages = {
       loading: "Checking how your memories are read…",
       loadFailed: "We couldn't check your search settings right now. Try again in a moment.",
       barRunning:
-        "Reading your memories again — {done} of {total} done. Other settings are locked " +
+        "Reading your memories again: {done} of {total} done. Other settings are locked " +
         "until it finishes.",
       barWorking: "Working on your Second Brain. Other settings are locked until this finishes.",
     },
@@ -363,7 +364,7 @@ export const en: Messages = {
   connectExisting: {
     title: "Connect to a Second Brain",
     // The lede on `manualEntryScreen`, which is where "none found", "Enter the
-    // address myself" and a pasted address all land — so it is the screen a
+    // address myself" and a pasted address all land - so it is the screen a
     // team member reaches, their brain being in the owner's Cloudflare account
     // rather than their own. It sits directly above a field that accepts either
     // credential and must name both.
@@ -379,7 +380,7 @@ export const en: Messages = {
     signInButton: "Find my Second Brain in Cloudflare",
     signInHint: "Use this only for a Second Brain in your own Cloudflare account.",
     signInFootnote:
-      "For a Second Brain you set up yourself, Cloudflare lets us look up its address. Cloudflare handles the sign-in; this app never sees your Cloudflare password. If someone invited you to their team, you do not need a Cloudflare account—choose 'I have an address or team sign-in token.'",
+      "For a Second Brain you set up yourself, Cloudflare lets us look up its address. Cloudflare handles the sign-in; this app never sees your Cloudflare password. If someone invited you to their team, you do not need a Cloudflare account: choose 'I have an address or team sign-in token.'",
     manualButton: "I have an address or team sign-in token",
     accountPickerTitle: "Which Cloudflare account should we search?",
     accountPickerLede: "Choose the account where you created your Second Brain.",
@@ -396,7 +397,7 @@ export const en: Messages = {
     unlockLede:
       "Use the password for this Second Brain, or the team sign-in token from your invitation. Connecting only saves access on this computer.",
     lostPassword: "I don't have my password",
-    memberTokenHelp: "I'm a team member — ask my admin for a new token",
+    memberTokenHelp: "I'm a team member. Ask my admin for a new token",
     memberTokenHelpTitle: "Ask your team admin for a new token",
     memberTokenHelpLede: "A token that's been replaced, or an account that's been suspended or removed, can't be repaired on this computer. Ask whoever invited you to issue a new one.",
   },
@@ -446,13 +447,13 @@ export const en: Messages = {
     // a fresh unfinished record straight away, so it re-blocks within a second.
     blockedEscape:
       "If nothing is rebuilding, one was left unfinished. Open Advanced Settings " +
-      "and carry it on — this clears when the rebuild finishes. Starting it over " +
+      "and carry it on. This clears when the rebuild finishes. Starting it over " +
       "gets there too, but it reads every memory again from the first one, so it " +
       "takes longer.",
     blockedButton: "Open Advanced Settings",
     // Only on the blocked screen, and only after an attempt that may have
-    // landed. The rebuild takes away the one thing that would settle it —
-    // trying again — so the sentence that says so has to come with the reason
+    // landed. The rebuild takes away the one thing that would settle it -
+    // trying again - so the sentence that says so has to come with the reason
     // the password below is still worth keeping.
     blockedMayBeLive:
       "An earlier attempt was sent to your Second Brain and never confirmed, so " +
@@ -461,8 +462,8 @@ export const en: Messages = {
       "wait until the rebuild is finished.",
     lostTitle: "Your memories are safe",
     lostLede:
-      "Nothing is lost. Nobody can look your password up for you — not this app, " +
-      "not Cloudflare — but it can be replaced, and replacing it is how you get " +
+      "Nobody, not this app and not Cloudflare, can look your password up for you. " +
+      "It can be replaced, though, and replacing it is how you get " +
       "back in.",
     lostBodySignedIn:
       "You're already signed in to the Cloudflare space your Second Brain lives " +
@@ -473,7 +474,7 @@ export const en: Messages = {
       "decides who gets in. Sign in there and you can set a new password. " +
       "Everything you've stored stays exactly where it is.",
     lostNotice:
-      "Anything that already has the old password will ask for the new one — " +
+      "Anything that already has the old password will ask for the new one: " +
       "your other computers, the browser extension, the Obsidian plugin.",
     lostContinueButton: "Choose a new password",
     // Word for word the same as connectExisting.signInButton: it is the same
@@ -484,14 +485,14 @@ export const en: Messages = {
     addressTitle: "What's your Second Brain's address?",
     addressLede:
       "We couldn't find it in that space. Enter the address and we'll set a new " +
-      "password on it — no current password needed.",
+      "password on it. No current password needed.",
     addressLedeManual:
-      "Enter the address of the Second Brain you want a new password for — no " +
+      "Enter the address of the Second Brain you want a new password for. No " +
       "current password needed.",
     pickTitle: "Choose a new password",
-    // Not "the copy you keep is the only copy". This computer keeps one too —
+    // Not "the copy you keep is the only copy". This computer keeps one too -
     // in secure storage, and in the CLI's plaintext config file when that
-    // exists — and someone reasoning about where their secret lives has to be
+    // exists - and someone reasoning about where their secret lives has to be
     // told the truth about that. What is true is that nobody will show it to
     // them again.
     pickLede:
@@ -509,7 +510,7 @@ export const en: Messages = {
       "A password manager is the right place for it. If you keep it anywhere " +
       "else, keep it somewhere you'd trust with the key to everything you've " +
       "written down.",
-    saveConfirm: "I've saved it — change my password",
+    saveConfirm: "I've saved it: change my password",
     saveBack: "Choose a different one",
     progressTitle: "Changing your password",
     progressLede: "This takes up to a minute or two. Leave this window open.",
@@ -532,15 +533,15 @@ export const en: Messages = {
     doneNeeds4: "Any browser tab where you opened your dashboard directly.",
     doneKeptHead: "What is still connected",
     // Not "none of them ever used your password". A tool set up by pasting the
-    // password straight in — which is the documented route for anything that
-    // can't open a browser — did use it, does break, and cannot be reached by
+    // password straight in - which is the documented route for anything that
+    // can't open a browser - did use it, does break, and cannot be reached by
     // Disconnect either, because it has nothing stored to disconnect.
     doneKept:
       "AI tools you connected by signing in through your connection link are " +
       "still connected and still working. Each one was given its own access at " +
       "the time, separate from your password, so changing it doesn't reach them. " +
       "Anything you connected by pasting the password itself is in the list " +
-      "above — it will ask for the new one.",
+      "above. It will ask for the new one.",
     doneLeak:
       "If you changed your password because someone else may have had it, those " +
       "connections are the one thing this didn't close. Disconnecting them makes " +
@@ -552,16 +553,16 @@ export const en: Messages = {
     failNotSentBody:
       "The new password never reached your Second Brain, so your old one still " +
       "works and everything is exactly as it was. Trying again is safe.",
-    failNotSentLabel: "The password you chose — not in use",
+    failNotSentLabel: "The password you chose is not in use",
     failDetail: "What went wrong: {detail}",
     failUnsureTitle: "Your new password may already be in use",
     failUnsureBody:
       "The change was sent to your Second Brain, but it didn't confirm in time, " +
       "so we can't tell you which password is live. Save the one below before " +
-      "you do anything else — it may be the one that works now.",
+      "you do anything else. It may be the one that works now.",
     failUnsureRetry:
       "Try again. Setting the same password a second time changes nothing if it " +
-      "already went through, and finishes the job if it didn't — either way you " +
+      "already went through, and finishes the job if it didn't. Either way, you " +
       "end up knowing.",
     failUnsureFootnote:
       "This computer hasn't been updated yet, so it may ask for a password too. " +
@@ -570,18 +571,18 @@ export const en: Messages = {
     recheckButton: "Check again",
     recheckConfirmed:
       "Your Second Brain answers to the new password, so that part is done. This " +
-      "computer hasn't saved it yet — try again to finish, and nothing on your " +
+      "computer hasn't saved it yet. Try again to finish, and nothing on your " +
       "Second Brain changes.",
     recheckUnconfirmed:
       "Your Second Brain still doesn't answer to the new password. It may need " +
-      "another moment, or the change may not have landed — trying again settles " +
+      "another moment, or the change may not have landed. Trying again settles " +
       "it either way.",
     // The third answer, and not the same as "no". Collapsing a failed probe
     // into "still doesn't answer" reports a question that was never asked as an
     // answer of no.
     recheckUnreachable:
       "We couldn't reach your Second Brain to ask, so this settles nothing " +
-      "either way — the change may still have gone through. Check again in a " +
+      "either way. The change may still have gone through. Check again in a " +
       "moment, or go straight to trying the change again.",
     failLocalTitle: "Your password was changed, but not saved on this computer",
     failLocalTitlePartial:
@@ -589,7 +590,7 @@ export const en: Messages = {
     failLocalBody:
       "Your Second Brain is using the new password. This computer couldn't store " +
       "it, so it can't open your Second Brain until you connect again with the " +
-      "new one — save it now, if you haven't.",
+      "new one. Save it now, if you haven't.",
     failLocalCli:
       "The brain command in your terminal is still set to the old password. Run " +
       "brain setup to point it at the new one.",
@@ -600,14 +601,14 @@ export const en: Messages = {
     leaveWarn:
       "This is the last screen that shows this password. If you haven't put it " +
       "somewhere safe, do it now.",
-    leaveConfirm: "I've saved it — leave",
+    leaveConfirm: "I've saved it: leave",
     leaveKeep: "Stay here",
   },
   passwordChangedElsewhere: {
     title: "Your password was changed on another computer",
     lede:
       "Your Second Brain has a new password, so the one saved on this computer " +
-      "no longer opens it. Nothing was lost and nothing was deleted — this " +
+      "no longer opens it. Nothing was lost and nothing was deleted. This " +
       "computer just needs the new one.",
     body:
       "You'll find it wherever you saved it when you changed it. It's the same " +
@@ -617,7 +618,7 @@ export const en: Messages = {
       "Signs in to Cloudflare and looks for it, in case you're connecting to a " +
       "different one now.",
     footnote:
-      "Don't have the new one — or didn't change it yourself? Choosing a new " +
+      "Don't have the new one, or didn't change it yourself? Choosing a new " +
       "password closes the old one for good.",
   },
   cloudflare: {
@@ -637,7 +638,7 @@ export const en: Messages = {
    * The two `start_provisioning` preflight guards (#P0-1): a Second Brain
    * already proven to exist on the chosen account, or a fixed resource name
    * already taken by something unproven. Neither screen ever mutates anything
-   * — that is the whole point of the guard they render for.
+   * - that is the whole point of the guard they render for.
    */
   guard: {
     existingBrainTitle: "We found your existing Second Brain",
@@ -653,7 +654,7 @@ export const en: Messages = {
     stepRecall: "Preparing search for your memories",
     stepFinish: "Final checks",
     /** Appended after the step label as `${label}: ${word}` for a screen
-     *  reader — the icon swap alone (bullet/spinner/check/bang) says nothing
+     *  reader - the icon swap alone (bullet/spinner/check/bang) says nothing
      *  to VoiceOver (#P0-7). */
     stepInProgress: "in progress",
     stepDone: "done",
@@ -664,7 +665,7 @@ export const en: Messages = {
     lede: "Connect any AI apps you use now, or skip this step and add them later. Each connected app can use the same Second Brain.",
     autoSetup: "Adds this computer's connection details to the app automatically.",
     notOnComputer: "Not installed on this computer. You can connect it later from Connections.",
-    doneRestart: "Done — restart the tool to start using your Second Brain.",
+    doneRestart: "Done. Restart the tool to start using your Second Brain.",
     cliSub: "Optional: use Second Brain from a terminal (for people who use command-line tools).",
     setupCli: "Set up CLI",
     settingUp: "Setting up…",
@@ -706,18 +707,18 @@ export const en: Messages = {
     passwordButton: "Change my password",
     disconnectLabel: "Disconnect your AI tools",
     // Not "this closes all of it at once". Tools set up by pasting the password
-    // have no keys here to delete, so this route cannot reach them at all —
+    // have no keys here to delete, so this route cannot reach them at all -
     // changing the password is what closes those.
     disconnectDesc:
       "AI tools that signed in through your connection link were each given " +
       "their own access, separate from your password. This closes all of those " +
       "at once. Anything you connected by pasting your password instead isn't " +
-      "affected — changing your password is what closes those. Your memories " +
+      "affected. Changing your password is what closes those. Your memories " +
       "and your password stay as they are.",
     disconnectButton: "Disconnect AI tools…",
     disconnectConfirmDesc:
-      "Every AI tool that signed in through your connection link — on this " +
-      "computer and on any other — will need connecting again, and each one " +
+      "Every AI tool that signed in through your connection link, on this " +
+      "computer and any other, will need connecting again, and each one " +
       "will ask for your password when you do.",
     disconnectConfirm: "Yes, disconnect them all",
     disconnectKeep: "Keep them connected",
@@ -725,14 +726,14 @@ export const en: Messages = {
     disconnectDone: "Disconnected. Each tool will ask to be connected again the next time you use it.",
     disconnectDoneNone:
       "No tool had signed in through your connection link, so there was nothing " +
-      "to close here. Tools that use your password are unaffected — changing " +
+      "to close here. Tools that use your password are unaffected. Changing " +
       "your password is what closes those.",
     disconnectFailed:
       "Some AI-app connections could not be closed. Connections already closed stay closed. Try again to close the remaining connections.",
     connectToolsTitle: "Connect your AI tools",
     connectToolsDesc:
       "Tools on this computer connect with one click. For anything else, " +
-      "paste your connection link into the tool's connector settings — " +
+      "paste your connection link into the tool's connector settings. " +
       "it will ask for your password the first time.",
     integrationsTitle: "Integrations",
     integrationsDesc: "Bring in notes and pages from the tools you already use.",
@@ -745,21 +746,21 @@ export const en: Messages = {
       "Update to get the latest improvements. Your memories, password, and connected tools are kept.",
     // Read by anyone who cannot perform the update: the redeploy happens inside
     // the Cloudflare account the brain lives in, and only the person who
-    // created it has one. Says who can, rather than going quiet — a member
+    // created it has one. Says who can, rather than going quiet - a member
     // whose brain is behind is missing features and deserves the reason.
     updateDescOther:
-      "Whoever set this brain up needs to update it — the update runs in their " +
+      "Whoever set this brain up needs to update it. The update runs in their " +
       "own Cloudflare account, so it isn't something this computer can do. " +
       "Nothing you've saved is affected in the meantime.",
     // The third case, and the honest version of it: this brain is running a
     // version that predates the check, so the app genuinely does not know
     // whether the person reading this created it. The button is offered anyway
-    // because updating is the only thing that fixes the check — but the copy
+    // because updating is the only thing that fixes the check - but the copy
     // must not pretend the app has confirmed anything.
     updateDescLegacy:
       "This brain is running an older version that can't yet tell this app who " +
       "you are, so the update is offered to everyone who opens this window. It " +
-      "only runs in the Cloudflare account the brain was created in — if that " +
+      "only runs in the Cloudflare account the brain was created in. If that " +
       "isn't yours, it will stop and say so. Updating once teaches this brain " +
       "to answer, and this note goes away.",
     updateButton: "Update my Second Brain",
@@ -802,16 +803,16 @@ export const en: Messages = {
     confirm: "Yes, log out",
     keep: "Keep me signed in",
     desc:
-      "You can reconnect with the address and password—or, for a team brain, the sign-in token—provided to you.",
+      "You can reconnect with the address and password, or with the sign-in token provided to you for a team brain.",
   },
   workerUpdate: {
     title: "Update your Second Brain",
     ledeWithVersion:
       "A newer version of your Second Brain (version {version}) is ready to install. " +
-      "Your memories, password, and connected tools are all kept — nothing is reset.",
+      "Your memories, password, and connected tools are all kept. Nothing is reset.",
     ledeGeneric:
       "A newer version of your Second Brain is ready to install. " +
-      "Your memories, password, and connected tools are all kept — nothing is reset.",
+      "Your memories, password, and connected tools are all kept. Nothing is reset.",
     notice: "You'll sign in to Cloudflare once to authorize the update. It takes about a minute.",
     signInUpdate: "Sign in and update",
     waitingLede:
@@ -823,7 +824,7 @@ export const en: Messages = {
     stepFinish: "Finishing up",
     doneTitle: "Your Second Brain is up to date",
     doneLede:
-      "Everything's on the latest version — your memories, password, and connected tools are unchanged.",
+      "Everything's on the latest version. Your memories, password, and connected tools are unchanged.",
   },
   email: {
     subject: "Your Second Brain details",

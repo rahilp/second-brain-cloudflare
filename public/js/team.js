@@ -327,20 +327,26 @@ function teamMemberRow(m) {
     .filter(Boolean)
     .map(escHtml)
     .join(' · ')
+  // One <td> per <th> in renderTeam's header row: member, role, captures
+  // (the default-share control, its own inline label already says
+  // "Captures:", teamShareSelect), actions. data-label on every cell is what
+  // the phone-width stacking (main.css, max-width: 700px) reads to show a
+  // heading beside a cell once the columns no longer exist as columns.
   return `
-    <div class="team-row${m.suspended ? ' suspended' : ''}">
-      <div style="min-width: 0">
-        <div class="team-name">${escHtml(teamMemberLabel(m))} ${chips}</div>
+    <tr class="team-row${m.suspended ? ' suspended' : ''}">
+      <td data-label="${escAttr(t('team.colMember'))}">
+        <div class="team-name">${escHtml(teamMemberLabel(m))}</div>
         ${subline ? `<div class="team-sub">${subline}</div>` : ''}
-      </div>
-      ${teamShareSelect({
+      </td>
+      <td data-label="${escAttr(t('team.colRole'))}">${chips}</td>
+      <td data-label="${escAttr(t('team.colCaptures'))}">${teamShareSelect({
         onchange: `setMemberDefaultShare('${escAttr(m.userId)}', this.value)`,
         selected: m.defaultShare,
         title: t('team.defaultShareTitle'),
         label: t('team.defaultShareLabel'),
-      })}
-      <div class="team-actions">${actions.join('')}</div>
-    </div>`
+      })}</td>
+      <td data-label="${escAttr(t('team.colActions'))}"><div class="team-actions">${actions.join('')}</div></td>
+    </tr>`
 }
 
 function renderTeam() {
@@ -358,15 +364,24 @@ function renderTeam() {
   body.style.display = ''
   const list = document.getElementById('team-list')
   if (list) {
+    // A real <table>, not a div roster: screen readers get a flat wall of
+    // spans from the div version, with no way to ask "whose row is this" or
+    // "which column am I in". The caption names the table for anyone
+    // navigating by landmark/table without needing eyes on the section
+    // heading above it.
     list.innerHTML = `
-      <div class="team-table">
-        <div class="team-head">
-          <span>${escHtml(t('team.colMember'))}</span>
-          <span>${escHtml(t('team.colCaptures'))}</span>
-          <span></span>
-        </div>
-        ${teamMembers.map(teamMemberRow).join('')}
-      </div>`
+      <table class="team-table">
+        <caption class="sr-only">${escHtml(t('team.rosterCaption'))}</caption>
+        <thead>
+          <tr>
+            <th scope="col">${escHtml(t('team.colMember'))}</th>
+            <th scope="col">${escHtml(t('team.colRole'))}</th>
+            <th scope="col">${escHtml(t('team.colCaptures'))}</th>
+            <th scope="col">${escHtml(t('team.colActions'))}</th>
+          </tr>
+        </thead>
+        <tbody>${teamMembers.map(teamMemberRow).join('')}</tbody>
+      </table>`
   }
   renderTeamMode()
   loadTeamOrgDefault()
@@ -533,6 +548,28 @@ function showTeamToken(token, name, email) {
   if (mailBtn) mailBtn.style.display = lastTeamInvite.email ? '' : 'none'
   wrap.style.display = ''
   if (wrap.scrollIntoView) wrap.scrollIntoView({ block: 'nearest' })
+  // A status line rather than the static title carrying aria-live: the title
+  // never changes text, so a screen reader has nothing to announce from it.
+  // This one exists to say the token is ready, once, the moment it is.
+  const status = document.getElementById('team-token-status')
+  if (status) status.textContent = t('team.tokenReady')
+  focusTeamTokenHeading()
+}
+
+/**
+ * Separated from showTeamToken so rotateTeamToken can defer this one step
+ * past the confirm sheet's own dismissal. dismissConfirmSheet() (confirm-
+ * sheet.js) synchronously returns focus to whatever opened the sheet, the
+ * rotate icon button, so calling this in the same tick as that dismissal had
+ * the sheet's own focus-return fire second and steal focus straight back off
+ * the heading it had just landed on. submitNewMember has no confirm sheet in
+ * its path, so it still calls this synchronously from inside showTeamToken.
+ */
+function focusTeamTokenHeading() {
+  const wrap = document.getElementById('team-token-reveal')
+  if (!wrap) return
+  const heading = wrap.querySelector('h2')
+  if (heading && typeof heading.focus === 'function') heading.focus()
 }
 
 function closeTeamTokenReveal() {
@@ -635,15 +672,17 @@ async function rotateTeamToken(id) {
     title: t('team.rotateTitle'),
     body: t('team.rotateConfirm', { name: teamMemberLabel(m) }),
     confirmLabel: t('team.rotateToken'),
+    tone: 'primary',
     // Progress copy is this action's to own — runConfirmAction disables the
     // button for the duration, but has no idea what to say while it waits.
     onConfirm: async (_checked, done) => {
       const btn = document.getElementById('confirm-accept-btn')
       if (btn) btn.textContent = t('team.rotating')
+      let result = null
       try {
         const r = await postTeam('/team/members/token', { id })
         if (!r.ok || !r.data.ok) throw new Error(r.data.error || t('team.actionFailed'))
-        showTeamToken(r.data.token, teamMemberLabel(m), m.email)
+        result = r.data
       } catch (e) {
         showToast(e.message || t('team.actionFailed'))
       }
@@ -651,7 +690,17 @@ async function rotateTeamToken(id) {
       // user dismissed this sheet and asked something else, and by then "what
       // is on screen" belongs to another caller. `done` closes this question
       // and is inert once this question has been superseded.
+      //
+      // Called BEFORE revealing the token, and on purpose: dismissConfirmSheet
+      // (confirm-sheet.js) synchronously returns focus to the rotate button
+      // that opened this sheet. Revealing the token and focusing its heading
+      // first would have that return-focus run second, in the same tick, and
+      // steal focus straight back off the heading. A microtask is late enough
+      // to land after it: done()'s own focus-return is entirely synchronous,
+      // so anything queued after it runs, even one tick later, is already
+      // ordered correctly.
       done()
+      if (result) Promise.resolve().then(() => showTeamToken(result.token, teamMemberLabel(m), m.email))
     },
   })
 }

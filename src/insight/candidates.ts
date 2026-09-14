@@ -2,8 +2,11 @@
  * Nightly candidate accrual.
  *
  * Search and reasoning are split because coverage, not token cost, is what
- * binds. A weekly job gets ~50 D1 subrequests, which buys about 25 Vectorize
- * seeds — 97 weeks to cross a 1,940-entry brain once. Accruing nightly from the
+ * binds. This codebase holds a weekly job to a self-imposed D1 budget of ~50
+ * calls per invocation (well under the platform's real 1,000-call ceiling,
+ * but kept tight for cost and 10 ms-CPU reasons), which buys about 25
+ * Vectorize seeds — 97 weeks to cross a 1,940-entry brain once. Accruing
+ * nightly from the
  * entries just written turns that into continuous coverage, and new entries are
  * where new tension appears: a memory written today is the one most likely to
  * contradict or extend something from March.
@@ -43,8 +46,10 @@ export function isEligiblePair(a: { tags: string[] }, b: { tags: string[] }): bo
 export const ACCRUAL_CURSOR_KEY = "insight:accrual-cursor";
 
 /**
- * Seeds per run. Each costs one Vectorize query, and the budget is 50
- * subrequests for the whole invocation. Measured at a full 25-seed batch
+ * Seeds per run. Each costs one Vectorize query, and the self-imposed budget
+ * is 50 D1/Vectorize calls for the whole invocation (the platform's real
+ * ceiling is 1,000; this codebase keeps it far tighter for cost and CPU
+ * reasons). Measured at a full 25-seed batch
  * (steady-state, already-migrated schema): 1 schema probe + 1 seed select +
  * 2 getByIds batches + 25 queries + 1 D1 hydration lookup + 1 batched insert
  * + 1 supersedes select + 1 supersedes batched insert + 1 KV read + 1 KV

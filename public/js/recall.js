@@ -227,6 +227,7 @@ async function sendRecall(retryQuery) {
   } catch {
     loadingEl.remove()
     appendBrainBubble(msgs, t('recall.error'), 'recall-sys')
+    document.getElementById('recall-clear-btn').style.display = 'flex'
   }
   msgs.scrollTop = msgs.scrollHeight
 }

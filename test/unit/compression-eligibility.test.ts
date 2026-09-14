@@ -4,6 +4,7 @@ import { STATUS_PREFIX } from "../../src/memory/status";
 import { KIND_PREFIX } from "../../src/memory/kind";
 import { VOLATILITY_PREFIX } from "../../src/memory/volatility";
 import { STALE_AS_OF } from "../../src/memory/stale";
+import { CAPSULE_SLOT_TAG_PREFIX, CAPSULE_TAG_PREFIX } from "../../src/tags/system";
 
 describe("compressionEligibilitySql", () => {
   it("includes the importance, recall+age, and contradiction-win clauses", () => {
@@ -41,7 +42,14 @@ describe("compressionEligibilitySql", () => {
 // isTopicTagSql would pass every mock-based test while production kept the old behaviour.
 // These bind both encodings to the same constants.
 describe("reserved tags", () => {
-  const RESERVED = [`${STATUS_PREFIX}canonical`, `${KIND_PREFIX}semantic`, `${VOLATILITY_PREFIX}state`, STALE_AS_OF];
+  const RESERVED = [
+    `${STATUS_PREFIX}canonical`,
+    `${KIND_PREFIX}semantic`,
+    `${VOLATILITY_PREFIX}state`,
+    `${CAPSULE_TAG_PREFIX}core`,
+    `${CAPSULE_SLOT_TAG_PREFIX}current-state`,
+    STALE_AS_OF,
+  ];
 
   it("rejects every reserved namespace", () => {
     for (const tag of RESERVED) {
@@ -52,7 +60,13 @@ describe("reserved tags", () => {
 
   it("excludes every reserved namespace from the SQL too", () => {
     const sql = isTopicTagSql();
-    for (const prefix of [STATUS_PREFIX, KIND_PREFIX, VOLATILITY_PREFIX]) {
+    for (const prefix of [
+      STATUS_PREFIX,
+      KIND_PREFIX,
+      VOLATILITY_PREFIX,
+      CAPSULE_TAG_PREFIX,
+      CAPSULE_SLOT_TAG_PREFIX,
+    ]) {
       expect(sql).toContain(`value NOT LIKE '${prefix}%'`);
     }
     expect(sql).toContain(`value NOT LIKE '${STALE_AS_OF}'`);
@@ -66,7 +80,15 @@ describe("reserved tags", () => {
   it("reserves the namespace whatever its case", () => {
     expect(isTopicTagSql()).not.toContain("GLOB");
     expect(isTopicTagSql()).not.toContain("<>");
-    for (const tag of ["Status:Active", "Kind:Personal", "Volatility:High", "Stale:As-Of", "STALE:AS-OF"]) {
+    for (const tag of [
+      "Status:Active",
+      "Kind:Personal",
+      "Volatility:High",
+      "Capsule:Core",
+      "Capsule-Slot:Current-State",
+      "Stale:As-Of",
+      "STALE:AS-OF",
+    ]) {
       expect(isReservedTag(tag)).toBe(true);
       expect(isTopicTag(tag)).toBe(false);
     }
@@ -100,7 +122,7 @@ describe("reserved tags", () => {
   });
 
   it("reserves the namespace, not the bare word", () => {
-    for (const tag of ["volatility", "stale", "status", "kind", "work"]) {
+    for (const tag of ["volatility", "stale", "status", "kind", "capsule", "capsule-slot", "work"]) {
       expect(isTopicTag(tag)).toBe(true); // a user may legitimately tag something "stale"
     }
   });

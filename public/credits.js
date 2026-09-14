@@ -8,6 +8,7 @@ window.SB_CREDITS = {
     { name: "Mochammad Fadhlan Al-Ghiffari", github: "MFA-G" },
     { name: "Phillip Smith", github: "phillipadsmith" },
     { name: "Robert Brandin", github: "tumes" },
+    { name: "oudouusa", github: "oudouusa" },
   ],
 };
 

@@ -262,7 +262,7 @@ async function submitHome() {
   }
 }
 
-/** Home gives way to the conversation, and the brief goes with it. */
+/** Home gives way to the conversation, and the brief and board go with it. */
 function leaveHome() {
   // Without dropping this class the old input bar stays hidden and the
   // conversation has nothing to type into.
@@ -272,6 +272,10 @@ function leaveHome() {
   if (home) home.style.display = 'none'
   const brief = document.getElementById('brief')
   if (brief) brief.style.display = 'none'
+  const boardTiles = document.getElementById('board-tiles')
+  if (boardTiles) boardTiles.style.display = 'none'
+  const board = document.getElementById('board')
+  if (board) board.style.display = 'none'
 }
 
 /**
@@ -285,6 +289,10 @@ function returnHome() {
   if (screen) screen.classList.add('home-visible')
   const home = document.getElementById('home')
   if (home) home.style.display = ''
+  const boardTiles = document.getElementById('board-tiles')
+  if (boardTiles) boardTiles.style.display = ''
+  const board = document.getElementById('board')
+  if (board) board.style.display = ''
 
   // A fresh start, so the field makes no claim about a sentence nobody has
   // written yet — coming back from a question otherwise left "will search"
@@ -316,8 +324,6 @@ function greetingFor(date) {
 
 /** Fills the greeting and the one number worth putting above the input. */
 function renderHome(data) {
-  const screen = document.getElementById('screen-home')
-  if (screen) screen.classList.add('home-visible')
   const greet = document.getElementById('home-greeting')
   if (greet) greet.textContent = greetingFor(new Date())
 

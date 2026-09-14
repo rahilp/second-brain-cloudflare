@@ -1,4 +1,4 @@
-// The "Advanced Settings" window (#246) — the only place Second Brain's
+// The "Advanced Settings" window (#246) - the only place Second Brain's
 // behaviour can be tuned. The Worker stores and reads config; this app is its
 // only writer, which is why there is deliberately no settings UI in the
 // dashboard.
@@ -9,7 +9,7 @@
 // user produce a config that silently snaps back.
 //
 // Edits are STAGED, not written on change. These settings alter how recall
-// behaves, so a mis-click must not silently retune the user's brain — nothing
+// behaves, so a mis-click must not silently retune the user's brain - nothing
 // reaches the Worker until Save, and Cancel discards the batch.
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -20,7 +20,7 @@ import "./style.css";
 type ControlView = {
   id: string;
   levels: string[];
-  /** null when the stored config matches no level — shown as "Custom". */
+  /** null when the stored config matches no level - shown as "Custom". */
   level: string | null;
   defaultLevel: string;
   forwardOnly: boolean;
@@ -40,7 +40,7 @@ type Staged = { kind: "level"; id: string } | { kind: "reset" };
 
 /**
  * Left-rail sections, mirroring the Connections window. Only the active pane
- * renders — seven controls stacked in one column was a long scroll, and the
+ * renders - seven controls stacked in one column was a long scroll, and the
  * grouping is what tells a user whether a setting affects recall or capture.
  *
  * "ai" holds the two model dropdowns rather than level controls, so it has no
@@ -66,7 +66,7 @@ let active: SectionId = "recall";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
-/** Last state read from the Worker — the baseline every diff is taken against. */
+/** Last state read from the Worker - the baseline every diff is taken against. */
 let saved: SettingsView | null = null;
 /** Staged edits, keyed by control id. Empty means nothing to save. */
 let staged = new Map<string, Staged>();
@@ -106,7 +106,7 @@ function isDirty(): boolean {
 }
 
 function stage(controlId: string, next: Staged, c: ControlView): void {
-  // Staging back to the saved value is not a change — drop it so Save stays
+  // Staging back to the saved value is not a change - drop it so Save stays
   // disabled and the count stays honest.
   const backToSaved =
     (next.kind === "level" && next.id === c.level) ||
@@ -164,15 +164,15 @@ async function save(): Promise<void> {
 /* ── Rebuilding how memories are read (#248) ─────────────────────────────────
  *
  * Every other control here is a staged radio pick that Save writes. This one is
- * a sequence of Worker-side operations — create, redeploy, re-read in batches,
- * then free the old search data — and the last of those cannot be undone. So it
+ * a sequence of Worker-side operations - create, redeploy, re-read in batches,
+ * then free the old search data - and the last of those cannot be undone. So it
  * is deliberately NOT part of `staged`/`stagedModel`: Save must not be able to
  * commit it, Cancel must not look like it can stop it, and the chosen target
  * must never reach `apply_settings`' patch. Only `begin_embedding_migration`
  * writes it, after the new search data exists.
  *
  * All of it lives at module scope because render() calls app.replaceChildren()
- * on every state change — a progress bar held by reference would be thrown away
+ * on every state change - a progress bar held by reference would be thrown away
  * on the next repaint, exactly as `message` and `busy` are handled.
  *
  * Every state has a way out, which is the property the phase list is arranged
@@ -223,14 +223,14 @@ type MigrationStep = {
   stalled: boolean;
   /**
    * Why it stopped. `"budget"` refills overnight; `"failing"` never will, so the
-   * two need different screens — "come back tomorrow" is advice that can never
+   * two need different screens - "come back tomorrow" is advice that can never
    * work against a memory that keeps failing.
    */
   stalledReason: "budget" | "failing" | null;
 };
 
 type MigrationPhase =
-  /** Pane never opened this session — opening it triggers the first load. */
+  /** Pane never opened this session - opening it triggers the first load. */
   | "unloaded"
   | "loading"
   | "loadFailed"
@@ -261,7 +261,7 @@ type MigrationPhase =
 const migration = {
   phase: "unloaded" as MigrationPhase,
   estimate: null as MigrationEstimate | null,
-  /** The picked target. Not staged — see the note above. */
+  /** The picked target. Not staged - see the note above. */
   target: null as string | null,
   /** Honest k-of-n, straight from the last step's `total - remaining`. */
   progress: null as { done: number; total: number; failed: number } | null,
@@ -288,7 +288,7 @@ function migrationBusy(): boolean {
 }
 
 /**
- * Chunks one batch will embed before it stops — the Worker's
+ * Chunks one batch will embed before it stops - the Worker's
  * MIGRATION_CHUNK_BUDGET. Duplicated here only to turn a piece count into a
  * number of sequential rounds, which is the one honest answer this window can
  * give to "how long will this take". It is shown as "about", so a drift in the
@@ -310,7 +310,7 @@ function levelOf(model: string): string | null {
  * before a one-way operation, and it asked the reader to reason about the
  * position of an opaque string in a list.
  *
- * Falls back to the id only for a model the Worker does not offer — a reader set
+ * Falls back to the id only for a model the Worker does not offer - a reader set
  * outside the app, which must still show as selected rather than vanish.
  */
 function levelName(model: string): string {
@@ -337,7 +337,7 @@ function levelNotice(model: string): string | null {
  *
  * Asked of the Worker side rather than tracked here: it is recorded from what
  * Cloudflare reported as bound, so it survives a restart and cannot name the
- * wrong thing. A failure reads as "nothing to free" — offering the step without
+ * wrong thing. A failure reads as "nothing to free" - offering the step without
  * a name behind it is how the wrong data gets deleted.
  */
 async function refreshOldIndex(): Promise<void> {
@@ -359,7 +359,7 @@ async function loadMigration(forcePicker = false): Promise<void> {
   try {
     const status = await invoke<MigrationStatus>("migration_status");
     // A status the Worker itself calls not-ok must not be read as "no rebuild in
-    // progress" — that would offer a fresh start over the top of a live one.
+    // progress" - that would offer a fresh start over the top of a live one.
     if (!status.ok) {
       migration.phase = "loadFailed";
       migration.error = null;
@@ -479,7 +479,7 @@ async function stepLoop(): Promise<void> {
       lastRemaining = step.remaining;
       if (idleRounds >= 2) {
         // Its own phase rather than an error string stacked under the failed
-        // screen, which said the same thing twice in two voices — three lines of
+        // screen, which said the same thing twice in two voices - three lines of
         // calm grey reassurance and then a red sentence arguing with them.
         migration.phase = "stuck";
         migration.error = null;
@@ -507,7 +507,7 @@ async function resumeMigration(): Promise<void> {
  * the first memory.
  *
  * Without it, a rebuild whose cursor sits on a permanently failing memory has no
- * exit at all — every Carry on reruns the same batch. It costs AI allowance for
+ * exit at all - every Carry on reruns the same batch. It costs AI allowance for
  * work already paid for once, which is why the screens that offer it say so.
  *
  * It does not land on the picker afterwards. The brain is already reading the new
@@ -593,7 +593,7 @@ function migrationButton(
 /**
  * Not rendered on the done screen at all, which is why `failed` never appears
  * there. `failed` is cumulative and a memory that failed one batch is retried in
- * a later one, so finishing with a non-zero count is an ordinary outcome — and
+ * a later one, so finishing with a non-zero count is an ordinary outcome - and
  * "couldn't be read: 3" under the heading "all your memories have been read
  * again" would contradict itself, with the alarming half carrying the number.
  */
@@ -646,8 +646,8 @@ function migrationPicker(e: MigrationEstimate): HTMLElement[] {
   select.value = migration.target ?? e.currentModel;
 
   // The one warning that is about a hard limit rather than a cost. On the free
-  // plan, running out of stored space makes writes fail — there is no billing to
-  // absorb it — and the peak comes during the rebuild, while both the old and new
+  // plan, running out of stored space makes writes fail - there is no billing to
+  // absorb it - and the peak comes during the rebuild, while both the old and new
   // search data are kept so the change can still be undone.
   const storageWarning = () => {
     const target = select.value;
@@ -705,8 +705,8 @@ function migrationPicker(e: MigrationEstimate): HTMLElement[] {
 
 function migrationConfirm(): HTMLElement[] {
   const e = migration.estimate;
-  const chunks = e ? num(e.chunksAtLeast) : "—";
-  const rounds = e ? num(roundsFor(e.chunksAtLeast)) : "—";
+  const chunks = e ? num(e.chunksAtLeast) : t("settingsPanel.migration.unknownValue");
+  const rounds = e ? num(roundsFor(e.chunksAtLeast)) : t("settingsPanel.migration.unknownValue");
   const points = h("ul", { class: "settings-migration-points" });
   for (const key of ["point1", "point2", "point3", "point4"] as const) {
     points.append(h("li", {}, [t(`settingsPanel.migration.${key}`, { chunks, rounds })]));
@@ -849,7 +849,7 @@ function migrationBody(): HTMLElement[] {
     case "running": {
       // The copy has always said closing the window is a safe pause, and then
       // beforeunload argued about closing it. A real Pause is the exit that
-      // settles the contradiction — and it stays enabled while everything else
+      // settles the contradiction - and it stays enabled while everything else
       // on the screen is locked.
       const pause = migrationButton(
         "btn-ghost",
@@ -1037,7 +1037,7 @@ function controlCard(c: ControlView): HTMLElement {
 
 /**
  * Both model dropdowns (LLM_MODEL and INSIGHT_LLM_MODEL) draw from the same
- * curated catalogue and show the id itself — there is no friendly-name layer
+ * curated catalogue and show the id itself - there is no friendly-name layer
  * for these the way the migration picker has for embedding models, so the
  * option text is the id.
  */
@@ -1227,7 +1227,7 @@ async function boot(): Promise<void> {
 
 // Closing the window with staged edits would lose them silently. Closing it
 // mid-rebuild stops the batch loop, which leaves the brain searchable but
-// incomplete until someone comes back and resumes — also worth a warning.
+// incomplete until someone comes back and resumes - also worth a warning.
 window.addEventListener("beforeunload", event => {
   if (isDirty() || migrationBusy()) event.preventDefault();
 });

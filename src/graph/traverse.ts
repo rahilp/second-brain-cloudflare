@@ -13,16 +13,21 @@ export const GRAPH_MAX_HOPS = 3;
 const GRAPH_FANOUT_CAP = 8;
 const GRAPH_MAX_NODES = 50;
 // Ceiling on the /graph view's node set, applied even when the caller asks for
-// no cap. The binding constraint is the Workers free-plan limit of 50
-// subrequests per invocation, not row reads. buildGraph costs
+// no cap. The binding constraint is this codebase's self-imposed D1 budget of
+// 50 calls per invocation — NOT the platform's actual ceiling, which is 1,000
+// D1/KV/Vectorize calls per invocation (see
+// https://developers.cloudflare.com/workers/platform/limits/#subrequests). The
+// self-imposed budget is kept this tight for cost and 10 ms-CPU reasons, not
+// because the platform would throw at these counts. buildGraph costs
 //
 //   1 (edge scan) + ceil(N/D1_MAX_BOUND_PARAMS) (node hydration)
 //                 + ceil(N/EDGE_QUERY_BATCH)    (edge hydration)
 //
 // D1 queries for N nodes, plus one KV read for the config. At N=1500 that is
 // 1 + 15 + 30 = 46, or 47 with the KV read. N=1600 lands on exactly 50 with
-// nothing spare, and anything from 1634 up exceeds it outright — which would be
-// a deterministically dead graph tab for every free-plan brain that large, and
+// nothing spare, and anything from 1634 up exceeds this codebase's self-imposed
+// budget outright — which would be a graph tab costing more D1 calls and CPU
+// than this codebase allows itself for every free-plan brain that large, and
 // runGraphPass backfills edges nightly, so a brain arrives there on its own.
 //
 // That formula is the IDENTITY-LESS arithmetic — the cron callers. A scoped
@@ -39,7 +44,7 @@ const GRAPH_MAX_NODES = 50;
 // in the hydration's projection and the author's name arrives through a LEFT
 // JOIN on it, so there is no per-view statement and no per-author bound
 // parameter. A whole served request adds the identity batch and the KV config
-// read: 50 for a member at N=1500, the entire free-plan budget with nothing
+// read: 50 for a member at N=1500, the entire self-imposed budget with nothing
 // spare. THAT TOTAL IS PINNED by "costs exactly this many subrequests at
 // GRAPH_VIEW_MAX_NODES" in test/integration/graph-team-aware.test.ts — change it
 // deliberately or not at all, and remember a cold isolate still pays
@@ -47,16 +52,17 @@ const GRAPH_MAX_NODES = 50;
 //
 // 47 is the WARM figure for the identity-less path. On a cold isolate the
 // budget is shared with initializeDatabase, which fires under waitUntil and spends about 12 more on
-// its DDL, so the first request against a fresh isolate costs ~59 and is over
-// the limit — 1500 buys margin on the warm path, it does not clear the cold one.
-// That is #282 (probe sqlite_master once instead of issuing twelve blind
-// statements, taking cold /graph from 59 to 48), not something a lower cap here
-// can fix: the tax is fixed, so it eats any N.
+// its DDL, so the first request against a fresh isolate costs ~59 — over this
+// codebase's self-imposed budget, though still far under the platform's real
+// 1,000-call ceiling — and 1500 buys margin on the warm path, it does not clear
+// the cold one. That is #282 (probe sqlite_master once instead of issuing
+// twelve blind statements, taking cold /graph from 59 to 48), not something a
+// lower cap here can fix: the tax is fixed, so it eats any N.
 //
 // Recompute the formula above before raising this, and count the cold case as
 // well as the warm one. D1's 5M rows/day cap is the secondary bound and is
 // nowhere near binding here; sizing against it is what produced a number that
-// broke the free plan.
+// blew this codebase's self-imposed cost budget (though not the platform's).
 //
 // It is a legibility limit too: the packed-cluster canvas is unreadable well
 // before 1500 nodes.
@@ -90,8 +96,8 @@ export const GRAPH_HOP_DECAY = 0.6;
  * already restricts the rows to the caller's readable workspaces, so the ids that
  * come back ARE the readable ones — reading that off costs nothing beyond the
  * statement the deprecation check was issuing anyway, which is what keeps the
- * per-endpoint check inside the subrequest budget GRAPH_VIEW_MAX_NODES is sized
- * against. Absent an Identity there is nothing to be readable *to*, and the
+ * per-endpoint check inside the self-imposed D1 budget GRAPH_VIEW_MAX_NODES is
+ * sized against. Absent an Identity there is nothing to be readable *to*, and the
  * `readable` set is not consulted.
  */
 async function readableAndDeprecatedAmong(

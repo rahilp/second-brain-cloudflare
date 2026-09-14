@@ -330,6 +330,20 @@ describe("memories multi-select — the mode", () => {
     expect(el("mem-select-btn").textContent).toBe("Select");
     for (const card of cards()) expect(card.innerHTML).not.toContain("toggleMemorySelection(");
   });
+
+  // Regression: the checkbox wrapped in an empty <label> with no accessible
+  // name: a screen reader announced "checkbox", not which memory it selects.
+  it("gives every select checkbox an accessible name that identifies its memory", async () => {
+    const { ctx, cards } = setup({ entries: THREE });
+    await ctx.loadRecent();
+    ctx.toggleSelectMode();
+    const labels = cards().map((c: any) => c.innerHTML.match(/<input type="checkbox" aria-label="([^"]*)"/)?.[1]);
+    expect(labels).toEqual([
+      "Select memory: Renewal date is 3 March",
+      "Select memory: Renewal date is 3 March",
+      "Select memory: Renewal date is 3 March",
+    ]);
+  });
 });
 
 describe("memories multi-select — the selection", () => {
@@ -614,6 +628,18 @@ describe("bulk layer move — the question", () => {
     h.ctx.confirmBulkLayerMove("personal");
     expect(h.el("confirm-title").textContent).toBe("Make this memory personal again?");
     expect(h.el("confirm-accept-btn").textContent).toBe("Make private");
+  });
+
+  // Sharing or unsharing is reversible in one tap either way, not a delete:
+  // the sheet used to render every caller red/danger regardless of severity,
+  // which told the truth about "Forget" and lied about this one.
+  it("renders the accept button as primary, not danger, for both directions of a reversible move", async () => {
+    const h = await selected({ entries: THREE }, ["a"]);
+    h.ctx.confirmBulkLayerMove("company");
+    expect(h.el("confirm-accept-btn").className).toBe("btn-primary confirm-accept-primary");
+
+    h.ctx.confirmBulkLayerMove("personal");
+    expect(h.el("confirm-accept-btn").className).toBe("btn-primary confirm-accept-primary");
   });
 
   it("opens no sheet on an empty selection", async () => {

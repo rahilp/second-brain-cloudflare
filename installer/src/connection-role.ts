@@ -2,7 +2,7 @@
  * Who is holding the token this install was set up with.
  *
  * Three answers, because the app has three different things to say. "owner" is
- * the identity holding this deployment's AUTH_TOKEN — the person who created
+ * the identity holding this deployment's AUTH_TOKEN - the person who created
  * the brain in their own Cloudflare account, and the only one who can rotate
  * the password or update the Worker. "admin" is a team admin holding a member
  * token with the admin role: they can invite people from the dashboard but have
@@ -10,13 +10,13 @@
  * do neither.
  *
  * The brain itself decides which, through GET /team/me. Nothing local is
- * evidence of ownership — see `RoleProbe.owner` for the signal this replaced
+ * evidence of ownership - see `RoleProbe.owner` for the signal this replaced
  * and why it was wrong.
  *
  * Derived, never stored: a member promoted to admin in the dashboard would
  * otherwise keep whatever this app decided on the day they installed it.
  *
- * Imports nothing, deliberately — `main.ts` resolves `#app` at module scope and
+ * Imports nothing, deliberately - `main.ts` resolves `#app` at module scope and
  * cannot be loaded outside a webview, so the rules only get a test if they live
  * somewhere a test runner can reach. Same arrangement as `rotation-state.ts`.
  */
@@ -29,18 +29,18 @@ export interface RoleProbe {
   /** `profile.role` from GET /team/me, or null if it could not be read. */
   role: string | null;
   /**
-   * `profile.owner` from GET /team/me — true only for the identity holding this
+   * `profile.owner` from GET /team/me - true only for the identity holding this
    * deployment's AUTH_TOKEN.
    *
    * This is the app's ONLY evidence of ownership, and it deliberately replaced
-   * the previous one. That was `signedInToCloudflare()` — `accounts.length > 0`,
+   * the previous one. That was `signedInToCloudflare()` - `accounts.length > 0`,
    * a module global in `main.ts` set by any successful `connect_cloudflare` in
    * the window and never cleared. It meant "somebody logged into some Cloudflare
    * account here", not "this person controls the deployment", and the app's own
    * primary connect path walked a member straight through it: sign in to
    * Cloudflare (the primary button), discovery finds nothing because the brain
    * is in the OWNER's account, fall through to manual entry, paste the invite
-   * token — and the app then told a member they were the owner-admin.
+   * token - and the app then told a member they were the owner-admin.
    *
    * The brain is the authority on this and nothing else is. Least privilege
    * does the rest: anything that is not a literal `true` is not ownership.
@@ -48,7 +48,7 @@ export interface RoleProbe {
   owner: boolean;
   /**
    * True only when `/team/me` answered with a well-formed profile that carried
-   * NO `owner` key at all — a Worker deployed before the key existed.
+   * NO `owner` key at all - a Worker deployed before the key existed.
    *
    * Deliberately not read by `roleFromProbe`: a legacy Worker cannot say who is
    * holding the token, so nobody is promoted by it. It exists for one caller,
@@ -69,9 +69,9 @@ export function roleFromProbe(probe: RoleProbe): ConnectionRole {
   // and an unexpected body must not promote anyone.
   if (probe.owner === true) return "owner";
   if (probe.role === "admin") return "admin";
-  // Everything else — "member", an unrecognised string, or `null` from a Worker
+  // Everything else - "member", an unrecognised string, or `null` from a Worker
   // too old to answer /team/me, a non-2xx, a timeout, or a request that never
-  // landed — falls to the least-privileged answer. Under-claiming costs a
+  // landed - falls to the least-privileged answer. Under-claiming costs a
   // hidden button; over-claiming is the sentence this module exists to delete.
   return "member";
 }
@@ -82,7 +82,7 @@ export function roleFromProbe(probe: RoleProbe): ConnectionRole {
  * A rejected fetch already reduces to "member". A fetch that never settles did
  * not: `existingTeamScreen` awaits this probe before the next screen, so a brain
  * behind a black-holed TCP connection or a captive portal left the user on
- * "Checking…" with no route forward but quitting the app — the safe default
+ * "Checking…" with no route forward but quitting the app - the safe default
  * being unreachable exactly when it was most needed. Long enough for a cold
  * Worker on a slow link, short enough to be a pause rather than a hang.
  */
@@ -100,11 +100,11 @@ type ProbeFetch = (
  * A 200 is not a promise about shape, and there are three different things a
  * body can mean, not two:
  *
- *   1. it carries a boolean `owner` — the brain has answered, trust it;
- *   2. it is well formed but has NO `owner` key — a Worker deployed before the
+ *   1. it carries a boolean `owner` - the brain has answered, trust it;
+ *   2. it is well formed but has NO `owner` key - a Worker deployed before the
  *      key existed, positively identified as such;
- *   3. anything else — no profile, no string role, or an `owner` key that is
- *      present but is not a boolean — nothing was established.
+ *   3. anything else - no profile, no string role, or an `owner` key that is
+ *      present but is not a boolean - nothing was established.
  *
  * (3) deliberately swallows `owner: "yes"` and friends. The key being THERE and
  * unreadable is not the same fact as the key being ABSENT: the first is a body
@@ -132,14 +132,14 @@ function answerToProbe(body: unknown): { role: string | null; owner: boolean; le
 /**
  * Asks a brain who is holding this token. Never rejects and never hangs.
  *
- * Every failure — a 401/403/404, a body that will not parse, a request that
- * never lands — reduces to the same unanswered shape, which `roleFromProbe`
+ * Every failure - a 401/403/404, a body that will not parse, a request that
+ * never lands - reduces to the same unanswered shape, which `roleFromProbe`
  * turns into "member". That is the point: the failure this whole module exists
  * to fix is the app telling a member they are the owner-admin, so an
  * unanswerable probe must claim less, not more.
  *
  * A Worker too old to carry `owner` is NOT one of those failures, and the
- * distinction is the whole of `legacyWorker` — see `answerToProbe`.
+ * distinction is the whole of `legacyWorker` - see `answerToProbe`.
  */
 export async function fetchRoleProbe(
   fetchImpl: ProbeFetch,
@@ -185,7 +185,7 @@ export async function fetchRoleProbe(
 /**
  * The Connection details window's version of the same question.
  *
- * That window has no token — it stays in the Rust core — so it asks through the
+ * That window has no token - it stays in the Rust core - so it asks through the
  * `connection_role` Tauri command, whose answer arrives as whatever
  * `invoke` deserialised, or `null` if the command itself failed. Narrowing it
  * here rather than in `details.ts` is what makes the window's role testable:
@@ -212,7 +212,7 @@ export function roleFromDetailsProbe(teamMode: boolean, probe: unknown): Connect
  * same `invoke` result, so the window pays for one round trip, not two.
  *
  * `=== true` and nothing else: a probe that failed is `null`, and a `null` probe
- * is not a legacy Worker — it is no answer at all.
+ * is not a legacy Worker - it is no answer at all.
  */
 export function legacyWorkerFromDetailsProbe(probe: unknown): boolean {
   return (probe as { legacyWorker?: unknown } | null)?.legacyWorker === true;
@@ -231,7 +231,7 @@ export function teamCardKeys(role: ConnectionRole): { label: string; body: strin
  *
  * Takes a role and nothing else, and must keep taking a role and nothing else.
  * The Worker-update route below has a legacy allowance and this one deliberately
- * does not — the asymmetry is explained there, and the two rules are NOT the
+ * does not - the asymmetry is explained there, and the two rules are NOT the
  * same rule wearing different names any more.
  */
 export function canRotatePassword(role: ConnectionRole): boolean {
@@ -264,11 +264,11 @@ export function canRotatePassword(role: ConnectionRole): boolean {
  * version you are trying to reach reports.
  *
  * So a POSITIVELY IDENTIFIED legacy Worker (answered, well formed, no `owner`
- * key — not "the probe failed", which stays suppressed) opens this one route.
+ * key - not "the probe failed", which stays suppressed) opens this one route.
  * That is not a weakening: `start_worker_update` resolves the hosting account
  * by matching the brain's workers.dev subdomain against the signed-in
  * Cloudflare session and answers ErrorWrongCfAccount to anyone else, so the
- * real gate here was never the role. And it self-heals — after one successful
+ * real gate here was never the role. And it self-heals - after one successful
  * update the brain can say who is asking, and this argument is false forever
  * after.
  *

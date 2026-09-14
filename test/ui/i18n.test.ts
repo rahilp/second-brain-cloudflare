@@ -315,6 +315,19 @@ describe("dashboard i18n", () => {
     expect(ctx.t("auth.serverError", { status: "503" })).toBe("Server error: 503");
   });
 
+  it("formats a clock time alone, not toLocaleDateString's forced date-plus-time", () => {
+    // toLocaleDateString defaults year/month/day onto the output even when
+    // `options` asks only for hour/minute, so a naive pass-through would read
+    // "9/9/2026, 3:48 PM" for a caller that wanted just "3:48 PM" (the night
+    // panel's "Pass ran at {time}"). Date-only and date+time calls, which
+    // every other call site uses, must still go through toLocaleDateString.
+    const { ctx } = loadI18n("en");
+    const ts = new Date("2026-09-09T15:48:00Z").getTime();
+    expect(ctx.formatDateUI(ts, { hour: "numeric", minute: "2-digit" })).not.toMatch(/2026|9\/9/);
+    expect(ctx.formatDateUI(ts, { year: "numeric", month: "short", day: "numeric" })).toMatch(/2026/);
+    expect(ctx.formatDateUI(ts, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })).toMatch(/2026/);
+  });
+
   it("applies data-i18n to the DOM", () => {
     const { ctx, makeEl } = loadI18n("it");
     const label = makeEl({ "data-i18n": "menu.appearance" });
@@ -457,6 +470,9 @@ describe("dashboard i18n", () => {
     "integrations.connect.calendar-icloud.placeholder",
     "brief.shapeSuffix",
     "download.withTag",
+    // PROPER NOUN — "Worker" names the Cloudflare Worker component; kept
+    // unchanged in Italian same as "Second Brain" (auth.brand) above.
+    "board.railVersion",
   ].sort();
 
   it("has no Italian string left as a copy of its English twin", () => {
@@ -726,6 +742,7 @@ describe("dashboard i18n", () => {
       // the same shape as memory-crud.js's timelineEventLabel below — one known
       // form for this indirection is what keeps this list readable.
       "public/js/activity.js t(keys[event])",
+      "public/js/board.js t(`patterns.shapes.${shape}`)",
       "public/js/brief.js t(`patterns.shapes.${shape}`)",
       // Both of these resolve through captureDefaultKey() in public/utils.js, which
       // returns one of exactly four literals — home.auto{Shared,Personal}{Yours,Org}.

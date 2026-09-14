@@ -16,6 +16,7 @@
 
 /** Cached for the session: the brief describes the night, not the minute. */
 let briefData = null
+let homeInitialized = false
 
 async function loadBrief() {
   const el = document.getElementById('brief')
@@ -29,7 +30,15 @@ async function loadBrief() {
       briefData.patternsTotal = await loadMoreInsightsTotal()
     }
     if (typeof renderHome === 'function') renderHome(briefData)
-    renderBrief(briefData)
+    // returnHome() renders the brief itself (it may be showing a stale one
+    // from before a conversation), so the first load must not also render it
+    // here. Two un-awaited renderBoard() runs would race and interleave.
+    if (!homeInitialized && typeof returnHome === 'function') {
+      homeInitialized = true
+      returnHome()
+    } else {
+      renderBrief(briefData)
+    }
   } catch {
     // Offline or a stale deploy — the welcome hero is a fine fallback.
   }
@@ -123,6 +132,19 @@ function renderBrief(data) {
   const el = document.getElementById('brief')
   const hero = document.getElementById('recall-welcome')
 
+  // The board (board.js) owns every one of these panels now: the decisions
+  // thread has the patterns and the attention chips, the growth chart has the
+  // activity strip and (in its legend) the source proportions, and its own
+  // reread panel has the resurfaced memory. Rendering the legacy #brief block
+  // alongside it would show the same insights and numbers twice on one
+  // screen, so this only falls back to the inline block below when board.js
+  // has not loaded (a stale cache, or a build that predates it).
+  if (typeof renderBoard === 'function') {
+    if (el) el.style.display = 'none'
+    renderBoard(data)
+    return
+  }
+
   // Topics live under the home input, where they read as questions worth
   // asking. Repeating them here as a panel said the same thing twice on one
   // screen.
@@ -146,7 +168,7 @@ function renderBrief(data) {
         <div class="brief-label">${escHtml(label)}</div>
         <div class="brief-body">${escHtml(text)}</div>
         <div class="brief-actions">
-          <button class="digest-btn" onclick="briefResolvePattern('${escAttr(p.id)}', 'confirm', this)">${escHtml(t('brief.confirm'))}</button>
+          <button class="digest-btn digest-btn--primary" onclick="briefResolvePattern('${escAttr(p.id)}', 'confirm', this)">${escHtml(t('brief.confirm'))}</button>
           <button class="digest-btn danger" onclick="briefResolvePattern('${escAttr(p.id)}', 'dismiss', this)">${escHtml(t('brief.dismiss'))}</button>
         </div>
       </div>`)
@@ -208,8 +230,18 @@ async function briefResolvePattern(id, action, btn) {
     })
     const data = await res.json()
     if (!data.ok) throw new Error(data.error || 'failed')
-    card.innerHTML = `<div class="brief-label">${escHtml(action === 'confirm' ? t('brief.confirmed') : t('brief.dismissed'))}</div>`
-    card.classList.add('brief-card--quiet')
+    card.innerHTML = `<div class="brief-label" aria-live="polite">${escHtml(action === 'confirm' ? t('brief.confirmed') : t('brief.dismissed'))}</div>`
+    card.classList.add('brief-card--quiet', 'stop--settled')
+    const label = card.querySelector('.brief-label')
+    if (label) { label.tabIndex = -1; label.focus() }
+    // Settling this stop shrinks it (its body and actions hide), so the
+    // thread (sized once at first render for the taller layout) has to be
+    // refit or it runs on past the last dot into the panel below. The
+    // ResizeObserver in board.js's fitThread also catches this, but that
+    // fires async on the next frame; refitting here too keeps it in sync
+    // with the same paint the collapse happens in.
+    const panelBody = card.closest('.panel-body')
+    if (panelBody && typeof refitThread === 'function') refitThread(panelBody)
   } catch {
     card.querySelectorAll('button').forEach((b) => (b.disabled = false))
     btn.classList.remove('digest-btn--loading')

@@ -2,9 +2,9 @@
  * Ending a conversation without ending the screen.
  *
  * `clearRecall` wiped the container's innerHTML, which was safe for as long as
- * the container held nothing but bubbles. Home and the brief moved in with them
- * when the two tabs merged, and the wipe took both — permanently, because the
- * desktop app runs this page in a window with no address bar and no reload.
+ * the container held nothing but bubbles. Home, the brief and the board moved
+ * in with them, and the wipe took all three, permanently, because the desktop
+ * app runs this page in a window with no address bar and no reload.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -13,10 +13,12 @@ import { describe, it, expect } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
-/** A container holding home, the brief, the hero, and one exchange after them. */
+/** A container holding home, the board, the brief, the hero, and one exchange after them. */
 function load() {
   const children = [
     { id: "home", style: { display: "none" } },
+    { id: "board-tiles", style: {} },
+    { id: "board", style: {} },
     { id: "brief", style: {} },
     { id: "recall-welcome", style: {} },
     { id: "", style: {} }, // the question bubble
@@ -59,10 +61,10 @@ describe("clearing the conversation", () => {
     expect(ctx.children.filter((c: any) => !c.id)).toHaveLength(0);
   });
 
-  it("keeps home, the brief and the hero", () => {
+  it("keeps home, the board, the brief and the hero", () => {
     const ctx = load();
     ctx.clearRecall();
-    expect(ctx.children.map((c: any) => c.id)).toEqual(["home", "brief", "recall-welcome"]);
+    expect(ctx.children.map((c: any) => c.id)).toEqual(["home", "board-tiles", "board", "brief", "recall-welcome"]);
   });
 
   it("returns to home rather than to an empty column", () => {

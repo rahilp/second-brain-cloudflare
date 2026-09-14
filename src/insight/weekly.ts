@@ -91,13 +91,15 @@ export const RECENT_INSIGHT_WINDOW = 10;
 /**
  * The most candidate statements one run will spend on a workspace slice.
  *
- * Chunking the slice (below) trades the bound-parameter ceiling for a
- * subrequest one: each statement past the first is one more of the invocation's
- * 50, and the team invocation measures 47 of 50 at its worst slate on one
- * workspace and 48 of 50 at 50 and at 98 — both MEASURED end to end through
- * scheduled() in test/integration/insight-cron-budget.test.ts, not inferred
- * from the 47 by adding one. The slack survives, and a regression past 50 is
- * now a red test rather than a production incident. Two covers 98 company workspaces —
+ * Chunking the slice (below) trades the bound-parameter ceiling for a D1-call
+ * one: each statement past the first is one more against this codebase's
+ * self-imposed ~50-call budget per invocation (the platform's real ceiling is
+ * 1,000 D1/KV/Vectorize calls), and the team invocation measures 47 of 50 at
+ * its worst slate on one workspace and 48 of 50 at 50 and at 98 — both
+ * MEASURED end to end through scheduled() in
+ * test/integration/insight-cron-budget.test.ts, not inferred from the 47 by
+ * adding one. The slack survives, and a regression past 50 is now a red test
+ * rather than a silent cost-discipline regression. Two covers 98 company workspaces —
  * far past any brain this ships to — and leaves the novelty floor's own slice
  * (which binds each id ONCE, so 98 + 1 = 99) inside the bound-parameter
  * ceiling without a second statement of its own.
@@ -191,9 +193,10 @@ export async function runWeeklyInsights(
     //
     // ceil(N / 49) statements, capped at MAX_SLICE_STATEMENTS, so a brain with
     // one or two teams — every brain that exists — pays exactly what it paid
-    // before: one subrequest. Each extra chunk is one more subrequest out of
-    // the same 50 the model calls come from, which is why the chunk is as
-    // large as the ceiling allows rather than a round number.
+    // before: one D1 call. Each extra chunk is one more call out of this
+    // codebase's self-imposed ~50-call budget the model calls also come from,
+    // which is why the chunk is as large as the bound-parameter ceiling allows
+    // rather than a round number.
     //
     // One consequence worth naming: past 49 workspaces a candidate whose two
     // sides sit in DIFFERENT chunks is no longer drawn at all, where before it
@@ -216,7 +219,7 @@ export async function runWeeklyInsights(
       : [[]];   // no slice asked for: one statement over the whole corpus
 
     // One statement per chunk rather than a select-then-hydrate: the join is what keeps
-    // this inside the subrequest budget, and a candidate whose entries have
+    // this inside the self-imposed D1 budget, and a candidate whose entries have
     // since been forgotten drops out of the result rather than needing a guard.
     //
     // The deprecation check is the same reasoning applied to a candidate whose

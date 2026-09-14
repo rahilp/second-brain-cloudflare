@@ -34,6 +34,22 @@ function onGraphLayerChange(value) {
   loadGraph()
 }
 
+/**
+ * /graph nodes carry actor_name, never actor_id (src/graph/types.ts), the
+ * same resolved display string GET /list and GET /recall already print.
+ * #actor-filter-recent's options hold ids (loadMemoryAuthors/renderAuthorOptions
+ * in recent.js), so the selected id has to be mapped through the loaded
+ * roster to that same name before it can match a node. The caller's own row
+ * resolves to the literal "You" the server also uses (untranslated by
+ * design, see src/lib/actors.ts), not the translated option label.
+ */
+function actorNameForGraphFilter(actorId) {
+  if (typeof memoryAuthors === 'undefined' || !memoryAuthors) return null
+  if (actorId === memoryAuthors.you) return 'You'
+  const member = (memoryAuthors.members || []).find((m) => m.userId === actorId)
+  return member ? member.name : null
+}
+
 async function loadGraph() {
   maybeRevealGraphLayer()
   const canvas = document.getElementById('graph-canvas')
@@ -42,6 +58,11 @@ async function loadGraph() {
   try {
     const res = await fetch(`${WORKER_URL}/graph${graphLayerFilter ? `?workspace=${encodeURIComponent(graphLayerFilter)}` : ''}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
     const data = await res.json()
+    if (typeof memoryActorFilter !== 'undefined' && memoryActorFilter && Array.isArray(data.nodes)) {
+      const filtered = filterGraphByActor(data.nodes, data.edges, actorNameForGraphFilter(memoryActorFilter))
+      data.nodes = filtered.nodes
+      data.edges = filtered.edges
+    }
     if (!data.ok || !data.nodes || !data.nodes.length) {
       graphState = null
       canvas.style.display = 'none'

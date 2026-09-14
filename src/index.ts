@@ -10,6 +10,7 @@ import { runGraphPass } from "./graph/pass";
 import { INTEGRATION_SYNC_CRON, runScheduledIntegrationSync } from "./integrations/mirror";
 import { runStalenessPass } from "./staleness/pass";
 import { nextWorkspace } from "./runtime/rotation";
+import { recordNightSummary } from "./runtime/night-summary";
 import { runInsightAccrual } from "./insight/candidates";
 import { companyWorkspaceIds, runWeeklyInsights } from "./insight/weekly";
 import { INSIGHT_ACCRUAL_CRON, INSIGHT_TEAM_WEEKLY_CRON, INSIGHT_WEEKLY_CRON } from "./insight/schedule";
@@ -59,12 +60,14 @@ export default {
     const job = (name: string, run: Promise<unknown>) =>
       ctx.waitUntil(run.catch((e) => console.error(`${name} failed (non-fatal):`, e)));
 
-    // Two schedules, two budgets (#290). A Worker invocation gets 50 D1 queries and 10 ms
-    // of CPU on the free plan; the maintenance jobs below already spend 30 of those
-    // queries, so the mirror sync gets its own invocation rather than the remainder of
-    // this one. Routing on the cron string is what makes that real — without the branch
-    // both triggers would run everything and the split would cost budget instead of
-    // buying it.
+    // Two schedules, two budgets (#290). The free plan's real subrequest ceiling is
+    // 1,000 D1/KV/Vectorize calls and 50 external fetch()es per invocation, but every
+    // invocation still gets only 10 ms of CPU, and this codebase keeps a much tighter
+    // self-imposed D1 budget (~50 statements) for cost discipline; the maintenance jobs
+    // below already spend 30 of those, so the mirror sync gets its own invocation rather
+    // than the remainder of this one. Routing on the cron string is what makes that
+    // real — without the branch both triggers would run everything and the split would
+    // cost CPU and D1-cost budget instead of buying it.
     if (event.cron === INTEGRATION_SYNC_CRON) {
       job("integration sync", runScheduledIntegrationSync(env));
       return;
@@ -134,8 +137,41 @@ export default {
     // means every pass scans the whole corpus exactly as it did pre-v3. Direct and
     // manual callers — admin routes that re-trigger these passes — never pass a slice.
     const slice = await nextWorkspace(env);
-    job("nightly compression", runNightlyCompression(env, ctx, slice));
-    job("graph pass", runGraphPass(env, ctx, slice));
-    job("staleness pass", runStalenessPass(env, ctx, slice));
+    // The three passes used to be three independent waitUntil()s so one
+    // failing never delayed or hid the others. They still run concurrently
+    // and still log their own failures independently below, bundled into one
+    // job() only so their counts can be collected once the night is over and
+    // handed to recordNightSummary in a single, fully-built write (never a
+    // partial record; see src/runtime/night-summary.ts). insightsProposed is
+    // always 0 here: the weekly insight pass runs on its own cron trigger
+    // (INSIGHT_WEEKLY_CRON / INSIGHT_TEAM_WEEKLY_CRON above) and never inside
+    // this invocation.
+    job("nightly maintenance", (async () => {
+      const [compression, graph, staleness] = await Promise.allSettled([
+        runNightlyCompression(env, ctx, slice),
+        runGraphPass(env, ctx, slice),
+        runStalenessPass(env, ctx, slice),
+      ]);
+      if (compression.status === "rejected") console.error("nightly compression failed (non-fatal):", compression.reason);
+      if (graph.status === "rejected") console.error("graph pass failed (non-fatal):", graph.reason);
+      if (staleness.status === "rejected") console.error("staleness pass failed (non-fatal):", staleness.reason);
+
+      // No single workspace to attribute the summary to: an empty corpus (nothing
+      // ran) or a rotation read failure (the passes fell back to a whole-corpus
+      // scan pre-v3 style, which spans every workspace, not one).
+      //
+      // `== null` deliberately, not `!slice`: "" is the legacy pre-team bucket
+      // and a genuine ring member (src/runtime/rotation.ts), so it must write
+      // night:'' like any other slice. Only null/undefined skip the write.
+      // GET /stats/night reads it back for admins via readableWorkspaces.
+      if (slice == null) return;
+
+      await recordNightSummary(env, slice, {
+        digestsWritten: compression.status === "fulfilled" ? compression.value.digestsWritten : 0,
+        linksInferred: graph.status === "fulfilled" ? graph.value.inserted : 0,
+        claimsFlagged: staleness.status === "fulfilled" ? staleness.value.flagged : 0,
+        insightsProposed: 0,
+      });
+    })());
   },
 };

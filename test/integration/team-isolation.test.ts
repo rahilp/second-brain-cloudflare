@@ -1,7 +1,7 @@
 /**
  * Cross-user isolation, end to end through the Worker.
  *
- * `src/lib/scope.ts` states the house rule — "no unscoped corpus-wide query" —
+ * `src/lib/scope.ts` states the house rule, "no unscoped corpus-wide query",
  * and names this file as the thing that enforces it. The file did not exist, so
  * the rule was enforced by review alone, and one surface had already slipped
  * through: `GET /tags` scoped its D1 scan correctly but cached the result under a
@@ -12,7 +12,7 @@
  *
  * The shape throughout: two members of one brain, each holding a memory the other
  * must never see, and a third memory on the company layer that both must see.
- * Every read surface is asked the same question — can Bob reach Alice's row? —
+ * Every read surface is asked the same question, can Bob reach Alice's row?,
  * and every write surface is asked whether Bob can change it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -25,6 +25,7 @@ import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { resetVectorizeFilterState, vectorizeFilterState } from "../../src/vectorize/scope";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember } from "../../src/lib/team-admin";
+import { nightSummaryKey } from "../../src/runtime/night-summary";
 import type { Env } from "../../src/env";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as ExecutionContext;
@@ -73,7 +74,7 @@ function seedCandidate(id: string, aId: string, bId: string, score: number) {
 
 /**
  * An AI double for the nightly digest pass, recording every prompt it is given
- * so the ROWS a rollup was built from can be audited — the digest text alone
+ * so the ROWS a rollup was built from can be audited, the digest text alone
  * cannot show whether two workspaces were pooled.
  */
 function digestAI(prompts: string[]): Ai {
@@ -112,7 +113,7 @@ function insightAI(text: string): Ai {
 
 /**
  * Insert directly: the unit under test is who can read the row, not how it got
- * there. Written as of an hour ago, not the epoch — /brief's topic query is
+ * there. Written as of an hour ago, not the epoch, /brief's topic query is
  * windowed on created_at, and epoch-dated rows fall outside it, which would make
  * the topic-chip assertion below pass against an empty list whether the query was
  * scoped or not.
@@ -174,7 +175,7 @@ beforeEach(async () => {
 
 afterEach(() => sqlite?.close());
 
-describe("cross-user isolation — read surfaces", () => {
+describe("cross-user isolation, read surfaces", () => {
   it("GET /list shows a member their own rows and the company layer, never a colleague's", async () => {
     const mine = await jsonOf(await call("GET", "/list?n=50", bobToken));
     const contents = mine.map((e: any) => e.content as string);
@@ -223,7 +224,7 @@ describe("cross-user isolation — read surfaces", () => {
   it("GET /tags stays isolated whichever member warms the cache first", async () => {
     // Order is the whole mechanism of the original bug: with one shared key the
     // second caller was served whatever the first one's rebuild happened to leave
-    // behind. Assert the exact set rather than the absence of two strings — under
+    // behind. Assert the exact set rather than the absence of two strings, under
     // the shared key the leaked value varied with which workspace's scan landed
     // last, so an absence check could pass by luck on a run that was still broken.
     await call("GET", "/tags", ALICE);
@@ -254,7 +255,7 @@ describe("cross-user isolation — read surfaces", () => {
   it("GET /stats reports the admin's own content, and the deployment's repair backlog", async () => {
     // Two questions, two scopes. `brain stats` in the CLI prints top_tags under
     // "Top tags" and count under "Total memories", so both are content and are
-    // scoped — an admin's terminal must not list a member's private tag names,
+    // scoped, an admin's terminal must not list a member's private tag names,
     // and the total must agree with the /count the same token gets.
     const stats = await jsonOf(await call("GET", "/stats", ALICE));
     expect(stats.top_tags).not.toContain("job-hunting");
@@ -267,12 +268,65 @@ describe("cross-user isolation — read surfaces", () => {
     expect(stats.unclassified).toBe(5);
   });
 
+  it("GET /stats/activity counts only the caller's own captures, per source", async () => {
+    // All fixtures above share source 'test', so each caller's total is just
+    // how many of their own readable rows exist.
+    const bobActivity = await jsonOf(await call("GET", "/stats/activity", bobToken));
+    const bobTotal = bobActivity.series
+      .flatMap((s: any) => s.counts as number[])
+      .reduce((a: number, b: number) => a + b, 0);
+    expect(bobTotal).toBe(4); // his three private rows plus the shared one, never Alice's
+
+    const aliceActivity = await jsonOf(await call("GET", "/stats/activity", ALICE));
+    const aliceTotal = aliceActivity.series
+      .flatMap((s: any) => s.counts as number[])
+      .reduce((a: number, b: number) => a + b, 0);
+    expect(aliceTotal).toBe(2); // her private row plus the shared one, never Bob's
+  });
+
+  it("GET /stats/recalled never prints a colleague's memory", async () => {
+    const bobRecalled = await jsonOf(await call("GET", "/stats/recalled?limit=20", bobToken));
+    const bobContents = bobRecalled.entries.map((e: any) => e.content as string).join(" ");
+    expect(bobContents).toContain("Bob private");
+    expect(bobContents).toContain("Company handbook");
+    expect(bobContents).not.toContain("Alice private");
+
+    const aliceRecalled = await jsonOf(await call("GET", "/stats/recalled?limit=20", ALICE));
+    const aliceContents = aliceRecalled.entries.map((e: any) => e.content as string).join(" ");
+    expect(aliceContents).toContain("Alice private");
+    expect(aliceContents).not.toContain("Bob private");
+  });
+
+  it("GET /stats/night sums the caller's own and company records, never a colleague's personal one", async () => {
+    await env.OAUTH_KV.put(nightSummaryKey(aliceWorkspaceId), JSON.stringify(
+      { ranAt: 1700000000000, linksInferred: 1, insightsProposed: 0, digestsWritten: 1, claimsFlagged: 1 },
+    ));
+    await env.OAUTH_KV.put(nightSummaryKey(bobWorkspaceId), JSON.stringify(
+      { ranAt: 1700000200000, linksInferred: 2, insightsProposed: 0, digestsWritten: 2, claimsFlagged: 2 },
+    ));
+    await env.OAUTH_KV.put(nightSummaryKey(companyWorkspaceId), JSON.stringify(
+      { ranAt: 1700000100000, linksInferred: 4, insightsProposed: 0, digestsWritten: 4, claimsFlagged: 4 },
+    ));
+
+    // Bob's own (2) plus the shared company record (4), never Alice's personal one (1).
+    expect(await jsonOf(await call("GET", "/stats/night", bobToken))).toEqual({
+      ok: true, ranAt: 1700000200000,
+      linksInferred: 6, insightsProposed: 0, digestsWritten: 6, claimsFlagged: 6,
+    });
+
+    // Alice's own (1) plus the shared company record (4), never Bob's personal one (2).
+    expect(await jsonOf(await call("GET", "/stats/night", ALICE))).toEqual({
+      ok: true, ranAt: 1700000100000,
+      linksInferred: 5, insightsProposed: 0, digestsWritten: 5, claimsFlagged: 5,
+    });
+  });
+
   it("the admin's review queues never print a member's private memory", async () => {
     // The sharpest form of the rule: the SAME admin token gets a 404 from
     // /entry for these rows, and both queues were handing back their full text.
     // /stale prints the memory so it can be re-confirmed; /patterns prints an
     // insight drawn from the memories it cites. Neither is a licence to read a
-    // colleague's personal workspace — nothing else in this codebase treats
+    // colleague's personal workspace, nothing else in this codebase treats
     // "admin" that way.
     expect((await call("GET", "/entry?id=bob-stale", ALICE)).status).toBe(404);
 
@@ -288,7 +342,7 @@ describe("cross-user isolation — read surfaces", () => {
   it("GET /patterns never prints a source memory the caller cannot read", async () => {
     // The fourth leak of this shape, and the subtlest: the insight page itself is
     // scoped, and the `drawn_from` hydration below it constrains only
-    // `e.source_id` — the ids of that scoped page. The content it RETURNS comes
+    // `e.source_id`, the ids of that scoped page. The content it RETURNS comes
     // from `e.target_id`, which nothing constrained, so an insight the admin may
     // read handed back the full text of the memory it was drawn from even when
     // that memory sits in a colleague's personal workspace.
@@ -308,7 +362,7 @@ describe("cross-user isolation — read surfaces", () => {
     expect(page.patterns.map((p: any) => p.id)).toContain("alice-drawn");
     expect(JSON.stringify(page)).not.toContain("lithium");
 
-    // An unreadable source reads exactly like a deleted one — the reviewer is
+    // An unreadable source reads exactly like a deleted one, the reviewer is
     // told the source is unavailable rather than shown a colleague's memory.
     const drawn = page.patterns.find((p: any) => p.id === "alice-drawn");
     expect(drawn.sources).toEqual([{ id: "bob-source", missing: true }]);
@@ -358,7 +412,7 @@ describe("cross-user isolation — read surfaces", () => {
     // The dry run reaches `entries` only through JOIN, which is how it escaped
     // the scope rule: two of Bob's personal memories paired by the accrual pass
     // put their full content through the model and their ids into the admin's
-    // response. requireAdmin authorises the SURFACE — it is not a licence to
+    // response. requireAdmin authorises the SURFACE, it is not a licence to
     // read a personal workspace, and the same token gets a 404 from /entry for
     // exactly these rows.
     seed("bob-pair-a", bobWorkspaceId, bobUserId,
@@ -394,7 +448,7 @@ describe("cross-user isolation — read surfaces", () => {
   it("GET /insights/dry-run's novelty check never reads a colleague's pending insight", async () => {
     // The second, quieter half of the same leak: the comparison list the dry run
     // measures novelty against was every pending insight in the deployment. Bob's
-    // private proposal is never printed, but it silently suppresses Alice's — an
+    // private proposal is never printed, but it silently suppresses Alice's, an
     // admin is told her own candidate "restates a recently written insight" that
     // she cannot see and did not write. Suppression by an invisible row is still
     // a cross-workspace read.
@@ -408,7 +462,7 @@ describe("cross-user isolation — read surfaces", () => {
     seedCandidate("cand-twin", "alice-twin-a", "alice-twin-b", 0.7);
 
     // Answers with text whose distinctive words are exactly those of the seeded
-    // `bob-insight` row, so restatesRecent fires if — and only if — that row is
+    // `bob-insight` row, so restatesRecent fires if, and only if, that row is
     // in the comparison list.
     env.AI = insightAI(
       "Considering leaving, that private company insight keeps returning to you.",
@@ -424,7 +478,7 @@ describe("cross-user isolation — read surfaces", () => {
   it("GET /stats digest_candidates never names a colleague's private tag", async () => {
     // digest_candidates sits beside top_tags in the same response and top_tags is
     // already scoped, which is the tell: this one scanned every workspace, so an
-    // admin's dashboard named a member's private topic — and its follow-up
+    // admin's dashboard named a member's private topic, and its follow-up
     // "already digested?" existence check read the whole corpus too.
     //
     // Eleven rows because the candidate query keeps only tags with count > 10.
@@ -444,7 +498,7 @@ describe("cross-user isolation — read surfaces", () => {
   });
 });
 
-describe("cross-user isolation — write surfaces", () => {
+describe("cross-user isolation, write surfaces", () => {
   const denied = (status: number) => status === 403 || status === 404;
 
   it("POST /update cannot touch a colleague's private row", async () => {
@@ -491,7 +545,7 @@ describe("cross-user isolation — write surfaces", () => {
   });
 });
 
-describe("cross-user isolation — administration", () => {
+describe("cross-user isolation, administration", () => {
   it("every /team administration route is admin-only", async () => {
     for (const [method, path, body] of [
       ["GET", "/team/members", undefined],
@@ -519,10 +573,10 @@ describe("cross-user isolation — administration", () => {
  * queues, where isolation has to hold without an identity to scope by.
  *
  * A single-workspace brain is the case every one of these must not change, so
- * each asserts the positive too — the pass still does its work, the repair
+ * each asserts the positive too, the pass still does its work, the repair
  * routes still repair every workspace.
  */
-describe("cross-user isolation — maintenance passes", () => {
+describe("cross-user isolation, maintenance passes", () => {
   // The nightly trigger from wrangler.jsonc. Routed by string in src/index.ts:
   // the integration and insight crons get their own invocation and budget, and
   // everything else falls through to maintenance.
@@ -530,7 +584,7 @@ describe("cross-user isolation — maintenance passes", () => {
 
   it("drives the cron string wrangler.jsonc actually schedules", () => {
     // The routing in src/index.ts is by string, and a cron this file no longer
-    // matches falls through to maintenance anyway — so a stale constant here
+    // matches falls through to maintenance anyway, so a stale constant here
     // would keep every case below green while testing a trigger that no longer
     // exists. Pinned to the deployment config rather than to a copy of it.
     const wrangler = readFileSync(resolve(import.meta.dirname, "../../wrangler.jsonc"), "utf8");
@@ -541,7 +595,7 @@ describe("cross-user isolation — maintenance passes", () => {
    * A Vectorize double that answers the way a real, unfiltered index answers:
    * every seeded near-duplicate is a strong neighbour of every other, whichever
    * workspace it lives in. src/graph/pass.ts queries with no filter, so this is
-   * the honest double — the default mock returns no matches at all, which would
+   * the honest double, the default mock returns no matches at all, which would
    * let the two cases below pass without the pass ever having had the chance to
    * bridge two workspaces.
    */
@@ -554,7 +608,7 @@ describe("cross-user isolation — maintenance passes", () => {
    * field the vectors did not carry.
    *
    * `workspaceId: undefined` models a vector with NO `workspace_id` metadata at
-   * all — an entry indexed before src/capture/store.ts started stamping it. Such
+   * all, an entry indexed before src/capture/store.ts started stamping it. Such
    * vectors are the normal case on an upgraded brain: tenancy bootstrap
    * backfills the `entries` ROWS (src/lib/tenancy.ts) but never restamps their
    * vectors, so the row has a real workspace and the vector has none.
@@ -598,7 +652,7 @@ describe("cross-user isolation — maintenance passes", () => {
 
   /**
    * Alice's and Bob's near-identical rows as each other's nearest neighbour,
-   * both vectors stamped — the shape a brain written entirely after stamping has.
+   * both vectors stamped, the shape a brain written entirely after stamping has.
    */
   const crossWorkspaceVectorize = (absentFieldMatches = true) => indexDouble({
     absentFieldMatches,
@@ -609,7 +663,7 @@ describe("cross-user isolation — maintenance passes", () => {
   });
 
   /**
-   * The same index, but one that REJECTS the workspace metadata filter — the
+   * The same index, but one that REJECTS the workspace metadata filter, the
    * documented degraded mode of `queryVectorizeScoped`, which retries unfiltered
    * and latches that per isolate.
    */
@@ -683,8 +737,8 @@ describe("cross-user isolation — maintenance passes", () => {
     await nightly();
     const second = (await cursor())?.workspace_id;
 
-    // Three workspaces carry entries here — Alice's, Bob's, and the company
-    // layer — so two consecutive nights must land on two different ones.
+    // Three workspaces carry entries here, Alice's, Bob's, and the company
+    // layer, so two consecutive nights must land on two different ones.
     expect(first).not.toBe(aliceWorkspaceId);
     expect(second).not.toBe(first);
     expect([aliceWorkspaceId, bobWorkspaceId, companyWorkspaceId]).toContain(first);
@@ -692,18 +746,18 @@ describe("cross-user isolation — maintenance passes", () => {
   });
 
   /**
-   * Recorded first as `it.fails` — the defect it describes was real: the nightly
+   * Recorded first as `it.fails`, the defect it describes was real: the nightly
    * graph pass queried Vectorize with no workspace filter, so a near-duplicate in
    * another member's personal workspace came back as a neighbour and
    * `inferEdgesOnWrite` wrote the edge. `relates_to` is symmetric, so
-   * edgeInsertStatement also reordered the endpoints — the edge was stamped with
+   * edgeInsertStatement also reordered the endpoints, the edge was stamped with
    * the acting entry's workspace while its `source_id` might be the colleague's
    * row.
    *
    * `inferEdgesOnWrite` now refuses a pair whose endpoints sit in different
    * workspaces, reading both from `entries` rather than from vector metadata.
-   * The pass still queries the index unfiltered — deliberately, see
-   * src/graph/pass.ts — so that check is doing all of the work here. The
+   * The pass still queries the index unfiltered, deliberately, see
+   * src/graph/pass.ts, so that check is doing all of the work here. The
    * assertion below is exactly the one that was recorded as failing.
    */
   it("the graph pass never links a memory to one in another workspace", async () => {
@@ -735,7 +789,7 @@ describe("cross-user isolation — maintenance passes", () => {
     // The pass deliberately does not filter (src/graph/pass.ts): its candidate
     // rows include entries whose vectors predate workspace stamping, and a
     // filter on a field those vectors do not carry can match nothing. So the
-    // containment is the endpoint check's alone, and this asserts both halves —
+    // containment is the endpoint check's alone, and this asserts both halves,
     // that no filter is sent, and that the crossing is refused anyway.
     //
     // The double here REJECTS any filtered query, so if the pass ever starts
@@ -753,7 +807,7 @@ describe("cross-user isolation — maintenance passes", () => {
     const calls = (index.query as unknown as { mock: { calls: any[][] } }).mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     for (const [, opts] of calls) expect(opts?.filter).toBeUndefined();
-    // Nothing degraded, because nothing was filtered — so the cron cannot latch
+    // Nothing degraded, because nothing was filtered, so the cron cannot latch
     // the isolate into unfiltered mode for the recall and capture paths.
     expect(vectorizeFilterState().supported).toBeNull();
     expect(vectorizeFilterState().degradedQueries).toBe(0);
@@ -772,7 +826,7 @@ describe("cross-user isolation — maintenance passes", () => {
    * rows have a real workspace (tenancy bootstrap backfills them) and their
    * vectors have no `workspace_id` metadata at all, because nothing restamps
    * vectors. Asking the index for "vectors whose workspace_id is in [ws-alice]"
-   * can therefore match nothing at all — and if the pass depends on that answer,
+   * can therefore match nothing at all, and if the pass depends on that answer,
    * an upgraded brain silently stops inferring ANY edges.
    *
    * Run under both readings of `$in` against a missing field, because which one
@@ -789,7 +843,7 @@ describe("cross-user isolation — maintenance passes", () => {
       "Renewal terms for the Ardent contract are unchanged this quarter", ["contracts"]);
     seed("alice-two", aliceWorkspaceId, aliceUserId,
       "Renewal terms for the Ardent contract were re-signed this quarter", ["contracts"]);
-    // Neither vector carries workspace_id — the upgraded-brain shape.
+    // Neither vector carries workspace_id, the upgraded-brain shape.
     env.VECTORIZE = indexDouble({
       absentFieldMatches,
       vectors: [
@@ -890,7 +944,7 @@ describe("cross-user isolation — maintenance passes", () => {
        VALUES ('stale-cross', 'alice-link', 'bob-link', 'relates_to', 0.96, 'inferred', '{}', ?, ?, ?)`,
     ).bind(SEEDED_AT, SEEDED_AT, aliceWorkspaceId).run();
 
-    // The bridging edge really is there — otherwise this proves nothing.
+    // The bridging edge really is there, otherwise this proves nothing.
     const bridged = await sqlite.db.prepare(
       `SELECT COUNT(*) AS n FROM edges e
          JOIN entries s ON s.id = e.source_id
@@ -979,7 +1033,7 @@ describe("cross-user isolation — maintenance passes", () => {
     // POST /vectorize-pending and /classify-pending are the two documented
     // exceptions to the scope rule: they must reach every workspace or a member's
     // unindexed rows stay unindexed with nothing on screen to say so. The rule
-    // they still owe is that repairing a row is not a way to relocate it — a
+    // they still owe is that repairing a row is not a way to relocate it, a
     // repair that stamped the acting admin's workspace onto Bob's memory would
     // move it into her readable set, which is a leak written by the fix.
     const { results: before } = await sqlite.db.prepare(

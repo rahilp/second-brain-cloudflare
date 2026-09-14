@@ -1,5 +1,5 @@
 /**
- * The value panel — the testimonial setup opens each screen with.
+ * The value panel - the testimonial setup opens each screen with.
  *
  * Most setup screens ask for one thing and then wait: a password typed, an
  * account chosen, a brain unlocked. The rail on the left says how much is
@@ -17,8 +17,8 @@
  * Three rules shape the data below:
  *
  * 1. One quote per screen, fixed. The mapping is a table rather than a
- *    rotation or a shuffle so that a re-render — a locale change, a rail
- *    refresh, a failed check redrawing the same screen — puts the same words
+ *    rotation or a shuffle so that a re-render - a locale change, a rail
+ *    refresh, a failed check redrawing the same screen - puts the same words
  *    back. A quote that changed its mind while the user was reading it would
  *    pull the eye off the field they were filling in, and it is now big
  *    enough that the movement would be impossible to ignore.
@@ -29,8 +29,8 @@
  *    `workerUpdate`, `stalePassword`) are not onboarding at all: nobody
  *    changing a password needs to be sold the app they already installed.
  * 3. Quotes are other people's words, so they are stored verbatim in one
- *    place and are never translated. Only the furniture around them — the
- *    kicker, the source labels, the stat line — goes through `t()`.
+ *    place and are never translated. Only the furniture around them - the
+ *    kicker, the source labels, the stat line - goes through `t()`.
  *
  * Like `steps.ts`, this module is plain data and pure lookups with no DOM in
  * it, so `test/unit/valuePanel.test.ts` can check the mapping without a

@@ -371,7 +371,7 @@ describe("the activity feed", () => {
     // assignment is pinned by the reveal/flip-back cases above; neither pin
     // survives the other's deletion.
     const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
-    const open = html.match(/<div id="team-activity"[^>]*>/)?.[0] ?? "";
+    const open = html.match(/<section id="team-activity"[^>]*>/)?.[0] ?? "";
     expect(open, "#team-activity must ship hidden").toContain("display: none");
   });
 
@@ -630,7 +630,7 @@ describe("the activity feed's event vocabulary", () => {
     // Ten AdminEventName + four entry-arm names. Deliberately pinned: a name
     // arriving in src/ has to be a decision taken here, in the same commit
     // that gives it a sentence in both catalogs.
-    expect(admitted()).toHaveLength(14);
+    expect(admitted()).toHaveLength(16);
   });
 
   it("keeps the entry-arm names it lists anchored to EntryEventName", () => {
@@ -663,5 +663,64 @@ describe("the activity feed's event vocabulary", () => {
     const html = els.get("activity-list").innerHTML as string;
     expect(html).toContain("member_teleported");
     expect((html.match(/class="activity-row"/g) ?? []).length).toBe(1);
+  });
+});
+
+/**
+ * The filter row's selected state. setActivityFilter (activity.js) already
+ * toggled aria-checked and .active on click; what was never tested is that
+ * doing so actually narrows renderActivity's output, or that the selected
+ * control ends up marked in a way main.css's [aria-checked='true'] rule can
+ * key off (charcoal fill, white text, matching .seg's selected segment).
+ */
+describe("activity filters", () => {
+  function makeRadio(initiallyChecked = false) {
+    const attrs: Record<string, string> = { "aria-checked": String(initiallyChecked) };
+    const classes = new Set<string>(initiallyChecked ? ["active"] : []);
+    return {
+      setAttribute(k: string, v: string) { attrs[k] = String(v); },
+      getAttribute(k: string) { return attrs[k] ?? null; },
+      classList: {
+        add(c: string) { classes.add(c); },
+        remove(c: string) { classes.delete(c); },
+        toggle(c: string, on?: boolean) { (on === undefined ? !classes.has(c) : on) ? classes.add(c) : classes.delete(c); },
+        contains: (c: string) => classes.has(c),
+      },
+    };
+  }
+
+  it("selecting Shared marks only that radio aria-checked, and leaves only shared rows", async () => {
+    const rows = [
+      memberRow(0, { event: "shared", subject: "Pricing floor note" }),
+      memberRow(1, { event: "member_created" }),
+      memberRow(2, { event: "insight_confirmed" }),
+    ];
+    const { ctx, els } = setup(async () => ok(rows));
+    await ctx.maybeRevealActivity();
+    // Three rows before any filter is applied: the fixture, not yet narrowed.
+    expect((els.get("activity-list").innerHTML.match(/class="activity-row"/g) ?? []).length).toBe(3);
+
+    const all = makeRadio(true);
+    const shared = makeRadio(false);
+    const insights = makeRadio(false);
+    const members = makeRadio(false);
+    // makeEl()'s querySelectorAll always returns []; setActivityFilter reads
+    // the live radio set from it to update every button's selected state, so
+    // this test needs a real one rather than the shared stub.
+    ctx.document.querySelectorAll = (sel: string) =>
+      sel === '.activity-filters [role="radio"]' ? [all, shared, insights, members] : [];
+
+    ctx.setActivityFilter("shared", shared);
+
+    expect(shared.getAttribute("aria-checked")).toBe("true");
+    expect(shared.classList.contains("active")).toBe(true);
+    expect(all.getAttribute("aria-checked")).toBe("false");
+    expect(all.classList.contains("active")).toBe(false);
+    expect(insights.getAttribute("aria-checked")).toBe("false");
+    expect(members.getAttribute("aria-checked")).toBe("false");
+
+    const html = els.get("activity-list").innerHTML as string;
+    expect((html.match(/class="activity-row"/g) ?? []).length).toBe(1);
+    expect(html).toContain("Pricing floor note");
   });
 });

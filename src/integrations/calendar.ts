@@ -30,10 +30,12 @@ export const RETENTION_MS = 180 * DAY_MS;    // hard bound on kept history
 // past, so they don't accumulate as low-value memories; one-off past events still
 // keep the full RETENTION_MS as historical memory.
 export const RECURRING_RETENTION_MS: number | null = 0;
-// Create/update ceiling per batch. The budget that binds here is D1's — 50
-// queries per Worker invocation on the free plan — not the one outbound fetch
-// per sync this used to be justified by, which is how the real cost went
-// unnoticed (#290). Each mirrored occurrence costs the mirror store two D1
+// Create/update ceiling per batch. The budget that binds here is D1's — this
+// codebase's self-imposed ~50 calls per Worker invocation (the platform's
+// real ceiling is 1,000 D1/KV/Vectorize calls, kept far tighter here for cost
+// and 10 ms-CPU reasons) — not the one outbound fetch per sync this used to be
+// justified by, which is how the real cost went unnoticed (#290). Each
+// mirrored occurrence costs the mirror store two D1
 // queries to create (insert, then vector_ids) and three to update (read, content
 // write, vector_ids), on top of its classify, embed and Vectorize calls. So ten
 // items is 20–30 D1 queries: comfortable in an HTTP sync, which owns its whole

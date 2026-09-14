@@ -84,6 +84,58 @@ CREATE TABLE IF NOT EXISTS workspaces (
   created_at  INTEGER NOT NULL
 );
 
+-- Authoritative version for each workspace's Prompt Capsule. The full Capsule
+-- body is cached in eventually-consistent KV, but this revision is read from D1
+-- before every lookup so an old KV payload can never cross an edit, delete,
+-- workspace move, or id change. Rows are created lazily by the entry triggers
+-- below or by the first Capsule read of an otherwise untouched workspace.
+CREATE TABLE IF NOT EXISTS prompt_capsule_revisions (
+  workspace_id TEXT PRIMARY KEY,
+  revision     TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS prompt_capsule_entry_insert
+AFTER INSERT ON entries
+WHEN instr(lower(NEW.tags), '"capsule:') > 0
+  OR instr(lower(NEW.tags), '"capsule-slot:') > 0
+BEGIN
+  INSERT INTO prompt_capsule_revisions (workspace_id, revision)
+  VALUES (NEW.workspace_id, lower(hex(randomblob(16))))
+  ON CONFLICT(workspace_id) DO UPDATE SET revision = lower(hex(randomblob(16)));
+END;
+
+CREATE TRIGGER IF NOT EXISTS prompt_capsule_entry_update
+AFTER UPDATE OF id, content, tags, workspace_id ON entries
+WHEN instr(lower(OLD.tags), '"capsule:') > 0
+  OR instr(lower(OLD.tags), '"capsule-slot:') > 0
+  OR instr(lower(NEW.tags), '"capsule:') > 0
+  OR instr(lower(NEW.tags), '"capsule-slot:') > 0
+BEGIN
+  INSERT INTO prompt_capsule_revisions (workspace_id, revision)
+  VALUES (OLD.workspace_id, lower(hex(randomblob(16))))
+  ON CONFLICT(workspace_id) DO UPDATE SET revision = lower(hex(randomblob(16)));
+
+  INSERT INTO prompt_capsule_revisions (workspace_id, revision)
+  SELECT NEW.workspace_id, lower(hex(randomblob(16))) WHERE NEW.workspace_id <> OLD.workspace_id
+  ON CONFLICT(workspace_id) DO UPDATE SET revision = lower(hex(randomblob(16)));
+END;
+
+CREATE TRIGGER IF NOT EXISTS prompt_capsule_entry_delete
+AFTER DELETE ON entries
+WHEN instr(lower(OLD.tags), '"capsule:') > 0
+  OR instr(lower(OLD.tags), '"capsule-slot:') > 0
+BEGIN
+  INSERT INTO prompt_capsule_revisions (workspace_id, revision)
+  VALUES (OLD.workspace_id, lower(hex(randomblob(16))))
+  ON CONFLICT(workspace_id) DO UPDATE SET revision = lower(hex(randomblob(16)));
+END;
+
+CREATE TRIGGER IF NOT EXISTS prompt_capsule_workspace_delete
+AFTER DELETE ON workspaces
+BEGIN
+  DELETE FROM prompt_capsule_revisions WHERE workspace_id = OLD.id;
+END;
+
 -- The bootstrap looks up the company workspace by kind on every identity path.
 CREATE INDEX IF NOT EXISTS idx_workspaces_kind ON workspaces(kind);
 
@@ -165,3 +217,7 @@ CREATE TABLE IF NOT EXISTS maintenance_cursor (
 
 INSERT INTO maintenance_cursor (id, workspace_id, advanced_at) VALUES (1, '', 0)
   ON CONFLICT DO NOTHING;
+
+-- Capsule-only index: missing project ids never scan ordinary memories.
+CREATE INDEX IF NOT EXISTS idx_entries_capsule ON entries(workspace_id, id)
+WHERE instr(lower(tags), '"capsule:') > 0;

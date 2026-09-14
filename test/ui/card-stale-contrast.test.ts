@@ -100,8 +100,11 @@ describe("card--stale does not reduce text contrast", () => {
   it("records the baseline contrast the modifier must not worsen", () => {
     // Asserted precisely, for the same reason the failing numbers were: a loose
     // tolerance cannot tell 4.4987 from 4.54, and that gap is the whole point.
-    expect(contrast(variable("dark", "--text-tertiary"), variable("dark", "--bg-card"))).toBeCloseTo(5.9568, 3);
-    expect(contrast(variable("light", "--text-tertiary"), variable("light", "--bg-card"))).toBeCloseTo(5.5668, 3);
+    // Re-recorded for the living-thread palette (dashboard redesign Task 0.2):
+    // the ink ramp and --bg-card both moved, so the prior baseline (5.9568
+    // dark, 5.5668 light) no longer describes the shipped tokens.
+    expect(contrast(variable("dark", "--text-tertiary"), variable("dark", "--bg-card"))).toBeCloseTo(5.424, 3);
+    expect(contrast(variable("light", "--text-tertiary"), variable("light", "--bg-card"))).toBeCloseTo(4.5355, 3);
   });
 
   it("both baselines now clear AA, and must keep clearing it", () => {

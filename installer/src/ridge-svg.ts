@@ -1,4 +1,4 @@
-// Ridge's artwork — the official animated mascot supplied by the user
+// Ridge's artwork - the official animated mascot supplied by the user
 // (six expression groups: idle, talking, thinking, surprised, celebrate,
 // empathy; ambient bob/groove/gleam animations; reduced-motion support).
 // Expressions are state-driven via [data-ridge-state] on the wrapper
@@ -30,7 +30,7 @@ export const RIDGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 12
 
     /* Expression is driven by the app, not a timer: the mascot wrapper
        carries [data-ridge-state] (ridge.ts). The ambient cycle from the
-       source art was removed — each reaction shows exactly one face. */
+       source art was removed - each reaction shows exactly one face. */
     #expression-idle { opacity: 1; }
     [data-ridge-state] #expression-idle { opacity: 0; }
     [data-ridge-state='idle'] #expression-idle,

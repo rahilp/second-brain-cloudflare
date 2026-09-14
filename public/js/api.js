@@ -32,12 +32,18 @@ async function apiCapture(content, tags, source, workspace) {
   return res.json()
 }
 
-async function apiList(n = 50, workspace, actor) {
+async function apiList(n = 50, workspace, actor, tag) {
   const params = new URLSearchParams({ n: String(n) })
   if (workspace) params.set('workspace', workspace)
   // Only ever set from the shared layer's author filter (js/recent.js), so a
   // solo brain's URL stays byte-identical to what it has always sent.
   if (actor) params.set('actor', actor)
+  // Server-side, not just the client-side pass in applyRecentFilters: without
+  // this, a tag filter only narrows whichever `n` most-recent rows already
+  // happened to be fetched, a tag with real matches outside that window read
+  // as "no results" (this bit the contradictions tile, whose tag is hidden
+  // from the select and so was easy to miss testing without it).
+  if (tag) params.set('tag', tag)
   const res = await fetch(`${WORKER_URL}/list?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
   return res.json()
 }

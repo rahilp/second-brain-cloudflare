@@ -46,6 +46,8 @@ const LEGACY_SHAPES: Record<string, string> = {
   // Never widened since it shipped.
   insight_candidates: `CREATE TABLE insight_candidates (id TEXT PRIMARY KEY, a_id TEXT NOT NULL, b_id TEXT NOT NULL, similarity REAL NOT NULL, gap_ms INTEGER NOT NULL, score REAL NOT NULL, signal TEXT NOT NULL DEFAULT 'vector', status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, UNIQUE(a_id, b_id))`,
   workspaces: `CREATE TABLE workspaces (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'personal', name TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)`,
+  // Added with Prompt Capsule caching and never widened since.
+  prompt_capsule_revisions: `CREATE TABLE prompt_capsule_revisions (workspace_id TEXT PRIMARY KEY, revision TEXT NOT NULL)`,
   // v3 as first provisioned: default_share, removed_at and last_used_at all
   // arrived afterwards, against team brains that already had members in them.
   users: `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT, role TEXT NOT NULL DEFAULT 'member', token_hash TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
@@ -160,10 +162,18 @@ describe("an existing database gains every column db/schema.sql declares", () =>
       expect(missing, `${table} is missing ${missing.join(", ")} after init — db/schema.sql declares ${
         Object.keys(declared).length} columns but src/db/init.ts has no ALTER TABLE ${table} ADD COLUMN for these, so only fresh brains get them`).toEqual([]);
 
-      // Not backfilled and not rewritten: the legacy row is still exactly what
-      // the earlier release wrote.
       const row = await d1.db.prepare(`SELECT ${legacyColumns.join(", ")} FROM ${table}`).first() as Record<string, unknown>;
-      expect(row).toEqual(Object.fromEntries(legacyColumns.map((c, i) => [c, legacyValues[i]])));
+      const expected = Object.fromEntries(legacyColumns.map((c, i) => [c, legacyValues[i]]));
+      if (table === "prompt_capsule_revisions") {
+        // 欠落したトリガーの復旧時には、古いキャッシュを失効させる。
+        // ワークスペースの行を保持し、リビジョンだけを再生成する。
+        expect(row.revision).toMatch(/^[0-9a-f]{32}$/);
+        expect(row.revision).not.toBe(expected.revision);
+        expect(row).toEqual({ ...expected, revision: row.revision });
+      } else {
+        // その他の既存データは書き換えずに保持する。
+        expect(row).toEqual(expected);
+      }
 
       // Existence of the columns is the mechanism; a write that binds all of
       // them is the behaviour every caller depends on. OR REPLACE only so the

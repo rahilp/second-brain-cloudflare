@@ -1,0 +1,1131 @@
+/* The home board: stat tiles and the panel grid below the command bar.
+   Ported from docs/design-mockups/dashboard/template.html, hex replaced by
+   tokens. Namespaced under .board where a class name would otherwise collide
+   with an existing dashboard class (main.css owns .memory-card and .tag). */
+
+/* ── Tiles ─────────────────────────────────────────────────────────────── */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 26px;
+}
+
+.tiles[hidden] {
+  display: none;
+}
+
+.tile {
+  background: var(--surface-muted);
+  border-radius: var(--r-card);
+  padding: 18px 22px 16px;
+}
+
+.tile-n {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 36px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.tile-l {
+  display: block;
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.tile-d {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.tile-d::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+}
+
+.tile-d.quiet {
+  color: var(--text-secondary);
+}
+
+.tile-d.quiet::before {
+  background: var(--border-soft);
+}
+
+/* ── Board grid and panels ────────────────────────────────────────────── */
+.board {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.board:empty {
+  margin-top: 0;
+}
+
+.panel {
+  grid-column: span 12;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  padding: 20px 22px 22px;
+  min-width: 0;
+}
+
+.span8 {
+  grid-column: span 8;
+}
+.span7 {
+  grid-column: span 7;
+}
+.span6 {
+  grid-column: span 6;
+}
+.span5 {
+  grid-column: span 5;
+}
+.span4 {
+  grid-column: span 4;
+}
+.span3 {
+  grid-column: span 3;
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.panel h2 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.panel-sub {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.panel-act,
+.more {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  border: 0;
+  background: none;
+  padding: 0 4px 1px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: border-color var(--dur-feedback) var(--ease-standard);
+}
+
+.panel-act:hover,
+.more:hover {
+  border-color: var(--text-primary);
+}
+
+.panel-act i {
+  font-size: 15px;
+  transition: transform var(--dur-feedback) var(--ease-standard);
+}
+
+.panel-act:hover i {
+  transform: translateX(2px);
+}
+
+/* Range control (.seg). A 2px inner inset keeps the labels off the border. */
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-button);
+}
+
+.seg button {
+  height: 30px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-state) var(--ease-standard),
+    color var(--dur-state) var(--ease-standard);
+}
+
+.seg button[aria-checked='true'] {
+  background: var(--text-primary);
+  color: var(--on-accent);
+}
+
+.seg button:hover:not([aria-checked='true']) {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+.seg button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Board buttons (template.html's .btn/.btn-primary/.btn-secondary/.btn-sm):
+   primary fills --action, secondary is transparent with a hairline border.
+   --on-accent, not a hardcoded white, so the primary label stays readable
+   once --action turns pale in dark theme. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid transparent;
+  border-radius: var(--r-button);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-feedback) var(--ease-standard),
+    border-color var(--dur-feedback) var(--ease-standard),
+    color var(--dur-feedback) var(--ease-standard);
+}
+
+.btn-primary {
+  background: var(--action);
+  color: var(--on-accent);
+}
+.btn-primary:hover {
+  background: var(--action-hover);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--line);
+}
+.btn-secondary:hover {
+  background: var(--surface-muted);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.btn-sm {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+@media (max-width: 1240px) {
+  .span8 {
+    grid-column: span 12;
+  }
+  /* The decisions thread needs full width before it needs to stack, unlike
+     the other span4 panels; matches the mockup's `.span4.decide` override. */
+  .span4.decide {
+    grid-column: span 12;
+  }
+  .span7,
+  .span5 {
+    grid-column: span 6;
+  }
+  .span4,
+  .span3 {
+    grid-column: span 6;
+  }
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .span7,
+  .span6,
+  .span5,
+  .span4,
+  .span3 {
+    grid-column: span 12;
+  }
+  .panel-head {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 700px) {
+  .tiles {
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .tile {
+    padding: 14px 16px 12px;
+  }
+  .tile-n {
+    font-size: 28px;
+  }
+  .board {
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .panel {
+    padding: 16px 16px 18px;
+  }
+  .bar {
+    grid-template-columns: 96px minmax(0, 1fr) 40px;
+  }
+}
+
+/* ── Decisions thread ─────────────────────────────────────────────────── */
+.ledger {
+  position: relative;
+  padding-left: 26px;
+  margin-top: 16px;
+  /* A guard, not the fix: refitThread (board.js) keeps the thread sized to
+     its stops, but this stops a stale height from ever visibly running past
+     the ledger's own box if a refit is ever missed. */
+  overflow: hidden;
+}
+
+.thread {
+  position: absolute;
+  left: 3px;
+  top: 9px;
+  width: 2px;
+  height: 60%;
+  border-radius: 1px;
+  background: var(--brand-orange);
+  transform-origin: top;
+  transform: scaleY(0);
+}
+
+.thread.drawn {
+  transform: scaleY(1);
+  transition: transform var(--dur-focal) var(--ease);
+}
+
+.stop {
+  position: relative;
+  padding: 0 0 18px;
+}
+
+.stop::before {
+  content: '';
+  position: absolute;
+  left: -26px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  margin-left: 0.5px;
+  border-radius: 50%;
+  background: var(--brand-orange);
+  box-shadow: 0 0 0 2px var(--bg-card);
+}
+
+.stop + .stop {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.stop + .stop::before {
+  top: 22px;
+}
+
+.stop-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.stop-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stop--settled .brief-body,
+.stop--settled .brief-actions {
+  display: none;
+}
+
+.stop--settled .brief-label {
+  color: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread {
+    transform: scaleY(1) !important;
+    transition: none !important;
+  }
+}
+
+/* ── Bars (topics, and the temporary sources-from-brief panel) ──────────── */
+.bars {
+  margin-top: 10px;
+}
+
+.bar {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  font-size: 13.5px;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.bar > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 8px;
+  min-width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--data);
+  width: var(--w);
+}
+
+.bar-n {
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+/* ── Recalled rows ────────────────────────────────────────────────────── */
+.board .rows .row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 3px 14px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+}
+
+.board .rows .row[role='button'] {
+  cursor: pointer;
+}
+
+.board .rows .row[role='button']:hover,
+.board .rows .row[role='button']:focus-visible {
+  background: var(--bg-soft);
+}
+
+.reread-text[role='button'] {
+  cursor: pointer;
+}
+
+.reread-text[role='button']:hover,
+.reread-text[role='button']:focus-visible {
+  color: var(--brand-orange);
+}
+
+.board .rows .row:first-child {
+  border-top: 0;
+}
+
+.board .row-t {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.board .row-m {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.board .row-n {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ── Open rows (sources-from-brief) ──────────────────────────────────────── */
+.board .rows {
+  margin-top: 8px;
+}
+
+.board .src {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 0 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  color: var(--text-secondary);
+}
+
+.board .src:first-child {
+  border-top: 0;
+}
+
+.board .src-name {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.board .src-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+/* ── Memory mark (the resurfaced memory, unboxed) ─────────────────────── */
+.memory-mark {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 14px;
+}
+
+.memory-mark-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.memory-mark-icon {
+  flex: none;
+  width: 36px;
+  height: auto;
+}
+
+.memory-mark-label {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+
+.memory-mark-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.reread-text {
+  margin-top: 8px;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.memory-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.board .tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--r-chip);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.memory-card-foot .digest-btn {
+  margin-left: auto;
+}
+
+/* ── Area chart ───────────────────────────────────────────────────────── */
+.panel.growth {
+  display: flex;
+  flex-direction: column;
+}
+
+.chart {
+  position: relative;
+  margin-top: 14px;
+  flex: 1;
+  min-height: 264px;
+}
+
+.chart svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.grid line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.axis text {
+  font-size: 11.5px;
+  fill: var(--text-secondary);
+}
+
+.area {
+  fill-opacity: 0.22;
+}
+
+.line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.area.is-muted,
+.line.is-muted {
+  opacity: 0.12;
+}
+
+.area,
+.line {
+  transition: opacity var(--dur-feedback) var(--ease-standard);
+}
+
+.cross {
+  stroke: var(--text-primary);
+  stroke-width: 1;
+  opacity: 0;
+  transition: opacity var(--dur-feedback) var(--ease-standard);
+}
+
+.cross-dot {
+  stroke: var(--bg-card);
+  stroke-width: 2;
+  opacity: 0;
+  transition: opacity var(--dur-feedback) var(--ease-standard);
+}
+
+.chart.hover .cross,
+.chart.hover .cross-dot {
+  opacity: 1;
+}
+
+/* Visually hidden, still readable by assistive tech (the data table caption). */
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Fixed tooltip shared by every chart on the page. */
+.tip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  padding: 8px 10px;
+  border-radius: var(--r-input);
+  background: var(--charcoal);
+  color: var(--text-on-elevated);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity var(--dur-feedback) var(--ease-standard),
+    transform var(--dur-feedback) var(--ease-standard);
+}
+
+.tip.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.tip b {
+  font-weight: 500;
+}
+
+.tip .row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  justify-content: space-between;
+}
+
+.tip .row i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.tip .row em {
+  font-style: normal;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+/* Shown instead of the range control and table toggle against an older
+   Worker, which has neither to switch between. */
+.chart-note {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.legend-item.is-muted {
+  opacity: 0.55;
+}
+
+.legend-item i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.legend-item .num {
+  color: var(--text-secondary);
+}
+
+.table-scroll {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 14px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  text-align: right;
+  padding: 7px 8px;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.data-table th:first-child,
+.data-table td:first-child {
+  text-align: left;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-weight: 500;
+  border-top: 0;
+}
+
+.data-table[hidden] {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .chart {
+    flex: none;
+    height: 240px;
+    min-height: 0;
+  }
+}
+
+/* ── Graph preview ────────────────────────────────────────────────────── */
+.graph {
+  margin-top: 14px;
+  aspect-ratio: 560 / 340;
+}
+
+.graph-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.graph-node {
+  fill: var(--text-secondary);
+  stroke: var(--bg-card);
+  stroke-width: 2;
+  transition: fill var(--dur-state) var(--ease-standard), opacity var(--dur-state) var(--ease-standard);
+}
+
+/* The one place this panel takes on brand orange: a user's own click, never
+   the default render (see the renderGraphPanel comment in board.js). */
+.graph-node.is-active {
+  fill: var(--brand-orange);
+}
+
+.graph-node.is-dimmed {
+  opacity: 0.3;
+}
+
+.graph-ring {
+  fill: var(--text-primary);
+  fill-opacity: 0.045;
+  stroke: var(--text-primary);
+  stroke-opacity: 0.28;
+  transition:
+    stroke var(--dur-state) var(--ease-standard),
+    fill var(--dur-state) var(--ease-standard),
+    opacity var(--dur-state) var(--ease-standard);
+}
+
+.graph-ring.is-active {
+  stroke: var(--brand-orange);
+  stroke-opacity: 1;
+  fill: color-mix(in srgb, var(--brand-orange) 6%, transparent);
+}
+
+.graph-ring.is-dimmed {
+  opacity: 0.4;
+}
+
+.graph-edge {
+  stroke: var(--line);
+  stroke-width: 1;
+  transition: opacity var(--dur-state) var(--ease-standard);
+}
+
+.graph-edge.is-dimmed {
+  opacity: 0.15;
+}
+
+.graph-label {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  fill: var(--text-secondary);
+  cursor: pointer;
+  transition: fill var(--dur-state) var(--ease-standard);
+}
+
+.graph-label:hover,
+.graph-label:focus-visible {
+  text-decoration: underline;
+}
+
+.graph-label.is-active {
+  fill: var(--text-primary);
+  font-weight: 600;
+}
+
+.graph-n {
+  fill: var(--text-primary);
+  font-weight: 500;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+/* Row of chips standing in for the in-SVG .graph-label controls, shown only
+   where those hide (below 700px, where there is no room to set them without
+   overlap). Same words, same click-to-highlight behavior. */
+.graph-cluster-legend {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+
+.graph-chip {
+  font: inherit;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  padding: 4px 0;
+  min-height: 24px;
+  cursor: pointer;
+  transition: color var(--dur-state) var(--ease-standard);
+}
+
+.graph-chip:hover,
+.graph-chip:focus-visible {
+  text-decoration: underline;
+}
+
+.graph-chip.is-active {
+  color: var(--brand-orange);
+  font-weight: 600;
+}
+
+@media (max-width: 700px) {
+  .graph-label {
+    display: none;
+  }
+  .graph-cluster-legend {
+    display: flex;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-node,
+  .graph-ring,
+  .graph-edge,
+  .graph-label,
+  .graph-chip {
+    transition: none !important;
+  }
+}
+
+/* ── Last night ───────────────────────────────────────────────────────── */
+.night {
+  margin-top: 8px;
+}
+
+.night-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+
+.night-row:first-child {
+  border-top: 0;
+}
+
+.night-n {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.night-t {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+/* ── Kinds of links: the two-column tail beneath the top-3 bars ────────── */
+.link-chips {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 16px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.link-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.link-chip .num {
+  color: var(--text-primary);
+}
+
+/* ── Upkeep and connected sources ─────────────────────────────────────── */
+.task {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.task:first-child {
+  border-top: 0;
+}
+
+.task-t {
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.task-t span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.board .src .ti {
+  color: var(--text-secondary);
+}
+
+.src-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  flex: none;
+}
+
+.board .src-meta a {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ── Prompt capsule ───────────────────────────────────────────────────── */
+.slots {
+  margin-top: 8px;
+}
+
+.slot {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--text-primary);
+  width: 100%;
+  text-align: left;
+  background: none;
+  border-right: 0;
+  border-left: 0;
+  border-bottom: 0;
+  cursor: pointer;
+}
+
+.slot:hover .slot-body,
+.slot:focus-visible .slot-body {
+  color: var(--brand-orange);
+}
+
+.slot-add {
+  grid-column: 2;
+  color: var(--brand-orange);
+  font-size: 12.5px;
+}
+
+.slot:first-child {
+  border-top: 0;
+}
+
+.slot .ti {
+  width: 16px;
+  margin-top: 1px;
+  color: var(--text-primary);
+}
+
+.slot.empty .ti {
+  color: var(--data);
+}
+
+.slot-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.slot small {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+@media (max-width: 370px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+}

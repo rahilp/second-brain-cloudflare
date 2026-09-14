@@ -93,11 +93,11 @@ function autoResize(el) {
  * The parts of the recall column that are not the conversation, and so must
  * survive clearing it.
  *
- * Wiping innerHTML was safe when this container held nothing but bubbles. Home
- * and the brief moved in with them, and the wipe took both — permanently, in a
- * desktop window that has no reload to recover with.
+ * Wiping innerHTML was safe when this container held nothing but bubbles. Home,
+ * the brief and the board moved in with them, and the wipe took all three,
+ * permanently, in a desktop window that has no reload to recover with.
  */
-const RECALL_FURNITURE = new Set(['home', 'brief', 'recall-welcome'])
+const RECALL_FURNITURE = new Set(['home', 'brief', 'recall-welcome', 'board-tiles', 'board'])
 
 function clearRecall() {
   const msgs = document.getElementById('recall-messages')

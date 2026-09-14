@@ -15,13 +15,16 @@ Claude, ChatGPT, Cursor, Codex, and the other AI tools you use do not naturally 
 
 Second Brain gives those tools one persistent memory system. It runs in your own Cloudflare account, stays under your control, and retrieves the right context by meaning rather than exact wording.
 
-### [Download for Mac or Windows](releases/latest) · [Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare) · [Read the documentation](wiki)
+---
 
 The desktop app is the easiest way to start. It builds your Second Brain and connects your AI tools in about two minutes—no terminal or Cloudflare setup required.
 
-> **#3 Product of the Day on Product Hunt**
->
-> <a href="https://www.producthunt.com/products/second-brain-cloudflare?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_campaign=badge-second-brain-for-ai" target="_blank" rel="noopener noreferrer"><img alt="Second Brain for AI: Persistent memory for Claude, ChatGPT, and Cursor" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1151393&theme=light&period=daily&t=1780357463637"></a>
+### [Download for Mac or Windows](releases/latest)
+
+---
+
+[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/rahilp/second-brain-cloudflare) · [Read the documentation](wiki)
+
 
 ## What it does
 
@@ -75,6 +78,7 @@ If Vectorize is unavailable, captures and keyword recall continue working. Your 
 | `recall` | Find memories by meaning rather than exact wording |
 | `list_recent` | Browse recently saved memories |
 | `list_teams` | List shared teams you belong to (names and ids). In v3.0.0 this is one team; used by MCP clients for future multi-team support |
+| `get_prompt_capsule` | Read a deterministic core or project context projection for a gateway-controlled prompt prefix |
 | `get` | Read one memory by ID |
 | `forget` | Permanently delete a memory |
 | `set_status` | Mark a memory `canonical`, `draft`, or `deprecated` |
@@ -93,6 +97,104 @@ CLI example:
 brain remember --workspace company "We ship on Thursdays"
 brain recall --workspace company "when do we ship?"
 ```
+
+### Prompt Capsules
+
+Prompt Capsules are deterministic, read-only projections for gateways and
+custom agents that can place stable context before a changing user request.
+They complement query-specific `recall`; they do not inject every memory into
+every prompt.
+
+A Capsule entry is an ordinary canonical memory with one target tag and one
+slot tag. Core entries use `capsule:core`; project entries use
+`capsule:project:<opaque-project-id>`. Slots are emitted in this fixed order:
+
+- Core: `identity`, `preferences`, `constraints`, `principles`
+- Project: `current-state`, `decisions`, `open-questions`
+
+Tag the slot as `capsule-slot:<slot>` and keep at most one canonical entry per
+slot. Draft and deprecated entries are ignored. Ambiguous slots are omitted
+without choosing a winner; malformed rows are skipped. The response reports
+`duplicate_slots` and `invalid_entries`, and `complete` is false. Other valid
+slots remain available, including on the shared layer.
+
+An entry must carry `status:canonical` to be part of a Capsule. The easiest way
+is to include `status:canonical` in the tags at remember or capture time (it is
+stored after whitespace trimming, and the classifier then leaves it alone);
+otherwise the definition starts as draft and requires `set_status canonical`.
+Classification, including `/classify-pending`, never publishes a capsule. A
+write that contradicts a protected memory is demoted to draft even when the
+caller requested canonical. To take an entry out of a Capsule, set its
+status to draft or deprecated. MCP `update` accepts an optional `tags` array:
+pass the complete replacement definition, for example
+`["capsule:core", "capsule-slot:preferences"]`, along with the entry id and
+content. Naming either capsule namespace replaces both namespaces; a lone
+slot tag is not a complete definition. Omit `tags` to preserve existing tags.
+MCP and REST capture/update accept at most 64 tags of 128 characters each.
+
+**Shared-layer recovery:** members can publish their own shared definitions,
+but cannot edit a teammate's entry. Check the reported ids, ask the author or
+an admin to re-slot or unpublish them with `update` or `set_status`, and do not
+interpret an incomplete response as the full team policy. The dashboard hides
+bookkeeping tags; use MCP for this recovery. No teammate content-edit permission
+is added.
+
+Authenticated clients can use `GET|HEAD /prompt-capsules/core`,
+`GET|HEAD /prompt-capsules/projects/<opaque-project-id>`, or the
+`get_prompt_capsule` MCP tool. Responses include a strong `ETag`, a SHA-256 of
+the exact prompt-ready `text`, and whole-slot omission metadata for the
+12,000-character budget. Validation happens before serialization: shared invalid,
+duplicate, or individually oversized definitions are excluded and reported, so
+later healthy slots may still appear. The result is an ordered subset of the
+defined slots, not necessarily their prefix. Among the remaining valid slots,
+once the cumulative budget is exceeded, that slot and every later slot are omitted. A single
+entry longer than the whole serialized budget (including JSON escaping) returns
+`409 invalid_prompt_capsule` with reason `content-too-large` in a personal
+capsule, even if earlier slots would fit; no partial text is returned. In a shared capsule it is skipped
+and reported, so it cannot hide unrelated slots. Empty responses have
+`populated: false` and `complete: false`. The 200-candidate resource limit still
+returns `409 too_many_candidates`; an author or admin must reduce definitions. Timestamps, entry ids, and ETags are excluded from
+`text`, so unrelated changes do not alter the reusable prefix. Provider cache
+keys, breakpoints, token budgets, and cache-hit measurement remain the
+gateway's responsibility.
+
+Capsule bodies are cached in KV per workspace and immutable D1 revision for up
+to one hour. Entry triggers advance that revision in the same D1 transaction
+as every capsule-tagged insert, id/content/tag update, workspace move, or delete.
+If a restore or import has no derived revision row, the first read seeds a new
+opaque revision instead of using a reusable sentinel.
+Each cached read therefore pays one indexed D1 row instead of scanning the whole
+workspace; KV eventual consistency can cause an extra rebuild, but cannot revive
+a pre-edit or pre-share body. Old keys become unreachable immediately and expire
+within the hour; after propagation settles, the longer TTL normally limits an
+unchanged, continuously read target to 24 refresh writes per day. Cold-fill races
+and revision changes can add attempts. Writes to ordinary entries do not advance
+the revision. Gateways should revalidate with `If-None-Match` once per session
+rather than on every request.
+
+An empty project Capsule is returned normally but not stored in KV. Project ids
+are caller-selected, so this prevents arbitrary nonexistent ids from consuming
+one KV write and key each. A partial `(workspace_id, id)` index over capsule-tagged
+rows, explicitly selected by the candidate query, also bounds these reads to capsule definitions instead of every ordinary
+memory in the workspace. Its cost grows with capsule-tagged rows, not with the
+ordinary corpus. Empty core Capsules remain cached because core is one fixed
+target per workspace.
+
+After a D1 Time Travel restore, redeploy the Worker before resuming traffic so
+schema initialization recreates `prompt_capsule_revisions` and the four
+`prompt_capsule_*` triggers if the restore point predates part of this migration.
+Initialization compares the installed capsule index definition and trigger bodies.
+Changed index definitions and changed or missing triggers are repaired atomically
+with a revision rotation, so cached results cannot survive a repaired invalidator. NUL-containing ids, content, or tag documents
+are rejected (personal) or skipped and reported (shared), never published as a
+truncated SQLite string. REST capture/update/append and MCP remember/update/append
+reject new NUL-containing content; incoming tags must also be NUL-free. Imported
+or legacy rows still receive the read-time checks described above.
+
+**Upgrade warning:** `capsule:*` and `capsule-slot:*` are now reserved. Existing
+canonical rows using those names can become prompt definitions or appear in
+validation reports. Review these tags before enabling a gateway, especially on
+a shared workspace.
 
 ## Get started
 

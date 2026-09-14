@@ -3,8 +3,10 @@ import { json } from "../lib/http";
 import { requireIdentity } from "../lib/identity";
 import { scopeWhere } from "../lib/scope";
 import { INDEXABLE_SQL } from "../capture/lifecycle";
+import { isTopicTagSql } from "../compression/eligibility";
 import { PENDING_INSIGHT_SQL } from "../memory/patterns";
 import { STALE_REVIEW_SQL } from "../memory/stale";
+import { parseTags } from "../insight/candidates";
 
 /**
  * GET /brief — what the brain did while you were away.
@@ -15,8 +17,11 @@ import { STALE_REVIEW_SQL } from "../memory/stale";
  * being read back; nothing here computes, embeds, or calls a model.
  *
  * BUDGET. Six D1 queries, no AI, no Vectorize, and one HTTP round trip
- * because the alternative — the client asking six endpoints — spends six of
- * the ~50 subrequests a free-plan invocation gets, on every app open. Each
+ * because the alternative — the client asking six endpoints — spends six
+ * times the D1 calls, on every app open, against this codebase's self-imposed
+ * ~50-call D1 budget per invocation (the platform's real ceiling is 1,000).
+ * Six round trips is also six times the request overhead against the free
+ * plan's 10 ms CPU limit. Each
  * query is either indexed (created_at DESC) or bounded by a small LIMIT. The
  * count is pinned by test/integration/brief-budget.test.ts, and that pin is
  * the point: this endpoint is the one thing every user runs every time.
@@ -99,7 +104,7 @@ export async function handleBriefRoutes(
     // say it once but are not what the rest of this codebase or its SQLite
     // test double use.
     env.DB.prepare(
-      `SELECT id, content, created_at FROM entries
+      `SELECT id, content, source, tags, created_at FROM entries
        WHERE (${RESURFACE_FILTER}) AND ${scope.clause}
        ORDER BY id
        LIMIT 1
@@ -131,9 +136,7 @@ export async function handleBriefRoutes(
     env.DB.prepare(
       `SELECT value AS tag, COUNT(*) AS n FROM entries, json_each(entries.tags)
        WHERE entries.created_at >= ?
-         AND value NOT LIKE 'kind:%' AND value NOT LIKE 'status:%'
-         AND value NOT LIKE 'volatility:%' AND value NOT LIKE 'stale:%'
-         AND value NOT IN ('auto-pattern', 'auto-insight', 'synthesized', 'rolled-up', 'duplicate-candidate')
+         AND ${isTopicTagSql()}
          AND value NOT GLOB '[0-9]*'
          AND ${scope.clause}
        GROUP BY value ORDER BY n DESC LIMIT 6`,
@@ -174,7 +177,9 @@ export async function handleBriefRoutes(
     content: r.content,
   }));
 
-  const resurfaceRow = (resurfaceRows.results as { id: string; content: string; created_at: number }[])[0];
+  const resurfaceRow = (resurfaceRows.results as {
+    id: string; content: string; source: string; tags: string; created_at: number;
+  }[])[0];
 
   // Days with no captures are absent from the GROUP BY and have to be filled
   // in, or the strip would silently compress a quiet week into a busy-looking
@@ -196,7 +201,16 @@ export async function handleBriefRoutes(
     sources: bySource,
     patterns,
     resurface: resurfaceRow
-      ? { id: resurfaceRow.id, content: resurfaceRow.content, created_at: resurfaceRow.created_at }
+      ? {
+          id: resurfaceRow.id,
+          content: resurfaceRow.content,
+          source: resurfaceRow.source,
+          // A malformed tags column (hand-edited, or a migration bug) must not
+          // 500 the whole endpoint every day this row is picked, see
+          // src/insight/candidates.ts's parseTags, the shared safe parser.
+          tags: parseTags(resurfaceRow.tags),
+          created_at: resurfaceRow.created_at,
+        }
       : null,
     activity,
     topics,

@@ -23,6 +23,7 @@ const EXPECTED_TOOLS = [
   "recall",
   "list_recent",
   "list_teams",
+  "get_prompt_capsule",
   "get",
   "append",
   "update",
@@ -70,6 +71,19 @@ describe("MCP tools contract (InMemoryTransport)", () => {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name).sort();
       expect(names).toEqual([...EXPECTED_TOOLS].sort());
+    });
+  });
+
+  it("requires an authenticated identity for Prompt Capsule reads", async () => {
+    await withMcpClient(env, async (client) => {
+      const result = await client.callTool({
+        name: "get_prompt_capsule",
+        arguments: { kind: "core" },
+      });
+      expect(result.isError).toBe(true);
+      const text = (result.content as { text?: string }[])[0]?.text;
+      expect(text).toContain("Prompt Capsule retrieval requires an authenticated identity.");
+      expect(JSON.parse(text ?? "null")).toMatchObject({ ok: false, code: "unauthenticated", status: 401 });
     });
   });
 

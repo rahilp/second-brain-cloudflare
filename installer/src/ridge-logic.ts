@@ -1,6 +1,6 @@
 // Ridge's pure decision logic: the seen-set, the typing gate, the reveal and
 // linger rules, the placement decision, the reaction throttle and the phase
-// machine. No DOM, no storage, no imports — deliberately.
+// machine. No DOM, no storage, no imports - deliberately.
 //
 // This lives apart from `ridge.ts` rather than merely being exported from it,
 // because `ridge.ts` imports `./shared` and `./i18n` for the DOM half. Those
@@ -12,7 +12,7 @@
 
 export type RidgeLineKind = "tour" | "reaction";
 
-// ── Pure decision logic (no DOM, no storage — exported for test/unit/ridge.test.ts) ──
+// ── Pure decision logic (no DOM, no storage - exported for test/unit/ridge.test.ts) ──
 
 export function parseSeenSet(raw: string | null): string[] {
   if (!raw) return [];
@@ -39,7 +39,7 @@ export function withSeen(seen: string[], key: string): string[] {
 }
 
 /** Whether an element with this tag name is a field Ridge must not interrupt
- *  with a *tour* line. Reaction lines bypass this — they exist specifically to
+ *  with a *tour* line. Reaction lines bypass this - they exist specifically to
  *  respond to what's being typed. */
 export function isFieldFocused(tagName: string | null | undefined): boolean {
   return tagName === "INPUT" || tagName === "TEXTAREA";
@@ -50,7 +50,7 @@ export function isFieldFocused(tagName: string | null | undefined): boolean {
  *
  * `sameAsShown` is the load-bearing case: a locale switch re-runs the current
  * screen, which calls `ridgeSay` again with the *same* key, now in the other
- * language. That must always update the bubble's text — never be read as "a
+ * language. That must always update the bubble's text - never be read as "a
  * once-line firing a second time" and suppressed, or switching languages mid-
  * sentence would silently hide Ridge instead of translating him.
  */
@@ -68,7 +68,7 @@ export function stepRevealCount(shown: number, total: number, charsPerTick = 2):
 }
 
 /** How long a fully-revealed line stays up before popping out, absent an
- *  explicit `dismissMs`. Reaction lines get less room — they're commentary on
+ *  explicit `dismissMs`. Reaction lines get less room - they're commentary on
  *  something already visible (the strength meter, the field itself), not the
  *  only place the information lives. */
 export function lingerMs(kind: RidgeLineKind = "tour"): number {
@@ -77,7 +77,7 @@ export function lingerMs(kind: RidgeLineKind = "tour"): number {
 
 /**
  * The reaction throttle: fires only on an actual change of bucket, and never
- * repeats the bucket already showing — so a password that stays weak for ten
+ * repeats the bucket already showing - so a password that stays weak for ten
  * keystrokes gets the concerned line once, not on every keystroke, and a
  * bucket that clears (`null`, e.g. back to strong) never fires anything on its
  * own re-entry until it becomes non-null again.
@@ -105,7 +105,7 @@ export interface AnchorRect {
 }
 
 /**
- * Where Ridge stands relative to the control he's commenting on. Right first —
+ * Where Ridge stands relative to the control he's commenting on. Right first -
  * reading order, and it keeps him clear of a column of stacked full-width
  * controls; left as the fallback for an anchor pinned to the window's right
  * edge; below only when neither side has room, which is the common case at

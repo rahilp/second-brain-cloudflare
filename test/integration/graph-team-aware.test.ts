@@ -362,10 +362,12 @@ describe("GET /graph subrequest budget", () => {
 
   it("costs exactly this many subrequests at GRAPH_VIEW_MAX_NODES, and no more", async () => {
     // THE TOTAL, pinned. Everything else in this file pins a shape; this pins the
-    // number the Workers free plan actually charges against its limit of 50 per
-    // invocation, because until it existed nothing did — graph-read-budget.test.ts
-    // asserts LIMITs and query plans, so a statement added anywhere in buildGraph
-    // broke no test and the figure lived only in a comment.
+    // number this codebase's self-imposed D1 budget actually charges against its
+    // limit of 50 per invocation (the platform's real ceiling is 1,000
+    // D1/KV/Vectorize calls per invocation), because until it existed nothing
+    // did — graph-read-budget.test.ts asserts LIMITs and query plans, so a
+    // statement added anywhere in buildGraph broke no test and the figure lived
+    // only in a comment.
     //
     // For a member (two scope bindings) at N = GRAPH_VIEW_MAX_NODES:
     //
@@ -375,12 +377,13 @@ describe("GET /graph subrequest budget", () => {
     //  31   edge hydration, ceil(1500 / floor((100 - 2) / 2))
     //   1   KV read for the config
     //  ---
-    //  50   total, which is the whole free-plan budget with nothing spare
+    //  50   total, which is the whole self-imposed budget with nothing spare
     //
     // An admin costs one more of each hydration kind (three scope bindings, because
     // readableWorkspaces adds the legacy '' layer). Read a change to this number as
-    // a decision to make, not a test to update: at 50 there is no headroom left, and
-    // a cold isolate pays initializeDatabase's DDL on top (see #282).
+    // a decision to make, not a test to update: at 50 there is no headroom left in
+    // this codebase's self-imposed budget, and a cold isolate pays
+    // initializeDatabase's DDL on top (see #282).
     seedTwoLayerGraph(GRAPH_VIEW_MAX_NODES + 100);
     // Warm: the schema probe and the tenancy bootstrap are one-offs, and this is a
     // claim about a served request, not a cold isolate.

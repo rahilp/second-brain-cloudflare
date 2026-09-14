@@ -374,7 +374,8 @@ export async function rememberTags(env: Env, tags: string[], workspaceId?: strin
   // it buys nothing: no production path reads the corpus-wide key on a v3 brain
   // (recallEntries' only two callers, the /recall route and the MCP tool, both
   // resolve an Identity first), so the second KV get was pure cost — three extra
-  // subrequests a night against the weekly insight cron's 50-subrequest budget.
+  // calls a night against the weekly insight cron's self-imposed ~50-call D1
+  // budget (the platform's real ceiling is 1,000 per invocation).
   await admitInto(env, workspaceId ? tagVocabularyKey(workspaceId) : TAG_VOCABULARY_KEY, tags);
 }
 

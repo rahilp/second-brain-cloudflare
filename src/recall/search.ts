@@ -64,7 +64,10 @@ async function keywordSearch(
   // plus strangers' rows truncated by the window.
   const scope = identity ? scopeWhereForRead(identity, { layer: only, teamId }) : null;
   const scopeSql = scope ? ` AND ${scope.clause}` : "";
-  const tokenWhere = timeWhere ? `(${where})` : where;
+  // Keep the alternatives as one predicate whenever an AND filter follows.
+  // Without grouping, SQLite applies that filter only to the final LIKE term
+  // because AND binds more tightly than OR. Leave the unfiltered SQL unchanged.
+  const tokenWhere = terms.length > 1 && (timeWhere || scopeSql) ? `(${where})` : where;
   const { results } = await env.DB.prepare(
     `SELECT id, content, tags, source, created_at FROM entries WHERE ${tokenWhere}${timeWhere}${scopeSql} ORDER BY created_at DESC LIMIT ?`
   ).bind(...terms.map(t => `%${t}%`), ...timeBindings, ...(scope?.bindings ?? []), limit).all();

@@ -53,7 +53,7 @@ export const it: Messages = {
     loadFailed: "Non è stato possibile caricare le Impostazioni avanzate. Chiudi questa finestra e riprova.",
     recency: {
       label: "Quanto i ricordi recenti contano più di quelli vecchi",
-      desc: "I ricordi più vecchi perdono gradualmente terreno rispetto ai nuovi. Qui decidi con quanta rapidità — e quanta protezione ottengono i ricordi consolidati e importanti.",
+      desc: "I ricordi più vecchi perdono gradualmente terreno rispetto ai nuovi. Qui decidi con quanta rapidità perdono terreno e quanta protezione ottengono i ricordi consolidati e importanti.",
       levels: {
         timeless: {
           name: "Senza tempo",
@@ -148,15 +148,15 @@ export const it: Messages = {
     },
     model: {
       label: "Quale modello AI usare",
-      desc: "Usato per ordinare, riassumere e individuare contraddizioni nei tuoi ricordi — non per la ricerca in sé, e non per gli insight che Second Brain trae dal confronto tra i ricordi, che hanno un modello proprio qui sotto. Ogni modello elencato qui gira sul tuo account Cloudflare.",
+      desc: "Usato per ordinare, riassumere e individuare contraddizioni nei tuoi ricordi. Non serve per la ricerca in sé né per gli insight che Second Brain trae dal confronto tra i ricordi, che hanno un modello proprio qui sotto. Ogni modello elencato qui gira sul tuo account Cloudflare.",
       sizeNote: "I modelli più grandi scrivono riassunti migliori e costano più Neurons. Quelli più piccoli sono più rapidi ed economici.",
       neuronsNote: "I Neurons sono l'unità di consumo AI di Cloudflare. Il tuo piano include un'assegnazione giornaliera.",
     },
     insightModel: {
       label: "Quale modello AI usare per gli insight",
-      desc: "Usato solo quando Second Brain confronta due ricordi e scrive un insight su come si collegano. Tutto il resto — ordinare, riassumere, individuare contraddizioni — usa il modello qui sopra.",
+      desc: "Usato solo quando Second Brain confronta due ricordi e scrive un insight su come si collegano. Il modello qui sopra serve per ordinare, riassumere e individuare contraddizioni.",
       sizeNote: "I modelli più grandi trovano insight più acuti e costano più Neurons. Quelli più piccoli sono più rapidi ed economici.",
-      defaultNote: "Confrontare due ricordi è un giudizio più difficile che riassumerne uno solo, perciò qui il valore predefinito è un modello più grande di quello sopra — e poiché il confronto in sé è breve, costa comunque quasi lo stesso.",
+      defaultNote: "Confrontare due ricordi è un giudizio più difficile che riassumerne uno solo, perciò qui il valore predefinito è un modello più grande di quello sopra. Poiché il confronto in sé è breve, costa comunque quasi lo stesso.",
     },
     migration: {
       lede: "Come il tuo Second Brain legge i tuoi ricordi e li abbina a ciò che chiedi.",
@@ -170,11 +170,12 @@ export const it: Messages = {
       entriesNone: "Non hai ancora salvato ricordi, quindi non c'è nulla da rileggere.",
       pickLabel: "Modo di leggere",
       inUse: "{name} (in uso ora)",
+      unknownValue: "Non ancora noto",
       storageWarning:
         "È più di quanto un account Cloudflare gratuito possa contenere per un " +
         "Second Brain della tua dimensione. Durante la ricostruzione vengono " +
         "conservati sia i vecchi sia i nuovi dati di ricerca, così puoi ancora " +
-        "cambiare idea — ed è lì che lo spazio finirebbe. Il salvataggio di nuovi " +
+        "cambiare idea. Ed è lì che lo spazio finirebbe. Il salvataggio di nuovi " +
         "ricordi inizierebbe a fallire. Un'opzione meno dettagliata, o un piano " +
         "Cloudflare a pagamento, lo evita.",
       pickNote:
@@ -209,7 +210,7 @@ export const it: Messages = {
             "Standard sulla tua assegnazione AI giornaliera; occupa lo stesso spazio di Massimo dettaglio.",
         },
       },
-      sameAsCurrent: "È già quella in uso — non c'è nulla da fare.",
+      sameAsCurrent: "È già quella in uso. Non c'è nulla da fare.",
       dirtyNote: "Salva o annulla prima le altre modifiche.",
       startButton: "Ricostruisci con questa opzione",
       confirmTitle: "Prima di iniziare",
@@ -231,7 +232,7 @@ export const it: Messages = {
       startingTitle: "Preparazione",
       startingBody:
         "Il nuovo modo di leggere i tuoi ricordi è quasi pronto; subito dopo il tuo Second " +
-        "Brain inizierà a usarlo. Ci vuole un minuto o due — lascia aperta questa finestra.",
+        "Brain inizierà a usarlo. Ci vuole un minuto o due. Lascia aperta questa finestra.",
       runningTitle: "Rilettura dei tuoi ricordi",
       runningBody:
         "Finché non finisce, la ricerca è incompleta. Lascia aperta questa finestra, " +
@@ -292,7 +293,7 @@ export const it: Messages = {
         "ricerca, che il tuo Second Brain non usa più. È il solo passaggio qui che non si " +
         "può annullare.",
       freeButton: "Libera i vecchi dati",
-      freeConfirm: "Sì, liberali — so che non si può annullare",
+      freeConfirm: "Sì, liberali. So che non si può annullare",
       freeKeep: "Conservali per ora",
       freeing: "Liberazione dei vecchi dati di ricerca",
       freeingBody: "Ci vuole solo un momento.",
@@ -304,7 +305,7 @@ export const it: Messages = {
       loadFailed:
         "Non è stato possibile controllare le impostazioni di ricerca in questo momento. Riprova tra poco.",
       barRunning:
-        "Rilettura dei tuoi ricordi — {done} su {total} completati. Le altre impostazioni " +
+        "Rilettura dei tuoi ricordi: {done} su {total} completati. Le altre impostazioni " +
         "sono bloccate fino alla fine.",
       barWorking:
         "Il tuo Second Brain è al lavoro. Le altre impostazioni sono bloccate fino alla fine.",
@@ -387,7 +388,7 @@ export const it: Messages = {
     unlockLede:
       "Usa la password di questo Second Brain oppure il token di accesso del team presente nel tuo invito. Il collegamento salva l'accesso solo su questo computer.",
     lostPassword: "Non ho la mia password",
-    memberTokenHelp: "Sono un membro del team — chiedo all'amministratore un nuovo token",
+    memberTokenHelp: "Sono un membro del team. Chiedo all'amministratore un nuovo token",
     memberTokenHelpTitle: "Chiedi al tuo amministratore del team un nuovo token",
     memberTokenHelpLede: "Un token sostituito, o un account sospeso o rimosso, non può essere riparato su questo computer. Chiedi a chi ti ha invitato di emetterne uno nuovo.",
   },
@@ -449,8 +450,8 @@ export const it: Messages = {
       "ricostruzione è finita.",
     lostTitle: "I tuoi ricordi sono al sicuro",
     lostLede:
-      "Non hai perso nulla. Nessuno può recuperare la tua password al posto tuo " +
-      "— né questa app né Cloudflare — ma può essere sostituita, ed è così che " +
+      "Non hai perso nulla. Né questa app né Cloudflare possono recuperare la tua password " +
+      "per te. Può però essere sostituita, ed è così che " +
       "rientri.",
     lostBodySignedIn:
       "Hai già effettuato l'accesso allo spazio Cloudflare in cui si trova il tuo " +
@@ -494,7 +495,7 @@ export const it: Messages = {
     saveAdvice:
       "Un gestore password è il posto giusto. Se la tieni altrove, tienila dove " +
       "terresti la chiave di tutto ciò che hai scritto.",
-    saveConfirm: "L'ho salvata — cambia la password",
+    saveConfirm: "L'ho salvata: cambia la password",
     saveBack: "Scegline un'altra",
     progressTitle: "Cambio della password",
     progressLede: "Ci vogliono fino a un paio di minuti. Lascia aperta questa finestra.",
@@ -523,7 +524,7 @@ export const it: Messages = {
       "incollando la password si trova nell'elenco qui sopra: chiederà quella " +
       "nuova.",
     // "averla vista" softened EN's "may have had it": vedere una password legge
-    // come un'occhiata alle spalle, averla è ciò che la rende pericolosa — e
+    // come un'occhiata alle spalle, averla è ciò che la rende pericolosa - e
     // questa è l'unica riga rivolta a chi ha subito una fuga di dati.
     doneLeak:
       "Se hai cambiato la password perché qualcun altro potrebbe averla avuta, " +
@@ -536,7 +537,7 @@ export const it: Messages = {
     failNotSentBody:
       "La nuova password non è mai arrivata al tuo Second Brain, quindi la " +
       "vecchia funziona ancora e tutto è rimasto com'era. Riprovare è sicuro.",
-    failNotSentLabel: "La password che hai scelto — non in uso",
+    failNotSentLabel: "La password che hai scelto non è in uso",
     failDetail: "Cosa è andato storto: {detail}",
     failUnsureTitle: "La tua nuova password potrebbe essere già attiva",
     failUnsureBody:
@@ -584,7 +585,7 @@ export const it: Messages = {
     leaveWarn:
       "Questa è l'ultima schermata che mostra questa password. Se non l'hai " +
       "ancora messa al sicuro, fallo adesso.",
-    leaveConfirm: "L'ho salvata — esci",
+    leaveConfirm: "L'ho salvata: esci",
     leaveKeep: "Resta qui",
   },
   passwordChangedElsewhere: {
@@ -604,7 +605,7 @@ export const it: Messages = {
     // all'utente in tutto il catalogo: ovunque altrove l'accordo è con un
     // oggetto, mai con chi legge.
     footnote:
-      "Non hai quella nuova — o non l'hai cambiata tu? Scegliendo una nuova " +
+      "Non hai quella nuova, o non l'hai cambiata tu? Scegliendo una nuova " +
       "password, la vecchia viene chiusa definitivamente.",
   },
   cloudflare: {
@@ -642,7 +643,7 @@ export const it: Messages = {
     lede: "Collega ora le app AI che usi, oppure salta questo passaggio e aggiungile più tardi. Ogni app collegata può usare lo stesso Second Brain.",
     autoSetup: "Aggiunge automaticamente all'app i dettagli di connessione di questo computer.",
     notOnComputer: "Non installato su questo computer. Puoi collegarlo più tardi da Connessioni.",
-    doneRestart: "Fatto — riavvia lo strumento per usare il Second Brain.",
+    doneRestart: "Fatto. Riavvia lo strumento per usare il Second Brain.",
     cliSub: "Facoltativo: usa Second Brain dal terminale (per chi usa strumenti a riga di comando).",
     setupCli: "Configura CLI",
     settingUp: "Configurazione…",
@@ -690,13 +691,13 @@ export const it: Messages = {
     disconnectButton: "Scollega gli strumenti AI…",
     disconnectConfirmDesc:
       "Ogni strumento AI che ha effettuato l'accesso tramite il tuo link di " +
-      "connessione — su questo computer e su qualsiasi altro — andrà collegato " +
+      "connessione, su questo computer e su qualsiasi altro, andrà collegato " +
       "di nuovo, e ognuno ti chiederà la password quando lo farai.",
     disconnectConfirm: "Sì, scollegali tutti",
     disconnectKeep: "Lasciali collegati",
     disconnectWorking: "Scollegamento…",
     // Non "Scollegati.": in apertura di frase si legge prima come imperativo
-    // riflessivo — "scollegati tu" — invece che come participio.
+    // riflessivo - "scollegati tu" - invece che come participio.
     disconnectDone:
       "Connessioni chiuse. Ogni strumento chiederà di essere collegato di nuovo " +
       "la prossima volta che lo usi.",
@@ -710,7 +711,7 @@ export const it: Messages = {
     connectToolsTitle: "Collega i tuoi strumenti AI",
     connectToolsDesc:
       "Gli strumenti su questo computer si collegano con un clic. Per gli altri, " +
-      "incolla il link di connessione nelle impostazioni del connettore — " +
+      "incolla il link di connessione nelle impostazioni del connettore. " +
       "chiederà la password la prima volta.",
     integrationsTitle: "Integrazioni",
     integrationsDesc: "Importa note e pagine dagli strumenti che già usi.",
@@ -729,7 +730,7 @@ export const it: Messages = {
       "Questo brain usa una versione più vecchia, che non sa ancora dire a " +
       "questa app chi sei: per questo l'aggiornamento viene proposto a " +
       "chiunque apra questa finestra. Viene eseguito solo nell'account " +
-      "Cloudflare in cui il brain è stato creato — se non è il tuo, si ferma e " +
+      "Cloudflare in cui il brain è stato creato. Se non è il tuo, si ferma e " +
       "te lo dice. Basta un aggiornamento perché il brain sappia rispondere, e " +
       "questa nota sparisce.",
     updateButton: "Aggiorna il Second Brain",
@@ -778,10 +779,10 @@ export const it: Messages = {
     title: "Aggiorna il Second Brain",
     ledeWithVersion:
       "È disponibile una nuova versione ({version}). " +
-      "Memorie, password e strumenti collegati restano — nulla viene resettato.",
+      "Memorie, password e strumenti collegati restano. Nulla viene resettato.",
     ledeGeneric:
       "È disponibile una nuova versione del Second Brain. " +
-      "Memorie, password e strumenti collegati restano — nulla viene resettato.",
+      "Memorie, password e strumenti collegati restano. Nulla viene resettato.",
     notice: "Accederai a Cloudflare una volta per autorizzare l'aggiornamento. Circa un minuto.",
     signInUpdate: "Accedi e aggiorna",
     waitingLede:
@@ -793,7 +794,7 @@ export const it: Messages = {
     stepFinish: "Completamento",
     doneTitle: "Second Brain aggiornato",
     doneLede:
-      "Tutto è all'ultima versione — memorie, password e strumenti collegati non sono cambiati.",
+      "Tutto è all'ultima versione. Memorie, password e strumenti collegati non sono cambiati.",
   },
   email: {
     subject: "Dettagli del tuo Second Brain",

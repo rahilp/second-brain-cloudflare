@@ -35,7 +35,9 @@ export interface AuditEventInput {
  * ONE env.DB.batch to ctx.waitUntil — same statement, same table, same
  * never-blocks contract, one subrequest rather than N. POST /patterns/resolve
  * is that caller: it exists because a per-id loop puts a ceiling on the batch
- * size (a free-plan invocation gets roughly 50 D1 queries), and its cost is
+ * size (the free plan's real ceiling is 1,000 D1 calls per invocation, but
+ * this codebase holds itself to a self-imposed budget of roughly 50 D1 calls
+ * per request for cost and 10 ms-CPU reasons), and its cost is
  * pinned flat in the number of ids in test/integration/patterns.test.ts. A
  * per-id audit write would have reintroduced exactly the ceiling the route was
  * built to remove.

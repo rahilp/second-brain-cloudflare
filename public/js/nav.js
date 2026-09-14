@@ -77,7 +77,11 @@ function switchTab(tab) {
   // Home shows counts and a brief that were fetched at startup, so arriving
   // back at it is exactly when they are most likely to be out of date. Rate
   // limited, so tab-flicking does not re-run the brief's queries each time.
-  if (tab === 'home') refreshIfStale()
+  if (tab === 'home') {
+    const screen = document.getElementById('screen-home')
+    if (screen && !screen.classList.contains('home-visible') && typeof returnHome === 'function') returnHome()
+    refreshIfStale()
+  }
   // Suspensions and rotations can happen while the window sits open, so the
   // roster refetches on every visit rather than trusting the last one.
   //

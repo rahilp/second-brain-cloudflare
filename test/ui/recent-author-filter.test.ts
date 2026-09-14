@@ -336,6 +336,31 @@ describe("memories author filter", () => {
     expect(html).toContain("Tutti gli autori");
     expect(html).toContain("Tu");
   });
+
+  // Regression: the tag filter only ever narrowed whichever `n` most-recent
+  // rows loadRecent had already fetched, so a real tag with matches outside
+  // that window read as "no results": this is exactly what the contradictions
+  // tile hit, since its tag never appears in the select and so was easy to
+  // miss testing without a server-side filter. selectedTag is set directly
+  // (nav.js, which owns onTagChange, is not part of this file's SRC) the same
+  // way onTagChange itself does it.
+  it("sends ?tag= when a tag filter is active, including a hidden system tag", async () => {
+    const { ctx, lists } = setup();
+    vm.runInContext("selectedTag = 'contradiction-resolved';", ctx);
+    await ctx.loadRecent();
+    expect(q(lists()[lists().length - 1])).toBe("n=50&tag=contradiction-resolved");
+  });
+
+  it("combines the tag filter with the layer and author filters already in play", async () => {
+    const { ctx, lists, settle } = setup();
+    ctx.onLayerFilterChange("company");
+    await settle();
+    ctx.onActorFilterChange("u2");
+    await settle();
+    vm.runInContext("selectedTag = 'work';", ctx);
+    await ctx.loadRecent();
+    expect(q(lists()[lists().length - 1])).toBe("n=50&workspace=company&actor=u2&tag=work");
+  });
 });
 
 /**

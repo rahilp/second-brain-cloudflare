@@ -349,6 +349,27 @@ describe("removing a link", () => {
     await ctx.runConfirmAction();
     expect((ctx.calls as any[]).some((c) => c.url.includes("/unlink"))).toBe(false);
   });
+
+  // Regression: the unlink button was icon-only with a title but no
+  // accessible name, so a screen reader announced "button" for every
+  // connection row. relatedContainer()'s querySelectorAll is a stub that
+  // hands back a fake row for wiring onclick handlers, but loadRelated still
+  // writes the real template into el.innerHTML first, that string is what a
+  // screen reader would actually see.
+  it("gives the remove-link button an accessible name, not just a title", async () => {
+    const { el } = await openedSheet();
+    expect(el.innerHTML).toContain('<button class="related-unlink" aria-label="Remove link" title="Remove link">');
+  });
+});
+
+// Regression: the view sheet's close button was icon-only with no accessible
+// name at all (not even a title), so a screen reader announced "button".
+// Static, not rendered: the markup is fixed HTML in index.html, not built by
+// any JS module this suite loads a harness for.
+it("gives the view sheet's close button an accessible name", () => {
+  const html = readFileSync(resolve(ROOT, "public/index.html"), "utf8");
+  const btn = html.match(/<button class="btn-close-icon" onclick="closeView\(\)"[^>]*>/)?.[0] ?? "";
+  expect(btn).toContain('aria-label="Close"');
 });
 
 /**
@@ -407,6 +428,39 @@ describe("the history of a shared memory", () => {
     ctx.initI18n("it");
     ctx.renderViewTimeline({ workspace: "company", actor_name: "Bob", timeline });
     expect(ctx.__els.get("view-timeline").innerHTML).toContain("Condiviso col team");
+  });
+
+  it("hides History entirely when there is nothing to say: no events, no lock", () => {
+    const ctx = load();
+    ctx.renderViewTimeline({ workspace: "personal", timeline: [] });
+    const el = ctx.__els.get("view-timeline");
+    expect(el.style.display).toBe("none");
+    expect(el.innerHTML).toBe("");
+  });
+
+  // Regression: renderViewTimeline hid the whole History section whenever
+  // entry.timeline was empty, before it ever looked at can_edit, so a shared
+  // memory nobody had edited or appended yet (an empty timeline is the common
+  // case) showed two greyed-out buttons with no explanation anywhere on the
+  // screen for why they were disabled.
+  it("still shows History for the lock note alone, on a shared memory with no timeline events yet", () => {
+    const ctx = load();
+    ctx.renderViewTimeline({ workspace: "company", actor_name: "Bob", can_edit: false, timeline: [] });
+    const el = ctx.__els.get("view-timeline");
+    expect(el.style.display).toBe("");
+    expect(el.innerHTML).toContain("Author: Bob");
+    expect(el.innerHTML).toContain("Shared by Bob — only they can edit or delete it");
+  });
+
+  it("still hides History on an empty timeline when the memory is not locked", () => {
+    // can_edit: false alone is not the signal: an entry can report that
+    // before it has resolved actor_name too (memory-crud.js sets can_edit
+    // only once /entry has actually answered), and a lock note attributed to
+    // nobody is worse than no note.
+    const ctx = load();
+    ctx.renderViewTimeline({ workspace: "company", can_edit: false, timeline: [] });
+    const el = ctx.__els.get("view-timeline");
+    expect(el.style.display).toBe("none");
   });
 });
 

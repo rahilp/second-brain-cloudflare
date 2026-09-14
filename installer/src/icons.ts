@@ -1,4 +1,4 @@
-// The icon set, as data. No imports — deliberately.
+// The icon set, as data. No imports - deliberately.
 //
 // `shared.ts` (where these used to live) imports `./i18n` and
 // `@tauri-apps/api/core` for its DOM helpers. Anything importing `IconName`
@@ -8,15 +8,15 @@
 
 /* ── Icons ────────────────────────────────────────────────────────────────────
  * Every mark in this app is one of these. There are no emoji anywhere in the
- * UI: an emoji is a font, and a font is rendered by the host OS — the same
+ * UI: an emoji is a font, and a font is rendered by the host OS - the same
  * character is a flat glyph on one machine, a gradient sticker on another, and
  * a tofu box on a machine missing the range. None of those is a design
  * decision, and setup has to look like itself on every desktop it ships to.
  *
  * Path data is Lucide (MIT), inlined rather than linked: setup must render
  * fully offline, so there is no CDN, no icon font and no network request in
- * this file. Drawn on Lucide's grid — 24×24, 2px stroke, no fill, round caps
- * and joins — which is why they sit together as one set and why they take
+ * this file. Drawn on Lucide's grid - 24×24, 2px stroke, no fill, round caps
+ * and joins - which is why they sit together as one set and why they take
  * their colour from whatever they are placed in.
  */
 export const ICON_PATHS = {
@@ -38,7 +38,7 @@ export const ICON_PATHS = {
   lightbulb:
     '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/>' +
     '<path d="M9 18h6"/><path d="M10 22h4"/>',
-  /** A password or a token — the thing to write down before moving on. */
+  /** A password or a token - the thing to write down before moving on. */
   key:
     '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 ' +
     '1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/>' +

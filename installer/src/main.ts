@@ -1,6 +1,6 @@
 // The first-run setup flow. Six screens, one action each; every technical
 // resource is described in plain language only. All real work happens in the
-// Rust core — this file renders state and forwards clicks.
+// Rust core - this file renders state and forwards clicks.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -52,8 +52,8 @@ interface Account {
 
 // The password change's three steps (#235) come from `ROTATION_STEP_IDS`, not
 // from a second list written out here. They are none of the four provisioning
-// steps — labelling "waiting for your Second Brain to accept it" as `recall`
-// would mislead the next person to read this — and spelling them twice is how
+// steps - labelling "waiting for your Second Brain to accept it" as `recall`
+// would mislead the next person to read this - and spelling them twice is how
 // one copy gets renamed and the other does not.
 type StepId = "space" | "memory" | "recall" | "finish" | RotationStepId;
 interface StepEvent {
@@ -70,7 +70,7 @@ let details: ConnectionDetails | null = null;
  * The wizard's personal/team fork. Personal is today's flow verbatim; team
  * provisions identically and only decides what is recorded with the setup and
  * what the closing screens say. The "Already have a Second Brain?" path never
- * sets it — a connected brain's mode is unknown.
+ * sets it - a connected brain's mode is unknown.
  */
 let teamMode = false;
 
@@ -78,7 +78,7 @@ let teamMode = false;
  * Who is holding the token this window connected with (#4.7).
  *
  * "owner" until a team brain says otherwise, which is what the provisioning
- * path always is — the person who just created the brain owns it. Only
+ * path always is - the person who just created the brain owns it. Only
  * `existingTeamScreen` moves it, and only on a brain that reports members, so a
  * solo install never leaves this value and never pays for a second request.
  *
@@ -88,7 +88,7 @@ let teamMode = false;
  */
 let connectionRole: ConnectionRole = "owner";
 
-/** Which setup screen is visible — used to re-render on locale change. */
+/** Which setup screen is visible - used to re-render on locale change. */
 let currentScreen: (() => void) | null = null;
 
 /** welcomeScreen's row 1 → row 1b sequencing (plan §4.4), cleared on every
@@ -101,7 +101,7 @@ let welcomeGuardTimer: number | undefined;
 // The shell's left column: what setup is going to ask for, where the user is,
 // and the way back into the few steps that are genuinely re-enterable. The
 // step model itself lives in `steps.ts` as pure data; everything below is the
-// rendering and the wiring to the *existing* screen functions — the rail never
+// rendering and the wiring to the *existing* screen functions - the rail never
 // invents a second way to navigate, so focus handling, Ridge's anchoring and
 // every state reset stay exactly whatever the Back buttons already do.
 
@@ -155,7 +155,7 @@ function stepRail(): HTMLElement | null {
     const label = t(STEP_LABEL_KEYS[step.id]);
     // The running step draws the shared CSS spinner, a finished one the shared
     // check; everything else is its position, which is the whole point of a
-    // rail — it says how much is left.
+    // rail - it says how much is left.
     const mark = h("span", { class: "steprail-mark" }, [
       step.state === "done"
         ? icon("check", "icon icon--sm")
@@ -207,7 +207,7 @@ function stepRail(): HTMLElement | null {
   return nav;
 }
 
-/// Redraws the rail without redrawing the screen — for the two changes that
+/// Redraws the rail without redrawing the screen - for the two changes that
 /// happen inside a screen rather than between screens: an await going out
 /// (which suspends every jump) and provisioning failing (which has to stop the
 /// spinner on the Build step).
@@ -227,13 +227,13 @@ function refreshStepRail() {
 // One testimonial, at the top of the screen and at the size of a headline, on
 // every screen that is asking the user for something rather than reporting on
 // itself. Which quote a screen gets is pure data in `valuePanel.ts`;
-// everything below is the render, and it is deliberately inert — no buttons,
+// everything below is the render, and it is deliberately inert - no buttons,
 // no links, nothing focusable, nothing that moves.
 //
 // A figure, a blockquote and a figcaption, because that is what this is. The
 // old gutter card was `aria-hidden`: it was ambient decoration and announcing
 // it would have interrupted the field the user was in. Above the task it is
-// content, so it is named instead — and `show()` still puts focus on the
+// content, so it is named instead - and `show()` still puts focus on the
 // heading, so the band is behind the reader rather than in front of them.
 
 function valuePanel(): HTMLElement | null {
@@ -241,7 +241,6 @@ function valuePanel(): HTMLElement | null {
   if (!quote) return null;
 
   const panel = h("figure", { class: "value-panel", "aria-label": t("value.label") }, [
-    h("p", { class: "value-kicker" }, [t("value.editorialHeading")]),
     h("div", { class: "value-quote-wrap" }, [
       // Typographic furniture, not punctuation: the words are stored without
       // it, every locale draws the same mark, and a reader would otherwise
@@ -276,9 +275,9 @@ function valueStats(): HTMLElement {
 }
 
 function show(...nodes: (Node | string)[]) {
-  // A screen change never has a line of its own queued yet — the incoming
+  // A screen change never has a line of its own queued yet - the incoming
   // screen's own `ridgeSay` call (if any) runs synchronously right after this
-  // returns — so any bubble left over from the previous screen is cleared
+  // returns - so any bubble left over from the previous screen is cleared
   // immediately rather than lingering on an anchor that's about to be gone
   // (the two provisioning guards render no line of their own at all).
   ridgeOnScreenChange();
@@ -287,8 +286,8 @@ function show(...nodes: (Node | string)[]) {
   // canvas it stands on is drawn by `body::before`, and its width has to
   // change with it.
   document.body.classList.toggle("has-steprail", rail !== null);
-  // The band is part of the rail's layout — the wide composition, the task
-  // column with Ridge's gutter kept clear beside it — so it is drawn only
+  // The band is part of the rail's layout - the wide composition, the task
+  // column with Ridge's gutter kept clear beside it - so it is drawn only
   // where that layout is. Without the rail the column is right-aligned
   // against the window edge and there is nothing to span. Both of the ways
   // that happens (a launch mode, or a screen and path that cannot co-occur)
@@ -346,7 +345,7 @@ function welcomeScreen() {
     h("p", { class: "footnote" }, [t("welcome.footnote")]),
   );
 
-  // Row 1b is the safety line (plan §4.4) — it outranks the greeting and ships
+  // Row 1b is the safety line (plan §4.4) - it outranks the greeting and ships
   // every visit. Row 1 only plays the first time this device has ever seen it;
   // on every later visit 1b fires immediately, with no wait for a line that
   // has already been said.
@@ -391,7 +390,7 @@ function audienceScreen() {
   setRail("audience", "new");
   // Two co-equal choice cards, not a primary button over a secondary link:
   // "just me" is not the default the other is a fallback from (user-requested
-  // promotion). Row 2's own Ridge line is deliberately skipped here — the
+  // promotion). Row 2's own Ridge line is deliberately skipped here - the
   // `audience.lede` copy rewrite already covers the same gap (plan §4.4 note).
   const justMe = h("button", { class: "choice-card" }, [
     h("div", { class: "choice-card-title" }, [t("audience.justMe")]),
@@ -425,8 +424,8 @@ function audienceScreen() {
  * Asks the brain who this token belongs to. Only ever called on a brain that
  * has already reported members, so `team` is true by construction.
  *
- * Every way of not getting an answer — a Worker too old to serve /team/me, a
- * 401/403/404, a body that will not parse, a request that never lands — reduces
+ * Every way of not getting an answer - a Worker too old to serve /team/me, a
+ * 401/403/404, a body that will not parse, a request that never lands - reduces
  * to `null`, and `roleFromProbe` turns `null` into "member". That is the point:
  * the failure this whole change exists to fix is the app telling a member they
  * are the owner-admin, so an unanswerable probe must claim less, not more.
@@ -438,7 +437,7 @@ async function deriveConnectionRole(
   // The brain is the only authority here. A Cloudflare sign-in used to count as
   // evidence of ownership and must never again: `signedInToCloudflare()` is
   // `accounts.length > 0`, which any successful `connect_cloudflare` in this
-  // window sets and nothing clears — including the one the primary connect
+  // window sets and nothing clears - including the one the primary connect
   // button performs for a member whose brain lives in somebody else's account.
   // `fetchRoleProbe` bounds itself, so a brain that never answers reaches the
   // same "member" a refused one does instead of holding this screen open.
@@ -472,7 +471,7 @@ async function brainReportsMembers(brainUrl: string, brainPassword: string): Pro
 /// Same question as audienceScreen, asked AFTER an existing brain connects.
 /// ONE-TIME by two independent locks, either of which settles it:
 ///   1. this machine already recorded a choice (keychain via details.teamMode);
-///   2. the brain itself already has members (/health team:true — server truth;
+///   2. the brain itself already has members (/health team:true - server truth;
 ///      going back to solo would mean destroying other people's memories, so
 ///      there is deliberately no downgrade path and no second question).
 /// The question only ever runs on a solo brain whose mode was never recorded.
@@ -481,7 +480,7 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
   setRail("existingTeam");
   if (details?.teamMode) {
     // A team brain this machine has already recorded. The mode is settled, but
-    // the role is not — it is re-derived here rather than skipped, because the
+    // the role is not - it is re-derived here rather than skipped, because the
     // token in hand may be a member's and this branch is exactly the one a
     // returning member takes.
     //
@@ -489,8 +488,8 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
     // the only thing `detailsScreen` consults before rendering the team card
     // (`teamMode ? [teamCard(connectionRole)] : []`) and before choosing
     // between the team lede and the solo one. Without it this branch derived a
-    // role nothing read, and a returning member — the person this branch
-    // exists for — finished setup on the solo "all set" copy with no card at
+    // role nothing read, and a returning member - the person this branch
+    // exists for - finished setup on the solo "all set" copy with no card at
     // all. The keychain already says this is a team brain; this is that fact
     // reaching the screen.
     teamMode = true;
@@ -505,7 +504,7 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
   }
   // Below here the brain reported no members, so `roleFromProbe` would answer
   // "owner" whatever /team/me said. `connectionRole` is already "owner" and no
-  // second request is made — a solo install pays nothing for any of this.
+  // second request is made - a solo install pays nothing for any of this.
 
   const justMe = h("button", { class: "choice-card" }, [
     h("div", { class: "choice-card-title" }, [t("audience.justMe")]),
@@ -537,7 +536,7 @@ async function existingTeamScreen(brainUrl: string, brainPassword: string, back:
     backBtn,
     h("p", { class: "footnote" }, [t("audience.existingFootnote")]),
   );
-  // Row F (plan §4.4): only this fallthrough branch reaches here — both
+  // Row F (plan §4.4): only this fallthrough branch reaches here - both
   // earlier branches in this function return before rendering anything.
   ridgeSay({
     key: "mascot.existingTeam.repeatQuestion",
@@ -557,7 +556,7 @@ function notice(message: string, tone: "error" | "info" = "error"): HTMLElement 
 
 /**
  * The "write this down before you go any further" notice. Seven screens show
- * one, and they used to spell out the same three-node structure seven times —
+ * one, and they used to spell out the same three-node structure seven times -
  * which is how six of them ended up with a key emoji and the seventh with a
  * padlock.
  */
@@ -566,12 +565,12 @@ function keyNotice(message: string): HTMLElement {
 }
 
 /**
- * The composition the three "we stopped, here is why" screens share — the two
+ * The composition the three "we stopped, here is why" screens share - the two
  * provisioning guards and the member-token dead end.
  *
  * They are not errors and they are not questions: nothing was created, nothing
  * was touched, and there is exactly one sensible next move. So they get a panel
- * with a mark, one sentence at full-strength ink, and the way on underneath —
+ * with a mark, one sentence at full-strength ink, and the way on underneath -
  * rather than the default lede-floating-above-two-buttons that a screen asking
  * a routine question uses. Being visibly a different kind of screen is the
  * point; that is what stops it reading as a failure.
@@ -587,7 +586,7 @@ function guardPanel(mark: IconName, body: Node | string): HTMLElement {
 }
 
 /// Two ways in. Signing in to Cloudflare is offered first because it removes
-/// the only genuinely hard step — finding the address — but manual entry is not
+/// the only genuinely hard step - finding the address - but manual entry is not
 /// a fallback for failures alone: a custom domain, a brain in someone else's
 /// account, or an unwillingness to grant scopes all need it, so it stays a
 /// first-class choice.
@@ -626,7 +625,7 @@ function connectExistingScreen(errorMsg?: string) {
     // that follows says so in Cloudflare's words. Say it in ours first.
     h("p", { class: "footnote" }, [t("connectExisting.signInFootnote")]),
   );
-  // Row A (plan §4.4): no spotlight on purpose — either door is legitimate,
+  // Row A (plan §4.4): no spotlight on purpose - either door is legitimate,
   // and lighting one up would bias the fork.
   ridgeSay({
     key: "mascot.connect.fork",
@@ -647,7 +646,7 @@ function searchingScreen() {
     ]),
   );
   // Row B (plan §4.4). Shared by the connect-existing scan and the "I don't
-  // have my password" rediscovery — the searching UX is identical either way.
+  // have my password" rediscovery - the searching UX is identical either way.
   ridgeSay({
     key: "mascot.discover.searching",
     text: t("mascot.discover.searching"),
@@ -667,7 +666,7 @@ async function discoverScreen() {
       chosenAccount = accounts[0];
       await runDiscovery();
     } else {
-      // More than one account, so the user picks before we scan — scanning all
+      // More than one account, so the user picks before we scan - scanning all
       // of them would be slower and would list brains they didn't ask about.
       accountPickerScreen(
         () => void runDiscovery(),
@@ -689,8 +688,8 @@ async function runDiscovery() {
     const found = await invoke<DiscoveredBrain[]>("discover_brains", {
       accountId: chosenAccount?.id ?? "",
     });
-    // Nothing found is not a failure — the brain may be on a custom domain or
-    // in another account — so it lands on manual entry with an explanation
+    // Nothing found is not a failure - the brain may be on a custom domain or
+    // in another account - so it lands on manual entry with an explanation
     // rather than a dead end.
     if (found.length === 0) {
       manualEntryScreen(t("connectExisting.noneFound"), undefined, "info");
@@ -747,15 +746,15 @@ function brainPickerScreen(found: DiscoveredBrain[]) {
 
 /**
  * Whether a `connect_existing` rejection is specifically the wrong-credential
- * error — a submitted password/token that Cloudflare rejected — rather than a
+ * error - a submitted password/token that Cloudflare rejected - rather than a
  * blank field, a bad address, an unreachable host, or anything else.
  *
  * `connect_existing` now rejects a bad credential with a structured
  * `{ errorKey, message }` shape (`commands.rs`'s `ConnectExistingError`:
  * `ErrorEmptyPassword` for a blank field, `ErrorWrongPassword` for a probe
  * that came back `WorkerProbe::WrongPassword`), same idea as
- * `start_provisioning`'s tagged errors below. Only `message` — the
- * already-localised prose, unwrapped by `connectExistingErrorMessage` below —
+ * `start_provisioning`'s tagged errors below. Only `message` - the
+ * already-localised prose, unwrapped by `connectExistingErrorMessage` below -
  * travels through this file's `errorMsg: string` render-chain parameter, so
  * this still matches against that text rather than the tag; per the locale
  * this window is already synced to (`i18n.ts`'s
@@ -779,7 +778,7 @@ function isCredentialError(errorMsg: string | undefined): boolean {
  * wire shapes it came back as. Precondition/network failures still reject
  * with a plain, already-localised string; a submitted-but-wrong credential
  * now rejects with `{ errorKey, message }` instead (`commands.rs`'s
- * `ConnectExistingError`), so its `message` has to be unwrapped explicitly —
+ * `ConnectExistingError`), so its `message` has to be unwrapped explicitly -
  * `String(e)` on that object stringifies to `"[object Object]"` and would
  * both blank the error notice and starve `isCredentialError` of the text it
  * matches against.
@@ -793,7 +792,7 @@ function connectExistingErrorMessage(e: unknown): string {
 
 /// Reached only from the new ghost action on a wrong-credential failure. States
 /// plainly that a rotated/suspended/removed token cannot be repaired on this
-/// computer — never routes a token holder into `lostPasswordIntroScreen`, which
+/// computer - never routes a token holder into `lostPasswordIntroScreen`, which
 /// is an owner-only Cloudflare recovery a member structurally cannot complete.
 function memberTokenHelpScreen(back: () => void) {
   currentScreen = () => memberTokenHelpScreen(back);
@@ -813,7 +812,7 @@ function memberTokenHelpScreen(back: () => void) {
 
 /// The address is known by this point, so only the password is asked for.
 /// Discovery cannot retrieve it: Cloudflare secrets are write-only, so an
-/// existing AUTH_TOKEN can never be read back — only overwritten, which would
+/// existing AUTH_TOKEN can never be read back - only overwritten, which would
 /// break every other client the user has connected.
 function unlockBrainScreen(
   brain: DiscoveredBrain,
@@ -850,8 +849,8 @@ function unlockBrainScreen(
 
   // A member whose token was rotated, suspended, or mistyped gets the same
   // wrong-credential message an owner with a bad password gets (#P0-2). Their
-  // only correct recovery is structurally different — it does not run through
-  // Cloudflare at all — so it is offered as its own action rather than folded
+  // only correct recovery is structurally different - it does not run through
+  // Cloudflare at all - so it is offered as its own action rather than folded
   // into "I don't have my password" above.
   const memberHelp = isCredentialError(errorMsg)
     ? (() => {
@@ -894,7 +893,7 @@ function unlockBrainScreen(
     lost,
     memberHelp,
   );
-  // Row D, or the member-aware wrong-credential error (plan §4.4/§4.5) — never
+  // Row D, or the member-aware wrong-credential error (plan §4.4/§4.5) - never
   // both: a member steered toward their admin should not also be told where
   // the token goes, which they have already found.
   if (isCredentialError(errorMsg)) {
@@ -942,7 +941,7 @@ function manualEntryScreen(
     spellcheck: "false",
   });
   if (prefillAddress) address.value = prefillAddress;
-  // Row E″ (plan §4.4/§4.5): a soft, pre-submit hint only — `connect_existing`
+  // Row E″ (plan §4.4/§4.5): a soft, pre-submit hint only - `connect_existing`
   // already rejects http:// server-side, so this is advisory, not the safety
   // net.
   address.addEventListener("blur", () => {
@@ -970,7 +969,7 @@ function manualEntryScreen(
 
   // No Cloudflare session here, so this door routes through sign-in and
   // discovery first. Anything already typed is carried over as the fallback
-  // address, for the brain a scan can't see — a custom domain, another account.
+  // address, for the brain a scan can't see - a custom domain, another account.
   const lost = h("button", { class: "btn-ghost btn-stack" }, [
     t("connectExisting.lostPassword"),
   ]);
@@ -1036,7 +1035,7 @@ function manualEntryScreen(
     });
   } else if (discoveryFailed) {
     // Row error.discoverFailed (plan §4.5/#hardening): the scan itself broke,
-    // not merely came up empty — concerned, anchored at the box that still
+    // not merely came up empty - concerned, anchored at the box that still
     // works.
     ridgeSay({
       key: "mascot.error.discoverFailed",
@@ -1108,7 +1107,7 @@ function passwordScreen() {
   let check: PasswordCheck | null = null;
   let debounce: number | undefined;
 
-  // Ridge's face responds to the password itself, not the keystrokes —
+  // Ridge's face responds to the password itself, not the keystrokes -
   // throttled (`shouldFireReaction`) to fire once per state change, so typing
   // through ten "weak" keystrokes shows the concerned face once, not ten
   // times. `kind: "reaction"` deliberately bypasses both the typing() focus
@@ -1241,7 +1240,7 @@ function passwordScreen() {
     h("p", { class: "footnote" }, [t("password.footnote")]),
   );
   // Row 3 (plan §4.4): the arrival greeting, once ever. The same key is
-  // reused above as the live "too short" reaction (#hardening) — that call
+  // reused above as the live "too short" reaction (#hardening) - that call
   // never sets `persist`, so it is never suppressed by this one having
   // already marked the key seen.
   ridgeSay({
@@ -1260,7 +1259,7 @@ function connectScreen(errorMsg?: string) {
   const signIn = h("button", { class: "btn-primary" }, [t("cloudflare.signIn")]);
   const error = errorMsg ? notice(errorMsg) : "";
   // The password chosen a screen back is still only in memory (#F3), same as
-  // `passwordScreen`'s own Back — nothing here has been sent to Cloudflare yet.
+  // `passwordScreen`'s own Back - nothing here has been sent to Cloudflare yet.
   const back = h("button", { class: "btn-ghost btn-stack" }, [
     t("common.back"),
   ]);
@@ -1296,7 +1295,7 @@ function connectScreen(errorMsg?: string) {
         progressScreen();
       } else {
         // Without a back closure here the screen was a dead end for anyone who
-        // signed in with the wrong Cloudflare login (#F1) — the other two
+        // signed in with the wrong Cloudflare login (#F1) - the other two
         // `accountPickerScreen` call sites already wire one.
         accountPickerScreen(progressScreen, undefined, undefined, () => connectScreen());
       }
@@ -1346,7 +1345,7 @@ function accountPickerScreen(
   currentScreen = () => accountPickerScreen(next, title, lede, back);
   // Three callers, three meanings. "Which account do I build in?" is the
   // Connect step; "which account do I scan?" is Find. The third is the
-  // lost-password rediscovery, which has no rail at all — so the rail is only
+  // lost-password rediscovery, which has no rail at all - so the rail is only
   // moved when there is one, rather than by testing for the rotation flow a
   // second way here.
   if (railFor(railScreen, railPath)) {
@@ -1376,7 +1375,7 @@ function accountPickerScreen(
     backBtn,
   );
   // Row 4c (plan §4.4): only the provisioning path's picker (`next` defaults
-  // to, or is explicitly, `progressScreen`) — the discovery/lost-password
+  // to, or is explicitly, `progressScreen`) - the discovery/lost-password
   // pickers ask the same visual question for a reason Ridge must not warn
   // about ("this starts building for real"), since nothing is being built.
   if (next === progressScreen && accounts.length > 1) {
@@ -1403,7 +1402,7 @@ function progressSteps(): { id: StepId; label: string }[] {
  * What goes inside a checklist row's `.check-icon` for a given step state.
  *
  * One function for all three checklists, so a state cannot end up drawn one way
- * on the setup screen and another on the password-change screen — which is
+ * on the setup screen and another on the password-change screen - which is
  * exactly what happened while each of them spelled its own glyph chain out.
  *
  * "running" is the CSS spinner rather than an icon: it is the only one of the
@@ -1427,7 +1426,7 @@ function statusWord(status: StepEvent["status"]): string {
 /**
  * A text node that is announced by an `aria-live` ancestor but takes no space
  * on screen (#P0-7 follow-up). The checklists' only other DOM change on a step
- * update is `.check-icon`'s glyph swap or an `aria-label` attribute — neither
+ * update is `.check-icon`'s glyph swap or an `aria-label` attribute - neither
  * is a live-region trigger in VoiceOver/NVDA, so the running/done/failed
  * sentence needs its own text node.
  */
@@ -1472,7 +1471,7 @@ function structuredProvisioningError(e: unknown): StructuredProvisioningError | 
 /// P0-1's render half: a proven Second Brain was found on the chosen account,
 /// so provisioning never ran and nothing was touched. Routes to the same
 /// manual-entry screen the "Already have one?" door uses, prefilled with the
-/// address the preflight already resolved — there is no discovery scan to
+/// address the preflight already resolved - there is no discovery scan to
 /// reuse here, since this account was never scanned.
 function existingBrainGuardScreen(err: GuardExistingBrainError) {
   currentScreen = () => existingBrainGuardScreen(err);
@@ -1489,7 +1488,7 @@ function existingBrainGuardScreen(err: GuardExistingBrainError) {
   show(
     brand(),
     h("h1", {}, [t("guard.existingBrainTitle")]),
-    // A brain, because one was found — this screen is good news wearing the
+    // A brain, because one was found - this screen is good news wearing the
     // shape of an interruption, and the mark is the first thing that says so.
     guardPanel("brain", h("p", { class: "lede" }, [err.message])),
     connectToIt,
@@ -1500,7 +1499,7 @@ function existingBrainGuardScreen(err: GuardExistingBrainError) {
 /// P0-1's other guard outcome: a fixed name is already taken on this account
 /// but nothing proved it is a Second Brain, so nothing was created or
 /// overwritten. `err.message` already names the resource category in plain
-/// language (`resource_kind_label` in `commands.rs`) — this screen does not
+/// language (`resource_kind_label` in `commands.rs`) - this screen does not
 /// re-derive it from `resourceKind`, which exists on the payload for callers
 /// that need to branch on it rather than just display it.
 function resourceConflictGuardScreen(err: GuardNameConflictError) {
@@ -1508,7 +1507,7 @@ function resourceConflictGuardScreen(err: GuardNameConflictError) {
   setRail("resourceConflictGuard", "new");
   // Routing "choose another account" through `connectScreen` would re-run
   // `connect_cloudflare`, whose sign-in handler short-circuits straight back to
-  // this same account when the login only has one (`main.ts:782-784`) —
+  // this same account when the login only has one (`main.ts:782-784`) -
   // reproducing this exact conflict and looping forever for the common
   // single-account login. With more than one account, the list already fetched
   // this session is reused instead, so picking a different one never re-runs
@@ -1571,7 +1570,7 @@ function progressScreen() {
     h("div", { class: "card" }, [list]),
     errorBox,
   );
-  // Row 5 (plan §4.4). No spotlight while things are progressing normally —
+  // Row 5 (plan §4.4). No spotlight while things are progressing normally -
   // the "Try again" target only exists once a failure has actually happened.
   ridgeSay({
     key: "mascot.progress.intro",
@@ -1588,7 +1587,7 @@ function progressScreen() {
     const sentence = `${labels.get(ev.step)}: ${statusWord(ev.status)}`;
     li.setAttribute("aria-label", sentence);
     // The live region only ever mutates `.check-icon`'s mark and this text
-    // node — an attribute change alone (the `aria-label` above) does not
+    // node - an attribute change alone (the `aria-label` above) does not
     // trigger VoiceOver/NVDA (#P0-7).
     statusEls.get(ev.step)!.textContent = sentence;
     const mark = li.querySelector<HTMLSpanElement>(".check-icon")!;
@@ -1643,7 +1642,7 @@ function progressScreen() {
       // previous attempt is destroyed by the `replaceChildren()` above and
       // focus falls back to `<body>`.
       retry.focus();
-      // plan §4.5's provisioningHonest, replacing row 5's optimistic line —
+      // plan §4.5's provisioningHonest, replacing row 5's optimistic line -
       // stops short of endorsing unlimited retries. Softened from the
       // original spec text: wave 1 dropped the "nothing is lost" claim and
       // the fix wave added in-session retry recovery, so this no longer
@@ -1675,7 +1674,7 @@ async function toolsScreen() {
     next,
   );
   // Row 6 (plan §4.4). Spotlights the whole card rather than surgically the
-  // first ready row — `toolRows` (shared.ts) doesn't expose individual rows,
+  // first ready row - `toolRows` (shared.ts) doesn't expose individual rows,
   // and this wave's file ownership doesn't extend to changing it.
   ridgeSay({
     key: "mascot.tools.intro",
@@ -1706,7 +1705,7 @@ function detailsScreen() {
     done,
   );
   // Rows 7 / 7b / 7c (plan §4.4). 7c (member) is talking, deliberately NOT
-  // celebrating — the clearest opposite-behaviour case: an owner built
+  // celebrating - the clearest opposite-behaviour case: an owner built
   // something, a member joined something.
   if (!teamMode) {
     ridgeSay({
@@ -1718,7 +1717,7 @@ function detailsScreen() {
       hero: true,
     });
   } else if (connectionRole === "member") {
-    // Calm spoken delivery, not a celebration and not the empathy frown —
+    // Calm spoken delivery, not a celebration and not the empathy frown -
     // the user read that frown as angry, and joining a team is good news:
     // an owner built something, a member joined something. "talking" keeps
     // it warm and chatty; the line's wording (not the face) carries the
@@ -1878,8 +1877,8 @@ function workerUpdateDoneScreen() {
 //
 // Two doors, one sequence. Door A is a voluntary change from the Connection
 // pane; Door B is "I don't have my password" on the connect screens. Neither
-// needs the current password — Cloudflare account access is the authority
-// either way — so they differ only in where they start and what they say.
+// needs the current password - Cloudflare account access is the authority
+// either way - so they differ only in where they start and what they say.
 //
 // The rule this whole section is written around: after the change lands, the
 // new password cannot be read back by anything, so it stays on screen in every
@@ -1890,7 +1889,7 @@ function workerUpdateDoneScreen() {
 let rotationDoor: "change" | "lost" = "change";
 
 /**
- * The brain being changed. Door A leaves it null — the address is whatever this
+ * The brain being changed. Door A leaves it null - the address is whatever this
  * computer already has stored. Door B has no stored setup, so the address the
  * user picked or typed has to travel with the call.
  */
@@ -1915,7 +1914,7 @@ let rotationGenerated = false;
  *
  * The reason it is sticky rather than per-attempt: attempt one can PUT the
  * secret and then time out waiting for the brain to confirm it, and attempt two
- * can fail before the PUT — an expired sign-in, a transient account lookup —
+ * can fail before the PUT - an expired sign-in, a transient account lookup -
  * which on its own is honestly "nothing was changed". Rendering that screen
  * would tell someone whose old password is already dead that everything is
  * exactly as it was, which is the one message in this flow that ends with a
@@ -1924,7 +1923,7 @@ let rotationGenerated = false;
 let rotationMayBeLive = false;
 
 /**
- * Entering the flow from outside — Door A at launch, or the ghost link on any
+ * Entering the flow from outside - Door A at launch, or the ghost link on any
  * of the three connect screens. Deliberately not called by the Back paths,
  * which are inside a flow that is still choosing its password.
  *
@@ -1947,12 +1946,12 @@ function beginRotation() {
  *  to Cloudflare a second time to get back here. */
 let rotationBack: () => void = () => changePasswordIntroScreen();
 
-/** Where Door B leads out — the screen the ghost link was clicked on. */
+/** Where Door B leads out - the screen the ghost link was clicked on. */
 let rotationExit: () => void = () => connectExistingScreen();
 
 /**
  * True once `connect_cloudflare` has succeeded in this window. The account list
- * is only ever set from its result, and that result is never empty — a login
+ * is only ever set from its result, and that result is never empty - a login
  * with no usable account is an error, not a success.
  */
 function signedInToCloudflare(): boolean {
@@ -2065,7 +2064,7 @@ function changePasswordIntroScreen(errorMsg?: string) {
   );
 }
 
-/// Door B. One screen, two variants — the heading does the reassurance on its
+/// Door B. One screen, two variants - the heading does the reassurance on its
 /// own, because the heading is what a frightened person reads before anything
 /// else. `address` is null when the brain still has to be found.
 function lostPasswordIntroScreen(address: string | null, errorMsg?: string) {
@@ -2108,7 +2107,7 @@ function lostPasswordIntroScreen(address: string | null, errorMsg?: string) {
     // a password alters that bargain.
     signedIn ? "" : h("p", { class: "footnote" }, [t("connectExisting.signInFootnote")]),
   );
-  // Row G (plan §4.4): one line, then silent — no other screen in this flow
+  // Row G (plan §4.4): one line, then silent - no other screen in this flow
   // calls ridgeSay, by design (plan §4.7's delight budget: rotation gets less
   // Ridge, not more).
   ridgeSay({
@@ -2153,7 +2152,7 @@ async function runLostDiscovery() {
   }
 }
 
-/// The existing picker's headings still read correctly; its ledes do not —
+/// The existing picker's headings still read correctly; its ledes do not -
 /// "Connect to it" is wrong when there is nothing to connect with yet.
 function lostBrainPickerScreen(found: DiscoveredBrain[]) {
   currentScreen = () => lostBrainPickerScreen(found);
@@ -2194,8 +2193,8 @@ function lostBrainPickerScreen(found: DiscoveredBrain[]) {
   );
 }
 
-/// Discovery finding nothing is not a failure — custom domains and second
-/// accounts exist — and without this the only fallback is a screen asking for
+/// Discovery finding nothing is not a failure - custom domains and second
+/// accounts exist - and without this the only fallback is a screen asking for
 /// the password the user came here without.
 function lostAddressScreen(
   found: DiscoveredBrain[],
@@ -2223,7 +2222,7 @@ function lostAddressScreen(
   address.addEventListener("input", sync);
   // Checked here rather than at the far end of the flow. `validate_brain_address`
   // runs exactly the checks `rotate_password` runs on an explicit address, so a
-  // typo is reported in the field it was typed in — not after the save gate, a
+  // typo is reported in the field it was typed in - not after the save gate, a
   // progress screen and a failure screen that has to hedge about what happened.
   next.addEventListener("click", async () => {
     const typed = address.value.trim();
@@ -2265,8 +2264,8 @@ function lostAddressScreen(
   address.focus();
 }
 
-/// Setup's password mechanics exactly — same meter, same debounced
-/// `check_password`, same generate button — with two differences: the field
+/// Setup's password mechanics exactly - same meter, same debounced
+/// `check_password`, same generate button - with two differences: the field
 /// arrives pre-filled from `generate_password`, and it stays readable. Rotation
 /// replaces a string that lives in a password manager and gets pasted into a
 /// handful of devices once each, so memorability buys nothing and the fastest
@@ -2529,7 +2528,7 @@ async function runRotation() {
 
 /// A rebuild started while this flow was open, so nothing was attempted. The
 /// same three strings the Connection pane shows in place of the door, including
-/// the escape — an abandoned rebuild would otherwise leave this screen as a dead
+/// the escape - an abandoned rebuild would otherwise leave this screen as a dead
 /// end with the reason relegated to a footnote under "Try again".
 ///
 /// This screen renders whenever the stage is `blocked`, including after an
@@ -2546,7 +2545,7 @@ function rotateBlockedScreen(detail: string) {
   settings.addEventListener("click", () => void invoke("open_settings_window"));
   // Leaving is a click when nothing was sent and the old password still works,
   // and a decision when this window holds the only copy of one that may already
-  // be live — the same acknowledgement the other may-be-live screen asks for.
+  // be live - the same acknowledgement the other may-be-live screen asks for.
   const leave = copy.guardLeaving
     ? guardedExit(t("changePassword.failUnsureLeave"), leaveRotation)
     : (() => {
@@ -2565,7 +2564,7 @@ function rotateBlockedScreen(detail: string) {
     // Above the password card, because it is the reason to keep what is in it.
     copy.liveNotice ? notice(t(copy.liveNotice)) : "",
     failDetailLine(detail),
-    // "The password you chose — not in use" while nothing has been sent, and
+    // "The password you chose - not in use" while nothing has been sent, and
     // "Your new password" once an attempt may have landed. Calling it not in
     // use on that second path would tell someone deciding whether to keep it
     // that they can safely throw away the only key to their brain.
@@ -2619,7 +2618,7 @@ function rotateFailNotSentScreen(detail: string) {
 
 /// The change went out and never confirmed. Never says "failed": the heading is
 /// a statement about the password, which is the only fact the app has. Retry is
-/// the escape and the copy says why — setting the same password twice confirms
+/// the escape and the copy says why - setting the same password twice confirms
 /// what landed or completes what did not.
 function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
   currentScreen = () => rotateFailUnsureScreen(detail, recheck);
@@ -2641,7 +2640,7 @@ function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
     // of no, on the one screen where the user is deciding what to believe.
     //
     // The address travels with the call for the same reason it does with the
-    // change itself — Door B is a computer with no stored setup, so a missing
+    // change itself - Door B is a computer with no stored setup, so a missing
     // address resolves to nothing rather than to the brain being asked about.
     let result: RecheckResult;
     try {
@@ -2681,7 +2680,7 @@ function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
     // to be closed.
     h("p", { class: "footnote" }, [t("changePassword.failUnsureFootnote")]),
   );
-  // Spotlights the password card first, per plan §4.5 — the line's own text
+  // Spotlights the password card first, per plan §4.5 - the line's own text
   // says to save it before anything else, so the ring goes where the text
   // points rather than at "Try again".
   ridgeSay({
@@ -2694,7 +2693,7 @@ function rotateFailUnsureScreen(detail: string, recheck?: RecheckResult) {
 }
 
 /// The brain has the new password; something local did not get it. No "try
-/// again" — the change is done, and re-running the flow to fix a keychain write
+/// again" - the change is done, and re-running the flow to fix a keychain write
 /// would change the password a second time.
 function rotateFailLocalScreen(outcome: RotateOutcome | null, detail = "") {
   currentScreen = () => rotateFailLocalScreen(outcome, detail);
@@ -2702,12 +2701,12 @@ function rotateFailLocalScreen(outcome: RotateOutcome | null, detail = "") {
   // Heading and body are chosen together. They used to disagree: the body
   // switched to the CLI-specific message when secure storage had in fact
   // succeeded, while the heading went on saying the password was "not saved on
-  // this computer" — and the heading was the false one.
+  // this computer" - and the heading was the false one.
   const copy = localFailureCopy(outcome);
 
   // When secure storage took the new password this computer can open its own
   // brain, so the dashboard button is the right exit. When it did not, that
-  // button opens a window that silently 401s — on Door B it rejects outright,
+  // button opens a window that silently 401s - on Door B it rejects outright,
   // leaving the screen's only control visibly doing nothing, forever. The
   // honest offer there is to connect this computer again with the password on
   // screen, and it is guarded, because taking it means leaving this screen.
@@ -2746,7 +2745,7 @@ function rotateDoneScreen(revealed = false) {
   currentScreen = () => rotateDoneScreen(revealed);
   setRail("rotation");
   // Four items, not three. A change writes to secure storage, the brain
-  // command's config and the open dashboard window — so the extension and the
+  // command's config and the open dashboard window - so the extension and the
   // Obsidian plugin hold the old password on *this* computer too, which is what
   // Door B's notice has always told people and this list used to deny.
   const needs = h("ul", { class: "bullet-list" }, [
@@ -2783,13 +2782,13 @@ function rotateDoneScreen(revealed = false) {
       h("div", { class: "url-label" }, [t("changePassword.doneKeptHead")]),
       h("div", { class: "url-desc" }, [t("changePassword.doneKept")]),
       // A notice, not a notice error. Most changes are hygiene, and a red block
-      // on every one of them trains people to skip the block — including the
+      // on every one of them trains people to skip the block - including the
       // person it was written for.
       keyNotice(t("changePassword.doneLeak")),
       h("div", { class: "row-actions" }, [disconnect]),
     ]),
     // Collapsed by default, so it is not sitting in a window someone walked
-    // away from — but still reachable, which is what the save gate promised.
+    // away from - but still reachable, which is what the save gate promised.
     revealed ? secretCard(t("changePassword.passwordLabel"), rotationPassword) : "",
     reveal,
     open,
@@ -2798,7 +2797,7 @@ function rotateDoneScreen(revealed = false) {
 
 /// Shown at launch when this computer's stored password no longer opens the
 /// brain. Three ways forward: enter the new one, find the brain again, or set a
-/// new one — the last is for the two people most likely to be here, someone
+/// new one - the last is for the two people most likely to be here, someone
 /// without the new password and someone who did not make the change.
 async function passwordChangedElsewhereScreen(errorMsg?: string) {
   currentScreen = () => void passwordChangedElsewhereScreen(errorMsg);
@@ -2881,7 +2880,11 @@ function applyWindowTitle() {
 async function boot() {
   initI18n();
   mountRidge();
-  applyWindowTitle();
+  try {
+    applyWindowTitle();
+  } catch {
+    // The browser preview has no Tauri window runtime.
+  }
   window.addEventListener(LOCALE_CHANGE_EVENT, () => {
     applyWindowTitle();
     currentScreen?.();

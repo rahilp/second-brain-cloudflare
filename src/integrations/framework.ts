@@ -77,6 +77,14 @@ export interface IntegrationRecord {
   updatedAt: number;
 }
 
+// The one narrowing rule for a mirror layer, on both the read and write side:
+// anything that isn't the exact literal "company" is personal. Extracted so
+// every call site agrees by construction rather than by everyone typing the
+// same ternary — the divergence the union type otherwise can't catch.
+export function narrowMirrorLayer(value: unknown): "company" | "personal" {
+  return value === "company" ? "company" : "personal";
+}
+
 // Prefixed so integration keys coexist with workers-oauth-provider's own
 // token:/grant:/client: keys in the same namespace.
 const INTEGRATIONS_KEY_PREFIX = "integrations:";
@@ -134,7 +142,7 @@ export function integrationStatus(
     // Record<string, unknown> escape hatch, and anything that is not "company"
     // is personal-by-default on the write path — so the readout has to agree
     // with the writer rather than with the blob.
-    mirrorWorkspace: record?.config?.mirrorWorkspace === "company" ? "company" : "personal",
+    mirrorWorkspace: narrowMirrorLayer(record?.config?.mirrorWorkspace),
     // The id, not the name. Resolving it needs D1 and the caller's own team
     // scope, neither of which this module has; the route swaps it for a name
     // and drops the id before the response leaves (src/routes/integrations.ts).

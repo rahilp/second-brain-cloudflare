@@ -8,6 +8,7 @@ import {
   deleteIntegration,
 } from "../integrations";
 import type { IntegrationProvider, MirrorStore } from "./framework";
+import { narrowMirrorLayer } from "./framework";
 import { initializeDatabase } from "../db/init";
 import { forgetEntry } from "../capture/lifecycle";
 import { deleteStaleVectors, storeEntry } from "../capture/store";
@@ -127,12 +128,16 @@ export function mirrorEditError(source: string): string {
 /**
  * The schedule this job owns, and the reason it has one.
  *
- * A Worker invocation gets 50 D1 queries and 10 ms of CPU on the free plan. The
- * nightly maintenance pass already spends 30 of those queries, which left a
- * mirror sync sharing that invocation with room for nothing useful: five batches
- * cost 100 D1 queries on their own, and even one batch put the shared invocation
- * exactly at the cap — over it as soon as the batch was updates rather than
- * creates, or a second provider was connected (#290).
+ * Every Worker invocation gets only 10 ms of CPU on the free plan, and this
+ * codebase holds itself to a self-imposed D1 budget of ~50 calls per
+ * invocation for cost discipline (the platform's real ceiling is 1,000
+ * D1/KV/Vectorize calls and 50 external fetch()es per invocation). The
+ * nightly maintenance pass already spends 30 of that self-imposed budget,
+ * which left a mirror sync sharing that invocation with room for nothing
+ * useful: five batches cost 100 D1 queries on their own, and even one batch
+ * put the shared invocation exactly at that self-imposed budget — over it as
+ * soon as the batch was updates rather than creates, or a second provider was
+ * connected (#290).
  *
  * So the sync runs on its own trigger with its own allowance. Must match the
  * second entry in wrangler.jsonc's `triggers.crons` exactly — scheduled() in
@@ -159,7 +164,8 @@ const CRON_SYNC_MAX_BATCHES = 1;
  *
  * Syncing every connected provider in a single invocation multiplies the cost by
  * however many the user has connected — two calendars measured 70 D1 queries
- * against a cap of 50 — and no per-provider batch size can fix that, because the
+ * against this codebase's self-imposed budget of 50 — and no per-provider batch
+ * size can fix that, because the
  * multiplier is the provider count. Rotating keeps the cost of a run flat in the
  * number of connections; the hourly schedule is what keeps each one fresh.
  *
@@ -222,7 +228,7 @@ export async function mirrorWriteContext(
   env: Env,
   record: { config?: { mirrorWorkspace?: string } } | null,
 ): Promise<WriteContext> {
-  const mirrorWorkspace = record?.config?.mirrorWorkspace === "company" ? "company" : "personal";
+  const mirrorWorkspace = narrowMirrorLayer(record?.config?.mirrorWorkspace);
   try {
     const roots = await ensureTenantBootstrap(env);
     const owner = await resolveIdentityByUserId(env, roots.ownerUserId);

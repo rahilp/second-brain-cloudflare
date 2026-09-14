@@ -382,3 +382,59 @@ describe("admin_events — integration connects and disconnects", () => {
     expect(await events()).toEqual([]);
   });
 });
+
+/**
+ * admin_events — the layer-change route, issue #346.
+ *
+ * `member_suspended`/`member_unsuspended` is the precedent the route follows:
+ * a separate event NAME per transition rather than reusing `integration_connected`
+ * with a boolean, so "when did this stop mirroring" doesn't require reading a
+ * payload. This uses the collecting ctx (not the no-op one integration-layer.test.ts
+ * uses) because these assertions read real admin_events rows back out.
+ */
+describe("admin_events — integration layer changes", () => {
+  it("POST /integrations/notion/layer records integration_layer_changed with from/to", async () => {
+    stubNotion(["secret_abc123"]);
+    expect((await call("POST", "/integrations/notion/connect", ALICE, { token: "secret_abc123" })).status).toBe(200);
+    await settle();
+    await env.DB.prepare(`DELETE FROM admin_events`).run();
+
+    const res = await call("POST", "/integrations/notion/layer", ALICE, { workspace: "company" });
+    expect(res.status).toBe(200);
+    await settle();
+
+    const rows = await events();
+    expect(rows.length).toBe(1);
+    expect(rows[0].event).toBe("integration_layer_changed");
+    expect(rows[0].actor_id).toBe(roots.ownerUserId);
+    expect(rows[0].target_user_id).toBe("");
+    expect(JSON.parse(rows[0].payload)).toEqual({ provider: "notion", from: "personal", to: "company" });
+  });
+
+  it("setting the layer to its current value writes no audit row at all", async () => {
+    stubNotion(["secret_abc123"]);
+    expect((await call("POST", "/integrations/notion/connect", ALICE, { token: "secret_abc123" })).status).toBe(200);
+    await settle();
+    await env.DB.prepare(`DELETE FROM admin_events`).run();
+
+    const res = await call("POST", "/integrations/notion/layer", ALICE, { workspace: "personal" });
+    expect(res.status).toBe(200);
+    await settle();
+    expect(await events()).toEqual([]);
+  });
+
+  it("no payload ever carries the stored credential", async () => {
+    const secret = "secret_nT0k3n-do-not-log-me";
+    stubNotion([secret]);
+    expect((await call("POST", "/integrations/notion/connect", ALICE, { token: secret })).status).toBe(200);
+    await settle();
+    await env.DB.prepare(`DELETE FROM admin_events`).run();
+
+    expect((await call("POST", "/integrations/notion/layer", ALICE, { workspace: "company" })).status).toBe(200);
+    await settle();
+
+    const rows = await events();
+    expect(rows.length).toBe(1);
+    expect(JSON.stringify(rows)).not.toContain(secret);
+  });
+});

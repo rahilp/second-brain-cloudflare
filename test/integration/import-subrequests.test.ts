@@ -1,13 +1,16 @@
 /**
  * Pins /import's D1 subrequest cost per invocation, driven against real SQLite.
  *
- * The endpoint exists to migrate a brain, and most brains run on the D1 free plan,
- * which allows roughly 50 queries per Worker invocation. The paging design holds
- * the per-call cost flat — one chunked existence lookup plus one insert batch per
- * page, regardless of file size or how far in the cursor is. An earlier version
- * resolved ids lazily, one query per entry and two per edge, which spent the whole
- * budget partway through a real restore (measured: 201 round trips for page 5 of a
- * 5,000-entry export). These tests are what keeps that from coming back.
+ * The endpoint exists to migrate a brain, and this codebase holds itself to a
+ * self-imposed budget of roughly 50 D1 calls per Worker invocation (the
+ * platform's real free-plan ceiling is 1,000 D1/KV/Vectorize calls per
+ * invocation, kept far tighter here for cost and 10 ms-CPU reasons). The
+ * paging design holds the per-call cost flat — one chunked existence lookup
+ * plus one insert batch per page, regardless of file size or how far in the
+ * cursor is. An earlier version resolved ids lazily, one query per entry and
+ * two per edge, which spent the whole self-imposed budget partway through a
+ * real restore (measured: 201 round trips for page 5 of a 5,000-entry
+ * export). These tests are what keeps that from coming back.
  *
  * Counting: `issued` logs one entry per D1 call; the batch shim below collapses a
  * batch's statements into one entry, because DB.batch() is one subrequest in
@@ -63,7 +66,7 @@ const entry = (i: number) => ({
   created_at: 1_700_000_000_000 + i,
 });
 
-describe("/import subrequest budget (D1 free plan: ~50 per invocation)", () => {
+describe("/import subrequest budget (self-imposed D1 budget: ~50 per invocation)", () => {
   it("a fresh default page costs one lookup and one batch", async () => {
     sq = await migrated();
     const entries = Array.from({ length: IMPORT_DEFAULT_LIMIT }, (_, i) => entry(i));

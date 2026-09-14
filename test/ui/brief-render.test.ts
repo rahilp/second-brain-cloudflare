@@ -279,4 +279,23 @@ describe("the daily brief", () => {
     expect(html).toContain("openStaleSheet()");
     expect(html).not.toContain("sendSuggestion");
   });
+
+  // Regression: loadBrief() used to call renderBrief(briefData) directly and
+  // then, on the first load, also call returnHome(), which itself renders
+  // the brief again. Two un-awaited renderBoard() runs raced, doubling every
+  // tile and panel. Spies on renderBoard (via renderBrief's own dispatch) to
+  // count how many render passes the first load actually triggers.
+  it("the first load renders the board exactly once, even though returnHome also renders", async () => {
+    const ctx = load();
+    let renderBoardCalls = 0;
+    ctx.renderBoard = () => { renderBoardCalls += 1; };
+    // Stands in for home.js's real returnHome, which re-renders the cached
+    // brief itself. Defined inside the vm context (rather than as a plain host
+    // function assigned to ctx.returnHome) so it closes over brief.js's own
+    // module-scoped `briefData`, exactly as the real returnHome does.
+    vm.runInContext("function returnHome() { renderBrief(briefData); }", ctx);
+    ctx.fetch = async () => ({ ok: true, json: async () => ({ ...empty }) });
+    await ctx.loadBrief();
+    expect(renderBoardCalls).toBe(1);
+  });
 });

@@ -144,7 +144,9 @@ describe("integer query parameters (#277)", () => {
   // bounds rows returned rather than rows read — `weight` is unindexed, so the
   // scan happens either way — but the returned rows are what fix the node set,
   // and the node set is what decides how many D1 queries the request costs:
-  // 1 + ceil(N/100) + ceil(N/50), against a 50-subrequest free-plan budget.
+  // 1 + ceil(N/100) + ceil(N/50), against this codebase's self-imposed
+  // ~50-call D1 budget (the platform's real ceiling is 1,000 calls per
+  // invocation).
 
   describe("buildGraph", () => {
     class RecordingD1 extends D1Mock {
@@ -236,13 +238,15 @@ describe("integer query parameters (#277)", () => {
     });
 
     /**
-     * The constraint that sets GRAPH_VIEW_MAX_NODES. Workers allow 50
-     * subrequests per invocation on the free plan, and buildGraph spends
-     * 1 + ceil(N/100) + ceil(N/50) D1 queries for N nodes plus one KV read for
-     * the config. That is what makes the node cap a hard limit rather than a
-     * taste question: at N=1634 the request exceeds the budget and the graph tab
-     * is dead for every free-plan brain that size, with runGraphPass adding the
-     * edges that get it there on its own.
+     * The constraint that sets GRAPH_VIEW_MAX_NODES. This codebase holds itself
+     * to a self-imposed budget of ~50 D1/KV calls per invocation (the
+     * platform's real ceiling is 1,000 D1/KV/Vectorize calls per invocation),
+     * and buildGraph spends 1 + ceil(N/100) + ceil(N/50) D1 queries for N nodes
+     * plus one KV read for the config. That is what makes the node cap a
+     * deliberate limit rather than a taste question: at N=1634 the request
+     * exceeds this codebase's self-imposed budget — costing more D1 calls and
+     * CPU than allowed for, not actually failing the platform — with
+     * runGraphPass adding the edges that get it there on its own.
      *
      * Raising the cap without recomputing this is the mistake this test exists
      * to catch, so it asserts the measured cost rather than a ratio.
@@ -250,11 +254,13 @@ describe("integer query parameters (#277)", () => {
      * SCOPE: this measures the request's own D1 and KV calls on a warm isolate.
      * It deliberately does not cover the cold-isolate path, where
      * initializeDatabase fires under waitUntil and spends ~12 more from the same
-     * budget, putting the first request against a fresh isolate at ~59 — over
-     * the limit. Green here is not evidence that case is safe; it is #282.
+     * self-imposed budget, putting the first request against a fresh isolate at
+     * ~59 — over that self-imposed budget, though still far under the
+     * platform's real 1,000-call ceiling. Green here is not evidence that case
+     * is safe; it is #282.
      */
-    it("keeps a full-size /graph request inside the free-plan subrequest budget", async () => {
-      const FREE_PLAN_SUBREQUESTS = 50;
+    it("keeps a full-size /graph request inside this codebase's self-imposed D1 budget", async () => {
+      const SELF_IMPOSED_D1_BUDGET = 50;
       const big = seedOversized();
 
       let kvReads = 0;
@@ -282,18 +288,19 @@ describe("integer query parameters (#277)", () => {
       expect(big.sql.filter((s: string) => !tenancy.test(s))).toHaveLength(predicted);
       // Team edition adds one token-to-identity round trip per request and, on
       // a first request against a fresh database, one-time tenant provisioning.
-      // A full-size team brain therefore sits above the free-plan ceiling even
-      // warm — accepted in the v3 spec (teams land on paid plans). Unscoped
-      // single-user paths keep the original counts and do not regress; the +4
-      // documents exactly how far over the team case goes.
+      // A full-size team brain therefore sits above this codebase's
+      // self-imposed D1 ceiling even warm — accepted in the v3 spec (teams land
+      // on paid plans, where the platform's real ceiling is higher still).
+      // Unscoped single-user paths keep the original counts and do not
+      // regress; the +4 documents exactly how far over the team case goes.
       //
       // This bound is EXACT: the measured value is 54 against 50 + 4. Keep it
       // exact. It was +11 while identity resolution and the tenant bootstrap
-      // each spent one subrequest per statement; both are batches now, and a
-      // batch is one subrequest however many statements it carries, so the same
+      // each spent one D1 call per statement; both are batches now, and a
+      // batch is one D1 call however many statements it carries, so the same
       // work costs 54 instead of 61. Re-pinning it at the measured number is the
       // point — a bound of +11 would still have read as "unchanged since v3"
-      // while quietly admitting seven subrequests of tenancy-path growth that no
+      // while quietly admitting seven calls of tenancy-path growth that no
       // test would have noticed.
       //
       // So: if you change this, measure the new value and re-pin it tight. A
@@ -305,7 +312,7 @@ describe("integer query parameters (#277)", () => {
       // per request" stops being free. users.last_used_at is written on this
       // path and costs nothing here, because it is batched with the identity
       // read rather than issued beside it.
-      expect(big.sql.length + kvReads).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS + 4);
+      expect(big.sql.length + kvReads).toBeLessThanOrEqual(SELF_IMPOSED_D1_BUDGET + 4);
     });
   });
 });

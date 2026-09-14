@@ -1,5 +1,5 @@
 /**
- * The setup spine — what the left rail draws, and which of its steps a user is
+ * The setup spine - what the left rail draws, and which of its steps a user is
  * allowed to click their way back into.
  *
  * Setup has never had a fixed number of screens: creating a brain, connecting
@@ -12,7 +12,7 @@
  *
  * So the rail counts *steps*, and every screen maps onto one. Transient
  * screens, pickers and guards resolve to the step they belong to and mark the
- * rail paused rather than adding a position of their own — which is why this
+ * rail paused rather than adding a position of their own - which is why this
  * whole module is a pair of pure lookups over plain data, exported for
  * `test/unit/steps.test.ts` the same way `ridge.ts` and `rotation-state.ts`
  * export theirs. `main.ts` supplies the screen name and the path; nothing here
@@ -35,7 +35,7 @@ export type StepId =
  *
  * `token` is the member/manual door: someone handed an address and a sign-in
  * token, who never signs in to Cloudflare and never scans for anything. It is
- * not derived from `connectionRole` — the brain only reports who is holding
+ * not derived from `connectionRole` - the brain only reports who is holding
  * the token on the *second to last* screen, and retroactively deleting the
  * steps someone just completed is worse than showing one step they skipped.
  * It is derived from the door they took instead, which is known immediately.
@@ -72,9 +72,9 @@ export const STEP_LABEL_KEYS: Record<StepId, `steps.${string}`> = {
  * Every screen in `main.ts` that renders through `show()`, named once here.
  *
  * `accountPickerScreen` and `manualEntryScreen` appear under more than one
- * name because they are the same render used for two different questions —
+ * name because they are the same render used for two different questions -
  * "which account do I scan?" is a Find, "which account do I build in?" is a
- * Connect — and the rail has to say which one is happening.
+ * Connect - and the rail has to say which one is happening.
  */
 export type ScreenName =
   // Creating a new brain.
@@ -108,7 +108,7 @@ export type ScreenName =
 interface ScreenMapping {
   step: StepId;
   /**
-   * A screen the user cannot advance from by choosing — a scan running, a
+   * A screen the user cannot advance from by choosing - a scan running, a
    * sign-in being watched, a guard explaining why nothing happened. The rail
    * mutes and stops accepting clicks rather than moving.
    */

@@ -1,7 +1,7 @@
 {
   "name": "second-brain-installer",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

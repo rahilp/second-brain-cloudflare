@@ -69,7 +69,7 @@ export async function runNightlyCompression(
   env: Env,
   ctx: ExecutionContext,
   workspaceId?: string | null,
-): Promise<void> {
+): Promise<{ digestsWritten: number }> {
   const cfg = await resolveConfig(env);
   await initializeDatabase(env);
 
@@ -95,11 +95,15 @@ export async function runNightlyCompression(
 
   const tags = await selectTagsForRun(env, results.map(r => r.tag as string));
 
+  let digestsWritten = 0;
   for (const tag of tags) {
     try {
-      await compressTag(tag, env, ctx);
+      const result = await compressTag(tag, env, ctx);
+      if (result.synthesizedId) digestsWritten++;
     } catch (e) {
       console.error(`Compression failed for tag "${tag}" (non-fatal):`, e);
     }
   }
+
+  return { digestsWritten };
 }

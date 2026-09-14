@@ -21,6 +21,7 @@ import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { makeTestEnv, makeMemoryKV, makeVectorizeMock } from "../helpers/make-env";
 import type { Identity } from "../../src/lib/identity";
 import type { Env } from "../../src/env";
+import { DEFAULTS } from "../../src/config";
 
 const memberOf = (personal: string): Identity => ({
   userId: "u1",
@@ -48,8 +49,8 @@ function recallEnv(sqlite: SqliteD1, vectorizeOverrides: Partial<VectorizeIndex>
 }
 
 /** Seed through the normal insert, then relocate — the unit under test IS that column. */
-function seedIn(sqlite: SqliteD1, id: string, workspaceId: string, content: string) {
-  sqlite.seed({ id, content, createdAt: 1000 });
+function seedIn(sqlite: SqliteD1, id: string, workspaceId: string, content: string, createdAt = 1000) {
+  sqlite.seed({ id, content, createdAt });
   sqlite.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(workspaceId, id).run();
 }
 
@@ -86,6 +87,34 @@ describe("recallEntries with an Identity", () => {
     expect(ids).toContain("own");
     expect(ids).toContain("co"); // personal ∪ company: the shared row stays readable
     expect(ids).not.toContain("foreign");
+  });
+
+  it("keeps unreadable rows out of a multi-keyword candidate window without date bounds", async () => {
+    seedIn(sqlite, "own-answer", "ws-a", "alpha beta decision", 1000);
+    for (let i = 0; i < 4; i++) {
+      seedIn(sqlite, `own-filler-${i}`, "ws-a", `unrelated readable note ${i}`, 900 - i);
+    }
+    for (let i = 0; i < 50; i++) {
+      seedIn(sqlite, `foreign-${i}`, "ws-b", `alpha private noise ${i}`, 2000 + i);
+    }
+    const { ctx } = makeCtx();
+    const diagnostics: NonNullable<RecallInternalOptions["diagnostics"]> = {};
+
+    const res = await recallEntries(
+      { query: "alpha beta", topK: 5, synthesize: false },
+      env,
+      ctx,
+      { ...DEFAULTS, KEYWORD_CANDIDATE_LIMIT: 50 },
+      { identity: memberOf("ws-a"), diagnostics },
+    );
+
+    expect(res.matches.map(m => m.id)).toContain("own-answer");
+    expect(diagnostics.keywordIds).toEqual(["own-answer"]);
+    expect(diagnostics.keywordIds!.some(id => id.startsWith("foreign-"))).toBe(false);
+    const keywordSql = sqlite.issued.find(s => s.includes("ORDER BY created_at DESC LIMIT"));
+    expect(keywordSql).toContain(
+      "WHERE (content LIKE ? OR content LIKE ?) AND workspace_id IN (?, ?)",
+    );
   });
 
   it("scopes every entries read, and leaves the unscoped SQL byte-for-byte alone", async () => {

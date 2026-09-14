@@ -3,7 +3,7 @@ export type Locale = "en" | "it";
 /** One named level of a multi-value control (#246). */
 export type LevelCopy = {
   name: string;
-  /** Names the downside as well as the upside — see #244 copy conventions. */
+  /** Names the downside as well as the upside - see #244 copy conventions. */
   notice: string;
 };
 
@@ -67,7 +67,7 @@ export type Messages = {
     model: { label: string; desc: string; sizeNote: string; neuronsNote: string };
     /**
      * The model used only when Second Brain reasons over a pair of memories to
-     * draw an insight — everything `model` above covers is unaffected by this.
+     * draw an insight - everything `model` above covers is unaffected by this.
      */
     insightModel: { label: string; desc: string; sizeNote: string; defaultNote: string };
     /**
@@ -85,11 +85,12 @@ export type Messages = {
       entriesNone: string;
       pickLabel: string;
       inUse: string;
+      unknownValue: string;
       storageWarning: string;
       pickNote: string;
       /**
        * Named levels, keyed by the `level` each choice carries. These are the
-       * only labels the picker shows — the model id is secondary text on the
+       * only labels the picker shows - the model id is secondary text on the
        * confirm screen and nowhere else, because this is the last thing read
        * before an operation that cannot be undone.
        */
@@ -103,7 +104,7 @@ export type Messages = {
       confirmBody: string;
       point1: string;
       point2: string;
-      /** How long, expressed in rounds — the only unit that can be honest. */
+      /** How long, expressed in rounds - the only unit that can be honest. */
       point3: string;
       point4: string;
       targetLine: string;
@@ -247,7 +248,7 @@ export type Messages = {
     noneFound: string;
     unlockTitle: string;
     unlockLede: string;
-    /** Door B into the password change (#235) — a ghost link on both screens. */
+    /** Door B into the password change (#235) - a ghost link on both screens. */
     lostPassword: string;
     memberTokenHelp: string;
     memberTokenHelpTitle: string;
@@ -276,7 +277,7 @@ export type Messages = {
    * don't have my password" from the connect screens.
    *
    * Every failure state in here shows the new password, because once the
-   * change lands nothing can read it back — not the app, not Cloudflare. A
+   * change lands nothing can read it back - not the app, not Cloudflare. A
    * screen that reports a failure without the password on it is how someone
    * loses a brain.
    */
@@ -295,14 +296,14 @@ export type Messages = {
     blockedEscape: string;
     blockedButton: string;
     /**
-     * Added to the blocked *screen* — never the Connection pane's card — when an
+     * Added to the blocked *screen* - never the Connection pane's card - when an
      * earlier attempt in the same window reached the brain and never confirmed.
      * Being blocked and having a password that may already be live are both
      * true at once, and the screen that drops either one is lying about the
      * other.
      */
     blockedMayBeLive: string;
-    // Door B intro — one screen, two variants
+    // Door B intro - one screen, two variants
     lostTitle: string;
     lostLede: string;
     lostBodySignedIn: string;
@@ -344,8 +345,8 @@ export type Messages = {
     doneNeeds1: string;
     /**
      * The extension and the Obsidian plugin hold the old password on *this*
-     * computer too — `persist` writes secure storage, the CLI config and the
-     * open dashboard window, and nothing else — so this list is not scoped to
+     * computer too - `persist` writes secure storage, the CLI config and the
+     * open dashboard window, and nothing else - so this list is not scoped to
      * "any other computer". Door B's `lostNotice` has always said so.
      */
     doneNeeds2: string;
@@ -364,7 +365,7 @@ export type Messages = {
     /** Labelled by what it actually is here: a password that is not in use. */
     failNotSentLabel: string;
     failDetail: string;
-    // It may already be live — never says "failed"
+    // It may already be live - never says "failed"
     failUnsureTitle: string;
     failUnsureBody: string;
     failUnsureRetry: string;
@@ -387,7 +388,7 @@ export type Messages = {
     /**
      * The save gate confirms a password that is merely proposed. By the time a
      * failure screen renders, the same password may already be the only key to
-     * the brain — so the exits from those screens get the same acknowledgement.
+     * the brain - so the exits from those screens get the same acknowledgement.
      */
     leaveWarn: string;
     leaveConfirm: string;
@@ -413,7 +414,7 @@ export type Messages = {
     pickerTitle: string;
     pickerLede: string;
   };
-  /** The two `start_provisioning` preflight guards (#P0-1) — `commands.rs`'s
+  /** The two `start_provisioning` preflight guards (#P0-1) - `commands.rs`'s
    *  `ExistingBrainFound` / `ResourceNameConflict` payload variants. */
   guard: {
     existingBrainTitle: string;
@@ -501,7 +502,7 @@ export type Messages = {
     /**
      * The owner's copy on a brain too old to confirm they are the owner.
      *
-     * Says why the button is there — the brain cannot answer the question yet —
+     * Says why the button is there - the brain cannot answer the question yet -
      * rather than claiming to know who is reading it.
      */
     updateDescLegacy: string;

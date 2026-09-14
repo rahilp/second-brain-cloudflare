@@ -1,4 +1,4 @@
-// The "Connection details" window — where the URLs live forever after setup.
+// The "Connection details" window - where the URLs live forever after setup.
 // Opened from the app menu or tray. Also lets the user connect a new tool
 // later without re-running setup.
 import { invoke } from "@tauri-apps/api/core";
@@ -55,19 +55,19 @@ async function boot() {
    * day they installed it.
    *
    * This used to be a hardcoded constant naming the owner, on the reasoning
-   * that the webview never handles the token — it stays in the Rust core — so
+   * that the webview never handles the token - it stays in the Rust core - so
    * this window had nothing to call `/team/me` with. It now has:
    * `connection_role` asks on its behalf. The constant meant every team member
    * who opened this window from the menu or the tray read "You're signed in as
    * this brain's owner-admin" and was offered a "Change my password" button
    * that walks them through a Cloudflare sign-in and inventing a password
-   * before failing with ErrorWrongCfAccount — one click from a setup screen
+   * before failing with ErrorWrongCfAccount - one click from a setup screen
    * that had just called them a member.
    *
    * A solo brain asks nothing at all: `teamMode` comes from the keychain, and
    * `roleFromDetailsProbe` short-circuits on it before any request. Any failure
-   * — the command erroring, an unreachable brain, a Worker too old for the
-   * route — is a `null` probe, which resolves to "member": the least-privileged
+   * - the command erroring, an unreachable brain, a Worker too old for the
+   * route - is a `null` probe, which resolves to "member": the least-privileged
    * answer, because the cost of under-claiming here is a hidden button and the
    * cost of over-claiming is the sentence above.
    */
@@ -78,7 +78,7 @@ async function boot() {
    * Whether the brain is too old to say who is asking.
    *
    * Read off the SAME probe, one round trip. It unlocks the Worker-update
-   * button and nothing else — see `canUpdateWorker` for why that one route, and
+   * button and nothing else - see `canUpdateWorker` for why that one route, and
    * why the password card below deliberately does not get the same treatment.
    */
   const legacyWorker = legacyWorkerFromDetailsProbe(roleProbe);
@@ -88,14 +88,14 @@ async function boot() {
     "worker_update_available",
   ).catch(() => null);
   // A rebuild in flight blocks a password change (#235 §4). If the check itself
-  // can't run — offline, brain unreachable — the button stays enabled: a
+  // can't run - offline, brain unreachable - the button stays enabled: a
   // network blip must not present as "you may not change your password", and
   // the command re-checks before it does anything anyway.
   let rotationBlocked = await invoke<boolean>("rotation_blocked").catch(() => false);
 
   // Re-asked rather than captured once. A rebuild is finished (or carried on)
   // in the Advanced Settings window, and the user comes straight back here to
-  // do the thing they were blocked from — so a value read at boot would go on
+  // do the thing they were blocked from - so a value read at boot would go on
   // saying the password can't be changed until this window was closed and
   // reopened. Only a change in the answer redraws, so this settles after one
   // flip instead of looping.
@@ -138,7 +138,7 @@ async function boot() {
         // Absent, not disabled, for anyone who cannot rotate. `passwordCard`'s
         // other branch already renders a greyed-out card with an escape hatch,
         // and reusing that shape for a member would say "not right now" about
-        // something that is not theirs to do at all — and then dead-end them at
+        // something that is not theirs to do at all - and then dead-end them at
         // a Cloudflare sign-in for an account they have no login to.
         ...(canRotatePassword(connectionRole) ? [passwordCard(rotationBlocked)] : []),
         h("div", { class: "actions-spread" }, [copyBothButton(details), emailButton(details)]),
@@ -214,7 +214,7 @@ async function boot() {
  * Shown, but not always actionable.
  *
  * The update redeploys the Worker inside the Cloudflare account it lives in, so
- * only the owner can complete it — `start_worker_update` matches the brain's
+ * only the owner can complete it - `start_worker_update` matches the brain's
  * workers.dev subdomain against the signed-in session and refuses anyone else.
  * The card still renders for everybody on purpose: a member whose brain is
  * behind sees features they have read about and do not have, and the honest
@@ -222,7 +222,7 @@ async function boot() {
  * that walks them through a Cloudflare sign-in before failing.
  *
  * `ownerUnconfirmed` is the third case: the brain is too old to say who is
- * asking, so the button is offered to whoever opened this window — otherwise
+ * asking, so the button is offered to whoever opened this window - otherwise
  * the brain could never be updated to the version that can say (see
  * `canUpdateWorker`). The copy has to be straight about that. Being offered a
  * button because the app cannot tell who you are is a different sentence from
@@ -275,7 +275,7 @@ function passwordCard(blocked: boolean): HTMLElement {
 
   // In place of the button, inside the same card. Opening a window that
   // immediately dead-ends is worse than never enabling the door, and the escape
-  // route has to be visible next to the thing it unblocks — an abandoned
+  // route has to be visible next to the thing it unblocks - an abandoned
   // rebuild would otherwise block this forever with no on-screen reason.
   const settings = h("button", { class: "btn-secondary" }, [t("changePassword.blockedButton")]);
   settings.addEventListener("click", () => void invoke("open_settings_window"));
@@ -295,7 +295,7 @@ function passwordCard(blocked: boolean): HTMLElement {
 
 /// Deliberately not part of changing the password (#235 §6). Tools connected
 /// with the connection link hold their own access and never used the password,
-/// so a change does not reach them — and a change made after a leak would
+/// so a change does not reach them - and a change made after a leak would
 /// otherwise leave them open. Confirmation names what will need reconnecting.
 function disconnectSection(): HTMLElement {
   const container = h("div", { class: "logout-section" });

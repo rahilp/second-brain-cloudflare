@@ -25,7 +25,7 @@ export async function runGraphPass(
   env: Env,
   ctx: ExecutionContext,
   workspaceId?: string | null,
-): Promise<void> {
+): Promise<{ inserted: number }> {
   // One resolve for the whole pass: every embed below must use the same model
   // the capture and recall paths use.
   const cfg = await resolveConfig(env);
@@ -99,6 +99,7 @@ export async function runGraphPass(
     console.error("Graph backfill query failed (non-fatal):", e);
   }
 
+  let inserted = 0;
   for (const entry of unlinked) {
     try {
       const values = await embed(entry.content, env, cfg);
@@ -139,9 +140,11 @@ export async function runGraphPass(
         scores.set(pid, Math.max(scores.get(pid) ?? 0, m.score));
       }
       const neighbors = [...scores.entries()].map(([id, score]) => ({ id, score }));
-      await inferEdgesOnWrite(entry.id, neighbors, env);
+      inserted += await inferEdgesOnWrite(entry.id, neighbors, env);
     } catch (e) {
       console.error(`Graph backfill failed for ${entry.id} (non-fatal):`, e);
     }
   }
+
+  return { inserted };
 }

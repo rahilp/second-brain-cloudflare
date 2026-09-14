@@ -196,9 +196,10 @@ export async function lookupAuditNames(env: Env, ids: string[]): Promise<Map<str
   //
   // Each id is bound ONCE, so the chunk is the whole ceiling rather than the
   // halved one the two-alias slice in insight/weekly.ts needs. That makes the
-  // worst case two statements — two of the ~5 subrequests this route spends of
-  // its 50 — and the common case, a page naming a hundred people or fewer, is
-  // the one statement it has always been.
+  // worst case two statements — two of the ~5 D1 calls this route spends of
+  // its self-imposed ~50-call budget per invocation (the platform's real
+  // ceiling is 1,000) — and the common case, a page naming a hundred people or
+  // fewer, is the one statement it has always been.
   //
   // The maps are MERGED, not replaced: a person whose id lands in the second
   // chunk is named in the response exactly like one in the first.

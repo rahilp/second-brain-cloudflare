@@ -43,6 +43,7 @@ Incremental split of the former monolithic `index.ts`. Entry point remains `src/
 | REST routes | `routes/*` |
 | dbReady | `runtime/state.ts` |
 | maintenance workspace rotation | `runtime/rotation.ts` |
+| nightly summary written to KV for GET /stats/night | `runtime/night-summary.ts` |
 
 ## Tests
 

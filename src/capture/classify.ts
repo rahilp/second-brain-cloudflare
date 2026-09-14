@@ -3,6 +3,7 @@ import { DEFAULTS, type Config } from "../config";
 import { CLASSIFY_MAX_TOKENS, LLM_MODEL } from "../constants";
 import { readStreamText } from "../lib/ai";
 import { withKind, type MemoryKind } from "../memory/kind";
+import { hasCapsuleTag } from "../tags/system";
 import { getStatus, withStatus } from "../memory/status";
 
 function normalizeKind(raw: unknown): MemoryKind | null {
@@ -70,7 +71,7 @@ async function applyClassification(
   if (!row) return;
   let tags: string[] = JSON.parse(row.tags ?? "[]");
   if (kind) tags = withKind(tags, kind);
-  if (canonical && getStatus(tags) === null) tags = withStatus(tags, "canonical");
+  if (canonical && getStatus(tags) === null && !hasCapsuleTag(tags)) tags = withStatus(tags, "canonical");
   await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(tags), entryId).run();
 }
 
@@ -106,7 +107,9 @@ export function classifyThenInfer(
   env: Env,
   ctx: ExecutionContext,
   config: Readonly<Config>,
-  infer: (kind: MemoryKind | null) => Promise<void>,
+  // Return value ignored (only .catch() below reads the promise), so a caller
+  // like inferEdgesOnWrite returning a count rather than void still fits.
+  infer: (kind: MemoryKind | null) => Promise<unknown>,
 ): void {
   ctx.waitUntil(
     classifyEntry(content, env, config)

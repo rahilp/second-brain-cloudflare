@@ -1,6 +1,10 @@
+import { buildMcpServer } from "../../src/mcp/server";
+import { makeTestEnv } from "../helpers/make-env";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
@@ -24,21 +28,20 @@ const ALL_FILES = {
 const FULL_PROVIDERS = ["CLAUDE", "CODEX", "CURSOR"] as const;
 
 /** Every MCP tool a team-aware client should know about. */
-const MCP_TOOLS = [
-  "remember",
-  "recall",
-  "get",
-  "list_recent",
-  "list_teams",
-  "append",
-  "update",
-  "forget",
-  "link",
-  "unlink",
-  "connections",
-  "share",
-  "set_status",
-] as const;
+let MCP_TOOLS: string[];
+beforeAll(async () => {
+  const server = buildMcpServer(makeTestEnv(), { waitUntil: () => {} } as unknown as ExecutionContext);
+  const client = new Client({ name: "instruction-drift", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+    MCP_TOOLS = (await client.listTools()).tools.map(tool => tool.name);
+    expect(MCP_TOOLS.length).toBeGreaterThan(0);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
 
 describe("AI instruction files (#223 lazy MCP contract)", () => {
   for (const label of FULL_PROVIDERS) {

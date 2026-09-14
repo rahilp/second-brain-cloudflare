@@ -104,7 +104,8 @@ export async function handleEntriesRoutes(
   // once entries are exhausted — edges[edge_offset .. edge_offset+limit). Clients
   // resend the same file with the next_offset/next_edge_offset from the previous
   // response until both remaining counts are 0. See importExportPayload for why
-  // this is what keeps a large restore inside the D1 free-plan query budget.
+  // this is what keeps a large restore inside this codebase's self-imposed D1
+  // query budget (well under the platform's real per-invocation ceiling).
   if (url.pathname === "/import" && request.method === "POST") {
     const auth = await requireIdentity(request, env);
     if (auth instanceof Response) return auth;

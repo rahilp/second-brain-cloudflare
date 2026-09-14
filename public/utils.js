@@ -433,7 +433,14 @@ function syncWorkspaceFilterChip(doc, chip, offsetTop) {
  */
 
 /** Namespaces the Worker owns. Anything `prefix:value` shaped and reserved. */
-const SYSTEM_TAG_PREFIXES = ['kind:', 'status:', 'volatility:', 'stale:']
+const SYSTEM_TAG_PREFIXES = [
+  'kind:',
+  'status:',
+  'volatility:',
+  'stale:',
+  'capsule:',
+  'capsule-slot:',
+]
 
 /**
  * Bare markers the Worker writes: compression, pattern mining, dedupe, and the
@@ -708,6 +715,24 @@ function assignGraphClusters(nodes, edges) {
   return nodes;
 }
 
+/**
+ * Narrows a graph to one author's nodes, pruning edges that no longer join two
+ * surviving nodes. Matches by actor_name (the server never puts actor_id on
+ * /graph nodes (src/graph/types.ts), only the resolved display name, the same
+ * "You" / real name / "Owner" / "Former member" string GET /list and GET
+ * /recall already print), so the caller has to resolve the selected filter's
+ * user id to that same name (loadGraph in graph-canvas.js does this) before
+ * calling in here. A falsy name is "no filter": returns the input unchanged.
+ */
+function filterGraphByActor(nodes, edges, name) {
+  if (!name) return { nodes, edges: edges || [] };
+  const kept = new Set((nodes || []).filter((n) => n.actor_name === name).map((n) => n.id));
+  return {
+    nodes: (nodes || []).filter((n) => kept.has(n.id)),
+    edges: (edges || []).filter((e) => kept.has(e.source) && kept.has(e.target)),
+  };
+}
+
 /* Phyllotaxis (sunflower) offsets for k node centers inside a disc of radius R.
  * A single node sits at the exact center. Returns [{x, y}] relative to the disc center. */
 function packGraphNodes(k, R) {
@@ -886,5 +911,5 @@ if (typeof module !== 'undefined' && module.exports) {
   // downloadTextFile is deliberately absent: it needs a live URL and Blob, and
   // it is exercised through its two callers (exportMemories in js/settings.js
   // and exportActivityCsv in js/activity.js) rather than in isolation.
-  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles, captureDefaultKey, csvCell, csvDocument, layerChipHtml };
+  module.exports = { escHtml, escAttr, toDateStr, parseRecallResult, normalizeEntry, vectorizeHealthBanner, vectorizeBannerHtml, syncVectorizeBanner, workspaceFilterChip, syncWorkspaceFilterChip, isSystemTag, humanTags, assignGraphClusters, packGraphNodes, packGraphCircles, filterGraphByActor, captureDefaultKey, csvCell, csvDocument, layerChipHtml };
 }

@@ -210,14 +210,15 @@ For a Worker change meant for everyone, `deploy:all` is the one-shot; the [Worke
 
 The app can update a user's deployed Worker in place (preserving their memories, password, and connections). It decides whether an update is available by comparing the version the deployed Worker reports at `GET /health` against the version this app bundles.
 
-The source of truth is a single constant, **`SB_VERSION`** in `src/index.ts` (currently `2.0.0`), echoed by `/health`. The installer's bundle step reads that same constant into its manifest, so both sides always agree.
+The source of truth is a single constant, **`SB_VERSION`** in `src/env.ts`, echoed by `/health`. The installer's bundle step reads that same constant into its manifest, so both sides always agree. No version number is repeated here on purpose: this section once said `src/index.ts` and `2.0.0` long after both had moved on, and `scripts/release.mjs` carries a comment about the invocation failures that drift caused.
 
 To ship a Worker change:
 
-1. Make the change in `src/index.ts`.
-2. Bump `SB_VERSION` (semver: patch / minor / major).
-3. PR → squash-merge to `main`.
-4. Tag `worker-v<version>` (e.g. `worker-v2.1.0`) to mark the release — a marker for history, not a trigger.
+1. Make the change under `src/`, on a feature branch, and merge it.
+2. Bump `SB_VERSION` (semver: patch / minor / major). `npm run deploy:worker -- <version|patch|minor|major>` does the bump, commit, push and PR for you; `npm run deploy:all` does it alongside the app bump when the change is meant for everyone. See [Releasing](#releasing) above.
+3. Squash-merge that PR to `main`.
+
+There is no Worker-only tag. Earlier revisions of this section described tagging `worker-v<version>` as a marker for history; no such tag has ever been created, and the release scripts do not make one. The only tag that means anything is `installer-v<version>`, which is what triggers the build-and-publish workflow.
 
 **How each audience receives it:** Cloudflare-button and manual deployers get the change when they redeploy from `main`. **Desktop-app users get it only when a new `installer-v*` release repackages it** — the app bundles the Worker at build time and never fetches it from the repo. So a Worker change intended for app users needs both the `SB_VERSION` bump *and* a following installer release; bump the installer version too so they travel together. Once a user's app updates and thus bundles the newer Worker, the app offers to redeploy it into their Cloudflare account.
 

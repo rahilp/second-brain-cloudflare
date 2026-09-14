@@ -194,6 +194,15 @@ describe("memory delete as the first caller", () => {
     expect(vm.runInContext("pendingForgetId", ctx)).toBe("m1");
   });
 
+  // Deleting a memory is genuinely irreversible: the one case the sheet's
+  // default (no `tone`) is meant for, unlike the reversible moves and resets
+  // that used to render the same red button regardless.
+  it("renders the accept button as danger, the sheet's default tone", () => {
+    const ctx = load();
+    ctx.openConfirm("m1", null);
+    expect(el(ctx, "confirm-accept-btn").className).toBe("btn-delete");
+  });
+
   it("clears the pending memory through the shared close, not a private one", () => {
     const ctx = load();
     const card = makeEl();

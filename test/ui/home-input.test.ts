@@ -187,7 +187,7 @@ describe("greeting", () => {
 describe("leaving home, and coming back", () => {
   it("gives the conversation its input bar back", () => {
     const ctx = load();
-    ctx.renderHome(null);
+    ctx.returnHome();
     expect(ctx.document.getElementById("screen-home").classList.contains("home-visible")).toBe(true);
 
     ctx.leaveHome();
@@ -195,6 +195,9 @@ describe("leaving home, and coming back", () => {
     // a conversation with nothing to type into.
     expect(ctx.document.getElementById("screen-home").classList.contains("home-visible")).toBe(false);
     expect(ctx.document.getElementById("home").style.display).toBe("none");
+    // The board is part of home, not the conversation; it must not float above it.
+    expect(ctx.document.getElementById("board-tiles").style.display).toBe("none");
+    expect(ctx.document.getElementById("board").style.display).toBe("none");
   });
 
   it("comes back making no claim about a sentence nobody has written", () => {
@@ -226,5 +229,29 @@ describe("leaving home, and coming back", () => {
     ctx.returnHome();
     expect(ctx.document.getElementById("screen-home").classList.contains("home-visible")).toBe(true);
     expect(ctx.document.getElementById("home").style.display).toBe("");
+    expect(ctx.document.getElementById("board-tiles").style.display).toBe("");
+    expect(ctx.document.getElementById("board").style.display).toBe("");
+  });
+
+  it("keeps rendering home data separate from showing home", () => {
+    const ctx = load();
+    ctx.renderHome(null);
+    expect(ctx.document.getElementById("screen-home").classList.contains("home-visible")).toBe(false);
+  });
+
+  it("returns home from its tab when a conversation is on top", () => {
+    const ctx = load();
+    ctx.currentTab = "home";
+    ctx.memoryView = "list";
+    ctx.refreshIfStale = () => { ctx.refreshed = true; };
+    ctx.document.querySelectorAll = () => [];
+    vm.runInContext(readFileSync(resolve(ROOT, "public/js/nav.js"), "utf8"), ctx);
+
+    ctx.leaveHome();
+    ctx.switchTab("home");
+    expect(ctx.document.getElementById("home").style.display).not.toBe("none");
+    expect(ctx.document.getElementById("board").style.display).not.toBe("none");
+    expect(ctx.document.getElementById("screen-home").classList.contains("home-visible")).toBe(true);
+    expect(ctx.refreshed).toBe(true);
   });
 });

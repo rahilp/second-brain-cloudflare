@@ -2,11 +2,13 @@
  * GET /brief against real SQLite: what it returns, and what it costs.
  *
  * The brief runs on every app open, so its cost is a product decision, not an
- * implementation detail — a free-plan Worker invocation gets roughly 50 D1
- * queries, and an endpoint that quietly grew to a dozen would eat a quarter of
- * that before the user typed anything. The count is pinned here for the same
- * reason /import's is: the way this regresses is by someone adding "just one
- * more" query to a Promise.all.
+ * implementation detail — this codebase holds a Worker invocation to a
+ * self-imposed budget of roughly 50 D1 calls (the platform's real ceiling is
+ * 1,000 D1/KV/Vectorize calls per invocation), and an endpoint that quietly
+ * grew to a dozen would eat a quarter of that self-imposed budget before the
+ * user typed anything. The count is pinned here for the same reason /import's
+ * is: the way this regresses is by someone adding "just one more" query to a
+ * Promise.all.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import worker from "../../src/index";
@@ -160,12 +162,19 @@ describe("GET /brief", () => {
   it("resurfaces an old important memory, never a recent or trivial one", async () => {
     sq = await migrated();
     const now = Date.now();
-    sq.seed({ id: "old-important", content: "The pricing floor is $6k", createdAt: now - 200 * DAY, importanceScore: 4 });
+    sq.seed({
+      id: "old-important", content: "The pricing floor is $6k", createdAt: now - 200 * DAY,
+      importanceScore: 4, source: "claude-desktop", tags: ["pricing"],
+    });
     sq.seed({ id: "old-trivial", content: "Renewed the domain", createdAt: now - 200 * DAY, importanceScore: 1 });
     sq.seed({ id: "new-important", content: "Shipped today", createdAt: now - HOUR, importanceScore: 5 });
 
     const data = await (await worker.fetch(req("GET", "/brief"), envOf(sq), ctx)).json() as any;
     expect(data.resurface?.id).toBe("old-important");
+    // The dashboard's resurface panel shows where a memory came from and its
+    // tags alongside the content, so both ride along on the same row.
+    expect(data.resurface?.source).toBe("claude-desktop");
+    expect(data.resurface?.tags).toEqual(["pricing"]);
   });
 
   it("returns a complete activity strip, including the days nothing happened", async () => {
@@ -227,6 +236,25 @@ describe("GET /brief", () => {
 
     const data = await (await worker.fetch(req("GET", "/brief"), envOf(sq), ctx)).json() as any;
     expect(data.resurface?.id).toBe("only-one");
+  });
+
+  it("answers 200 with tags: [] when the resurfaced row's tags column is not valid JSON", async () => {
+    sq = await migrated();
+    sq.seed({
+      id: "corrupt-tags", content: "Old and important, but hand-edited badly",
+      createdAt: Date.now() - 200 * DAY, importanceScore: 4,
+    });
+    // Bypasses seed()'s JSON.stringify: a hand-edited row or a migration bug,
+    // not something a normal write path can produce. The RESURFACE_FILTER's
+    // tags NOT LIKE clauses are substring checks, so this row is still
+    // resurface-eligible at the SQL layer even though its tags cannot parse.
+    sq.db.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind("not valid json{{", "corrupt-tags").run();
+
+    const res = await worker.fetch(req("GET", "/brief"), envOf(sq), ctx);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.resurface?.id).toBe("corrupt-tags");
+    expect(data.resurface?.tags).toEqual([]);
   });
 
   it("answers cleanly on a brain with nothing to say", async () => {

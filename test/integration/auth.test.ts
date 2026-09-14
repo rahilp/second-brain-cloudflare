@@ -35,3 +35,14 @@ describe("Auth", () => {
     });
   }
 });
+
+describe("OAuth sign-in page", () => {
+  it("serves same-origin fonts and brand assets only, never a CDN", async () => {
+    const res = await worker.fetch(new Request("http://localhost/oauth/authorize"), makeTestEnv(), ctx);
+    const html = await res.text();
+    expect(html).not.toMatch(/fonts\.googleapis/);
+    expect(html).not.toMatch(/cdn\./);
+    expect(html).toContain("/fonts/");
+    expect(html).toContain("/brand-lockup.png");
+  });
+});

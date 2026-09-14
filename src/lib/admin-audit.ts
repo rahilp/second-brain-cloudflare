@@ -20,7 +20,43 @@ export type AdminEventName =
   | "member_profile_updated"
   | "team_renamed"
   | "integration_connected"
-  | "integration_disconnected";
+  | "integration_disconnected"
+  | "integration_layer_changed"
+  | "integration_memories_moved";
+
+/**
+ * The one place that writes admin_events. Awaited — callers that need the row
+ * committed before responding (e.g. the #347 move route, same "don't claim
+ * what hasn't landed yet" reasoning as its awaited vector re-stamp) call this
+ * directly; adminAuditEvent wraps it in ctx.waitUntil for its own fire-and-
+ * forget callers.
+ */
+export function writeAdminEvent(
+  env: Env,
+  event: {
+    actorId: string;
+    targetUserId?: string;
+    workspaceId?: string;
+    event: AdminEventName;
+    payload?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const { actorId, targetUserId, workspaceId, event: name, payload } = event;
+  return env.DB.prepare(
+    `INSERT INTO admin_events (id, actor_id, target_user_id, workspace_id, event, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      crypto.randomUUID(),
+      actorId,
+      targetUserId ?? "",
+      workspaceId ?? "",
+      name,
+      JSON.stringify(payload ?? {}),
+      Date.now(),
+    )
+    .run()
+    .then(() => undefined);
+}
 
 export function adminAuditEvent(
   env: Env,
@@ -33,21 +69,7 @@ export function adminAuditEvent(
     payload?: Record<string, unknown>;
   },
 ): void {
-  const { actorId, targetUserId, workspaceId, event: name, payload } = event;
   ctx.waitUntil(
-    env.DB.prepare(
-      `INSERT INTO admin_events (id, actor_id, target_user_id, workspace_id, event, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        crypto.randomUUID(),
-        actorId,
-        targetUserId ?? "",
-        workspaceId ?? "",
-        name,
-        JSON.stringify(payload ?? {}),
-        Date.now(),
-      )
-      .run()
-      .catch((e: unknown) => console.error("admin_events insert failed (non-fatal):", e)),
+    writeAdminEvent(env, event).catch((e: unknown) => console.error("admin_events insert failed (non-fatal):", e)),
   );
 }

@@ -238,6 +238,7 @@ function confirmBulkLayerMove(target) {
     title: tPlural(`bulk.${sharing ? 'confirmShareTitle' : 'confirmPrivateTitle'}`, ids.length, { n: ids.length }),
     body: t(`bulk.${sharing ? 'confirmShareBody' : 'confirmPrivateBody'}`),
     confirmLabel: t(`bulk.${sharing ? 'shareAction' : 'privateAction'}`),
+    tone: 'primary',
     onConfirm: async (_checked, done, progress) => {
       bulkMoveInFlight = true
       // So the two actions behind the sheet are visibly held down for as long
@@ -394,7 +395,7 @@ async function loadRecent() {
   // so it is allowed to populate a moment late.
   maybeRevealActorFilter()
   try {
-    allEntries = await apiList(50, memoryLayerFilter, memoryActorFilter)
+    allEntries = await apiList(50, memoryLayerFilter, memoryActorFilter, selectedTag)
     // Through the filters, not straight to render: reloading used to reset the
     // list to everything while the filter controls still read "work" and
     // "past 7 days", which now happens after every capture rather than only
@@ -444,6 +445,7 @@ function onLayerFilterChange(value) {
 
 function onActorFilterChange(value) {
   memoryActorFilter = value || null
+  if (typeof loadGraph === 'function' && document.getElementById('mem-graph')?.style.display !== 'none') loadGraph()
   loadRecent()
 }
 
@@ -573,7 +575,7 @@ function makeRecentCard(entry) {
   const selecting = TEAM_MODE && selectMode
   const picked = selecting && selectedMemoryIds.has(entry.id)
   const selectBox = selecting
-    ? `<label class="card-select"><input type="checkbox" ${picked ? 'checked' : ''} onchange="toggleMemorySelection('${escAttr(entry.id)}', this.checked)" /></label>`
+    ? `<label class="card-select"><input type="checkbox" aria-label="${escAttr(t('memories.selectMemory', { title }))}" ${picked ? 'checked' : ''} onchange="toggleMemorySelection('${escAttr(entry.id)}', this.checked)" /></label>`
     : ''
   const card = document.createElement('div')
   card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '') + (isStale ? ' card--stale' : '') + (selecting ? ' memory-card--selecting' : '') + (picked ? ' memory-card--selected' : '')

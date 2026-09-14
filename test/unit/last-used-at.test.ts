@@ -103,10 +103,11 @@ describe("the throttled write", () => {
   });
 
   // The regression guard for the whole design. An informational column may not
-  // cost a subrequest on a path every request takes: Workers get 50 per
-  // invocation on the free plan and GET /graph already has no headroom. The
-  // stamp is therefore batched with the identity read, and a D1 batch is ONE
-  // subrequest whatever it carries.
+  // cost a D1 call on a path every request takes: this codebase holds itself
+  // to a self-imposed ~50-call D1 budget per invocation (the platform's real
+  // ceiling is 1,000 calls) and GET /graph already has no headroom against
+  // that self-imposed budget. The stamp is therefore batched with the
+  // identity read, and a D1 batch is ONE subrequest whatever it carries.
   //
   // Both halves matter. The cold case is the one that would regress if someone
   // moved the write back out into its own statement — it is the request that

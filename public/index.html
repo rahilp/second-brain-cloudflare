@@ -8,24 +8,18 @@
     <meta name="apple-mobile-web-app-title" content="Second Brain" />
     <meta name="theme-color" content="#ffffff" />
     <title>Second Brain</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Geist:wght@300;400;500;600&display=swap"
-      rel="stylesheet"
-    />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css" />
     <link rel="icon" type="image/svg+xml" href="/sb-mark-square.svg" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="stylesheet" href="css/main.css" />
     <link rel="stylesheet" href="css/graph.css" />
+    <link rel="stylesheet" href="css/board.css" />
   </head>
 
   <body>
     <div id="auth-overlay">
       <div class="auth-card">
-        <div class="brain-logo">
-          <i class="ti ti-brain"></i>
-        </div>
+        <img class="auth-lockup" src="/brand-lockup.png" alt="" width="174" height="25" />
         <h1 data-i18n="auth.brand">Second Brain</h1>
         <p data-i18n="auth.subtitle">Enter your Bearer token to connect to your personal memory layer. This is the password you chose when you set up Second Brain.</p>
         <form
@@ -54,22 +48,19 @@
 
     <div id="app" style="display: none">
       <div id="sidebar">
-        <div class="sb-logo">
-          <div class="brain-avatar">
-            <i class="ti ti-brain"></i>
-          </div>
-          <div>
-            <div class="sb-brand-name">Second Brain</div>
-            <!-- Which company's shared layer this member writes into. Hidden on a
-                 solo brain, where there is no other layer to distinguish. -->
-            <div class="sb-brand-team" id="sb-team-name" style="display: none"></div>
-            <div class="sb-brand-status" id="sb-status" data-i18n="nav.statusEmpty">always remembers</div>
-          </div>
+        <div class="brand">
+          <img src="/brand-lockup.png" alt="Second Brain" width="567" height="80" />
+        </div>
+        <div class="rail-status">
+          <!-- Which company's shared layer this member writes into. Hidden on a
+               solo brain, where there is no other layer to distinguish. -->
+          <div class="sb-brand-team" id="sb-team-name" style="display: none"></div>
+          <div class="sb-brand-status num" id="sb-status" data-i18n="nav.statusEmpty">always remembers</div>
         </div>
         <!-- Two destinations, not four. Recall and Remember were verbs and the
              home input does both; Recent and Graph were two projections of one
              corpus, so they are one place with a view toggle. -->
-        <nav class="sb-nav">
+        <nav class="sb-nav" aria-label="Screens">
           <button class="sb-tab active" id="sb-tab-home" onclick="switchTab('home')"><i class="ti ti-home"></i><span data-i18n="nav.home">Home</span></button>
           <button class="sb-tab" id="sb-tab-memories" onclick="switchTab('memories')"><i class="ti ti-stack-2"></i><span data-i18n="nav.memories">Memories</span></button>
           <!-- Hidden until GET /team/members answers 200 — see js/team.js. -->
@@ -80,14 +71,14 @@
                is the only way to get fresh data without quitting. -->
           <button class="sb-footer-btn refresh-now" onclick="refreshAll()" title="Refresh" data-i18n="nav.refresh" data-i18n-attr="title"><i class="ti ti-refresh"></i><span data-i18n="nav.refresh">Refresh</span></button>
           <button class="sb-footer-btn" onclick="openMenu()"><i class="ti ti-settings"></i><span data-i18n="nav.settings">Settings</span></button>
+          <!-- Filled by renderRailNote() in js/board.js (Task 1.7); empty until then. -->
+          <p class="rail-note" id="sb-version-note"></p>
         </div>
       </div>
 
       <div id="main-panel">
         <div id="topbar">
-          <div class="brain-avatar">
-            <i class="ti ti-brain"></i>
-          </div>
+          <img src="/brand-mark.png" alt="" width="32" height="19" />
           <div class="topbar-info">
             <div class="topbar-name">Second Brain</div>
             <!-- Same line the sidebar carries. The sidebar is hidden on phone
@@ -103,15 +94,17 @@
         <div id="screens">
           <div class="screen active" id="screen-home">
             <div id="recall-messages">
-              <!-- The home composition: greeting + one input, centred as a unit.
-                   Hidden the moment a conversation starts. -->
+              <!-- The home composition: greeting + command bar, top-anchored as a
+                   dashboard header. Hidden the moment a conversation starts. -->
               <div class="home" id="home">
-                <div class="home-greet">
-                  <span class="home-mark"><i class="ti ti-sparkles"></i></span>
-                  <span id="home-greeting" data-i18n="home.greetingDefault">Hello</span>
+                <div class="home-head">
+                  <h1 class="home-greet">
+                    <span class="home-mark"><i class="ti ti-sparkles"></i></span>
+                    <span id="home-greeting" data-i18n="home.greetingDefault">Hello</span>
+                  </h1>
+                  <p class="home-sub num" id="home-sub"></p>
                 </div>
-                <div class="home-sub" id="home-sub"></div>
-                <div class="home-input">
+                <section class="composer" aria-label="Ask, or tell me something to remember">
                   <textarea
                     class="home-field"
                     id="home-field"
@@ -120,24 +113,23 @@
                     onkeydown="handleHomeKey(event)"
                     oninput="onHomeInput(this)"
                   ></textarea>
-                  <div class="home-row">
-                    <button class="home-mode" id="home-mode" onclick="toggleHomeMode()" title="Switch between asking and remembering" data-i18n="home.modeTitle" data-i18n-attr="title">
-                      <span class="home-mode-dot"></span><span id="home-mode-label" data-i18n="home.willSearch">will search</span>
-                    </button>
-                    <!-- Team-layer target for captures. Hidden on solo brains;
-                         Auto defers to the member's configured default. -->
-                    <span id="home-layer-wrap" style="display: none">
-                      <span class="team-select-wrap">
-                        <select class="team-select" id="home-layer" onchange="onHomeLayerChange(this.value)" title="Default uses your team's configured policy; Personal and Shared pin it for this memory">
-                          <option value="" data-i18n="home.layerAuto">Default</option>
-                          <option value="personal" data-i18n="home.layerPersonal">Personal</option>
-                          <option value="company" data-i18n="home.layerShared">Shared</option>
-                        </select><i class="ti ti-chevron-down"></i>
-                      </span>
+                  <button class="home-mode" id="home-mode" onclick="toggleHomeMode()" title="Switch between asking and remembering" data-i18n="home.modeTitle" data-i18n-attr="title">
+                    <span class="home-mode-dot"></span><span id="home-mode-label" data-i18n="home.willSearch">will search</span>
+                  </button>
+                  <!-- Team-layer target for captures. Hidden on solo brains;
+                       Auto defers to the member's configured default. -->
+                  <span id="home-layer-wrap" style="display: none">
+                    <span class="team-select-wrap">
+                      <select class="team-select" id="home-layer" onchange="onHomeLayerChange(this.value)" title="Default uses your team's configured policy; Personal and Shared pin it for this memory">
+                        <option value="" data-i18n="home.layerAuto">Default</option>
+                        <option value="personal" data-i18n="home.layerPersonal">Personal</option>
+                        <option value="company" data-i18n="home.layerShared">Shared</option>
+                      </select><i class="ti ti-chevron-down"></i>
                     </span>
-                    <button class="send-btn" onclick="submitHome()"><i class="ti ti-arrow-up"></i></button>
-                  </div>
-                </div>
+                  </span>
+                  <span class="hint" data-i18n="home.hintHtml" data-i18n-html>Add <span class="hashtag">#tags</span> anywhere to file it</span>
+                  <button class="send-btn" onclick="submitHome()" aria-label="Send" data-i18n="home.sendLabel" data-i18n-attr="aria-label"><i class="ti ti-arrow-up"></i></button>
+                </section>
                 <!-- What Auto resolves to, or which layer is pinned for this capture.
                      Hidden on solo brains and until /team/me answers. -->
                 <div class="home-layer-hint" id="home-layer-hint" style="display: none"></div>
@@ -145,12 +137,31 @@
                      renderComposerCoach() in js/home.js. Empty and hidden on a
                      solo brain, and once both marks have been dismissed. -->
                 <div class="coach-mark" id="coach-home" hidden></div>
-                <!-- The one thing worth keeping from the deleted Remember tab:
-                     it was the only place hashtags were ever taught. -->
-                <div class="home-hint" data-i18n="home.hintHtml" data-i18n-html>Add <span class="hashtag">#tags</span> anywhere to file it</div>
-                <div class="home-topics" id="home-topics"></div>
+                <!-- The receipt from the last capture. -->
                 <div class="home-more" id="home-more"></div>
+                <!-- The hashtag lesson, inherited from the deleted Remember tab.
+                     Repeated below the bar for widths where the inline hint
+                     above hides. -->
+                <p class="home-hint-mobile" data-i18n="home.hintHtml" data-i18n-html>Add <span class="hashtag">#tags</span> anywhere to file it</p>
+                <div class="quick" role="group" aria-label="Quick questions">
+                  <span class="quick-label" data-i18n="home.topicsLabel">Ask about</span>
+                  <div class="home-topics" id="home-topics"></div>
+                  <span class="quick-sep" aria-hidden="true"></span>
+                  <div class="suggestions-row">
+                    <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugWorkingOn'))" data-i18n="recall.sugWorkingOn">What am I working on?</button>
+                    <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugDecidedRecently'))" data-i18n="recall.sugDecidedRecently">What did I decide recently?</button>
+                    <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugTasks'))" data-i18n="recall.sugTasks">Show my tasks</button>
+                    <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugGoals'))" data-i18n="recall.sugGoals">What are my goals?</button>
+                    <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugIdeas'))" data-i18n="recall.sugIdeas">What ideas do I have?</button>
+                    <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugLastWeekQuery'))" data-i18n="recall.sugLastWeek">Last week</button>
+                    <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugThisMonthQuery'))" data-i18n="recall.sugThisMonth">This month</button>
+                  </div>
+                </div>
               </div>
+              <!-- Stat tiles and the board panels, both rendered by board.js
+                   from data the brief and small rollup endpoints return. -->
+              <section class="tiles" id="board-tiles" hidden aria-label="Brain at a glance"></section>
+              <div class="board" id="board"></div>
               <div class="brief" id="brief" style="display: none"></div>
               <div class="recall-hero" id="recall-welcome" style="display: none">
                 <div class="eyebrow" data-i18n="recall.eyebrow">Recall</div>
@@ -167,15 +178,6 @@
                   <option value="" data-i18n="recall.allTags">All tags</option>
                 </select>
               </div>
-            </div>
-            <div class="suggestions-row">
-              <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugWorkingOn'))" data-i18n="recall.sugWorkingOn">What am I working on?</button>
-              <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugDecidedRecently'))" data-i18n="recall.sugDecidedRecently">What did I decide recently?</button>
-              <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugTasks'))" data-i18n="recall.sugTasks">Show my tasks</button>
-              <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugGoals'))" data-i18n="recall.sugGoals">What are my goals?</button>
-              <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugIdeas'))" data-i18n="recall.sugIdeas">What ideas do I have?</button>
-              <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugLastWeekQuery'))" data-i18n="recall.sugLastWeek">Last week</button>
-              <button class="suggestion-pill" onclick="sendSuggestion(t('recall.sugThisMonthQuery'))" data-i18n="recall.sugThisMonth">This month</button>
             </div>
             <div class="input-bar">
               <div class="input-inner">
@@ -199,7 +201,7 @@
                     <option value="company" data-i18n="memories.sharedLayer">Shared</option>
                   </select><i class="ti ti-chevron-down"></i></span>
                 </span>
-                <button class="send-btn" onclick="sendRecall()"><i class="ti ti-arrow-up"></i></button>
+                <button class="send-btn" onclick="sendRecall()" aria-label="Send" data-i18n="home.sendLabel" data-i18n-attr="aria-label"><i class="ti ti-arrow-up"></i></button>
               </div>
             </div>
           </div>
@@ -304,8 +306,8 @@
                both the admin check and the roster. A personal install never
                sees this screen exist. -->
           <div class="screen" id="screen-team">
-            <div class="mem-bar">
-              <h3 style="margin: 0; font-family: var(--font-serif); font-size: 15px; font-weight: 500;" data-i18n="team.title">Team</h3>
+            <div class="mem-bar team-page-bar">
+              <h2 data-i18n="team.title">Team</h2>
             </div>
 
             <!-- Last resort, not the member's screen. Reached only when NEITHER
@@ -324,35 +326,40 @@
                  and role and nothing else. Read-only on purpose — every write on
                  this screen is behind requireAdmin on the Worker, so a control
                  here would be a control the server refuses. -->
-            <div id="team-member-view" style="display: none; flex: 1; overflow-y: auto; padding: 24px 28px;"></div>
+            <div id="team-member-view" class="team-content" style="display: none"></div>
 
-            <div id="team-body" style="display: none; flex: 1; overflow-y: auto; padding: 24px 28px;">
-              <div style="display: flex; flex-direction: column; gap: 24px;">
+            <div id="team-body" class="team-content" style="display: none">
+              <div class="team-panels">
                 <!-- One-time token reveal. A section rather than a dialog: the
                      token must stay on screen until it has been copied, and a
                      modal invites dismissing it by accident. -->
-                <div id="team-token-reveal" style="display: none; padding: 14px 16px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
-                  <div class="digest-section-label"><i class="ti ti-key"></i> <span data-i18n="team.tokenTitle">One-time sign-in token</span> <span id="team-token-for"></span></div>
+                <section id="team-token-reveal" class="panel team-panel token-reveal" style="display: none">
+                  <h2 tabindex="-1"><i class="ti ti-key"></i> <span data-i18n="team.tokenTitle">One-time sign-in token</span> <span id="team-token-for"></span></h2>
+                  <!-- The title text never changes, so aria-live on it announces
+                       nothing. This status line does: it is the thing that
+                       actually changes when the token becomes ready, so it is
+                       the thing that carries aria-live. -->
+                  <span id="team-token-status" class="sr-only" aria-live="polite"></span>
                   <p class="digest-note" data-i18n="team.tokenWarning">Copy it now — you will not see this again.</p>
-                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                    <code id="team-token-value" style="font-size: 12px; word-break: break-all;"></code>
+                  <div class="team-actions-row">
+                    <code id="team-token-value"></code>
                     <button class="digest-btn" id="team-copy-btn" type="button" onclick="copyTeamToken()" data-i18n="team.copy">Copy</button>
                     <button class="digest-btn" id="team-invite-copy-btn" type="button" onclick="copyInviteMessage()" data-i18n="invite.copy">Copy invite message</button>
                     <button class="digest-btn" id="team-invite-mail-btn" type="button" onclick="emailInvite()" style="display: none" data-i18n="invite.email">Email invite</button>
-                    <button class="digest-btn danger" type="button" onclick="closeTeamTokenReveal()" data-i18n="team.done">Done</button>
+                    <button class="digest-btn" type="button" onclick="closeTeamTokenReveal()" data-i18n="team.done">Done</button>
                   </div>
-                </div>
+                </section>
 
-                <div>
-                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.nameLabel">Team name</div>
+                <section class="panel team-panel">
+                  <h2 data-i18n="team.nameLabel">Team name</h2>
                   <form class="team-name-row" id="team-name-form" onsubmit="submitTeamName(); return false">
                     <i class="ti ti-users-group team-name-icon"></i>
                     <input class="filter-field team-name-input" id="team-name-input" maxlength="60"
                            placeholder="Team name" data-i18n="team.namePlaceholderTeam" data-i18n-attr="placeholder" autocomplete="off" />
-                    <button class="digest-btn" id="team-name-btn" type="submit" data-i18n="team.nameSave">Save</button>
+                    <button class="btn btn-primary" id="team-name-btn" type="submit" data-i18n="team.nameSave">Save</button>
                   </form>
                   <p class="digest-note team-name-note" data-i18n="team.nameHint">Everyone on the team sees this name.</p>
-                </div>
+                </section>
 
                 <!-- Team mode. The ONE team control a solo owner sees, and a
                      deliberate exception to "no team UI on a solo brain": it is
@@ -364,11 +371,11 @@
                      toggleable and announced as a checkbox. renderTeamMode()
                      in js/team.js sets checked, disabled and the hint on every
                      render, in both branches. -->
-                <div id="team-mode-row">
-                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.modeTitle">Team mode</div>
-                  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2);">
-                    <i class="ti ti-users-group" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
-                    <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.modeLabel">Shared team layer</span>
+                <section class="panel team-panel" id="team-mode-row">
+                  <h2 data-i18n="team.modeTitle">Team mode</h2>
+                  <div class="team-open-row">
+                    <i class="ti ti-users-group"></i>
+                    <span data-i18n="team.modeLabel">Shared team layer</span>
                     <label class="sb-switch">
                       <input type="checkbox" class="sb-switch-input" id="team-mode-toggle" onchange="setTeamMode(this.checked)" />
                       <span class="sb-switch-track"><span class="sb-switch-knob"></span></span>
@@ -378,16 +385,16 @@
                        depends on how many people are on the team, and a
                        data-i18n key here would overwrite that on every locale
                        change. -->
-                  <p class="digest-note" id="team-mode-hint" style="margin-top: 8px;"></p>
-                </div>
+                  <p class="digest-note" id="team-mode-hint"></p>
+                </section>
 
-                <div>
-                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.membersLabel">Members</div>
+                <section class="panel team-panel">
+                  <h2 data-i18n="team.membersLabel">Members</h2>
                   <!-- Org-wide capture default. Its own pill, label and control
                        on one centered line — this was the cramped pair. -->
-                  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
-                    <i class="ti ti-eye" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
-                    <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.orgDefaultLabel">New captures default to</span>
+                  <div class="team-open-row">
+                    <i class="ti ti-eye"></i>
+                    <span data-i18n="team.orgDefaultLabel">New captures default to</span>
                     <span class="team-select-wrap"><select class="team-select" id="team-org-default" onchange="setTeamOrgDefault(this.value)" title="Org-wide default; members with their own override ignore this">
                       <option value="personal" data-i18n="team.sharePersonal">Personal (private)</option>
                       <option value="company" data-i18n="team.shareCompany">Company (shared)</option>
@@ -402,9 +409,9 @@
                        render. The hint is inside the wrapper too — it is the
                        half that says "everyone's review queue" out loud. -->
                   <div id="team-insights-row" style="display: none">
-                    <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border-input); border-radius: 13px; background: var(--surface-2); margin-bottom: 12px;">
-                      <i class="ti ti-bulb" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
-                      <span style="font-size: 12.5px; color: var(--text-secondary); flex-shrink: 0" data-i18n="team.insightsLabel">Weekly team insights</span>
+                    <div class="team-open-row">
+                      <i class="ti ti-bulb"></i>
+                      <span data-i18n="team.insightsLabel">Weekly team insights</span>
                       <span class="team-select-wrap"><select class="team-select" id="team-insights" onchange="setTeamInsights(this.value)">
                         <option value="off" data-i18n="team.insightsOff">Off</option>
                         <option value="on" data-i18n="team.insightsOn">On</option>
@@ -412,24 +419,24 @@
                     </div>
                     <p class="digest-note" data-i18n="team.insightsHint">When this is on, once a week the brain looks for connections between shared memories and puts what it finds in everyone's review queue.</p>
                   </div>
-                  <div id="team-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
-                </div>
+                  <div id="team-list"></div>
+                </section>
 
-                <div>
-                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="team.addTitle">Add member</div>
+                <section class="panel team-panel">
+                  <h2 data-i18n="team.addTitle">Add member</h2>
                   <form id="team-add-form" onsubmit="submitNewMember(); return false">
-                    <div class="filter-inner" style="flex-wrap: wrap;">
+                    <div class="filter-inner team-add-fields">
                       <input class="filter-field" id="team-add-name" placeholder="Name" data-i18n="team.namePlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
                       <input class="filter-field" id="team-add-email" placeholder="Email (optional)" data-i18n="team.emailPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
-                      <select class="filter-field" id="team-add-role" style="flex: 0 1 auto;">
+                      <select class="filter-field" id="team-add-role">
                         <option value="member" data-i18n="team.roleMember">Member</option>
                         <option value="admin" data-i18n="team.roleAdmin">Admin</option>
                       </select>
-                      <button class="digest-btn" id="team-add-btn" type="submit" data-i18n="team.addAction">Add member</button>
+                      <button class="btn btn-primary" id="team-add-btn" type="submit" data-i18n="team.addAction">Add member</button>
                     </div>
-                    <p class="integration-error" id="team-add-error" style="display: none; margin-top: 8px;"></p>
+                    <p class="integration-error" id="team-add-error" style="display: none"></p>
                   </form>
-                </div>
+                </section>
 
                 <!-- Recent activity. Admin-only by construction: this whole panel is
                      #team-body, which only renders when GET /team/members answered 200.
@@ -441,15 +448,21 @@
                      once the roster probe answers, so without this the section
                      and its Export CSV button are on screen for that whole round
                      trip — and for good if the probe never settles. -->
-                <div id="team-activity" style="display: none">
-                  <div class="digest-section-label" style="margin-bottom: 10px;" data-i18n="activity.title">Recent activity</div>
+                <section id="team-activity" class="panel team-panel" style="display: none">
+                  <h2 data-i18n="activity.title">Recent activity</h2>
                   <p class="digest-note" data-i18n="activity.intro">Who changed what, newest first. Kept as a record — nothing here can be edited.</p>
-                  <div id="activity-list"></div>
-                  <div class="filter-inner" style="margin-top: 10px;">
+                  <div class="activity-filters" role="radiogroup" aria-label="Activity filter">
+                    <button class="btn btn-secondary btn-sm active" type="button" role="radio" aria-checked="true" onclick="setActivityFilter('all', this)" data-i18n="activity.filterAll">All</button>
+                    <button class="btn btn-secondary btn-sm" type="button" role="radio" aria-checked="false" onclick="setActivityFilter('shared', this)" data-i18n="activity.filterShared">Shared</button>
+                    <button class="btn btn-secondary btn-sm" type="button" role="radio" aria-checked="false" onclick="setActivityFilter('insights', this)" data-i18n="activity.filterInsights">Insights</button>
+                    <button class="btn btn-secondary btn-sm" type="button" role="radio" aria-checked="false" onclick="setActivityFilter('members', this)" data-i18n="activity.filterMembers">Members</button>
+                  </div>
+                  <div id="activity-list" aria-live="polite"></div>
+                  <div class="filter-inner team-activity-actions">
                     <button class="digest-btn" id="activity-export" type="button" onclick="exportActivityCsv(this)" data-i18n="activity.exportCsv">Export CSV</button>
                     <button class="digest-btn" id="activity-more" type="button" hidden onclick="loadMoreActivity(this)" data-i18n="activity.more">Show more</button>
                   </div>
-                </div>
+                </section>
               </div>
             </div>
           </div>
@@ -470,7 +483,7 @@
          onto it, which is what makes the title and body get read out. -->
     <div id="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body" tabindex="-1">
       <div class="confirm-sheet">
-        <h3 id="confirm-title" data-i18n="memories.confirmTitle">Forget this memory?</h3>
+        <h2 id="confirm-title" data-i18n="memories.confirmTitle">Forget this memory?</h2>
         <p id="confirm-body" data-i18n="memories.confirmBody">This can't be undone. The memory will be removed from your brain.</p>
         <label class="confirm-check" id="confirm-check-row" style="display: none">
           <input type="checkbox" id="confirm-checkbox" />
@@ -485,7 +498,7 @@
 
     <div id="append-sheet">
       <div class="append-inner">
-        <h3 data-i18n="memories.appendTitle">Add an update</h3>
+        <h2 data-i18n="memories.appendTitle">Add an update</h2>
         <div class="append-context" id="append-context-preview"></div>
         <div class="append-input-wrap">
           <textarea id="append-textarea" placeholder="What's changed or new?" data-i18n="memories.appendPlaceholder" data-i18n-attr="placeholder" rows="3"></textarea>
@@ -500,7 +513,7 @@
     <div id="edit-sheet">
       <div class="edit-inner">
         <div class="edit-header">
-          <h3 data-i18n="memories.editTitle">Edit memory</h3>
+          <h2 data-i18n="memories.editTitle">Edit memory</h2>
           <div class="edit-sub" id="edit-sub"></div>
         </div>
         <div class="append-input-wrap edit-input-wrap">
@@ -519,8 +532,8 @@
     <div id="view-sheet">
       <div class="view-inner">
         <div class="view-header">
-          <h3 data-i18n="memories.viewTitle">Memory</h3>
-          <button class="btn-close-icon" onclick="closeView()"><i class="ti ti-x"></i></button>
+          <h2 data-i18n="memories.viewTitle">Memory</h2>
+          <button class="btn-close-icon" onclick="closeView()" aria-label="Close" data-i18n="memories.close" data-i18n-attr="aria-label"><i class="ti ti-x"></i></button>
         </div>
         <!-- One scroll region between a fixed header and fixed actions. These
              were five siblings of the actions, each with its own min- or
@@ -556,7 +569,7 @@
            control here is an immediate verb — Digest, Restore, Export — and a
            "Save" that fired nine irreversible actions at once would be a trap. -->
       <div class="menu-inner">
-        <h3 data-i18n="menu.title">Your brain</h3>
+        <h2 data-i18n="menu.title">Your brain</h2>
 
         <!-- Chores. Each section hides itself when there is nothing to do, so
              on a healthy brain this whole group disappears. -->
@@ -617,7 +630,7 @@
         <div class="view-header">
           <div style="display: flex; align-items: center; gap: 10px">
             <button class="btn-close-icon" id="integrations-back" onclick="backToMenu()" title="Back to settings" data-i18n="integrations.backSettings" data-i18n-attr="title"><i class="ti ti-arrow-left"></i></button>
-            <h3 style="margin-bottom: 0" id="integrations-title" data-i18n="menu.integrations">Integrations</h3>
+            <h2 style="margin-bottom: 0" id="integrations-title" data-i18n="menu.integrations">Integrations</h2>
           </div>
           <button class="btn-close-icon" onclick="closeIntegrations()"><i class="ti ti-x"></i></button>
         </div>
@@ -634,7 +647,7 @@
         <div class="view-header">
           <div style="display: flex; align-items: center; gap: 10px">
             <button class="btn-close-icon" onclick="backToMenuFromPatterns()" title="Back to settings" data-i18n="integrations.backSettings" data-i18n-attr="title"><i class="ti ti-arrow-left"></i></button>
-            <h3 style="margin-bottom: 0" data-i18n="patterns.title">Insights noticed</h3>
+            <h2 style="margin-bottom: 0" data-i18n="patterns.title">Insights noticed</h2>
           </div>
           <button class="btn-close-icon" onclick="closePatternsSheet()"><i class="ti ti-x"></i></button>
         </div>
@@ -645,7 +658,7 @@
             <span id="patterns-selected-label" data-i18n="patterns.selectAll">Select all</span>
           </label>
           <div class="patterns-bulk-actions">
-            <button class="digest-btn" id="patterns-confirm-btn" onclick="resolveSelectedPatterns('confirm', this)" disabled data-i18n="brief.confirm">Confirm</button>
+            <button class="digest-btn digest-btn--primary" id="patterns-confirm-btn" onclick="resolveSelectedPatterns('confirm', this)" disabled data-i18n="brief.confirm">Confirm</button>
             <button class="digest-btn danger" id="patterns-dismiss-btn" onclick="resolveSelectedPatterns('dismiss', this)" disabled data-i18n="brief.dismiss">Dismiss</button>
           </div>
         </div>
@@ -657,7 +670,7 @@
     <div id="stale-sheet">
       <div class="menu-inner patterns-inner">
         <div class="view-header">
-          <h3 style="margin-bottom: 0" data-i18n="stale.title">May be out of date</h3>
+          <h2 style="margin-bottom: 0" data-i18n="stale.title">May be out of date</h2>
           <button class="btn-close-icon" onclick="closeStaleSheet()"><i class="ti ti-x"></i></button>
         </div>
         <p class="digest-note" id="stale-intro" data-i18n="stale.intro">These were true when you wrote them and carry a claim that ages. Update one to confirm it, add to it, keep it as still true, or forget it.</p>
@@ -665,6 +678,8 @@
         <button class="digest-more" id="stale-more" hidden onclick="loadMoreStale(this)"></button>
       </div>
     </div>
+    <!-- The growth chart's one shared hover/keyboard tooltip (js/chart.js). -->
+    <div class="tip" id="board-tip" role="tooltip"></div>
 
     <script src="js/i18n.js"></script>
     <script src="utils.js"></script>
@@ -688,6 +703,8 @@
     <script src="js/activity.js"></script>
     <script src="js/graph-canvas.js"></script>
     <script src="js/brief.js"></script>
+    <script src="js/board.js"></script>
+    <script src="js/chart.js"></script>
     <script src="js/home.js"></script>
     <script src="js/nav.js"></script>
     <script src="js/refresh.js"></script>

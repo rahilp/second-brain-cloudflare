@@ -133,6 +133,7 @@ document.addEventListener('keydown', onConfirmKeydown)
  *   one.
  * @param {() => void} [opts.onClose]  run on dismiss, for the caller's state
  * @param {string} [opts.checkboxLabel] shows a modifier tick when non-empty
+ * @param {'danger'|'primary'} [opts.tone] visual weight for reversible actions
  * @returns {number} this question's generation — for tests and logging; the
  *   handle passed to `onConfirm` is what callers close with.
  */
@@ -152,6 +153,7 @@ function openDangerConfirm(opts) {
   const accept = document.getElementById('confirm-accept-btn')
   if (accept) {
     accept.textContent = opts.confirmLabel
+    accept.className = opts.tone === 'primary' ? 'btn-primary confirm-accept-primary' : 'btn-delete'
     // The previous action held this down while it worked. Releasing it here
     // means a caller that threw on the way out cannot leave the next opener
     // with a dead button.

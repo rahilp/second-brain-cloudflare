@@ -4,8 +4,10 @@ import { initializeDatabase } from "../db/init";
 /**
  * Workspace rotation for the nightly maintenance passes (v3 Team Edition).
  *
- * Free-plan Workers allow ~50 D1 queries per invocation and the nightly passes already
- * spend ~30 of them on a single-user brain. Scanning the whole corpus per night grows
+ * The free plan's real ceiling is 1,000 D1 calls per invocation, but this codebase
+ * holds itself to a self-imposed budget of ~50 for cost and 10 ms-CPU reasons, and
+ * the nightly passes already spend ~30 of them on a single-user brain. Scanning the
+ * whole corpus per night grows
  * linearly with workspaces, so instead each invocation processes ONE workspace's slice
  * behind this round-robin cursor, keeping per-invocation cost roughly flat as teams grow.
  * The trade-off is coverage latency: the whole deployment cycles every K nights, where

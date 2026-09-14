@@ -228,15 +228,17 @@ describe("runStalenessPass", () => {
   });
 });
 
-// A free-plan Worker invocation gets 50 subrequests, and the nightly cron already runs
-// several jobs against that budget, so the staleness pass has to be cheap or it never gets
-// to run at all on a free deployment.
+// This codebase holds a Worker invocation to a self-imposed budget of ~50 D1
+// calls (the platform's real ceiling is 1,000 D1/KV/Vectorize calls per
+// invocation), and the nightly cron already runs several jobs against that
+// self-imposed budget, so the staleness pass has to be cheap or it never gets
+// its share of D1 calls or CPU.
 //
 // What D1 bills is EXECUTIONS, not prepares: run/first/all/exec spend one each, and a
 // batch() spends one however many statements it carries. `billed` counts it that way —
 // counting prepares would price a batch as if it were still one write per row.
 describe("runStalenessPass D1 round-trip cost", () => {
-  const SUBREQUEST_BUDGET = 50;
+  const SELF_IMPOSED_D1_BUDGET = 50;
 
   /**
    * `prepared` is the pass's own statements. initializeDatabase's schema probe is dropped
@@ -309,12 +311,13 @@ describe("runStalenessPass D1 round-trip cost", () => {
 
     // One candidate query plus one batch carrying every CAS — nothing per-row on either
     // side. The DDL is not counted here because it is memoised across the whole
-    // invocation; see test/unit/cron-subrequest-budget.test.ts, where the 50 actually binds.
+    // invocation; see test/unit/cron-subrequest-budget.test.ts, where the
+    // self-imposed 50-call budget actually binds.
     expect(prepared.filter(s => s.includes("COALESCE(updated_at, created_at) <"))).toHaveLength(1);
     expect(billed.batched).toEqual([STALENESS_PASS_LIMIT]);
     expect(billed.run).toBe(0);
     expect(billed.total).toBe(2);
-    expect(billed.total).toBeLessThanOrEqual(SUBREQUEST_BUDGET);
+    expect(billed.total).toBeLessThanOrEqual(SELF_IMPOSED_D1_BUDGET);
     expect(db.entries.filter(e => e.staleness_checked_at != null)).toHaveLength(STALENESS_PASS_LIMIT);
   });
 

@@ -1,3 +1,4 @@
+import { validInputTags, MAX_INPUT_TAGS, MAX_INPUT_TAG_CHARS } from "../tags/system";
 import type { Env } from "../env";
 import { resolveConfig } from "../config";
 import { VECTORIZE_FIX_HINT } from "../constants";
@@ -51,6 +52,8 @@ export async function handleCaptureRoutes(
 
     let body: { content?: string; tags?: string[]; source?: string; volatility?: unknown; workspace?: unknown; team?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+    if (body.tags !== undefined && !validInputTags(body.tags)) return json({ ok: false, error: `tags must contain at most ${MAX_INPUT_TAGS} NUL-free strings of at most ${MAX_INPUT_TAG_CHARS} characters` }, 400);
+    if (typeof body.content === "string" && body.content.includes("\0")) return json({ ok: false, error: "NUL is not allowed" }, 400);
     if (!body.content?.trim()) return json({ ok: false, error: "content is required" }, 400);
     if (body.workspace !== undefined && body.workspace !== "personal" && body.workspace !== "company") {
       return json({ ok: false, error: 'workspace must be "personal" or "company"' }, 400);
@@ -93,7 +96,13 @@ export async function handleCaptureRoutes(
       return json({ ok: true, id: result.id, resolved_conflict: result.resolvedConflict, reason: result.reason });
     }
     if (result.status === "contradiction_protected") {
-      return json({ ok: true, id: result.id, status: "draft", kept_canonical: result.canonicalId, reason: result.reason });
+      return json({
+        ok: true,
+        id: result.id,
+        status: result.entryStatus,
+        kept_canonical: result.canonicalId,
+        reason: result.reason,
+      });
     }
     if (result.status === "replaced") {
       return json({ ok: true, id: result.id, action: "replaced", message: "New memory replaced an outdated existing entry" });
@@ -125,6 +134,7 @@ export async function handleCaptureRoutes(
     let body: { id?: string; addition?: string; volatility?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+    if (typeof body.addition === "string" && body.addition.includes("\0")) return json({ ok: false, error: "NUL is not allowed" }, 400);
     if (!body.addition?.trim()) return json({ ok: false, error: "addition is required" }, 400);
 
     const appendVol = readVolatility(body.volatility);
@@ -176,6 +186,8 @@ export async function handleCaptureRoutes(
     let body: { id?: string; content?: string; volatility?: unknown; tags?: unknown };
     try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
     if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+    if (body.tags !== undefined && !validInputTags(body.tags)) return json({ ok: false, error: `tags must contain at most ${MAX_INPUT_TAGS} NUL-free strings of at most ${MAX_INPUT_TAG_CHARS} characters` }, 400);
+    if (typeof body.content === "string" && body.content.includes("\0")) return json({ ok: false, error: "NUL is not allowed" }, 400);
     if (!body.content?.trim()) return json({ ok: false, error: "content is required" }, 400);
 
     const updateVol = readVolatility(body.volatility);

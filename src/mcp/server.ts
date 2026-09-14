@@ -1,3 +1,4 @@
+import { MAX_INPUT_TAGS, MAX_INPUT_TAG_CHARS } from "../tags/system";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resolveConfig } from "../config";
 import { z } from "zod";
@@ -23,6 +24,8 @@ import { VOLATILITY_VALUES, withVolatility, type Volatility } from "../memory/vo
 import { recallEntries } from "../recall/search";
 import { renderRecallText, memoryHeader } from "../recall/render";
 import { RECALL_OUTPUT_BUDGET, SNIPPET_MAX_CHARS, snippetOf, truncationNote } from "../recall/snippet";
+import { buildPromptCapsule } from "../prompt-capsule/build";
+import { PROMPT_CAPSULE_MCP_SCHEMA } from "../prompt-capsule/types";
 
 // Asking the calling model for this is the whole point: it has already read the content
 // in order to decide to store it, so the judgment is free, and it is a far better
@@ -177,8 +180,9 @@ const layerOfRow = (identity: Identity | undefined, row: Record<string, any>) =>
  *
  * The name is information only on the shared layer — a personal row is the
  * reader's own by definition — so a listing with nothing shared on it must not
- * spend a subrequest to learn that. These tools run inside the same 50-subrequest
- * invocation budget as everything else.
+ * spend a D1 call to learn that. These tools run inside the same self-imposed
+ * ~50-call D1 budget per invocation as everything else (the platform's real
+ * ceiling is 1,000 D1/KV/Vectorize calls per invocation).
  */
 async function labelsForRows(
   env: Env,
@@ -234,8 +238,8 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
     {
       description: REMEMBER_DESCRIPTION,
       inputSchema: {
-        content: z.string().describe("The idea, task, or note to store — one distinct item, written so it still makes sense on its own months from now"),
-        tags: z.array(z.string()).optional().describe("Optional tags for filtering and later retrieval"),
+        content: z.string().refine(value => !value.includes("\0"), "NUL is not allowed").describe("The idea, task, or note to store — one distinct item, written so it still makes sense on its own months from now"),
+        tags: z.array(z.string().max(MAX_INPUT_TAG_CHARS).refine(value => !value.includes("\0"), "NUL is not allowed")).max(MAX_INPUT_TAGS).optional().describe("Optional tags for filtering and later retrieval"),
         source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
         volatility: volatilityParam,
         workspace: z.enum(["personal", "company"]).optional().describe("Where to store it: your private workspace (default) or the shared company layer"),
@@ -282,7 +286,10 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         return { content: [{ type: "text", text: `Stored. ID: ${result.id} — resolved contradiction with entry ${result.resolvedConflict}${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
       if (result.status === "contradiction_protected") {
-        return { content: [{ type: "text", text: `Stored as draft (ID: ${result.id}) — conflicts with a canonical memory (${result.canonicalId}), which was kept${result.reason ? `: ${result.reason}` : ""}.` }] };
+        const disposition = result.entryStatus
+          ? `Stored as ${result.entryStatus}`
+          : "Stored without a status pending classification";
+        return { content: [{ type: "text", text: `${disposition} (ID: ${result.id}) — conflicts with a canonical memory (${result.canonicalId}), which was kept${result.reason ? `: ${result.reason}` : ""}.` }] };
       }
       if (result.status === "replaced") {
         return { content: [{ type: "text", text: `Memory updated — new content replaced outdated entry (ID: ${result.id}).` }] };
@@ -304,7 +311,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       description: APPEND_DESCRIPTION,
       inputSchema: {
         id: z.string().describe("Entry ID to append to — from recall or list_recent"),
-        addition: z.string().describe("The new information to add to the existing entry — what actually changed, not a restatement of what is already there"),
+        addition: z.string().refine(value => !value.includes("\0"), "NUL is not allowed").describe("The new information to add to the existing entry — what actually changed, not a restatement of what is already there"),
         volatility: volatilityParam,
       },
     },
@@ -368,11 +375,12 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       description: UPDATE_DESCRIPTION,
       inputSchema: {
         id: z.string().describe("Entry ID to update — from recall or list_recent"),
-        content: z.string().describe("The new content to replace the existing entry with"),
+        content: z.string().refine(value => !value.includes("\0"), "NUL is not allowed").describe("The new content to replace the existing entry with"),
+        tags: z.array(z.string().max(MAX_INPUT_TAG_CHARS).refine(value => !value.includes("\0"), "NUL is not allowed")).max(MAX_INPUT_TAGS).optional().describe("Replacement topic tags. Supplying any capsule: or capsule-slot: tag replaces both capsule namespaces; include the complete new definition. Omit to preserve tags. Use set_status to unpublish."),
         volatility: volatilityParam,
       },
     },
-    async ({ id, content, volatility }) => {
+    async ({ id, content, volatility, tags }) => {
       const newContent = content.trim();
       if (!newContent) {
         return { content: [{ type: "text", text: "Content cannot be empty." }] };
@@ -394,7 +402,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
         return { content: [{ type: "text", text: mirrorEditError(row.source as string) }] };
       }
 
-      const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), volatility as Volatility | undefined, undefined, writeCtx);
+      const result = await updateEntryContent(env, id, newContent, await resolveConfig(env), volatility as Volatility | undefined, tags, writeCtx);
 
       // Only reachable if the entry was deleted between the guard read and the write.
       if (result.status === "not_found") {
@@ -480,6 +488,78 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, identity?: Ident
       ctx.waitUntil(restampVectorWorkspace(env, result.vectorIds, result.workspaceId));
       return { content: [{ type: "text", text: `Entry ${id} ${result.status} — now in the ${workspace ?? "company"} workspace.` }] };
     }
+  );
+
+  // ── prompt capsule ─────────────────────────────────────────────────────
+  server.registerTool(
+    "get_prompt_capsule",
+    {
+      description: "Return one deterministic Prompt Capsule and its strong ETag. This read-only tool is for gateways that construct stable prompt prefixes; use recall for query-specific context. Only entries with canonical status are included: give the entry canonical status in its tags at remember time, or call set_status canonical afterwards. To re-slot an entry, use update with tags containing the complete capsule: and capsule-slot: definition.",
+      inputSchema: {
+        kind: z.enum(["core", "project"]).describe("Capsule kind"),
+        project_id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional()
+          .describe("Required for project; omitted for core"),
+        workspace: z.enum(["personal", "company"]).default("personal")
+          .describe("Read exactly one private or shared workspace layer"),
+        team: z.string().max(128).optional()
+          .describe("Company workspace id from list_teams; required when company membership is ambiguous"),
+      },
+    },
+    async ({ kind, project_id, workspace, team }) => {
+      if (!identity) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: JSON.stringify({
+            ok: false,
+            schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            code: "unauthenticated",
+            status: 401,
+            error: "Prompt Capsule retrieval requires an authenticated identity.",
+          }) }],
+        };
+      }
+
+      try {
+        const built = await buildPromptCapsule(env, identity, {
+          kind,
+          projectId: project_id,
+          workspace,
+          team,
+        });
+        if (!built.ok) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: JSON.stringify({
+              schema: PROMPT_CAPSULE_MCP_SCHEMA,
+              status: built.status,
+              ...built.body,
+            }) }],
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: JSON.stringify({
+            ok: true,
+            schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            etag: built.etag,
+            capsule: built.payload,
+          }, null, 2) }],
+        };
+      } catch {
+        // 例外本文にはSQLや入力が含まれ得るため、応答とログへ流さない。
+        console.error("Prompt Capsule retrieval failed");
+        return {
+          isError: true,
+          content: [{ type: "text", text: JSON.stringify({
+            ok: false,
+            schema: PROMPT_CAPSULE_MCP_SCHEMA,
+            code: "internal_error",
+            status: 500,
+            error: "Prompt Capsule retrieval failed. Please try again later.",
+          }) }],
+        };
+      }
+    },
   );
 
   // ── recall ───────────────────────────────────────────────────────────────

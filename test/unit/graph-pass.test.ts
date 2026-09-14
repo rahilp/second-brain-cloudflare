@@ -54,7 +54,7 @@ describe("runGraphPass", () => {
 
     await runGraphPass(env, ctx);
 
-    expect(db.edges).toHaveLength(1); // unchanged — "linked" already had an edge
+    expect(db.edges).toHaveLength(1); // unchanged, "linked" already had an edge
   });
 
   it("prunes weak old inferred edges but keeps explicit and recent ones", async () => {
@@ -77,8 +77,30 @@ describe("runGraphPass", () => {
   it("is a safe no-op on an empty database", async () => {
     const env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock() });
     const { ctx } = makeCtx();
-    await expect(runGraphPass(env, ctx)).resolves.toBeUndefined();
+    await expect(runGraphPass(env, ctx)).resolves.toEqual({ inserted: 0 });
     expect(db.edges).toHaveLength(0);
+  });
+
+  it("reports how many edge-insert statements it queued", async () => {
+    db.entries.push(
+      { id: "lonely", content: "Unlinked memory", tags: "[]", source: "api", created_at: 2, vector_ids: "[]" },
+      { id: "neighbor", content: "Similar memory", tags: "[]", source: "api", created_at: 1, vector_ids: "[]" },
+    );
+    const env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [
+          { id: "lonely", score: 1.0, metadata: { parentId: "lonely" } },
+          { id: "neighbor", score: 0.8, metadata: { parentId: "neighbor" } },
+        ] }),
+      }),
+    });
+    const { ctx } = makeCtx();
+
+    // Both "lonely" and "neighbor" are unlinked candidates in the same snapshot
+    // (taken before either gets an edge), so the backfill visits the pair from
+    // both sides and queues one relates_to insert each time, 2, even though
+    // the symmetric-edge canonicalization means they land on the same row.
+    await expect(runGraphPass(env, ctx)).resolves.toEqual({ inserted: 2 });
   });
 });
 

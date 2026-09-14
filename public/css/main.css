@@ -5,6 +5,31 @@
        backward-compatible so inline styles keep resolving.
        ============================================================ */
 
+      @font-face {
+        font-family: 'DM Sans';
+        src: url(../fonts/dm-sans-400.ttf) format('truetype');
+        font-weight: 400;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'DM Sans';
+        src: url(../fonts/dm-sans-500.ttf) format('truetype');
+        font-weight: 500;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'DM Sans';
+        src: url(../fonts/dm-sans-600.ttf) format('truetype');
+        font-weight: 600;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Sora';
+        src: url(../fonts/sora.ttf) format('truetype');
+        font-weight: 100 800;
+        font-display: swap;
+      }
+
       *,
       *::before,
       *::after {
@@ -16,34 +41,29 @@
       :root {
         /* surfaces */
         --bg: #ffffff;
-        --bg-card: #fcfbf7;
-        --bg-tag: #ece8dd;
-        --bg-secondary: #fcfbf7;
+        --bg-card: #ffffff;
+        --bg-tag: #f3f4f6;
+        --bg-secondary: #f3f4f6;
         --bg-confirm: rgba(253, 84, 10, 0.1);
         --bg-tag-confirmed: #fd540a;
-        --surface-2: #f2efec;
-        --surface-3: #e8e3df;
+        --surface-2: #f3f4f6;
+        --surface-3: #e2e4e8;
+        --surface-muted: #f3f4f6;
+        --charcoal: #17181b;
 
         /* This surface is deliberately dark in BOTH themes — it is an overlay
            chip (the toast), not a page surface, and its ink is therefore
-           fixed rather than theme-flipping. --text-on-elevated on
-           --surface-elevated measures 14.55:1 here. Do not point
-           .app-toast-msg at --text-primary: that token flips to near-black
-           in light mode, which on this near-black surface is how this
-           shipped unreadable in the first place.
-           --accent-on-elevated exists because --accent itself cannot be
-           reused for the toast action: --accent is tuned per theme against
-           each theme's own page surface (light page / dark page), but
-           --surface-elevated is dark in BOTH themes, so light mode's
-           --accent needs re-checking against a surface it was never tuned
-           for. Here it happens to still measure 5.12:1 and clears AA, so
-           this token is the current --accent value restated rather than a
-           new colour. Do not consolidate the two back together: the day
-           --accent moves for page-surface reasons, this one must not move
-           with it. */
-        --surface-elevated: #1e1e1e;
-        --text-on-elevated: #f2efec;
-        --accent-on-elevated: #fd540a;
+           fixed rather than theme-flipping. Do not point .app-toast-msg at
+           the primary ink token, which flips to near-black in light mode
+           and on this near-black surface is how this shipped unreadable
+           in the first place. The elevated-accent token exists because the
+           page accent cannot be reused for the toast action either: it is
+           tuned per theme against each theme's own page surface, but this
+           overlay is dark in BOTH themes. Contrast is re-verified by
+           toast-contrast.test.ts on every change to these three tokens. */
+        --surface-elevated: #17181b;
+        --text-on-elevated: #ffffff;
+        --accent-on-elevated: #ff9a61;
 
         /* The knob of an on/off switch (.sb-switch). Fixed near-white in BOTH
            themes, like --text-on-elevated and for the same reason: it never
@@ -51,128 +71,152 @@
            off, --accent when on — so a theme-flipping value would go dark on
            dark the moment the switch was turned on. Defined in both blocks
            rather than reached for with a var() fallback: an undefined token
-           must fail loudly, which is how the black-on-black toast shipped. */
+           must fail loudly, which is how the black-on-black toast shipped.
+           Contrast re-verified by switch-contrast.test.ts. */
         --switch-knob: #ffffff;
 
         /* ink */
-        /* Ink ramp, all three steps at WCAG AA (4.5:1) against every surface
-           they are set on — #ffffff through the darkest, --surface-3 #e8e3df.
-           Tertiary was #96908b, which measured 2.48:1 on --surface-3 and 3.15:1
-           on plain white at the 10-12px it is actually used at: timestamps,
-           sources, section labels, card meta. Secondary moved down with it,
-           because three passing inks live in a narrower band than two passing
-           and one failing, and leaving secondary at #68635f would have put it
-           within 1.1:1 of the new tertiary — a ramp with no visible steps.
-           Separation is now 2.27 primary/secondary and 1.39 secondary/tertiary. */
-        --text-primary: #161616;
-        --text-secondary: #54504c;
-        --text-tertiary: #6a6560;
-        --text-tag: #68635f;
-        --text-tag-confirmed: #161616;
+        --text-primary: #202124;
+        --text-secondary: #61646c;
+        /* Lighter than --text-secondary on purpose: DESIGN.md's palette has one
+           "muted" ink, but the ink ramp needs three visible steps (see
+           card-stale-contrast.test.ts). Tuned to the tightest gap that still
+           clears AA (4.5:1) on --bg-card and stays a visible step (>1.3:1)
+           below --text-secondary. */
+        --text-tertiary: #74767d;
+        --text-tag: #61646c;
+        --text-tag-confirmed: #202124;
 
         /* lines */
-        --border: rgba(22, 22, 22, 0.09);
-        --border-card: rgba(22, 22, 22, 0.075);
-        --border-input: rgba(22, 22, 22, 0.11);
-        --line-soft: rgba(22, 22, 22, 0.06);
+        --border: #e2e4e8;
+        --border-card: rgba(32, 33, 36, 0.06);
+        --border-input: #e2e4e8;
+        --line: #e2e4e8;
+        --line-soft: rgba(32, 33, 36, 0.05);
+        --border-soft: #d5d8de;
 
-        /* accent — brand orange */
-        --accent: #fd540a;
-        --accent-press: #a83200;
-        --accent-soft: rgba(253, 84, 10, 0.09);
-        --accent-ink: #c43d00;
-        --good: #18794e;
+        /* orange roles: brand identity, action buttons, focus/link accent */
+        --brand-orange: #fd540a;
+        --accent: #cc4109;
+        --action: #cc4109;
+        --action-hover: #a63508;
+        --accent-press: #a63508;
+        --accent-soft: rgba(253, 84, 10, 0.1);
+        --accent-ink: #bd410e;
+        --good: #008300;
         --warn: #b45309;
         --danger: #b42318;
         --danger-soft: rgba(180, 35, 24, 0.08);
-        --on-accent: #161616;
+        --on-accent: #ffffff;
 
-        /* type */
-        --font-serif: 'Lora', Georgia, serif;
-        --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
+        /* chart / data series */
+        --data: #8a8f99;
+        --s1: #fd540a;
+        --s2: #2a78d6;
+        --s3: #008300;
+        --s4: #4a3aa7;
+        --s5: #8a8f99;
 
-        /* radii */
+        /* type: name kept for compatibility, Sora is the display face now */
+        --font-serif: 'Sora', 'DM Sans', sans-serif;
+        --font-display: 'Sora', 'DM Sans', sans-serif;
+        --font-sans: 'DM Sans', system-ui, sans-serif;
+
+        /* radii: old names kept, new living-thread scale added */
         --radius-card: 14px;
         --radius-pill: 999px;
-        --radius-tag: 999px;
-        --radius-bubble: 18px;
+        --radius-tag: 4px;
+        --radius-bubble: 14px;
+        --r-chip: 4px;
+        --r-chip-outline: 5px;
+        --r-input: 6px;
+        --r-button: 7px;
+        --r-card: 12px;
+        --r-panel: 14px;
 
         /* elevation */
-        --shadow-card: 0 1px 2px rgba(22, 22, 22, 0.05), 0 4px 14px rgba(22, 22, 22, 0.06);
-        --shadow-float: 0 2px 6px rgba(22, 22, 22, 0.07), 0 14px 34px rgba(22, 22, 22, 0.12);
-        --shadow-sheet: 0 -10px 44px rgba(22, 22, 22, 0.16);
+        --shadow-card: 0 12px 32px #2021240b;
+        --shadow-float: 0 24px 50px rgba(0, 0, 0, 0.18);
+        --shadow-sheet: 0 -10px 44px rgba(32, 33, 36, 0.16);
 
         /* brand mark (S-ribbon), used to replace the brain glyph in identity spots */
         --sb-mark: url('data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAtNTMuMzUgMjcwLjI3IDI3MC4yNyI+PGRlZnM+PHN0eWxlPi5jbHMtMXtmaWxsOiNmZDU0MGE7fS5jbHMtMntmaWxsOiNmZDZmMTI7fTwvc3R5bGU+PC9kZWZzPjxnPjxwYXRoIGNsYXNzPSJjbHMtMSIgZD0iTS4wNCwxMDUuODNjLS4wMi40MS0uMDQuODQtLjA0LDEuMjZsLjAyLTEuMjZoLjAyWiIvPjxwYXRoIGNsYXNzPSJjbHMtMSIgZD0iTTI2OC43NCwxNjMuNThsLTIxNS44Ny0zLjI0Yy0yOS4xNi0uNDMtNTIuNTYtMjQuMTYtNTIuODctNTMuMjJ2LS4wMmw5NS4wMywxLjQyLDE0Mi45NSw1LjY5YzUuODcsMi43MiwxMS4xMyw2LjUxLDE1LjU4LDExLjE1LDkuNiw5Ljg1LDE1LjQsMjMuMzcsMTUuMTcsMzguMjFaIi8+PHBhdGggY2xhc3M9ImNscy0xIiBkPSJNMjcwLjI2LDU3LjVsLTExOS4yNS0xLjc5LTExNC41MS00LjUxQzE1Ljg1LDQzLjQ1LDEuMjYsMjMuMzksMS42MSwwbDIxNS44MSwzLjI0YzE0Ljg0LjIzLDI4LjE3LDYuNDEsMzcuNzIsMTYuMyw5LjUsOS43OSwxNS4yOSwyMy4yNSwxNS4xMywzNy45NloiLz48cGF0aCBjbGFzcz0iY2xzLTIiIGQ9Ik0yNzAuMjYsNTcuNXYuMjVjLS4yOSwxNC43LTYuNDcsMjcuOTctMTYuMjQsMzcuNDctNS40LDUuMjMtMTEuOTMsOS4zNi0xOS4xMSwxMS45M2gtLjA2bC04Ny44Ljg5aC0uMzFsLTUxLjU5LjQ5aC0uMTJMMCwxMDcuMTF2LS4wMmMwLS40MS4wMi0uODQuMDQtMS4yNi44Ny0yMi40NCwxNS41Mi00MS4zNiwzNS42NC00OC40OGwxMjUuMjEtMS4yNi05Ljg3LS4zOSwxMTkuMjUsMS43OVoiLz48L2c+PC9zdmc+Cg==');
 
         /* motion */
-        --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
-        --ease-spring: cubic-bezier(0.34, 1.45, 0.5, 1);
+        --ease: cubic-bezier(0.16, 1, 0.3, 1);
+        --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+        --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+        /* Name kept for compatibility; the living-thread system has no
+           bounce/overshoot curve, so this now matches --ease. */
+        --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+        --dur-feedback: 150ms;
+        --dur-state: 260ms;
+        --dur-layout: 420ms;
+        --dur-focal: 700ms;
       }
 
       html[data-theme='dark'] {
-        --bg: #161616;
-        --bg-card: #221f17;
-        --bg-tag: #2c2820;
-        --bg-secondary: #221f17;
-        --bg-confirm: rgba(253, 111, 18, 0.15);
-        --bg-tag-confirmed: #fd6f12;
-        --surface-2: #2c2820;
-        --surface-3: #38332a;
+        --bg: #17181b;
+        --bg-card: #1e1f23;
+        --bg-tag: #24262b;
+        --bg-secondary: #24262b;
+        --bg-confirm: rgba(255, 154, 97, 0.16);
+        --bg-tag-confirmed: #ff9a61;
+        --surface-2: #24262b;
+        --surface-3: #2f3237;
+        --surface-muted: #24262b;
+        --charcoal: #0f1012;
 
         /* Same deliberately-dark overlay surface as the light theme, reusing
-           --surface-3 so the toast still separates from --bg (#161616) — the
-           flat #1e1e1e used everywhere else in this theme sits only 1.44:1
-           from --bg and reads as barely distinct. --text-on-elevated on
-           --surface-elevated measures 10.94:1. Ink stays fixed here for the
-           same reason as light: do not swap it back to --text-primary.
-           --accent itself (#fd6f12) measures only 4.4529:1 here, just under
-           the 4.5:1 AA floor — dark theme's --accent was tuned against
-           --bg-card and friends, not against this dark-in-both-themes
-           overlay, so it cannot simply be reused. --accent-on-elevated uses
-           --accent-ink instead (#ffab6e, already the theme's answer to
-           "orange that needs to sit on something dark"), which measures
-           6.75:1 here and clears AA with real headroom. Do not consolidate
-           this back into --accent: that token is deliberate, measured work
-           for the page surfaces, and rescuing one control by moving it would
-           ripple through every other accent use in the product. */
-        --surface-elevated: #38332a;
-        --text-on-elevated: #f2efec;
+           --surface-3 so the toast still separates from --bg. Contrast
+           re-verified by toast-contrast.test.ts; see the light-theme comment
+           above for why these three stay fixed rather than theme-flipping. */
+        --surface-elevated: #2f3237;
+        --text-on-elevated: #f3f4f6;
         --accent-on-elevated: #ffab6e;
 
-        /* Not #ffffff: pure white is the one ink this theme never uses, and the
-           knob reads as a hole punched in the page against --bg #161616.
-           #f2efec is the theme's own lightest ink, 12.5:1 on the off track
-           (--surface-3) and 4.9:1 on the on track (--accent). */
-        --switch-knob: #f2efec;
+        /* Not pure white: this theme's lightest ink stays a touch warmer so
+           the knob reads as part of the surface, not a hole punched in it.
+           Contrast re-verified by switch-contrast.test.ts. */
+        --switch-knob: #f3f4f6;
 
-        --text-primary: #f2efec;
-        --text-secondary: #c9c5c1;
-        /* Was #8a857f: 3.43:1 on --surface-3 and 4.01:1 on --surface-2. Lifted
-           to clear AA on all four dark surfaces; secondary stays put, since the
-           two are still 1.61:1 apart. */
-        --text-tertiary: #9f9b96;
-        --text-tag: #c9c5c1;
-        --text-tag-confirmed: #161616;
+        --text-primary: #f3f4f6;
+        --text-secondary: #c3c6cc;
+        /* Same ink-ramp requirement as the light theme's comment above. */
+        --text-tertiary: #929499;
+        --text-tag: #c3c6cc;
+        --text-tag-confirmed: #17181b;
 
-        --border: rgba(255, 255, 255, 0.085);
-        --border-card: rgba(255, 255, 255, 0.075);
-        --border-input: rgba(255, 255, 255, 0.11);
-        --line-soft: rgba(255, 255, 255, 0.055);
+        --border: #2f3237;
+        --border-card: rgba(255, 255, 255, 0.07);
+        --border-input: #3a3d43;
+        --line: #2f3237;
+        --line-soft: rgba(255, 255, 255, 0.05);
+        --border-soft: #454850;
 
-        --accent: #fd6f12;
-        --accent-press: #ff8a3d;
-        --accent-soft: rgba(253, 111, 18, 0.16);
-        --accent-ink: #ffab6e;
-        --good: #7bae8a;
-        --warn: #d9a15c;
-        --danger: #d9806b;
-        --danger-soft: rgba(217, 128, 107, 0.14);
-        --on-accent: #161616;
+        --brand-orange: #fd540a;
+        --accent: #ff9a61;
+        --action: #ff9a61;
+        --action-hover: #ffab6e;
+        --accent-press: #ffab6e;
+        --accent-soft: rgba(255, 154, 97, 0.16);
+        --accent-ink: #ff9a61;
+        --on-accent: #17181b;
+        --good: #7bd389;
+        --warn: #e0b15e;
+        --danger: #ff8a7a;
+        --danger-soft: rgba(255, 138, 122, 0.14);
 
-        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 6px 18px rgba(0, 0, 0, 0.28);
-        --shadow-float: 0 2px 8px rgba(0, 0, 0, 0.4), 0 16px 36px rgba(0, 0, 0, 0.5);
-        --shadow-sheet: 0 -10px 44px rgba(0, 0, 0, 0.55);
+        --data: #9aa0aa;
+        --s1: #ff7a3d;
+        --s2: #5aa0f2;
+        --s3: #3fb554;
+        --s4: #9a8cf0;
+        --s5: #9aa0aa;
+
+        --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.35);
+        --shadow-float: 0 24px 50px rgba(0, 0, 0, 0.55);
+        --shadow-sheet: 0 -10px 44px rgba(0, 0, 0, 0.6);
       }
 
       html,
@@ -180,6 +224,8 @@
         height: 100%;
         background: var(--bg);
         font-family: var(--font-sans);
+        font-size: 15px;
+        line-height: 1.5;
         color: var(--text-primary);
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
@@ -188,6 +234,18 @@
 
       body {
         transition: background 0.45s var(--ease);
+      }
+
+      h1,
+      h2,
+      h3 {
+        font-family: var(--font-display);
+        font-weight: 500;
+        letter-spacing: -0.03em;
+      }
+
+      .num {
+        font-variant-numeric: tabular-nums;
       }
 
       i.ti {
@@ -251,6 +309,15 @@
         display: flex;
         flex-direction: column;
         align-items: center;
+        background: var(--bg);
+        border-radius: var(--r-panel);
+      }
+
+      .auth-lockup {
+        display: block;
+        width: 174px;
+        height: auto;
+        margin-bottom: 28px;
       }
 
       .auth-link {
@@ -278,41 +345,20 @@
         margin-bottom: 6px;
       }
 
-      #auth-overlay .brain-logo {
-        width: 70px;
-        height: 70px;
-        border-radius: 50%;
-        background: var(--accent-soft);
-        color: var(--accent);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-bottom: 24px;
-        position: relative;
-      }
-
-      #auth-overlay .brain-logo i {
-        font-size: 33px;
-      }
-
-      #auth-overlay .brain-logo::after {
-        content: '';
-        position: absolute;
-        inset: -7px;
-        border-radius: 50%;
-        border: 1px solid var(--accent-soft);
-      }
-
+      /* The lockup image (.auth-lockup) already carries the wordmark
+         visually; this heading stays for its accessible name rather than
+         showing "Second Brain" twice. */
       #auth-overlay h1 {
-        font-family: var(--font-serif);
-        font-size: 29px;
-        font-weight: 500;
-        color: var(--text-primary);
-        margin-bottom: 9px;
-        letter-spacing: -0.015em;
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
       }
 
       #auth-overlay p {
+        font-family: var(--font-sans);
         font-size: 14px;
         color: var(--text-secondary);
         margin-bottom: 34px;
@@ -329,12 +375,13 @@
         margin-bottom: 14px;
       }
 
+      /* Inputs: 6px radius, --line borders, per the system's input anatomy. */
       #auth-overlay input {
         width: 100%;
         padding: 14px 16px;
         background: var(--bg-card);
-        border: 0.5px solid var(--border-input);
-        border-radius: 13px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-input);
         font-family: var(--font-sans);
         font-size: 15px;
         color: var(--text-primary);
@@ -345,36 +392,31 @@
       }
 
       #auth-overlay input::placeholder {
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       #auth-overlay input:focus {
-        border-color: var(--accent);
+        border-color: var(--accent-ink);
         box-shadow: 0 0 0 3px var(--accent-soft);
       }
 
+      /* Connect: the system's primary button, --action fill. */
       #auth-connect {
         width: 100%;
         padding: 15px;
-        background: var(--accent);
+        background: var(--action);
         color: var(--on-accent);
         border: none;
-        border-radius: 13px;
+        border-radius: var(--r-button);
         font-family: var(--font-sans);
         font-size: 15px;
         font-weight: 600;
         cursor: pointer;
-        transition:
-          background 0.18s,
-          transform 0.12s var(--ease);
+        transition: background-color var(--dur-feedback) var(--ease-standard);
       }
 
       #auth-connect:hover {
-        background: var(--accent-press);
-      }
-
-      #auth-connect:active {
-        transform: scale(0.985);
+        background: var(--action-hover);
       }
 
       #auth-error {
@@ -389,44 +431,27 @@
       #topbar {
         display: flex;
         align-items: center;
-        gap: 11px;
-        padding: 14px 18px 12px;
+        gap: 12px;
+        height: 60px;
+        box-sizing: border-box;
+        padding: 8px 12px 8px 20px;
+        border-bottom: 1px solid var(--line);
         background: var(--bg);
         flex-shrink: 0;
-        position: relative;
+        position: sticky;
+        top: 0;
         z-index: 10;
       }
 
-      .brain-avatar {
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        background: var(--accent-soft);
-        color: var(--accent);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+      #topbar > img {
+        width: 32px;
+        height: auto;
         flex-shrink: 0;
       }
 
-      .brain-avatar i {
-        font-size: 20px;
-      }
-
-      /* identity spots render the brand mark instead of the icon-font glyph */
-      .brain-avatar i.ti-brain,
-      #auth-overlay .brain-logo i.ti-brain {
-        font-size: 0;
-        width: 62%;
-        height: 62%;
-        background-color: var(--accent);
-        mask: var(--sb-mark) center / contain no-repeat;
-        -webkit-mask: var(--sb-mark) center / contain no-repeat;
-      }
-      .brain-avatar i.ti-brain::before,
-      #auth-overlay .brain-logo i.ti-brain::before {
-        content: none;
-      }
+      /* The rail and top bar render the brand-lockup/brand-mark images
+         directly (see index.html); the auth card now does too (.auth-lockup
+         above), replacing the icon-font glyph mask this used to be. */
 
       .topbar-info {
         flex: 1;
@@ -434,18 +459,18 @@
       }
 
       .topbar-name {
-        font-family: var(--font-serif);
-        font-size: 18px;
-        font-weight: 500;
+        font-family: var(--font-display);
+        font-size: 16px;
+        font-weight: 600;
         color: var(--text-primary);
-        line-height: 1.15;
-        letter-spacing: -0.01em;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
       }
 
       .topbar-status {
-        font-size: 11.5px;
+        font-size: 12px;
         color: var(--text-secondary);
-        line-height: 1.3;
+        line-height: 1.2;
         margin-top: 1px;
         display: flex;
         align-items: center;
@@ -465,25 +490,24 @@
         background: none;
         border: none;
         cursor: pointer;
-        color: var(--text-secondary);
-        width: 38px;
-        height: 38px;
-        border-radius: 50%;
+        color: var(--text-primary);
+        width: 40px;
+        height: 40px;
+        border-radius: var(--r-button);
         display: flex;
         align-items: center;
         justify-content: center;
         transition:
-          background 0.15s,
-          color 0.15s;
+          background var(--dur-feedback) var(--ease-standard),
+          color var(--dur-feedback) var(--ease-standard);
       }
 
       .topbar-menu i {
-        font-size: 22px;
+        font-size: 20px;
       }
 
       .topbar-menu:hover {
-        background: var(--surface-2);
-        color: var(--text-primary);
+        background: var(--surface-muted);
       }
 
       /* ============ SCREENS ============ */
@@ -530,7 +554,7 @@
       /* ============ BOTTOM NAV ============ */
       #navbar {
         display: flex;
-        border-top: 0.5px solid var(--border);
+        border-top: 1px solid var(--line);
         background: var(--bg);
         flex-shrink: 0;
         padding: 9px 8px calc(16px + env(safe-area-inset-bottom));
@@ -546,31 +570,38 @@
         border: none;
         cursor: pointer;
         padding: 6px 0;
-        color: var(--text-tertiary);
-        transition: color 0.2s var(--ease);
+        color: var(--text-secondary);
+        position: relative;
+        transition: color var(--dur-feedback) var(--ease-standard);
       }
 
       .nav-tab i {
         font-size: 22px;
-        transition: transform 0.32s var(--ease-spring);
       }
 
       .nav-tab span {
-        font-family: var(--font-serif);
-        font-size: 11.5px;
+        font-family: var(--font-sans);
+        font-size: 11px;
+        font-weight: 500;
         letter-spacing: 0.005em;
       }
 
       .nav-tab.active {
-        color: var(--accent-ink);
+        color: var(--text-primary);
       }
 
-      .nav-tab.active i {
-        transform: translateY(-1px);
-      }
-
-      .nav-tab:active i {
-        transform: scale(0.84);
+      /* Accent underline at the top of the active tab, mirroring the rail's
+         accent dot on the active link. */
+      .nav-tab.active::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 50%;
+        width: 28px;
+        margin-left: -14px;
+        height: 3px;
+        background: var(--accent-ink);
+        border-radius: 0 0 3px 3px;
       }
 
       /* ============ CHAT BUBBLES ============ */
@@ -651,7 +682,7 @@
 
       .bubble-time {
         font-size: 11px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         padding: 0 6px;
         margin-top: 4px;
         text-align: right;
@@ -680,7 +711,7 @@
         width: 7px;
         height: 7px;
         border-radius: 50%;
-        background: var(--text-tertiary);
+        background: var(--text-secondary);
         animation: bounce 1.3s infinite ease-in-out;
       }
 
@@ -715,10 +746,10 @@
       }
 
       /* ============================================================
-       JOURNAL EDITORIAL — the conversation reads as prose
+       CONVERSATION: .ex-q a user bubble, .ex-a an answer on paper
        ============================================================ */
       #recall-messages {
-        gap: 0;
+        gap: 14px;
         padding: 20px 20px 10px;
       }
 
@@ -737,53 +768,65 @@
       }
 
       .recall-hero .hero-line {
-        font-family: var(--font-serif);
-        font-size: 23px;
-        line-height: 1.42;
-        letter-spacing: -0.012em;
+        font-family: var(--font-sans);
+        font-size: 19px;
+        line-height: 1.5;
         color: var(--text-primary);
-        max-width: 22em;
+        max-width: 26em;
       }
 
       .recall-hero .hero-line .hashtag {
         color: var(--accent-ink);
       }
 
-      /* a recall exchange: uppercase question label + large serif answer */
+      /* The user's own message: a bubble with one square lower corner (the
+         system's device for "this is the speaker"), right-aligned like
+         .bubble.user elsewhere in the app. The "You asked" label still
+         exists for assistive tech; the bubble shape carries it visually. */
       .ex-q {
         display: flex;
-        gap: 8px;
         align-items: baseline;
-        flex-wrap: wrap;
-        font-size: 11px;
-        letter-spacing: 0.13em;
-        text-transform: uppercase;
-        color: var(--accent-ink);
-        padding: 24px 0 13px;
-        border-top: 0.5px solid var(--line-soft);
+        gap: 6px;
+        align-self: flex-end;
+        max-width: 84%;
+        padding: 11px 15px;
+        border-radius: var(--radius-bubble);
+        border-bottom-right-radius: 6px;
+        background: var(--text-primary);
+        color: var(--bg);
+        font-family: var(--font-sans);
+        font-size: 14px;
+        line-height: 1.5;
         animation: bubble-in 0.36s var(--ease) both;
       }
 
-      #recall-messages > .ex-q:first-child {
-        border-top: none;
-        padding-top: 6px;
-      }
-
+      .ex-q .q-label,
       .ex-q .q-dash {
-        opacity: 0.5;
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
       }
 
       .ex-q .q-text {
-        color: var(--text-secondary);
-        letter-spacing: 0.03em;
-        font-weight: 500;
+        overflow-wrap: anywhere;
       }
 
+      /* The assistant's answer: paper, a hairline border and the system's
+         answer-card shadow, DM Sans rather than the earlier literary serif
+         voice reserved for headings and numerals now. */
       .ex-a {
-        font-family: var(--font-serif);
-        font-size: 19px;
-        line-height: 1.58;
-        letter-spacing: -0.004em;
+        max-width: 92%;
+        padding: 14px 17px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-card);
+        border-radius: var(--r-card);
+        box-shadow: var(--shadow-card);
+        font-family: var(--font-sans);
+        font-size: 15.5px;
+        line-height: 1.6;
         color: var(--text-primary);
         animation: bubble-in 0.36s var(--ease) both;
       }
@@ -866,8 +909,7 @@
         position: absolute;
         left: 0;
         top: 0.04em;
-        font-family: var(--font-serif);
-        font-style: italic;
+        font-family: var(--font-display);
         font-size: 0.82em;
         color: var(--accent-ink);
         font-variant-numeric: tabular-nums;
@@ -882,13 +924,11 @@
 
       /* system note (no result / error) */
       .recall-sys {
-        font-family: var(--font-serif);
-        font-style: italic;
-        font-size: 18px;
+        font-family: var(--font-sans);
+        font-size: 15px;
         line-height: 1.55;
         color: var(--text-secondary);
-        padding: 24px 0 0;
-        border-top: 0.5px solid var(--line-soft);
+        padding: 8px 0 0;
         animation: bubble-in 0.36s var(--ease) both;
       }
 
@@ -931,60 +971,16 @@
         font-family: var(--font-serif);
         font-style: italic;
         font-size: 13px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         padding: 8px 0 4px 16px;
         animation: bubble-in 0.36s var(--ease) both;
       }
 
-      /* ---- underline "writing" input ---- */
-      #screen-home .input-inner {
-        background: transparent;
-        border: none;
-        border-bottom: 1.5px solid var(--accent);
-        border-radius: 0;
-        padding: 4px 2px 9px;
-        margin: 0 4px;
-        box-shadow: none;
-        align-items: flex-end;
-        gap: 10px;
-      }
-
-      #screen-home .input-inner:focus-within {
-        box-shadow: none;
-        border-bottom-color: var(--accent-press);
-      }
-
-      #screen-home .input-field {
-        font-family: var(--font-serif);
-        font-size: 16.5px;
-        padding: 6px 0;
-      }
-
-      #screen-home .input-field::placeholder {
-        font-style: italic;
-        color: var(--text-tertiary);
-      }
-
-      #screen-home .send-btn {
-        background: transparent;
-        width: auto;
-        height: auto;
-        padding: 4px;
-      }
-
-      #screen-home .send-btn:hover {
-        background: transparent;
-        transform: translateY(-1px);
-      }
-
-      #screen-home .send-btn i {
-        font-size: 23px;
-        color: var(--accent);
-      }
-
-      #screen-home .send-btn:disabled {
-        opacity: 0.4;
-      }
+      /* The conversation's own input bar (bottom, #recall-input) now uses the
+         same rounded, paper input-bar anatomy as the rest of the system
+         instead of a bespoke underline field; see .input-inner/.input-field/
+         .send-btn below. #screen-home .composer .send-btn (further down)
+         still carries the composer's own 42px square button. */
 
       /* sources toggle */
       .sources-toggle {
@@ -994,40 +990,45 @@
         animation: bubble-in 0.36s var(--ease) both;
       }
 
+      /* Secondary button: transparent, hairline border, same anatomy as
+         .btn-cancel and the view sheet's Append/Edit. */
       .sources-toggle > button {
         display: inline-flex;
         align-items: center;
         gap: 7px;
         align-self: flex-start;
+        height: 32px;
         background: none;
-        border: none;
+        border: 1px solid var(--line);
+        border-radius: var(--r-button);
         cursor: pointer;
-        color: var(--text-secondary);
+        color: var(--text-primary);
         font-family: var(--font-sans);
-        font-size: 12px;
-        padding: 3px 2px;
-        transition: color 0.15s;
+        font-size: 12.5px;
+        font-weight: 500;
+        padding: 0 12px;
+        transition: background-color var(--dur-feedback) var(--ease-standard);
       }
 
       .sources-toggle > button i {
         font-size: 15px;
-        color: var(--accent);
+        color: var(--text-secondary);
       }
 
       .sources-toggle > button:hover {
-        color: var(--text-primary);
+        background: var(--surface-muted);
       }
 
-      /* ============ MEMORY CARD (recall sources) ============ */
+      /* ============ MEMORY CARD ============
+         System anatomy: paper, 12px radius, a hairline border, no shadow at
+         rest. The card shadow appears only on hover and for a cited card. */
       .memory-card {
         background: var(--bg-card);
-        border: 0.5px solid var(--border-card);
-        border-radius: var(--radius-card);
-        padding: 12px 14px;
-        box-shadow: var(--shadow-card);
+        border: 1px solid var(--border-card);
+        border-radius: var(--r-card);
+        padding: 14px 16px;
         transition:
-          transform 0.25s var(--ease),
-          box-shadow 0.25s var(--ease),
+          box-shadow var(--dur-feedback) var(--ease-standard),
           opacity 0.3s;
         animation: card-in 0.42s var(--ease) both;
       }
@@ -1042,7 +1043,7 @@
       }
 
       .memory-card:hover {
-        box-shadow: var(--shadow-float);
+        box-shadow: var(--shadow-card);
       }
 
       .memory-card.card--rolled-up {
@@ -1162,9 +1163,10 @@
       }
 
       .tag-chip {
-        background: var(--surface-2);
+        background: var(--surface-muted);
         color: var(--text-tag);
-        font-size: 11px;
+        font-size: 12px;
+        font-weight: 500;
         padding: 3px 10px;
         border-radius: var(--radius-tag);
         white-space: nowrap;
@@ -1223,7 +1225,7 @@
         font-size: 14px;
       }
 
-      /* ============ RECENT — numbered editorial list ============ */
+      /* ============ RECENT: a list of memory cards ============ */
       #recent-list {
         flex: 1;
         overflow-y: auto;
@@ -1231,60 +1233,30 @@
            a phone, the panel edge on a desktop — which reads as the list being
            cut off rather than ended. */
         padding: 14px 18px 22px;
-        counter-reset: memo;
         -webkit-overflow-scrolling: touch;
       }
 
+      /* The open-row rule: a date group is a hairline heading, not a box. */
       .date-group {
         margin-bottom: 22px;
       }
 
       .date-label {
-        font-family: var(--font-serif);
-        font-style: italic;
-        font-weight: 400;
-        font-size: 15px;
+        font-family: var(--font-sans);
+        font-weight: 500;
+        font-size: 12.5px;
         color: var(--text-secondary);
-        margin: 0 2px 6px;
-        letter-spacing: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin: 0 2px 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--line);
       }
 
       #recent-list .recent-cards {
         display: flex;
         flex-direction: column;
-        gap: 0;
-      }
-
-      /* recent rows: strip the card chrome, become editorial entries */
-      #recent-list .memory-card {
-        background: transparent;
-        border: none;
-        border-top: 0.5px solid var(--line-soft);
-        border-radius: 0;
-        box-shadow: none;
-        padding: 14px 2px 14px 34px;
-        position: relative;
-        counter-increment: memo;
-      }
-
-      #recent-list .memory-card:first-child {
-        border-top: none;
-      }
-
-      #recent-list .memory-card::before {
-        content: counter(memo, decimal-leading-zero);
-        position: absolute;
-        left: 2px;
-        top: 15px;
-        font-family: var(--font-serif);
-        font-style: italic;
-        font-size: 13px;
-        color: var(--accent-ink);
-        font-variant-numeric: tabular-nums;
-      }
-
-      #recent-list .memory-card:hover {
-        box-shadow: none;
+        gap: 10px;
       }
 
       #recent-list .card-content {
@@ -1296,44 +1268,45 @@
         margin-top: 8px;
       }
 
-      /* ── The memory is the hero ───────────────────────────────────────────
+      /* ── The memory is the hero, on a desktop-width card ──────────────────
          Measured before this block: a card was 158px tall and its content was
-         46px of that — the memory occupied 29% of its own card, and five of
-         them fitted on a phone holding 2,394. The other 112px was chrome:
-         three stacked bands (a meta line, a tag row forced onto its own line by
-         `flex: 1 0 100%`, and a 44px action row) all competing at the same
-         visual weight.
+         46px of that. The memory occupied 29% of its own card. The bands
+         collapse into ONE quiet line (source, time, tags and the actions
+         share a row and truncate rather than stack) but only where a card is
+         wide enough to give tags real room. At 390px the same squeeze left
+         Append, Edit and the overflow button (about 170px) and the meta line
+         (about 115px) almost nothing, so a tag chip rendered as one clipped
+         letter. Below 768px the tags keep their own full-width row instead
+         (the general .card-footer rule further down already wraps there). */
+      @media (min-width: 768px) {
+        #recent-list .card-footer {
+          margin-top: 8px;
+          gap: 10px;
+          flex-wrap: nowrap;
+        }
 
-         The bands collapse into ONE quiet line — source, time, tags and the
-         actions share a row and truncate rather than stack — and the content
-         keeps everything that buys back. */
-      #recent-list .card-footer {
-        margin-top: 8px;
-        gap: 10px;
-        flex-wrap: nowrap;
-      }
+        /* Reading order on the line: where it came from and when, then what it
+           is about, then what you can do to it. Provenance first because it is
+           the thing that orients you in a list of 2,394. */
+        #recent-list .card-meta {
+          margin-bottom: 0;
+          flex-shrink: 0;
+          order: 0;
+        }
 
-      /* Reading order on the line: where it came from and when, then what it is
-         about, then what you can do to it. Provenance first because it is the
-         thing that orients you in a list of 2,394. */
-      #recent-list .card-meta {
-        margin-bottom: 0;
-        flex-shrink: 0;
-        order: 0;
-      }
+        /* Shares the meta line and scrolls within it, rather than owning a
+           full-width row of its own, room enough here for that to work. */
+        #recent-list .card-tags {
+          order: 1;
+          flex: 1 1 auto;
+          min-width: 0;
+        }
 
-      /* `flex: 1 0 100%` is what pushed the tags onto a line of their own. They
-         share the meta line now and scroll within it, as they already did. */
-      #recent-list .card-tags {
-        order: 1;
-        flex: 1 1 auto;
-        min-width: 0;
-      }
-
-      #recent-list .card-actions {
-        order: 2;
-        margin-left: auto;
-        flex-shrink: 0;
+        #recent-list .card-actions {
+          order: 2;
+          margin-left: auto;
+          flex-shrink: 0;
+        }
       }
 
       /* 44px was well past the 32px this project holds itself to, and it set the
@@ -1348,7 +1321,7 @@
       #recent-list .card-action-btn {
         padding: 4px 6px;
         font-size: 10.5px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       #recent-list .card-action-btn:hover {
@@ -1373,7 +1346,7 @@
         padding: 10px 18px;
         flex-shrink: 0;
         background: var(--bg);
-        border-bottom: 0.5px solid var(--border);
+        border-bottom: 1px solid var(--line);
       }
 
       /* Grows to fill a phone, stops well short of it on a wide window — two
@@ -1396,18 +1369,22 @@
 
       .mem-caption {
         font-size: 12.5px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
+      /* A bordered rectangle group, same anatomy as board.css's .seg range
+         control: the resting state is a plain outline, the active member
+         switches to charcoal fill with white text. */
       .view-toggle {
         display: flex;
         gap: 2px;
         padding: 2px;
-        background: var(--surface-2);
-        border-radius: var(--radius-pill);
+        background: none;
+        border: 1px solid var(--line);
+        border-radius: var(--r-button);
         flex-shrink: 0;
         /* Pinned right in both views. Capping the filters at 420px stopped them
            filling the bar, which left the toggle stranded mid-row in list view
@@ -1419,42 +1396,50 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
+        min-height: 32px;
         padding: 6px 12px;
         border: none;
         background: none;
-        border-radius: var(--radius-pill);
+        border-radius: 5px;
         cursor: pointer;
         color: var(--text-secondary);
         font-family: var(--font-sans);
         font-size: 13px;
+        font-weight: 500;
         transition:
-          background 0.15s,
-          color 0.15s;
+          background-color var(--dur-state) var(--ease-standard),
+          color var(--dur-state) var(--ease-standard);
       }
 
       .view-toggle-btn i {
         font-size: 16px;
       }
 
-      .view-toggle-btn.active {
-        background: var(--bg-card);
+      .view-toggle-btn:hover:not(.active) {
+        background: var(--surface-muted);
         color: var(--text-primary);
-        box-shadow: var(--shadow-card);
+      }
+
+      .view-toggle-btn.active {
+        background: var(--text-primary);
+        color: var(--on-accent);
       }
 
       #recent-list[hidden] {
         display: none;
       }
 
+      /* Filters: 36px rectangles with a hairline border, not pills. They
+         switch to charcoal/white when selected, like the view toggle above. */
       .filter-inner {
         display: flex;
         align-items: center;
+        min-height: 36px;
         background: var(--bg-card);
-        border: 0.5px solid var(--border-input);
-        border-radius: var(--radius-pill);
-        padding: 7px 8px 7px 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-button);
+        padding: 8px 10px 8px 14px;
         gap: 8px;
-        box-shadow: var(--shadow-card);
       }
 
       .filter-field {
@@ -1469,7 +1454,7 @@
       }
 
       .filter-field::placeholder {
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       select.filter-field {
@@ -1479,8 +1464,8 @@
       }
 
       select.filter-field option {
-        color: #161616;
-        background: #fcfbf7;
+        color: var(--text-primary);
+        background: var(--bg-card);
       }
 
       .refresh-btn {
@@ -1600,7 +1585,7 @@
       }
 
       .input-field::placeholder {
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       .send-btn {
@@ -1639,7 +1624,7 @@
 
       .input-hint {
         font-size: 11.5px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         padding: 0 4px 8px;
       }
 
@@ -1698,9 +1683,8 @@
         justify-content: center;
         padding: 56px 32px;
         gap: 10px;
-        color: var(--text-tertiary);
-        font-family: var(--font-serif);
-        font-style: italic;
+        color: var(--text-secondary);
+        font-family: var(--font-sans);
         font-size: 15px;
         line-height: 1.5;
         text-align: center;
@@ -1710,8 +1694,7 @@
       .empty-state i {
         font-size: 34px;
         margin-bottom: 4px;
-        font-style: normal;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       .first-run-steps {
@@ -1719,7 +1702,6 @@
         padding-left: 20px;
         text-align: left;
         font-family: var(--font-sans);
-        font-style: normal;
         font-size: 14px;
         line-height: 1.65;
         color: var(--text-secondary);
@@ -1786,7 +1768,7 @@
       .menu-inner,
       .view-inner {
         background: var(--bg);
-        border-radius: 24px 24px 0 0;
+        border-radius: var(--r-panel) var(--r-panel) 0 0;
         width: 100%;
         max-width: 440px;
         box-shadow: var(--shadow-sheet);
@@ -1824,21 +1806,25 @@
         max-height: 90vh;
       }
 
-      .confirm-sheet h3,
-      .append-inner h3,
-      .edit-inner h3,
-      .menu-inner h3,
-      .view-header h3 {
-        font-family: var(--font-serif);
-        font-size: 21px;
+      /* Sheet and dialog titles: Sora 17px as h2, per the system's panel
+         anatomy (confirm, append, edit, view, menu, integrations, patterns
+         and stale sheets all promoted from h3, same ids). */
+      .confirm-sheet h2,
+      .append-inner h2,
+      .edit-inner h2,
+      .menu-inner h2,
+      .view-header h2 {
+        font-family: var(--font-display);
+        font-size: 17px;
         font-weight: 500;
         margin-bottom: 9px;
-        letter-spacing: -0.01em;
+        letter-spacing: -0.02em;
         color: var(--text-primary);
       }
 
       .confirm-sheet p {
-        font-size: 14px;
+        font-family: var(--font-sans);
+        font-size: 15px;
         color: var(--text-secondary);
         margin-bottom: 22px;
         line-height: 1.55;
@@ -1888,10 +1874,10 @@
       }
 
       .view-content {
-        font-family: var(--font-serif);
-        font-size: 17px;
+        font-family: var(--font-sans);
+        font-size: 15px;
         color: var(--text-primary);
-        line-height: 1.62;
+        line-height: 1.6;
         overflow-y: auto;
         margin-bottom: 18px;
         white-space: pre-wrap;
@@ -1920,16 +1906,19 @@
            without it the text simply stopped mid-sentence at the buttons with
            nothing saying the rest was still there. */
         padding-top: 14px;
-        border-top: 0.5px solid var(--border);
+        border-top: 1px solid var(--line);
       }
 
+      /* View-sheet actions: Append and Edit are secondary (transparent,
+         hairline border); Forget is destructive (--danger, white label),
+         the same treatment as the confirm sheet's own Forget button. */
       .btn-view-append,
       .btn-view-edit,
       .btn-view-forget {
         flex: 1;
         padding: 13px;
-        border: none;
-        border-radius: 13px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-button);
         font-family: var(--font-sans);
         font-size: 13.5px;
         font-weight: 500;
@@ -1938,11 +1927,12 @@
         align-items: center;
         justify-content: center;
         gap: 6px;
-        background: var(--surface-2);
+        background: transparent;
         color: var(--text-primary);
         transition:
-          background 0.15s,
-          color 0.15s;
+          background-color var(--dur-feedback) var(--ease-standard),
+          border-color var(--dur-feedback) var(--ease-standard),
+          color var(--dur-feedback) var(--ease-standard);
       }
 
       .btn-view-append i,
@@ -1953,15 +1943,20 @@
 
       .btn-view-append:hover,
       .btn-view-edit:hover {
-        background: var(--surface-3);
+        background: var(--surface-muted);
       }
 
       .btn-view-forget {
-        color: var(--danger);
+        background: var(--danger);
+        border-color: var(--danger);
+        /* --on-accent, not a hardcoded white: --danger flips light-on-dark
+           in dark theme (a pale coral), so a fixed white label would read at
+           roughly 1.5:1 there. --on-accent flips the same way --danger does
+           and lands on dark ink exactly when the fill goes pale. */
+        color: var(--on-accent);
       }
       .btn-view-forget:hover {
-        background: var(--danger);
-        color: #fff;
+        opacity: 0.92;
       }
 
       .confirm-actions,
@@ -1970,36 +1965,39 @@
         gap: 10px;
       }
 
+      /* Secondary: transparent with a hairline border. */
       .btn-cancel,
       .btn-append-cancel {
         flex: 1;
         padding: 14px;
-        background: var(--surface-2);
-        border: none;
-        border-radius: 13px;
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: var(--r-button);
         font-family: var(--font-sans);
         font-size: 14.5px;
         font-weight: 500;
         color: var(--text-primary);
         cursor: pointer;
-        transition: background 0.15s;
+        transition: background-color var(--dur-feedback) var(--ease-standard);
       }
 
       .btn-cancel:hover,
       .btn-append-cancel:hover {
-        background: var(--surface-3);
+        background: var(--surface-muted);
       }
 
+      /* Destructive: --danger fill, --on-accent label (see .btn-view-forget:
+         a hardcoded white fails once --danger goes pale in dark theme). */
       .btn-delete {
         flex: 1;
         padding: 14px;
         background: var(--danger);
-        border: none;
-        border-radius: 13px;
+        border: 1px solid var(--danger);
+        border-radius: var(--r-button);
         font-family: var(--font-sans);
         font-size: 14.5px;
         font-weight: 600;
-        color: #fff;
+        color: var(--on-accent);
         cursor: pointer;
         transition: opacity 0.15s;
       }
@@ -2008,22 +2006,24 @@
         opacity: 0.92;
       }
 
+      /* Primary: --action fill, white label. */
       .btn-append-save {
         flex: 1;
         padding: 14px;
-        background: var(--accent);
-        border: none;
-        border-radius: 13px;
+        background: var(--action);
+        border: 1px solid var(--action);
+        border-radius: var(--r-button);
         font-family: var(--font-sans);
         font-size: 14.5px;
         font-weight: 600;
         color: var(--on-accent);
         cursor: pointer;
-        transition: background 0.15s;
+        transition: background-color var(--dur-feedback) var(--ease-standard);
       }
 
       .btn-append-save:hover {
-        background: var(--accent-press);
+        background: var(--action-hover);
+        border-color: var(--action-hover);
       }
 
       .btn-append-save:disabled {
@@ -2032,16 +2032,15 @@
       }
 
       .append-context {
-        font-family: var(--font-serif);
-        font-style: italic;
+        font-family: var(--font-sans);
         font-size: 13.5px;
         color: var(--text-secondary);
         margin-bottom: 16px;
         line-height: 1.5;
         padding: 12px 14px;
-        background: var(--bg-card);
-        border: 0.5px solid var(--border-card);
-        border-radius: 12px;
+        background: var(--surface-muted);
+        border: 1px solid var(--border-card);
+        border-radius: var(--r-card);
         display: -webkit-box;
         -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
@@ -2078,7 +2077,7 @@
       }
 
       .append-input-wrap textarea::placeholder {
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       .edit-existing-tags {
@@ -2090,7 +2089,7 @@
 
       .edit-hint {
         font-size: 12px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-bottom: 14px;
       }
 
@@ -2135,7 +2134,7 @@
          row opened it. */
       .edit-sub {
         font-size: 12.5px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-bottom: 14px;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -2184,7 +2183,7 @@
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        border: 0.5px solid var(--border);
+        border: 1px solid var(--line);
         cursor: pointer;
         font-family: var(--font-sans);
         transition:
@@ -2207,7 +2206,7 @@
       }
 
       /* ============ MENU SHEET ============ */
-      .menu-inner h3 {
+      .menu-inner h2 {
         margin-bottom: 18px;
       }
 
@@ -2264,7 +2263,7 @@
         align-items: center;
         gap: 12px;
         padding: 15px 0;
-        border-top: 0.5px solid var(--border);
+        border-top: 1px solid var(--line);
         cursor: pointer;
         color: var(--text-primary);
         font-size: 15px;
@@ -2297,16 +2296,16 @@
       .about-credits {
         margin: 18px 0 14px;
         padding: 14px 16px;
-        background: var(--bg-card);
-        border: 0.5px solid var(--border-card);
-        border-radius: var(--radius-card);
+        background: var(--surface-muted);
+        border: 1px solid var(--border-card);
+        border-radius: var(--r-card);
         font-size: 13px;
         color: var(--text-secondary);
         line-height: 1.5;
       }
 
       .about-credits-label {
-        font-family: var(--font-serif);
+        font-family: var(--font-sans);
         font-size: 15px;
         font-weight: 500;
         color: var(--text-primary);
@@ -2318,7 +2317,7 @@
         text-transform: uppercase;
         letter-spacing: 0.06em;
         font-weight: 500;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin: 0 0 6px;
       }
 
@@ -2365,13 +2364,13 @@
          stacked ("UPKEEP" over "READY TO COMPRESS") read as two peers rather
          than as a heading and its contents. */
       .menu-group-label {
-        font-family: var(--font-serif);
+        font-family: var(--font-sans);
         font-size: 15px;
         font-weight: 500;
         color: var(--text-primary);
         margin-bottom: 10px;
         padding-bottom: 7px;
-        border-bottom: 0.5px solid var(--border);
+        border-bottom: 1px solid var(--line);
       }
 
       .digest-section {
@@ -2380,7 +2379,7 @@
 
       .digest-section-label {
         font-size: 11px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         text-transform: uppercase;
         letter-spacing: 0.06em;
         font-weight: 500;
@@ -2405,8 +2404,8 @@
         flex-shrink: 0;
         padding: 10px 0;
         margin-bottom: 4px;
-        border-top: 0.5px solid var(--border);
-        border-bottom: 0.5px solid var(--border);
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
         position: sticky;
         top: 0;
         background: var(--bg);
@@ -2448,7 +2447,7 @@
          per-memory judgement rather than a bulk one. */
       .stale-row {
         padding: 12px 2px;
-        border-bottom: 0.5px solid var(--border);
+        border-bottom: 1px solid var(--line);
       }
 
       .stale-row:last-child {
@@ -2465,7 +2464,7 @@
       .stale-when {
         display: block;
         font-size: 12px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-bottom: 8px;
       }
 
@@ -2480,7 +2479,7 @@
         align-items: flex-start;
         gap: 11px;
         padding: 12px 2px;
-        border-bottom: 0.5px solid var(--border);
+        border-bottom: 1px solid var(--line);
         cursor: pointer;
       }
 
@@ -2506,7 +2505,7 @@
       }
 
       .pattern-text {
-        font-family: var(--font-serif);
+        font-family: var(--font-sans);
         font-size: 15px;
         line-height: 1.5;
         color: var(--text-primary);
@@ -2515,7 +2514,7 @@
 
       .pattern-when {
         font-size: 11.5px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       .pattern-sources {
@@ -2535,7 +2534,7 @@
       }
 
       .pattern-source--gone {
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         font-style: italic;
       }
 
@@ -2585,13 +2584,13 @@
 
       .digest-candidate-count {
         font-size: 11px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       /* Browsers do not inherit font-family into form controls: a <button>,
          <select>, <input> or <textarea> falls back to a system font unless you
          say otherwise. Half the controls in this app — 207 of 416 — were
-         rendering in Arial next to Geist copy, which is most of why the
+         rendering in Arial next to DM Sans copy, which is most of why the
          interface read as unfinished.
 
          font-family only, not the `font` shorthand: size, weight and
@@ -2607,10 +2606,10 @@
       .digest-btn {
         font-size: 12px;
         font-weight: 500;
-        color: var(--accent-ink);
-        background: var(--accent-soft);
-        border: none;
-        border-radius: var(--radius-pill);
+        color: var(--text-primary);
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: 7px;
         padding: 5px 12px;
         cursor: pointer;
         white-space: nowrap;
@@ -2618,7 +2617,7 @@
       }
 
       .digest-btn:hover {
-        background: rgba(253, 84, 10, 0.14);
+        background: var(--surface-muted);
       }
 
       .digest-btn:disabled {
@@ -2631,9 +2630,20 @@
         display: inline-block;
       }
 
+      .digest-btn--primary,
+      .confirm-accept-primary {
+        background: var(--action);
+        border-color: var(--action);
+        color: var(--on-accent);
+      }
+
+      .digest-btn--primary:hover,
+      .confirm-accept-primary:hover { background: var(--action-hover); }
+
+
       .digest-note {
         font-size: 12px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         line-height: 1.5;
         margin-bottom: 10px;
       }
@@ -2653,7 +2663,7 @@
       }
 
       .integration-row + .integration-row {
-        border-top: 0.5px solid var(--border-input);
+        border-top: 1px solid var(--line);
       }
 
       .integration-category-row {
@@ -2664,7 +2674,7 @@
         padding: 15px 4px;
         background: transparent;
         border: none;
-        border-bottom: 0.5px solid var(--border-input);
+        border-bottom: 1px solid var(--line);
         font-family: inherit;
         font-size: 14px;
         color: var(--text-primary);
@@ -2687,10 +2697,10 @@
       .integration-category-summary {
         margin-left: auto;
         font-size: 12px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
       .integration-category-chevron {
-        color: var(--text-tertiary) !important;
+        color: var(--text-secondary) !important;
         font-size: 16px !important;
       }
 
@@ -2712,7 +2722,7 @@
       .integration-state {
         margin-left: auto;
         font-size: 11px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
       }
 
       .integration-state.connected {
@@ -2735,8 +2745,8 @@
         min-width: 0;
         padding: 8px 10px;
         background: transparent;
-        border: 0.5px solid var(--border-input);
-        border-radius: 9px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-input);
         font-size: 13px;
         font-family: inherit;
         color: var(--text-primary);
@@ -2782,26 +2792,37 @@
 
       /* ============ DESKTOP SIDEBAR ============ */
       #sidebar {
-        width: 248px;
+        width: 232px;
         flex-shrink: 0;
         flex-direction: column;
+        gap: 6px;
         background: var(--bg);
-        border-right: 0.5px solid var(--border);
-        padding: 20px 12px 22px;
+        border-right: 1px solid var(--line);
+        padding: 26px 22px 22px;
       }
 
-      .sb-logo {
-        display: flex;
-        align-items: center;
-        gap: 11px;
-        padding: 6px 10px 26px;
+      .brand {
+        display: block;
+        width: 174px;
+        margin: 2px 0 0 2px;
       }
 
-      .sb-brand-name {
-        font-family: var(--font-serif);
-        font-size: 16px;
-        font-weight: 500;
-        color: var(--text-primary);
+      .brand img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      /* The ink lockup's wordmark is unreadable on a dark ground; swap in the
+         reverse (white-text) mark, same asset the site's own header/mobile
+         menu convention uses. */
+      html[data-theme='dark'] .brand img,
+      html[data-theme='dark'] .auth-lockup {
+        content: url(../brand-lockup-reverse.png);
+      }
+
+      .rail-status {
+        margin: 14px 0 22px 2px;
       }
 
       /* The team a member belongs to, between the product name and the status
@@ -2820,95 +2841,131 @@
       }
 
       .sb-brand-team {
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 500;
-        line-height: 1.35;
+        line-height: 1.4;
         color: var(--accent-ink);
-        margin-top: 2px;
-        max-width: 148px;
+        max-width: 188px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
       .sb-brand-status {
-        font-size: 11.5px;
+        font-size: 13px;
         color: var(--text-secondary);
-        margin-top: 1px;
+        margin-top: 2px;
       }
 
       .sb-nav {
-        flex: 1;
         display: flex;
         flex-direction: column;
-        gap: 3px;
+        gap: 2px;
       }
 
       .sb-tab {
         display: flex;
         align-items: center;
-        gap: 11px;
-        padding: 10px 11px;
-        border-radius: 10px;
+        gap: 10px;
+        height: 40px;
+        padding: 0 10px 0 22px;
+        border: 0;
+        border-radius: var(--r-button);
         background: none;
-        border: none;
         cursor: pointer;
         color: var(--text-secondary);
-        font-size: 14.5px;
-        font-family: var(--font-serif);
+        font-size: 14px;
+        font-weight: 500;
+        font-family: var(--font-sans);
         width: 100%;
         text-align: left;
+        position: relative;
         transition:
-          background 0.15s,
-          color 0.15s;
+          color var(--dur-feedback) var(--ease-standard),
+          background-color var(--dur-feedback) var(--ease-standard);
       }
 
       .sb-tab i {
-        font-size: 19px;
+        font-size: 18px;
         flex-shrink: 0;
       }
 
       .sb-tab:hover {
-        background: var(--surface-2);
+        background: var(--surface-muted);
         color: var(--text-primary);
       }
 
       .sb-tab.active {
-        background: var(--accent-soft);
-        color: var(--accent-ink);
+        background: none;
+        color: var(--text-primary);
+      }
+
+      /* The accent dot marking the active screen, mirroring the mockup's
+         .rail-link[aria-current]::before. */
+      .sb-tab.active::before {
+        content: '';
+        position: absolute;
+        left: 8px;
+        top: 50%;
+        width: 6px;
+        height: 6px;
+        margin-top: -3px;
+        border-radius: 50%;
+        background: var(--accent-ink);
       }
 
       .sb-footer {
-        padding-top: 12px;
-        border-top: 0.5px solid var(--border);
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
       }
 
       .sb-footer-btn {
         display: flex;
         align-items: center;
-        gap: 11px;
-        padding: 10px 11px;
-        border-radius: 10px;
+        gap: 10px;
+        height: 40px;
+        padding: 0 10px 0 22px;
+        border: 0;
+        border-radius: var(--r-button);
         background: none;
-        border: none;
         cursor: pointer;
         color: var(--text-secondary);
-        font-size: 14.5px;
+        font-size: 14px;
+        font-weight: 500;
         font-family: var(--font-sans);
         width: 100%;
         text-align: left;
         transition:
-          background 0.15s,
-          color 0.15s;
+          color var(--dur-feedback) var(--ease-standard),
+          background-color var(--dur-feedback) var(--ease-standard);
       }
 
       .sb-footer-btn:hover {
-        background: var(--surface-2);
+        background: var(--surface-muted);
         color: var(--text-primary);
       }
 
       .sb-footer-btn i {
-        font-size: 19px;
+        font-size: 18px;
+        flex-shrink: 0;
+      }
+
+      /* Filled by renderRailNote() (Task 1.7): Worker version + index health. */
+      .rail-note {
+        margin: 18px 2px 0;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+        color: var(--text-secondary);
+        line-height: 1.45;
+      }
+
+      .rail-note b {
+        display: block;
+        font-weight: 500;
+        color: var(--text-primary);
       }
 
       /* ============ DESKTOP ============ */
@@ -2939,7 +2996,7 @@
         gap: 10px;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 11px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-bottom: 6px;
       }
 
@@ -3081,7 +3138,7 @@
         gap: 12px;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 11px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-bottom: 14px;
         flex-shrink: 0;
       }
@@ -3110,7 +3167,7 @@
         font-size: 10px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-bottom: 8px;
       }
 
@@ -3138,8 +3195,7 @@
       /* The sentence that explains a verdict, in the voice the rest of the
          product uses rather than the tag it is stored as. */
       .view-brain-note {
-        font-family: var(--font-serif);
-        font-style: italic;
+        font-family: var(--font-sans);
         font-size: 13px;
         line-height: 1.5;
         color: var(--text-secondary);
@@ -3148,7 +3204,6 @@
 
       .view-brain-note--warn {
         color: var(--warn);
-        font-style: normal;
         font-family: var(--font-sans);
       }
 
@@ -3174,11 +3229,15 @@
 
       .cite:hover {
         background: var(--accent);
-        color: #fff;
+        /* --on-accent, not a hardcoded white: --accent turns pale in dark
+           theme, and white-on-pale-orange measures about 2:1. */
+        color: var(--on-accent);
       }
 
       .memory-card--cited {
-        box-shadow: 0 0 0 2px var(--accent);
+        box-shadow:
+          0 0 0 2px var(--accent),
+          var(--shadow-card);
         transition: box-shadow 0.3s ease;
       }
 
@@ -3305,6 +3364,69 @@
         flex-shrink: 0;
       }
 
+      /* Related memories: open rows on a hairline, not boxes. This list was
+         previously unstyled entirely (browser defaults). */
+      .view-related-label {
+        font-size: 11px;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 500;
+        margin-bottom: 6px;
+      }
+
+      .related-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .related-item:first-of-type {
+        border-top: none;
+      }
+
+      .related-open {
+        flex: 1;
+        min-width: 0;
+        text-align: left;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-family: var(--font-sans);
+        font-size: 13.5px;
+        color: var(--text-primary);
+        line-height: 1.4;
+      }
+
+      .related-type {
+        display: block;
+        font-size: 11.5px;
+        color: var(--text-secondary);
+        margin-bottom: 2px;
+      }
+
+      .related-unlink {
+        flex-shrink: 0;
+        width: 30px;
+        height: 30px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: none;
+        border-radius: var(--r-button);
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: background-color var(--dur-feedback) var(--ease-standard), color var(--dur-feedback) var(--ease-standard);
+      }
+
+      .related-unlink:hover {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
       /* ── v2.3 daily brief ─────────────────────────────────────────────────
          The home surface. Quiet by construction: when nothing happened it does
          not render, and the welcome hero stands in its place. */
@@ -3345,7 +3467,7 @@
         font-size: 10px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-bottom: 6px;
       }
 
@@ -3451,7 +3573,7 @@
       .src-n {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 11px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         min-width: 22px;
         text-align: right;
       }
@@ -3480,7 +3602,9 @@
       .topic-chip span {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 10px;
-        color: var(--text-tertiary);
+        /* --text-tertiary does not clear AA on --bg-tag with the
+           living-thread palette (only on --bg-card); --text-secondary does. */
+        color: var(--text-secondary);
       }
 
       .topic-chip:hover {
@@ -3495,45 +3619,58 @@
         margin-bottom: 14px;
       }
 
+      /* The neutral outlined chip from the mockup, not a peach/gold pill,
+         used by both the board's decisions panel (board.js) and the older
+         #brief fallback (brief.js) it replaces, so the two read the same. */
       .attn {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        background: none;
-        border: 1px solid var(--border-input);
-        border-radius: 999px;
-        padding: 6px 12px;
-        font-size: 12.5px;
-        color: var(--warn);
+        gap: 8px;
+        height: 32px;
+        background: var(--bg-card);
+        border: 1px solid var(--line);
+        border-radius: var(--r-chip-outline);
+        padding: 0 12px 0 10px;
+        font-size: 13.5px;
+        color: var(--text-primary);
         cursor: pointer;
         font-family: var(--font-sans);
       }
 
-      .attn:hover {
-        background: var(--surface-2);
+      .attn i {
+        color: var(--text-secondary);
+        font-size: 16px;
       }
 
-      /* ── v2.4 home: greeting and one input, composed as a unit ──────────
-         The old layout pinned a hero to the top and the input to the bottom
-         and left a trench between them, which is what made a brain holding
-         two thousand memories feel empty. */
+      .attn:hover {
+        background: var(--surface-muted);
+      }
+
+      /* ── Home: dashboard header + command-bar composer ──────────────────
+         The old layout centred a hero and an input in a trench of empty
+         space. The home screen is a command bar and a board now: the header
+         sits at the top of normal flow, and the board (board.css) follows. */
       .home {
+        padding: 0 0 8px;
+        text-align: left;
+      }
+
+      .home-head {
         display: flex;
         flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        min-height: 58vh;
-        padding: 24px 4px 8px;
-        text-align: center;
+        gap: 6px;
       }
 
       .home-greet {
         display: flex;
         align-items: center;
         gap: 12px;
-        font-family: var(--font-serif);
-        font-size: 30px;
+        font-family: var(--font-display);
+        font-size: 32px;
+        font-weight: 500;
+        letter-spacing: -0.03em;
         color: var(--text-primary);
+        margin: 0;
       }
 
       .home-mark {
@@ -3543,35 +3680,40 @@
       }
 
       .home-sub {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11.5px;
-        color: var(--text-tertiary);
-        margin-top: 10px;
+        font-size: 15px;
+        color: var(--text-secondary);
+        margin: 0;
       }
 
-      .home-input {
-        width: 100%;
-        max-width: 620px;
-        margin-top: 26px;
+      /* The command bar. One row: textarea, the mode guess, the hashtag hint,
+         the send button, a single decision surface rather than a box with a
+         toolbar underneath it. */
+      .composer {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 64px;
+        margin-top: 20px;
+        padding: 10px 10px 10px 20px;
         background: var(--bg-card);
         border: 1px solid var(--border-input);
-        border-radius: 18px;
-        padding: 14px 16px 10px;
-        text-align: left;
-        transition: border-color 0.15s;
+        border-radius: var(--r-panel);
+        box-shadow: var(--shadow-card);
+        transition: border-color var(--dur-feedback) var(--ease-standard);
       }
 
-      .home-input:focus-within {
-        border-color: var(--accent);
+      .composer:focus-within {
+        border-color: var(--text-primary);
       }
 
       .home-field {
-        width: 100%;
+        flex: 1;
+        min-width: 0;
         border: 0;
         background: none;
         resize: none;
         outline: none;
-        font-family: var(--font-serif);
+        font-family: var(--font-sans);
         font-size: 16px;
         line-height: 1.5;
         color: var(--text-primary);
@@ -3579,21 +3721,7 @@
       }
 
       .home-field::placeholder {
-        color: var(--text-tertiary);
-      }
-
-      .home-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 10px;
-      }
-
-      /* Mode pill anchors left; the layer target and send button anchor right,
-         as one cluster. A middle-anchored dropdown in a full-width box reads
-         as floating — this way the wide middle is just the textarea's space. */
-      .home-row #home-mode {
-        margin-right: auto;
+        color: var(--text-secondary);
       }
 
       /* The prediction, always visible and always one tap from being overridden.
@@ -3602,46 +3730,83 @@
         display: inline-flex;
         align-items: center;
         gap: 7px;
+        flex-shrink: 0;
+        height: 32px;
         background: none;
-        border: 1px solid var(--border-input);
-        border-radius: 999px;
-        padding: 5px 12px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11px;
-        color: var(--text-secondary);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--r-chip-outline);
+        padding: 0 10px;
+        font-family: var(--font-sans);
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-primary);
+        white-space: nowrap;
         cursor: pointer;
         visibility: hidden;
+        transition:
+          background-color var(--dur-state) var(--ease-standard),
+          border-color var(--dur-state) var(--ease-standard);
       }
 
       .home-mode:hover {
-        border-color: var(--accent);
-        color: var(--accent-ink);
+        background: var(--surface-muted);
       }
 
       .home-mode-dot {
-        width: 6px;
-        height: 6px;
+        width: 5px;
+        height: 5px;
         border-radius: 50%;
-        background: var(--text-tertiary);
+        background: var(--accent-ink);
+      }
+
+      .home-mode--remember {
+        background: var(--surface-muted);
+        border-color: transparent;
       }
 
       .home-mode--remember .home-mode-dot {
-        background: var(--accent);
+        background: var(--text-primary);
       }
 
-      .home-topics {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 8px;
-        margin-top: 18px;
+      /* Add #tags anywhere, shown inline in the bar at desktop widths. */
+      .hint {
+        flex-shrink: 0;
+        font-size: 13px;
+        color: var(--text-secondary);
+        white-space: nowrap;
       }
 
+      .hint .hashtag,
+      .home-hint-mobile .hashtag {
+        color: var(--accent-ink);
+        font-style: italic;
+      }
+
+      /* #screen-home scoped: #screen-home .send-btn above (line ~1026) is an ID
+         selector and would otherwise win over a plain `.composer .send-btn`,
+         leaving the composer's button transparent instead of the action-orange
+         square the mockup shows. */
+      #screen-home .composer .send-btn {
+        width: 42px;
+        height: 42px;
+        flex-shrink: 0;
+        border-radius: var(--r-button);
+        background: var(--action);
+      }
+
+      #screen-home .composer .send-btn:hover {
+        background: var(--action-hover);
+      }
+
+      #screen-home .composer .send-btn i {
+        /* --on-accent, not a hardcoded white: --action goes pale in dark
+           theme, and white-on-pale-orange measures about 2:1. */
+        color: var(--on-accent);
+      }
+
+      /* The receipt from the last capture, one line under the bar. */
       .home-more {
-        width: 100%;
-        max-width: 620px;
-        margin-top: 14px;
-        text-align: left;
+        margin-top: 10px;
       }
 
       /* With nothing to show this element is zero-height, and its margin was
@@ -3652,28 +3817,88 @@
         margin-top: 0;
       }
 
-      /* On the home screen the old bottom bars are redundant: the input above
-         is the input, and a tag filter with nothing to filter is furniture. */
+      /* On the home screen the old bottom bars are redundant: the composer
+         above is the input, and a tag filter with nothing to filter is
+         furniture. The suggestions row moved inside #home (the .quick group
+         below), so it is not in this list. */
       #screen-home.home-visible .input-bar,
-      #screen-home.home-visible .suggestions-row,
       #screen-home.home-visible .filter-bar {
         display: none;
       }
 
-      /* The hashtag lesson, inherited from the deleted Remember tab — which was
-         the only place the product ever taught it. */
-      .home-hint {
+      /* The hashtag lesson repeated below the bar for widths where .hint
+         (inline in the composer) is hidden. Hidden by default; the 900px
+         breakpoint below swaps the two. */
+      .home-hint-mobile {
+        display: none;
         font-size: 12.5px;
-        color: var(--text-tertiary);
-        text-align: center;
-        margin-top: 10px;
+        color: var(--text-secondary);
+        margin: 8px 0 0;
+      }
+
+      @media (max-width: 899px) {
+        .hint {
+          display: none;
+        }
+        .home-hint-mobile {
+          display: block;
+        }
       }
 
       .home-layer-hint {
         font-size: 12px;
-        color: var(--text-tertiary);
-        text-align: center;
+        color: var(--text-secondary);
         margin-top: 8px;
+      }
+
+      /* Topic chips and suggestions share one row: "Ask about" plus what the
+         brain has actually been fed, then a divider, then the recall prompts
+         that used to appear only once a conversation had started. */
+      .quick {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .quick-label {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-right: 2px;
+      }
+
+      .home-topics {
+        display: contents;
+      }
+
+      .quick-sep {
+        width: 1px;
+        height: 20px;
+        background: var(--line);
+        margin: 0 2px;
+      }
+
+      .quick .suggestions-row {
+        flex: 1 0 100%;
+        padding: 0;
+        margin-top: 2px;
+      }
+
+      @media (max-width: 767px) {
+        .quick-sep {
+          display: none;
+        }
+        .composer {
+          flex-wrap: wrap;
+          padding: 14px 10px 10px 16px;
+        }
+        .home-field {
+          flex: 1 0 100%;
+        }
+        .composer .send-btn {
+          margin-left: auto;
+        }
       }
 
       /* First-run coach marks (js/coach.js). An inline callout under the
@@ -3683,9 +3908,9 @@
       .coach-mark {
         margin-top: 10px;
         padding: 12px 14px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: var(--r-card);
+        background: var(--surface-muted);
       }
 
       .coach-mark-title {
@@ -3716,11 +3941,6 @@
         color: var(--text-secondary);
         text-decoration: underline;
         cursor: pointer;
-      }
-
-      .home-hint .hashtag {
-        color: var(--accent-ink);
-        font-style: italic;
       }
 
       @media (min-width: 768px) {
@@ -3770,7 +3990,7 @@
 
         .auth-card {
           background: var(--bg);
-          border-radius: 22px;
+          border-radius: var(--r-panel);
           padding: 44px 38px;
           width: 420px;
           box-shadow: var(--shadow-float);
@@ -3821,7 +4041,7 @@
         .edit-inner,
         .menu-inner,
         .view-inner {
-          border-radius: 18px;
+          border-radius: var(--r-panel);
           max-width: 420px;
           transform: translateY(16px) scale(0.98);
           /* Bottom-sheet shadow points upward; on centered modals it reads as a
@@ -3871,7 +4091,10 @@
       }
 
       .explode-out {
-        animation: explode-out 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
+        /* Was a hand-picked overshoot curve; --ease-exit is the system's
+           token for exits and collapses (no overshoot in the timing
+           function itself, per DESIGN.md). */
+        animation: explode-out 0.4s var(--ease-exit) forwards !important;
         pointer-events: none;
       }
 
@@ -3948,6 +4171,68 @@
          A roster that reads like a table without being one: hairline
          rows in a single rounded container, an aligned header, and
          quiet icon actions that only speak on hover. */
+
+      /* Present to a screen reader, invisible on screen. Used for the roster
+         table's <caption> and the token-ready status line: content that
+         orients or announces, with nothing to draw. */
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .team-page-bar h2 {
+        margin: 0;
+        font-family: var(--font-display);
+        font-size: clamp(24px, 3vw, 34px);
+        font-weight: 500;
+        letter-spacing: -0.03em;
+      }
+
+      .team-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px 28px;
+      }
+
+      .team-panels {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .team-panel { padding: 20px 22px 22px; }
+      .team-panel > h2 { margin-bottom: 14px; }
+      .team-open-row,
+      .team-actions-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .team-open-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+      .team-open-row i { color: var(--text-secondary); }
+      .team-open-row > span { color: var(--text-secondary); font-size: 13px; }
+      .team-actions-row code { font-size: 12px; overflow-wrap: anywhere; }
+      .team-add-fields { flex-wrap: wrap; }
+      #team-add-role { flex: 0 1 auto; }
+      .team-activity-actions { margin-top: 10px; }
+      .activity-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+      /* Selected state, exactly .seg's (board.css): charcoal fill, white text.
+         Each filter is a standalone .btn-secondary rather than a segment
+         inside one shared track, so its own border is pulled to match rather
+         than left as a lighter ring around the darker fill. */
+      .activity-filters button[aria-checked='true'] {
+        background: var(--text-primary);
+        border-color: var(--text-primary);
+        color: var(--on-accent);
+      }
       /* Team name editor. Matches the org-default pill above the roster: same
          border, radius and surface, so the two settings rows read as a pair. */
       .team-name-row {
@@ -3955,13 +4240,15 @@
         align-items: center;
         gap: 10px;
         padding: 10px 14px;
-        border: 0.5px solid var(--border-input);
-        border-radius: 13px;
+        border: 1px solid var(--border-input);
+        border-radius: 14px;
         background: var(--surface-2);
       }
 
       .team-name-icon {
-        color: var(--text-tertiary);
+        /* --text-tertiary does not clear AA on the row's --surface-2
+           background with the living-thread palette; --text-secondary does. */
+        color: var(--text-secondary);
         font-size: 13px;
         flex-shrink: 0;
       }
@@ -3976,14 +4263,22 @@
       }
 
       .team-table {
-        border: 0.5px solid var(--border-input);
-        border-radius: 13px;
+        /* Panel vocabulary, not the settings-row one: 1px var(--line) and the
+           board's 14px radius, no --surface-2 box around it. */
+        border: 1px solid var(--line);
+        border-radius: 14px;
         overflow: hidden;
         background: var(--surface);
       }
 
-      .team-head,
-      .team-row {
+      /* The two single-setting boxes (team name, your capture default,
+         renderTeamMember) and the member's own read-only roster
+         (teamRosterRow) reuse .team-table/.team-row as a plain grid row,
+         not the real <table> the ADMIN roster below renders (renderTeam),
+         which gets its own tag-scoped rules further down. Scoped to `div`
+         so it cannot also match the roster's <tr class="team-row">: a grid
+         display on a table row breaks the table it sits in. */
+      div.team-row {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto auto;
         gap: 16px;
@@ -3991,22 +4286,44 @@
         padding: 10px 14px;
       }
 
-      .team-head {
+      div.team-row + div.team-row {
+        border-top: 1px solid var(--border-input);
+      }
+
+      .team-row.suspended .team-name {
+        color: var(--text-secondary);
+      }
+
+      /* The admin member roster: a real <table> (renderTeam/teamMemberRow,
+         js/team.js), not a div roster, so a screen reader gets row/column
+         semantics instead of a flat wall of spans. */
+      table.team-table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+
+      table.team-table th {
         font-size: 10.5px;
         font-weight: 500;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: var(--text-tertiary);
+        /* --text-tertiary does not clear AA on --surface-2 with the
+           living-thread palette (only on --bg-card); --text-secondary does. */
+        color: var(--text-secondary);
         background: var(--surface-2);
-        border-bottom: 0.5px solid var(--border-input);
+        text-align: left;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border-input);
       }
 
-      .team-row + .team-row {
-        border-top: 0.5px solid var(--border-input);
+      table.team-table td {
+        padding: 10px 14px;
+        vertical-align: middle;
+        border-top: 1px solid var(--border-input);
       }
 
-      .team-row.suspended .team-name {
-        color: var(--text-tertiary);
+      table.team-table tbody tr:first-child td {
+        border-top: 0;
       }
 
       .team-name {
@@ -4019,7 +4336,7 @@
 
       .team-sub {
         font-size: 11.5px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-top: 2px;
       }
 
@@ -4035,7 +4352,7 @@
         padding: 6px;
         border-radius: 8px;
         cursor: pointer;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         font-size: 15px;
         line-height: 1;
         display: inline-flex;
@@ -4068,7 +4385,7 @@
         font-weight: 500;
         color: var(--text-secondary);
         background: var(--surface);
-        border: 0.5px solid var(--border-input);
+        border: 1px solid var(--border-input);
         border-radius: 9px;
         padding: 5px 26px 5px 11px;
         cursor: pointer;
@@ -4076,7 +4393,7 @@
       }
 
       .team-select-wrap select:hover {
-        border-color: var(--text-tertiary);
+        border-color: var(--text-secondary);
       }
 
       .team-select-wrap select:focus {
@@ -4088,7 +4405,7 @@
         position: absolute;
         right: 9px;
         font-size: 12px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         pointer-events: none;
         transition: color 0.15s;
       }
@@ -4134,7 +4451,7 @@
         align-items: center;
         border-radius: var(--radius-pill);
         background: var(--surface-3);
-        border: 0.5px solid var(--border-input);
+        border: 1px solid var(--border-input);
         /* The input is on top; without this the track would eat its own clicks
            in browsers that hit-test the sibling first. */
         pointer-events: none;
@@ -4146,7 +4463,7 @@
         height: 17px;
         border-radius: 50%;
         background: var(--switch-knob);
-        border: 0.5px solid var(--border-input);
+        border: 1px solid var(--border-input);
         box-shadow: var(--shadow-card);
         transition: transform 0.18s var(--ease);
       }
@@ -4194,7 +4511,7 @@
         align-items: center;
         gap: 7px;
         font-size: 11.5px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         white-space: nowrap;
       }
 
@@ -4250,7 +4567,7 @@
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-bottom: 8px;
       }
 
@@ -4264,7 +4581,7 @@
          footnote on the history, not another entry in it. */
       .view-timeline-note {
         font-size: 12px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         padding: 6px 0 0;
       }
 
@@ -4312,10 +4629,10 @@
         }
 
         /* .filter-field carries no padding of its own — it is a bare input
-           inside a padded .filter-inner pill, so the pill looks like the control
-           while the thing that actually takes the tap is one line tall (17px).
-           Filling the pill costs nothing visually and makes the hit area match
-           what the eye already believes it is aiming at. */
+           inside the 36px .filter-inner rectangle, so the rectangle looks like
+           the control while the thing that actually takes the tap is one line
+           tall (17px). Filling it costs nothing visually and makes the hit
+           area match what the eye already believes it is aiming at. */
         .filter-field {
           min-height: 32px;
         }
@@ -4330,25 +4647,18 @@
           min-height: 32px;
         }
 
-        /* The roster is a three-column grid — member, capture policy, actions —
-           and its two `auto` tracks demand more width than a phone has, so they
-           were laid over the first column instead of wrapping: a member's email
-           rendered on top of the "Captures:" label, and the role chip on top of
-           it again. Stack it. The column headings go with it, because they name
-           columns that no longer exist once the row is vertical. */
-        .team-head {
-          display: none;
-        }
-
-        .team-row {
+        /* The two single-setting boxes (team name, your capture default) and
+           the member's own read-only roster are still a plain grid row at
+           this width — a three-column grid demands more width than a phone
+           has, so they were laid over the first column instead of wrapping.
+           Stack it. The admin roster's real <table> gets its own stacking
+           rules below (max-width: 700px): it needs data-label, not just a
+           narrower grid. */
+        div.team-row {
           grid-template-columns: minmax(0, 1fr);
           gap: 10px;
           align-items: flex-start;
           padding: 14px;
-        }
-
-        .team-capture {
-          justify-content: flex-start;
         }
 
         .team-actions {
@@ -4370,6 +4680,59 @@
           flex: 1 0 100%;
           max-width: none;
           order: 2;
+        }
+      }
+
+      /* The admin roster table (renderTeam/teamMemberRow, js/team.js): at
+         phone width four columns side by side no longer fit, so each row
+         stacks and each cell shows its own header through a data-label
+         attribute instead (the site's comparison-table technique). <thead>
+         stays in the DOM and in the accessibility tree (visually hidden, not
+         display:none), so a screen reader still gets the real column
+         headers; only sighted users see them replaced by the per-cell label. */
+      @media (max-width: 700px) {
+        table.team-table thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+          border: 0;
+        }
+
+        table.team-table,
+        table.team-table tbody,
+        table.team-table tr,
+        table.team-table td {
+          display: block;
+          width: 100%;
+        }
+
+        table.team-table tr.team-row {
+          padding: 14px;
+        }
+
+        table.team-table tr.team-row + tr.team-row {
+          border-top: 1px solid var(--border-input);
+        }
+
+        table.team-table td {
+          padding: 6px 0;
+          border-top: 0;
+        }
+
+        table.team-table td[data-label]::before {
+          content: attr(data-label);
+          display: block;
+          font-size: 10.5px;
+          font-weight: 500;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--text-secondary);
+          margin-bottom: 4px;
         }
       }
 
@@ -4399,7 +4762,7 @@
 
       .activity-when {
         font-size: 11.5px;
-        color: var(--text-tertiary);
+        color: var(--text-secondary);
         margin-top: 2px;
       }
 
@@ -4417,7 +4780,7 @@
         flex-wrap: wrap;
         align-items: center;
         padding: 10px 18px;
-        border-bottom: 0.5px solid var(--border);
+        border-bottom: 1px solid var(--line);
       }
 
       /* Two kinds of button share this bar and they are not equivalent.
@@ -4497,22 +4860,19 @@
         outline-offset: 2px;
       }
 
-      /* In select mode the tick takes over the gutter the row number sits in.
-         Two leading markers on one row is clutter, and the number is the less
-         useful of the two while you are picking rows. Putting the tick in the
-         gutter rather than in the flow also means the content column does not
-         move when select mode turns on — the list does not reflow under your
-         thumb. */
-      #recent-list .memory-card--selecting::before {
-        content: none;
+      /* In select mode the tick takes a reserved gutter on the card's own
+         padding box rather than pushing the title down a line. */
+      #recent-list .memory-card--selecting {
+        position: relative;
+        padding-left: 46px;
       }
 
       #recent-list .memory-card--selecting > .card-select {
         position: absolute;
-        left: 1px;
+        left: 14px;
         /* Optically centred on the title's first line rather than the card:
            a tall card would otherwise float its tick somewhere near the tags. */
-        top: 8px;
+        top: 14px;
         margin: 0;
         justify-content: center;
       }
@@ -4523,4 +4883,16 @@
       .memory-card--selected {
         outline: 1px solid var(--accent);
         outline-offset: -1px;
+      }
+
+      /* ============ FOCUS ============
+         One visible ring for every control, system-wide: 3px --accent-ink
+         offset 4px. Last in the file so it wins the source-order tie against
+         every earlier `outline: none` reset paired with a focus-time border
+         or box-shadow substitute. Those stay as an extra cue, this is the
+         one that is always there. */
+      :is(a, button, input, select, textarea, [tabindex]):focus-visible {
+        outline: 3px solid var(--accent-ink);
+        outline-offset: 4px;
+        border-radius: var(--r-button);
       }

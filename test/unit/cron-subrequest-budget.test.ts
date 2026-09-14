@@ -1,6 +1,8 @@
 /**
  * All four nightly jobs are fired from a single scheduled() invocation (src/index.ts),
- * so they share ONE subrequest budget — 50 on the free plan. Each of them awaits
+ * so they share ONE D1 cost budget — a self-imposed 50 statements per invocation, not
+ * a platform ceiling (the free plan actually allows 1,000 D1/KV/Vectorize subrequests
+ * per invocation; see NIGHTLY_D1_STATEMENT_BUDGET below). Each of them awaits
  * initializeDatabase, so before it was memoised the same thirteen DDL statements were paid
  * for once per job, and the pass that runs last could find the budget already spent.
  *
@@ -26,13 +28,38 @@ import { INSIGHT_ACCRUAL_CRON, INSIGHT_TEAM_WEEKLY_CRON, INSIGHT_WEEKLY_CRON } f
 import { CONFIG_KEY } from "../../src/config";
 import { ACCRUAL_CURSOR_KEY } from "../../src/insight/candidates";
 
-const FREE_PLAN_SUBREQUESTS = 50;
+// This is a self-imposed D1 cost budget, NOT the platform's subrequest
+// ceiling. Cloudflare's actual free-plan subrequest limits per invocation are:
+//   - 50 external subrequests (fetch() to the internet)
+//   - 1,000 subrequests to Cloudflare services (D1, KV, Vectorize)
+// https://developers.cloudflare.com/workers/platform/limits/#subrequests
+// Fifty D1 statements is nowhere near that 1,000-statement ceiling; it is kept
+// tight anyway because D1's OWN free tier is a daily quota (5M rows read,
+// 100k written per day) and the free plan's 10 ms CPU-per-invocation limit is
+// unaffected by any of this — a cheap D1 statement count is still the
+// cheapest proxy this suite has for "did a job get needlessly chatty."
+const NIGHTLY_D1_STATEMENT_BUDGET = 50;
+// The weekly dangling-edge sweep (GRAPH_SWEEP_WEEKDAY_UTC in src/graph/pass.ts)
+// adds exactly one DELETE on top of an ordinary night. That is still nowhere
+// near the platform's real 1,000-subrequest ceiling, so the honest worst-case
+// budget for a sweep night is this, not a reason to shrink anything.
+const SWEEP_NIGHT_D1_STATEMENT_BUDGET = NIGHTLY_D1_STATEMENT_BUDGET + 1;
+// The platform ceiling this suite's one external caller — the integration
+// sync's feed fetch — actually has to respect (see "the integration schedule"
+// tests below).
+const FREE_PLAN_EXTERNAL_SUBREQUESTS = 50;
 const MAINTENANCE_CRON = "0 1 * * *";
 
 // D1 bills EXECUTIONS: run/first/all/exec spend one each, and a batch() spends one however
 // many statements it carries. Counting prepares instead would price the batched writes in
 // the compression and staleness passes as if they were still one round trip per row —
 // which is exactly the cost this budget is meant to track.
+//
+// KV is billed into the SAME `statements` ledger, not a separate counter: a
+// KVNamespace.get/put is its own subrequest against the same free-plan
+// ceiling D1 competes for (the night-summary recorder's one OAUTH_KV.put per
+// maintenance invocation is the case this exists to catch), so a budget test
+// that only watched D1 would go blind to it growing.
 function countingEnv(db: D1Mock, overrides: Partial<Env> = {}) {
   const statements: string[] = [];
   const bill = (sql: string) => statements.push(sql.replace(/\s+/g, " ").trim());
@@ -49,7 +76,15 @@ function countingEnv(db: D1Mock, overrides: Partial<Env> = {}) {
     exec(sql: string) { bill(sql); return db.exec(sql); },
     batch: (stmts: any[]) => { bill("BATCH"); return db.batch(stmts.map((s: any) => s.__inner ?? s)); },
   } as unknown as D1Database;
-  return { env: makeTestEnv(db, { DB, VECTORIZE: makeVectorizeMock(), ...overrides }), statements, prepared };
+
+  const baseKV = overrides.OAUTH_KV ?? makeTestEnv(db).OAUTH_KV;
+  const OAUTH_KV = {
+    ...baseKV,
+    get: (...a: Parameters<KVNamespace["get"]>) => { bill(`KV GET ${a[0]}`); return (baseKV.get as any)(...a); },
+    put: (...a: Parameters<KVNamespace["put"]>) => { bill(`KV PUT ${a[0]}`); return (baseKV.put as any)(...a); },
+  } as unknown as KVNamespace;
+
+  return { env: makeTestEnv(db, { DB, VECTORIZE: makeVectorizeMock(), ...overrides, OAUTH_KV }), statements, prepared };
 }
 
 // Each tag gets more than the ten eligible entries a digest needs, so nightly compression
@@ -129,6 +164,22 @@ function hourlyClock(): (run: number) => void {
   return (run: number) => spy.mockReturnValue(base + run * 3600_000);
 }
 
+// Pins Date.now() to a specific instant. Unlike hourlyClock's base-plus-offset
+// (which floats with whatever day the suite happens to run on), this fixes the
+// UTC weekday outright — needed here because runGraphPass's dangling-edge
+// sweep (GRAPH_SWEEP_WEEKDAY_UTC in src/graph/pass.ts) only fires on Sundays,
+// and a test that measures the nightly budget without controlling the weekday
+// would pass six days out of seven and fail every Sunday.
+function clockAt(iso: string): void {
+  vi.spyOn(Date, "now").mockReturnValue(new Date(iso).getTime());
+}
+
+// 2024-01-14 is a Sunday (GRAPH_SWEEP_WEEKDAY_UTC = 0); 2024-01-15 is an
+// ordinary Monday. Both are recent enough that STALENESS_AGE_MS lookback and
+// other Date.now()-derived fixtures in this file still land in the past.
+const SWEEP_NIGHT_UTC = "2024-01-14T02:00:00Z";
+const ORDINARY_NIGHT_UTC = "2024-01-15T02:00:00Z";
+
 // `cron` selects which invocation is being measured — the two schedules are two
 // separate budgets, so a run has to name the one it means (#290).
 async function runCron(env: any, cron = MAINTENANCE_CRON) {
@@ -158,7 +209,7 @@ describe("nightly cron D1 subrequest cost", () => {
     await runCron(env);
 
     // The signature statement of initializeDatabase, once for the whole cron.
-    expect(statements.filter(s => s.startsWith("SELECT type AS kind, name FROM sqlite_master"))).toHaveLength(1);
+    expect(statements.filter(s => s.startsWith("SELECT type AS kind, name, sql AS definition FROM sqlite_master"))).toHaveLength(1);
     // #282: the schema is already there, and the whole point is that finding that out no
     // longer costs a CREATE and an ALTER per object.
     expect(statements.filter(s => /^(CREATE|ALTER)\b/.test(s))).toEqual([]);
@@ -168,7 +219,13 @@ describe("nightly cron D1 subrequest cost", () => {
   // candidate, and in situ it runs concurrently with the compression job's writes, so its
   // guards lose and it pays for re-reads and retries on top. Batched, the whole pass is a
   // candidate query and one write round trip.
-  it("keeps a nightly run with every job busy inside the budget", async () => {
+  it("keeps a nightly run with every job busy inside the budget, sweep night included", async () => {
+    // Pinned to the sweep night (see clockAt above): the worst case for this
+    // budget is every job busy AND the weekly dangling-edge sweep running, so
+    // that is the case this ceiling has to hold under — an unpinned clock
+    // would only exercise it one day in seven and pass the other six
+    // regardless of whether the ceiling actually covers it.
+    clockAt(SWEEP_NIGHT_UTC);
     const db = makeTestDb();
     seedCompressibleTags(db, 7);
     const { env, statements } = countingEnv(db);
@@ -177,10 +234,19 @@ describe("nightly cron D1 subrequest cost", () => {
 
     expect(db.entries.filter(e => JSON.parse(e.tags).includes("synthesized")).length).toBeGreaterThan(0);
     expect(db.entries.filter(e => e.staleness_checked_at != null)).toHaveLength(25);
-    expect(statements.length).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS);
+    expect(statements.length).toBeLessThanOrEqual(SWEEP_NIGHT_D1_STATEMENT_BUDGET);
   });
 
-  it("keeps a whole nightly run inside the free-plan subrequest budget", async () => {
+  // The exact-pin tests below fix the clock rather than trusting the real
+  // Date.now(), because runGraphPass's dangling-edge sweep only fires on
+  // Sundays (GRAPH_SWEEP_WEEKDAY_UTC in src/graph/pass.ts). Six days a week
+  // the old, clock-free version of this test measured a night WITHOUT the
+  // sweep and passed; every Sunday it measured a night WITH it and failed.
+  // Pinning the clock makes both nights explicit and both pinned numbers
+  // reproducible regardless of what day the suite runs on.
+
+  it("keeps an ordinary night (no dangling-edge sweep) inside the free-plan D1 budget", async () => {
+    clockAt(ORDINARY_NIGHT_UTC);
     const db = makeTestDb();
     const old = Date.now() - STALENESS_AGE_MS - 86400000;
     for (let i = 0; i < 25; i++) {
@@ -193,7 +259,33 @@ describe("nightly cron D1 subrequest cost", () => {
 
     await runCron(env);
 
-    expect(statements.length).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS);
+    expect(statements.length).toBeLessThanOrEqual(NIGHTLY_D1_STATEMENT_BUDGET);
+    // Exact pin, not just the ceiling: 11 D1 statements (unchanged from before
+    // the night-summary recorder) plus the ONE OAUTH_KV.put it adds per
+    // maintenance invocation. If this number moves, say why in the same
+    // commit, see the scope-checker test's convention for this pattern.
+    expect(statements.length).toBe(12);
+  });
+
+  it("keeps a sweep night (the weekly dangling-edge sweep runs) inside the free-plan D1 budget", async () => {
+    clockAt(SWEEP_NIGHT_UTC);
+    const db = makeTestDb();
+    const old = Date.now() - STALENESS_AGE_MS - 86400000;
+    for (let i = 0; i < 25; i++) {
+      db.entries.push({
+        id: `job-${i}`, content: `Person ${i} works at Company ${i}`, tags: "[]",
+        source: "api", created_at: old + i, updated_at: old + i, vector_ids: "[]",
+      });
+    }
+    const { env, statements } = countingEnv(db);
+
+    await runCron(env);
+
+    expect(statements.length).toBeLessThanOrEqual(NIGHTLY_D1_STATEMENT_BUDGET);
+    // Exact pin: the same 12 as an ordinary night, plus the ONE dangling-edge
+    // DELETE the sweep adds once a week. If this number moves, say why in the
+    // same commit, see the scope-checker test's convention for this pattern.
+    expect(statements.length).toBe(13);
   });
 
   it("still leaves the staleness pass room to run after the other jobs", async () => {
@@ -288,13 +380,17 @@ describe("nightly cron D1 subrequest cost", () => {
       const db = makeTestDb();
       seedCompressibleTags(db, 7); // a big brain must not make the sync cost more
       const kv = makeMemoryKV();
-      await connectCalendar(kv, 120);
+      const fetchMock = await connectCalendar(kv, 120);
       const { env, statements } = countingEnv(db, { OAUTH_KV: kv });
 
       await runCron(env, INTEGRATION_SYNC_CRON);
 
       expect(db.entries.filter(e => e.source === "calendar-google")).toHaveLength(SYNC_EVENT_BATCH);
-      expect(statements.length).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS);
+      expect(statements.length).toBeLessThanOrEqual(NIGHTLY_D1_STATEMENT_BUDGET);
+      // The integration sync is the only caller in this codebase that makes an
+      // actual fetch() — the one thing the platform's 50-per-invocation
+      // external-subrequest ceiling governs. One feed fetch, nowhere near it.
+      expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(FREE_PLAN_EXTERNAL_SUBREQUESTS);
     });
 
     // The multiplier the rotation exists to remove: syncing every connected
@@ -310,7 +406,7 @@ describe("nightly cron D1 subrequest cost", () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(db.entries.filter(e => e.source.startsWith("calendar-"))).toHaveLength(SYNC_EVENT_BATCH);
-      expect(statements.length).toBeLessThanOrEqual(FREE_PLAN_SUBREQUESTS);
+      expect(statements.length).toBeLessThanOrEqual(NIGHTLY_D1_STATEMENT_BUDGET);
     });
 
     it("rotates to the least recently attempted provider on the next run", async () => {

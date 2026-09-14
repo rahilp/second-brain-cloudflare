@@ -10,7 +10,7 @@ export type ShareTarget = "personal" | "company";
 export type ShareResult =
   | { status: "shared"; workspaceId: string; vectorIds: string[] }
   | { status: "unshared"; workspaceId: string; vectorIds: string[] }
-  | { status: "no_change" }
+  | { status: "no_change"; workspaceId: string; vectorIds: string[] }
   | { status: "not_found" }
   | { status: "forbidden" };
 
@@ -27,18 +27,20 @@ export async function moveEntry(
   ).bind(id, ...scope.bindings).first<{ id: string; workspace_id: string; actor_id: string; vector_ids: string }>();
   if (!row) return { status: "not_found" };
 
+  // Parse before moving the row so malformed metadata cannot fail after commit.
+  let vectorIds: string[] = [];
+  try { vectorIds = JSON.parse(row.vector_ids ?? "[]") as string[]; } catch { vectorIds = []; }
+
   // Admins un-share another person's entry into their own personal workspace.
   const targetWorkspaceId = scopeWrite(identity, target, target === "company" ? team : undefined);
-  if (row.workspace_id === targetWorkspaceId) return { status: "no_change" };
+  // Carries vectorIds/workspaceId like the moved branches do, so a caller can
+  // repair a stale Vectorize stamp on an already-moved row by re-running.
+  if (row.workspace_id === targetWorkspaceId) return { status: "no_change", workspaceId: targetWorkspaceId, vectorIds };
 
   if (isCompanyWorkspace(identity, row.workspace_id) && target === "personal") {
     const isActor = row.actor_id === identity.userId;
     if (!isActor && identity.role !== "admin") return { status: "forbidden" };
   }
-
-  // Parse before moving the row so malformed metadata cannot fail after commit.
-  let vectorIds: string[] = [];
-  try { vectorIds = JSON.parse(row.vector_ids ?? "[]") as string[]; } catch { vectorIds = []; }
 
   await env.DB.batch([
     env.DB.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(targetWorkspaceId, id),
@@ -54,19 +56,28 @@ export async function moveEntry(
   };
 }
 
-/** Best-effort metadata update; SQL remains the correctness boundary. */
-export async function restampVectorWorkspace(env: Env, vectorIds: string[], workspaceId: string): Promise<void> {
-  try {
-    for (let i = 0; i < vectorIds.length; i += VECTORIZE_GET_BY_IDS_BATCH) {
-      const batch = vectorIds.slice(i, i + VECTORIZE_GET_BY_IDS_BATCH);
-      if (!batch.length) continue;
+/**
+ * Best-effort metadata update; SQL remains the correctness boundary.
+ * Never throws (per-chunk catch, not one catch around the whole loop, so one
+ * bad chunk doesn't abort the rest) — /share's ctx.waitUntil path depends on
+ * that. Returns whether every chunk actually succeeded, for callers (the
+ * #347 move route) that need to know rather than just fire-and-forget.
+ */
+export async function restampVectorWorkspace(env: Env, vectorIds: string[], workspaceId: string): Promise<{ ok: boolean }> {
+  let ok = true;
+  for (let i = 0; i < vectorIds.length; i += VECTORIZE_GET_BY_IDS_BATCH) {
+    const batch = vectorIds.slice(i, i + VECTORIZE_GET_BY_IDS_BATCH);
+    if (!batch.length) continue;
+    try {
       const vectors = await env.VECTORIZE.getByIds(batch);
       if (!vectors.length) continue;
       await env.VECTORIZE.upsert(
         vectors.map(v => ({ ...v, metadata: { ...v.metadata, workspace_id: workspaceId } })),
       );
+    } catch (e) {
+      console.error("Vectorize workspace re-stamp failed (non-fatal):", e);
+      ok = false;
     }
-  } catch (e) {
-    console.error("Vectorize workspace re-stamp failed (non-fatal):", e);
   }
+  return { ok };
 }

@@ -40,6 +40,10 @@ pub const MAINTAINERS: &[Person] = &[
         name: "Robert Brandin",
         github: Some("tumes"),
     },
+    Person {
+        name: "oudouusa",
+        github: Some("oudouusa"),
+    },
 ];
 
 fn line(person: &Person) -> String {

@@ -18,7 +18,11 @@ import {
   COMPRESSION_MIN_AGE_MS,
 } from "../../src/compression/eligibility";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
+import { makeMemoryKV, makeTestEnv } from "../helpers/make-env";
 import { tagLikePattern, TAG_LIKE_ESCAPE } from "../../src/memory/tag-sql";
+import { CAPSULE_SLOT_TAG_PREFIX, CAPSULE_TAG_PREFIX } from "../../src/tags/system";
+import { compressTag } from "../../src/compression/digest";
+import { initializeDatabase, resetDatabaseInit } from "../../src/db/init";
 
 let sqlite: SqliteD1 | null = null;
 
@@ -54,7 +58,15 @@ describe("digest-candidate query", () => {
       for (let i = 0; i < 11; i++) {
         s.seed({
           id: `e-${i}`, content: `memory ${i}`, createdAt: 1,
-          tags: ["work", "kind:semantic", "status:canonical", "volatility:state", "stale:as-of"],
+          tags: [
+            "work",
+            "kind:semantic",
+            "status:canonical",
+            "volatility:state",
+            "stale:as-of",
+            `${CAPSULE_TAG_PREFIX}core`,
+            `${CAPSULE_SLOT_TAG_PREFIX}identity`,
+          ],
         });
       }
     });
@@ -89,7 +101,14 @@ describe("digest-candidate query", () => {
   // row-level filters are `entries.tags NOT LIKE '%"synthesized"%'`, which already ignores
   // case, so such a row is dropped whole before any tag value is considered.
   it("reserves the namespace whatever its case", async () => {
-    const reserved = ["Status:Active", "Kind:Personal", "Volatility:High", "Stale:As-Of"];
+    const reserved = [
+      "Status:Active",
+      "Kind:Personal",
+      "Volatility:High",
+      "Stale:As-Of",
+      "Capsule:Core",
+      "Capsule-Slot:Identity",
+    ];
     const tags = await candidateTags(s => {
       for (let i = 0; i < 11; i++) {
         s.seed({ id: `e-${i}`, content: "m", createdAt: 1, tags: ["holiday-plans", ...reserved] });
@@ -103,11 +122,16 @@ describe("digest-candidate query", () => {
   it("reserves the namespace rather than the bare word", async () => {
     const tags = await candidateTags(s => {
       for (let i = 0; i < 11; i++) {
-        s.seed({ id: `e-${i}`, content: "m", createdAt: 1, tags: ["volatility", "stale", "status", "kind"] });
+        s.seed({
+          id: `e-${i}`,
+          content: "m",
+          createdAt: 1,
+          tags: ["volatility", "stale", "status", "kind", "capsule", "capsule-slot"],
+        });
       }
     });
 
-    expect(tags.sort()).toEqual(["kind", "stale", "status", "volatility"]);
+    expect(tags.sort()).toEqual(["capsule", "capsule-slot", "kind", "stale", "status", "volatility"]);
   });
 });
 
@@ -151,5 +175,49 @@ describe("compressTag source selector", () => {
   it("still matches the ordinary tag it is given", async () => {
     expect(await selected("q3-planning")).toHaveLength(9);
     expect(await selected("q3_planning")).toHaveLength(11);
+  });
+});
+
+/**
+ * A Prompt Capsule definition is a curated, canonical entry that must stay
+ * verbatim: rolling it up appends a digest marker to its content and changes the
+ * published prompt text. Run compressTag for real so the exclusion is tested in
+ * the membership query itself rather than in a retyped copy of it.
+ */
+describe("compressTag membership", () => {
+  it("never rolls up a capsule-tagged row, even on the topic being compressed", async () => {
+    resetDatabaseInit();
+    sqlite = makeSqliteD1();
+    const env = makeTestEnv(undefined, {
+      DB: sqlite.db as unknown as D1Database,
+      OAUTH_KV: makeMemoryKV(),
+    });
+    await initializeDatabase(env);
+    for (let i = 0; i < 12; i++) sqlite.seed({ id: `work-${i}`, content: `memory ${i}`, createdAt: 1 + i, tags: ["work"] });
+    sqlite.seed({
+      id: "capsule-definition",
+      content: "Definition",
+      createdAt: 1,
+      tags: ["work", `${CAPSULE_TAG_PREFIX}core`, `${CAPSULE_SLOT_TAG_PREFIX}identity`, "status:canonical"],
+    });
+    sqlite.seed({
+      id: "malformed-slot-only-definition",
+      content: "Incomplete definition",
+      createdAt: 1,
+      tags: ["work", `${CAPSULE_SLOT_TAG_PREFIX}preferences`, "status:canonical"],
+    });
+
+    const result = await compressTag("work", env, { waitUntil: () => {} } as unknown as ExecutionContext);
+
+    expect(result.synthesizedId).toBeTruthy();
+    expect(result.entriesUsed).toBe(12);
+    const rows = sqlite.rows() as { id: string; tags: string; content: string }[];
+    const definition = rows.find(r => r.id === "capsule-definition")!;
+    expect(JSON.parse(definition.tags)).not.toContain("rolled-up");
+    expect(definition.content).toBe("Definition");
+    const slotOnly = rows.find(r => r.id === "malformed-slot-only-definition")!;
+    expect(JSON.parse(slotOnly.tags)).not.toContain("rolled-up");
+    expect(slotOnly.content).toBe("Incomplete definition");
+    expect(rows.filter(r => r.id.startsWith("work-") && JSON.parse(r.tags).includes("rolled-up"))).toHaveLength(12);
   });
 });

@@ -59,7 +59,10 @@ function normaliseField(field: string, isDayOfWeek = false): string {
  * in — calling two schedules distinct is what lets a collision ship, and it is
  * exactly what the earlier string-equality version did with `1,2` against `2`.
  * A false collision costs one moved schedule; a missed one costs a pass dying
- * half-written against a shared 50-subrequest budget.
+ * half-written when two passes sharing an invocation blow through the 10 ms
+ * free-plan CPU limit (they also double this codebase's self-imposed ~50-call
+ * D1 budget, though that alone would not make the platform kill the request —
+ * the real ceiling there is 1,000 calls per invocation).
  *
  * Day-of-month and day-of-week are not independent: standard cron (which
  * Cloudflare documents) fires when EITHER matches once both are restricted, so
@@ -140,8 +143,10 @@ describe("cron triggers", () => {
   // of the week, so "distinct from the integration cron" is not enough — the
   // team pass must not be able to fire at the same instant as ANY other
   // configured schedule. That is the collision the split exists to avoid: two
-  // passes on one wall clock is 76 subrequests against a 50-subrequest
-  // invocation, and the second one dies half-written.
+  // passes on one wall clock is 76 D1 calls against this codebase's
+  // self-imposed ~50-call budget (still under the platform's real 1,000-call
+  // ceiling), but it is also twice the CPU inside one 10 ms-CPU invocation,
+  // so the second one dies half-written.
   it("gives the team insight pass a firing time no other configured schedule shares", () => {
     const others = configuredCrons().filter(c => c !== INSIGHT_TEAM_WEEKLY_CRON);
     expect(others.length).toBeGreaterThan(0);

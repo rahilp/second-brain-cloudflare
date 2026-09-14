@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-const { assignGraphClusters, packGraphNodes, packGraphCircles } = require("../../public/utils.js");
+const { assignGraphClusters, packGraphNodes, packGraphCircles, filterGraphByActor } = require("../../public/utils.js");
 
 type N = { id: string; tags: string[]; cluster?: string; sub?: string | null };
 type E = { source: string; target: string; weight?: number };
@@ -289,5 +289,46 @@ describe("packGraphCircles", () => {
     const a = packGraphCircles(radii, 12);
     const b = packGraphCircles(radii, 12);
     expect(a).toEqual(b);
+  });
+});
+
+describe("filterGraphByActor", () => {
+  // Regression: /graph nodes carry actor_name, never actor_id (src/graph/
+  // types.ts), the client filter used to compare against actor_id and so
+  // never matched anything, hiding the whole canvas behind the empty state
+  // for every author selection.
+  const nodes = [
+    { id: "a", actor_name: "You" },
+    { id: "b", actor_name: "Grace Hopper" },
+    { id: "c", actor_name: "You" },
+    { id: "d", actor_name: null },
+  ];
+  const edges = [
+    { source: "a", target: "b" }, // crosses authors: must not survive either filter
+    { source: "a", target: "c" }, // both You: survives the "You" filter
+    { source: "b", target: "d" }, // crosses authors: must not survive
+  ];
+
+  it("keeps only the named author's nodes and prunes edges that no longer join two survivors", () => {
+    const { nodes: n, edges: e } = filterGraphByActor(nodes, edges, "You");
+    expect(n.map((x: any) => x.id).sort()).toEqual(["a", "c"]);
+    expect(e).toEqual([{ source: "a", target: "c" }]);
+  });
+
+  it("matches a teammate's real name the same way", () => {
+    const { nodes: n, edges: e } = filterGraphByActor(nodes, edges, "Grace Hopper");
+    expect(n.map((x: any) => x.id)).toEqual(["b"]);
+    expect(e).toEqual([]);
+  });
+
+  it("returns everything unchanged when no name is given", () => {
+    expect(filterGraphByActor(nodes, edges, null)).toEqual({ nodes, edges });
+    expect(filterGraphByActor(nodes, edges, "")).toEqual({ nodes, edges });
+  });
+
+  it("is truly empty, not a crash, when nobody matches", () => {
+    const { nodes: n, edges: e } = filterGraphByActor(nodes, edges, "Nobody Here");
+    expect(n).toEqual([]);
+    expect(e).toEqual([]);
   });
 });

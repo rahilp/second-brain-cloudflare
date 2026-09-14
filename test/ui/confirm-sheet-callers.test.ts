@@ -117,7 +117,7 @@ describe("destructive-action sheet caller counts match the architecture doc", ()
   });
 
   /** Doc count, kept next to the code it counts so both move together. */
-  const EXPECTED_OPEN = 7;
+  const EXPECTED_OPEN = 8;
 
   // The companion guard, and the reason both live in one file: twelve tests
   // exercise the sheet's behaviour and not one of them counts who opens it, so

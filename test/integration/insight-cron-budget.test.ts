@@ -13,12 +13,14 @@ import { CONFIG_KEY } from "../../src/config";
 import { INSIGHT_TEAM_WEEKLY_CRON } from "../../src/insight/schedule";
 
 /**
- * A Worker invocation gets 50 D1 subrequests on the free plan, and every
- * binding call counts against it — D1, Vectorize, Workers AI and KV alike.
- * `sqlite.issued` records one entry per D1 call, including one per batch;
- * the other three are counted directly off each mock's own call log below.
+ * This codebase holds a Worker invocation to a self-imposed budget of ~50
+ * calls (the platform's real ceiling is 1,000 D1/KV/Vectorize calls per
+ * invocation), and every binding call counts against the self-imposed
+ * budget — D1, Vectorize, Workers AI and KV alike. `sqlite.issued` records
+ * one entry per D1 call, including one per batch; the other three are
+ * counted directly off each mock's own call log below.
  */
-const SUBREQUEST_BUDGET = 50;
+const SELF_IMPOSED_D1_BUDGET = 50;
 
 const ctx = { waitUntil: () => {} } as unknown as ExecutionContext;
 const DAY = 86400000;
@@ -88,7 +90,7 @@ function makeReasoningAI() {
  * stops a real run reasoning over the whole WEEKLY_CANDIDATE_LIMIT slate: a
  * corpus of near-duplicate memories declines constantly, which is the exact
  * corpus the pass exists for. Every declined candidate is one more AI.run
- * against the same 50-subrequest invocation, so the honest worst case is
+ * against the same self-imposed ~50-call invocation budget, so the honest worst case is
  * "every candidate reaches the model AND three of them are written".
  *
  * The three accepted tiers reuse the same three texts makeReasoningAI uses,
@@ -174,7 +176,7 @@ describe("insight crons stay inside one invocation's budget", () => {
       (fx.env.VECTORIZE.getByIds as any).mock.calls.length +
       kvGet.mock.calls.length +
       kvPut.mock.calls.length;
-    expect(fx.sqlite.issued.length + bindingCalls).toBeLessThan(SUBREQUEST_BUDGET);
+    expect(fx.sqlite.issued.length + bindingCalls).toBeLessThan(SELF_IMPOSED_D1_BUDGET);
     fx.sqlite.close();
   });
 
@@ -240,7 +242,7 @@ describe("insight crons stay inside one invocation's budget", () => {
       kvGet.mock.calls.length +
       kvPut.mock.calls.length;
     const measured = (sqlite.issued.length - before) + bindingCalls;
-    expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
+    expect(measured).toBeLessThan(SELF_IMPOSED_D1_BUDGET);
     // 38 is what THIS fixture costs, and this fixture is the cheapest branch:
     // the model accepts the first three candidates, so the loop breaks after
     // three of the ten and seven model calls are never made. The ceiling is
@@ -249,7 +251,7 @@ describe("insight crons stay inside one invocation's budget", () => {
     // invocation, which is THREE of slack rather than twelve. Read that number
     // before spending any of it — six more unbatched subrequests here (two
     // drawn_from edges per insight via createEdge instead of joining the batch
-    // below) would be 51, over the ceiling, while this assertion still read as
+    // below) would be 51, over this codebase's self-imposed budget, while this assertion still read as
     // "under budget".
     expect(measured).toBe(38);
 
@@ -326,7 +328,7 @@ describe("insight crons stay inside one invocation's budget", () => {
       kvGet.mock.calls.length +
       kvPut.mock.calls.length;
     const measured = (sqlite.issued.length - before) + bindingCalls;
-    expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
+    expect(measured).toBeLessThan(SELF_IMPOSED_D1_BUDGET);
     // Pinned, like the unsliced case above: the slice is a WHERE predicate on
     // a query that already ran, so it costs the same 38 the personal pass
     // costs. A future change that made the team pass more expensive than the
@@ -338,7 +340,7 @@ describe("insight crons stay inside one invocation's budget", () => {
     // measurement — the invocation itself is measured end to end in "the whole
     // team invocation at its most expensive slate" below, which is the number
     // to trust.
-    expect(measured + 2).toBeLessThan(SUBREQUEST_BUDGET);
+    expect(measured + 2).toBeLessThan(SELF_IMPOSED_D1_BUDGET);
 
     expect(await drawnFrom(sqlite)).toHaveLength(MAX_INSIGHTS_PER_RUN * 2);
     sqlite.close();
@@ -414,7 +416,7 @@ describe("the worst case, not the cheapest branch", () => {
     expect(written.n).toBe(MAX_INSIGHTS_PER_RUN);
 
     const measured = (sqlite.issued.length - before) + countBindings(env, kvGet, kvPut);
-    expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
+    expect(measured).toBeLessThan(SELF_IMPOSED_D1_BUDGET);
     expect(measured).toBe(45);
     sqlite.close();
   });
@@ -453,7 +455,7 @@ describe("the worst case, not the cheapest branch", () => {
     expect(written.n).toBe(MAX_INSIGHTS_PER_RUN);
 
     const measured = (sqlite.issued.length - before) + countBindings(env, kvGet, kvPut);
-    expect(measured).toBeLessThan(SUBREQUEST_BUDGET);
+    expect(measured).toBeLessThan(SELF_IMPOSED_D1_BUDGET);
     // 47 of 50. THREE subrequests of slack for the whole team invocation —
     // not the twelve the fixture-shaped 38 above suggests. Anything added to
     // this pass or to the branch around it has to fit in three.
@@ -524,7 +526,7 @@ describe("the worst case, not the cheapest branch", () => {
   it("stays inside the budget when the slice needs a second statement", async () => {
     expect(await teamInvocationCost(49)).toBe(47);
     const fifty = await teamInvocationCost(50);
-    expect(fifty).toBeLessThan(SUBREQUEST_BUDGET);
+    expect(fifty).toBeLessThan(SELF_IMPOSED_D1_BUDGET);
     // 48 of 50. TWO subrequests of slack for the whole team invocation on a
     // deployment big enough to need chunking. This is the number the
     // MAX_SLICE_STATEMENTS comment reasons to, now measured.
@@ -538,10 +540,11 @@ describe("POST /insights/accrue stays inside one invocation's budget", () => {
   // The on-demand endpoint (src/routes/admin.ts) runs the exact same
   // runInsightAccrual pass the nightly cron does, plus two cheap COUNT(*)
   // queries against insight_candidates (before/after) to report what
-  // changed. It has to fit the same 50-subrequest ceiling — the platform
-  // does not grant fetch handlers a bigger budget than scheduled ones — so
-  // this measures the endpoint's total cost, not just the accrual pass
-  // underneath it.
+  // changed. It has to fit the same self-imposed ~50-call D1 budget — the
+  // platform does not grant fetch handlers a bigger self-imposed budget than
+  // scheduled ones, and both are far under the platform's real 1,000-call
+  // ceiling — so this measures the endpoint's total cost, not just the
+  // accrual pass underneath it.
   beforeEach(() => {
     vi.spyOn(Date, "now").mockReturnValue(FIXTURE_NOW);
     resetDatabaseInit();
@@ -576,8 +579,8 @@ describe("POST /insights/accrue stays inside one invocation's budget", () => {
       kvGet.mock.calls.length +
       kvPut.mock.calls.length;
     // Measured: 37 (runInsightAccrual's own ~34-37 plus the endpoint's two
-    // COUNT(*) queries) — comfortably inside the 50-subrequest ceiling.
-    expect(fx.sqlite.issued.length + bindingCalls).toBeLessThan(SUBREQUEST_BUDGET);
+    // COUNT(*) queries) — comfortably inside the self-imposed ~50-call budget.
+    expect(fx.sqlite.issued.length + bindingCalls).toBeLessThan(SELF_IMPOSED_D1_BUDGET);
     fx.sqlite.close();
   });
 });

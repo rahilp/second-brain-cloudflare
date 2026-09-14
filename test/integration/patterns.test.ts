@@ -287,8 +287,9 @@ describe("POST /patterns/resolve — in bulk", () => {
   });
 
   it("costs a fixed number of round trips however many patterns are in it", async () => {
-    // The reason bulk exists at all: a free-plan invocation gets roughly 50 D1
-    // queries, so a per-id loop would put a ceiling on the batch size.
+    // The reason bulk exists at all: this codebase holds an invocation to a
+    // self-imposed budget of roughly 50 D1 calls (the platform's real ceiling
+    // is 1,000), so a per-id loop would put a ceiling on the batch size.
     //
     // Measured at TWO id counts rather than pinned at one, because flatness is
     // the property and a single number only pins it by implication. The audit
