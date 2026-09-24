@@ -19,6 +19,25 @@ describe("tokenizeQuery() beyond ASCII (#326)", () => {
     expect(tokenizeQuery("v1.9 の変更")).toEqual(["v1.9", "変更"]);
   });
 
+  it("keeps an ASCII identifier whole when Japanese text touches it without a space", () => {
+    expect(tokenizeQuery("SB-024の決定")).toEqual(["sb-024", "決定"]);
+    expect(tokenizeQuery("決定はSB-024。")).toEqual(["決定", "sb-024"]);
+    expect(tokenizeQuery("API-7の仕様")).toEqual(["api-7", "仕様"]);
+    expect(tokenizeQuery("SB-024、SB-025")).toEqual(["sb-024", "sb-025"]);
+    expect(tokenizeQuery("v1.9の変更")).toEqual(["v1.9", "変更"]);
+    expect(tokenizeQuery("「SB-024」の件")).toEqual(["sb-024"]);
+  });
+
+  it("tokenizes an ASCII run next to CJK text exactly like the same ASCII on its own", () => {
+    expect(tokenizeQuery("SB-024の決定")).toEqual(tokenizeQuery("SB-024 の決定"));
+    expect(tokenizeQuery("foo,barの件")).toEqual(tokenizeQuery("foo,bar"));
+  });
+
+  it("does the same next to Chinese and Korean text", () => {
+    expect(tokenizeQuery("SB-024的决定")).toEqual(["sb-024", "决定"]);
+    expect(tokenizeQuery("SB-024를 확인")).toEqual(["sb-024", "확인"]);
+  });
+
   it("folds full-width Latin to its ASCII token and keeps the typed surface as a probe, after the tokens", () => {
     expect(tokenizeQuery("Ｃｌｏｕｄｆｌａｒｅ")).toEqual(["cloudflare", "Ｃｌｏｕｄｆｌａｒｅ"]);
     expect(tokenizeQuery("Ｖ１．９")).toEqual(["v1.9", "Ｖ１．９"]);
