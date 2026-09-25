@@ -78,7 +78,7 @@ export interface DistilledQuery {
   query: string;
   df: Map<string, number> | null;
   total: number | null;
-  /** How df/total were obtained: the FTS index, the LIKE full scan, or skipped (single term). */
+  /** How df/total were obtained: the FTS index, the LIKE full scan, or skipped (no terms). */
   distillSource: "fts" | "like" | "shortcut";
 }
 
@@ -285,10 +285,9 @@ export async function distillToRareTerms(
   // entry (cap bound) keeps the router's FTS default.
   const evidence = tokenizeQuery(query).slice(0, KEYWORD_MAX_TOKENS);
   const dfTerms = [...new Set([...uniq, ...deterministicVariants(query, evidence)])].slice(0, KEYWORD_MAX_TOKENS);
-  // Nothing to rank with at most one distinct term. A single whitespace word can
-  // carry several terms once it is CJK; that case goes on to the scan.
-  if (content.length <= 1 && uniq.length <= 1) {
-    return { query: content.length ? content.join(" ") : query, df: null, total: null, distillSource: "shortcut" };
+  // Even one term needs corpus df/total for keyword fusion and FTS routing.
+  if (!content.length) {
+    return { query, df: null, total: null, distillSource: "shortcut" };
   }
 
   // One bound parameter and one SUM column per term, so this scan is bounded by

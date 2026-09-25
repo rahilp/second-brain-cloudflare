@@ -46,14 +46,14 @@ describe("recall stays within the Cloudflare Free operation envelope", () => {
     return { env, ctx, diagnostics, deferred };
   }
 
-  async function run(hops: 0 | 1) {
+  async function run(hops: 0 | 1, query = "why atlas ledger changed") {
     // Each case models its own invocation; the readiness answer is cached per
     // isolate for FTS_READY_CACHE_MS, so a cold start must be simulated or the
     // second case would inherit the first case's cached answer and undercount.
     resetFtsReadyMemo();
     const state = await setup(hops);
     const result = await recallEntries(
-      { query: "why atlas ledger changed", topK: 5, hops, synthesize: false },
+      { query, topK: 5, hops, synthesize: false },
       state.env,
       state.ctx,
       DEFAULTS,
@@ -91,6 +91,14 @@ describe("recall stays within the Cloudflare Free operation envelope", () => {
     // total is unknowable and must not be reported as a fabricated number.
     expect(budget.d1RowsRead).toBeNull();
     expect(budget.d1RowsWritten).toBeNull();
+  });
+
+  it("charges one df statement for a single-token direct recall", async () => {
+    const budget = await run(0, "atlas");
+    // The former single-token shortcut used four D1 calls. Corpus df now adds
+    // one LIKE aggregation, matching the five-call multi-token path above.
+    expect(budget.d1Statements).toBe(5);
+    expect(budget.d1Statements).toBeLessThanOrEqual(30);
   });
 
   it("adds graph reads but no extra AI, embedding, or Vectorize path", async () => {

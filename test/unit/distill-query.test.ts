@@ -4,6 +4,9 @@ import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { makeSqliteD1, type SqliteD1 } from "../helpers/sqlite-d1";
 import { makeTestEnv, makeMemoryKV } from "../helpers/make-env";
 import type { Env } from "../../src/env";
+import type { Identity } from "../../src/lib/identity";
+import { resetFtsReadyMemo } from "../../src/recall/fts";
+import { FTS_READY_KV_KEY } from "../../src/constants";
 
 // A minimal env whose D1 aggregation returns crafted document-frequencies. The columns
 // d0..dN map to the query's unique content tokens in order (as distillToRareTerms builds
@@ -67,10 +70,11 @@ describe("distillToRareTerms", () => {
     expect(out.query).toBe("trip cleveland");
   });
 
-  it("returns a single content word unchanged without touching the DB", async () => {
+  it("skips the DB when the query has no content terms", async () => {
     const env = { DB: { prepare: () => { throw new Error("should not query"); } } } as any;
-    const out = await distillToRareTerms("dictawiz", env);
-    expect(out.query).toBe("dictawiz");
+    const out = await distillToRareTerms(" ", env);
+    expect(out.query).toBe(" ");
+    expect(out.distillSource).toBe("shortcut");
   });
 
   it("falls back to the content words if the frequency scan fails", async () => {
@@ -101,11 +105,46 @@ describe("distillToRareTerms", () => {
     expect(out.df?.get("brain")).toBe(85);
   });
 
-  it("returns null stats when the query never reaches the DB", async () => {
-    const env = { DB: { prepare: () => { throw new Error("should not query"); } } } as any;
+  it("counts a single token against the corpus", async () => {
+    const env = envWith(100, { dictawiz: 2 }, ["dictawiz"]);
     const out = await distillToRareTerms("dictawiz", env);
-    expect(out.df).toBeNull();
-    expect(out.total).toBeNull();
+    expect(out.query).toBe("dictawiz");
+    expect(out.df?.get("dictawiz")).toBe(2);
+    expect(out.total).toBe(100);
+    expect(out.distillSource).toBe("like");
+  });
+
+  it.each([
+    ["like", true, 2, 1],
+    ["fts", true, 2, 1],
+    ["fts", false, 3, 2],
+  ] as const)("applies scope and time bounds to a single token via %s (bounded: %s)", async (source, bounded, total, df) => {
+    resetDatabaseInit();
+    resetFtsReadyMemo();
+    const sqlite = makeSqliteD1();
+    const env = makeTestEnv(undefined, { DB: sqlite.db as unknown as Env["DB"], OAUTH_KV: makeMemoryKV() });
+    const identity: Identity = { userId: "u1", role: "member", personalWorkspaceId: "ws-a", companyWorkspaceIds: ["ws-team"], defaultShare: "" };
+    try {
+      await initializeDatabase(env);
+      for (const [id, workspace, content, createdAt] of [
+        ["in", "ws-team", "quartzcode", 150],
+        ["peer", "ws-team", "plain note", 150],
+        ["old", "ws-team", "quartzcode", 50],
+        ["foreign", "ws-other", "quartzcode", 150],
+        ["personal", "ws-a", "quartzcode", 150],
+      ] as const) {
+        sqlite.seed({ id, content, createdAt });
+        await sqlite.db.prepare("UPDATE entries SET workspace_id = ? WHERE id = ?").bind(workspace, id).run();
+      }
+      if (source === "fts") await env.OAUTH_KV.put(FTS_READY_KV_KEY, "1");
+
+      const out = await distillToRareTerms("quartzcode", env, undefined, bounded ? { after: 100, before: 200 } : {}, identity, "company", "ws-team");
+      expect(out.distillSource).toBe(source);
+      expect(out.total).toBe(total);
+      expect(out.df?.get("quartzcode")).toBe(df);
+    } finally {
+      sqlite.close();
+    }
   });
 
   it("returns null stats when the frequency scan fails", async () => {

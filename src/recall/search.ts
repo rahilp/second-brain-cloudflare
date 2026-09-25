@@ -152,9 +152,8 @@ async function keywordSearch(
     // recency-ordered hits while bm25 scores every match. The scan counts the
     // deterministic variants retrieval appends too, so a plural query
     // ("widgets gadgets") estimates like its singular. Any term the scan still
-    // lacks (cap-bound) keeps FTS, as does every single-word query: the distill
-    // shortcut computes no df for one-word inputs, so single-word recall stays
-    // on FTS by design.
+    // lacks (cap-bound) keeps FTS. Single-word queries use the same corpus df
+    // and routing threshold as multi-word queries.
     const df = corpus?.df;
     if (df && terms.every(t => df.has(t))) {
       const dfSum = terms.reduce((s, t) => s + (df.get(t) ?? 0), 0);

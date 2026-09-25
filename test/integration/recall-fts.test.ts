@@ -574,19 +574,20 @@ describe("recall keyword arm: FTS5 with LIKE fallback", () => {
     expect(diagnostics.ftsUsed).toBe(true);
   });
 
-  it("keeps routing on FTS when df is unknown for the query", async () => {
+  it("routes a single-token query over the df budget to LIKE", async () => {
     await env.OAUTH_KV.put(FTS_READY_KV_KEY, "1");
     resetFtsReadyMemo();
-    // A 2,100-row corpus of the query's own token: had the scan run, the sum
-    // would sit far over the budget — but a single-token query skips it
-    // (distillToRareTerms early-exits with df null), so today's FTS rule holds.
+    // A 2,100-row corpus of the query's own token exceeds the same df budget
+    // used for multi-token queries.
     for (let i = 0; i < 2100; i++) sqlite.seed({ id: `row-${i}`, content: "widget gadget ledger", createdAt: i + 1 });
 
     const diagnostics: RecallDiagnostics = {};
     await recallEntries({ query: "widget", topK: 5, synthesize: false }, env, ctx, undefined, { diagnostics });
 
-    expect(diagnostics.ftsRoute).toBe("fts");
-    expect(diagnostics.ftsUsed).toBe(true);
+    // Every term is saturated, so capped FTS counts fall back to exact LIKE df.
+    expect(diagnostics.distillSource).toBe("like");
+    expect(diagnostics.ftsRoute).toBe("like-match-budget");
+    expect(diagnostics.ftsUsed).toBe(false);
   });
 
   it("sits exactly on the budget: sum == budget stays on FTS, sum == budget+1 routes to LIKE", async () => {
