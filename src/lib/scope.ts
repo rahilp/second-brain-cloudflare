@@ -133,8 +133,13 @@ export function readScopeWorkspaces(
  */
 export function scopeWrite(identity: Identity, target?: "personal" | "company", team?: string): string {
   if (target !== "company") return identity.personalWorkspaceId;
-  // Named teams are accepted only when present in the resolved identity.
-  if (team && identity.companyWorkspaceIds.includes(team)) return team;
+  // A named team must not silently fall back to a different workspace.
+  if (team !== undefined) {
+    if (typeof team !== "string" || !team.trim() || !identity.companyWorkspaceIds.includes(team)) {
+      throw new Error("team must be one of your teams");
+    }
+    return team;
+  }
   return primaryCompanyWorkspaceId(identity) || identity.personalWorkspaceId;
 }
 
