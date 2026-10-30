@@ -126,6 +126,21 @@ export function readScopeWorkspaces(
 }
 
 /**
+ * A write naming a team the caller is not on. Mirrors TeamAdminError's
+ * (status, message) shape so the edge maps it the same way; status is 400.
+ */
+/** Shared actionable copy for a write naming a team the caller is not on. */
+export const FOREIGN_TEAM_MESSAGE =
+  "team must be one of your teams — call list_teams (MCP) or GET /team/workspaces";
+
+export class ScopeWriteError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = "ScopeWriteError";
+  }
+}
+
+/**
  * Which workspace a write lands in. Defaults to the caller's personal workspace —
  * remembering something is private until it is explicitly shared — and only ever
  * returns a workspace the caller is actually a member of, because both values come
@@ -136,7 +151,7 @@ export function scopeWrite(identity: Identity, target?: "personal" | "company", 
   // A named team must not silently fall back to a different workspace.
   if (team !== undefined) {
     if (typeof team !== "string" || !team.trim() || !identity.companyWorkspaceIds.includes(team)) {
-      throw new Error("team must be one of your teams");
+      throw new ScopeWriteError(400, FOREIGN_TEAM_MESSAGE);
     }
     return team;
   }
@@ -181,9 +196,7 @@ export function readTeamParam(
     return { error: 'team is only valid when workspace is "company"' };
   }
   if (!identity.companyWorkspaceIds.includes(teamId)) {
-    return {
-      error: "team must be one of your teams — call list_teams (MCP) or GET /team/workspaces",
-    };
+    return { error: FOREIGN_TEAM_MESSAGE };
   }
   return { teamId };
 }
