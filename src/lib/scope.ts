@@ -105,6 +105,14 @@ export function scopeWhere(identity: Identity, only?: "personal" | "company", co
   return { clause: `${column} IN (${workspaces.map(() => "?").join(", ")})`, bindings: workspaces };
 }
 
+/** Refuse a read naming a team the caller is not on. scopeWrite keeps its own
+ * near-copy (out of scope) and could adopt this later. */
+function assertTeamMember(identity: Identity, teamId: string | undefined): void {
+  if (teamId && !identity.companyWorkspaceIds.includes(teamId)) {
+    throw new ScopeReadError(400, FOREIGN_TEAM_MESSAGE);
+  }
+}
+
 /** Read-side scope: optional layer and/or a single validated team workspace id. */
 export function scopeWhereForRead(
   identity: Identity,
@@ -112,6 +120,7 @@ export function scopeWhereForRead(
   column = "workspace_id",
 ): ScopeClause {
   if (opts?.teamId) {
+    assertTeamMember(identity, opts.teamId);
     return { clause: `${column} = ?`, bindings: [opts.teamId] };
   }
   return scopeWhere(identity, opts?.layer, column);
@@ -121,7 +130,10 @@ export function readScopeWorkspaces(
   identity: Identity,
   opts?: { layer?: "personal" | "company"; teamId?: string },
 ): string[] {
-  if (opts?.teamId) return [opts.teamId];
+  if (opts?.teamId) {
+    assertTeamMember(identity, opts.teamId);
+    return [opts.teamId];
+  }
   return scopeWorkspaces(identity, opts?.layer);
 }
 
@@ -137,6 +149,14 @@ export class ScopeWriteError extends Error {
   constructor(public status: number, message: string) {
     super(message);
     this.name = "ScopeWriteError";
+  }
+}
+
+/** A read naming a team the caller is not on. Mirrors ScopeWriteError; status is 400. */
+export class ScopeReadError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = "ScopeReadError";
   }
 }
 
