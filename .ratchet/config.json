@@ -1,0 +1,28 @@
+{
+  "human_review": "end",
+  "host_provider": "auto",
+  "ui_reviewers": {
+    "visual": [
+      "gemini",
+      "claude",
+      "codex"
+    ],
+    "behavior": [
+      "claude",
+      "gemini",
+      "codex"
+    ]
+  },
+  "regression_command": "WRANGLER_SEND_METRICS=false npx wrangler types >/dev/null && npx tsc --noEmit && npm run check:scope -- --inventory >/dev/null && npx vitest run --exclude '.claude/**' --exclude '.rat*/**'",
+  "commit_per_checkpoint": true,
+  "design_md": "DESIGN.md",
+  "standards": [
+    ".ratchet/standards.md"
+  ],
+  "app": {
+    "start_command": null,
+    "url": null,
+    "healthcheck": null
+  },
+  "related_test_command": "npx vitest run {files}"
+}
