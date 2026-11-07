@@ -267,6 +267,8 @@ npm run vectors:create
 npm run deploy
 ```
 
+`vectors:create` also creates the `workspace_id` metadata index. Recall filters Vectorize by workspace, and Vectorize returns no matches for a filter on a property it has no metadata index for, so without it meaning-based recall finds nothing and only keyword matches come back. A brain created before this step can add it with `npm run vectors:metadata-index`, then re-embed so existing vectors enter the index: call `POST /migration/reset` once, then `POST /migration/reembed` until it returns `"done": true` (both take your `Authorization: Bearer` token).
+
 Follow the [Setup Guide](https://github.com/rahilp/second-brain-cloudflare/wiki/Setup-Guide) for prerequisites, resource creation, deployment verification, and troubleshooting. Then use [Connect to AI Clients](https://github.com/rahilp/second-brain-cloudflare/wiki/Connect-to-AI-Clients) for client-specific instructions.
 
 **Develop locally:**
