@@ -111,6 +111,90 @@ describe("vectorize workspace scoping", () => {
     expect(vectorizeFilterState().degradedQueries).toBe(3);
   });
 
+  // Vectorize answers a filter on a property with no metadata index with zero
+  // matches, not an error (#394), so a missing index has to be read off the result.
+  describe("a filter that silently matches nothing", () => {
+    const filter = workspaceFilter(identity)!.filter;
+    const scoped = (calls: any[], unfiltered: { id: string; metadata?: Record<string, unknown> }[]) =>
+      makeVectorizeMock({
+        query: vi.fn().mockImplementation(async (_values: number[], opts: any) => {
+          calls.push(opts);
+          return { matches: opts?.filter ? [] : unfiltered.map(m => ({ score: 0.9, ...m })) };
+        }),
+      });
+
+    it("falls back unfiltered when the caller's own vectors exist outside the filter", async () => {
+      const calls: any[] = [];
+      const v = scoped(calls, [
+        { id: "foreign", metadata: { workspace_id: "ws-other" } },
+        { id: "mine", metadata: { workspace_id: "ws-c" } },
+      ]);
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      const onDegrade = vi.fn();
+      try {
+        const result = await queryVectorizeScoped<{ id: string }>(v as never, [0.1], { topK: 5, filter, onDegrade });
+        expect(result.degraded).toBe(true);
+        expect(result.matches.map(m => m.id)).toEqual(["foreign", "mine"]);
+        expect(calls).toHaveLength(2);
+        expect(calls[1].filter).toBeUndefined();
+        expect(vectorizeFilterState()).toEqual({ supported: false, degradedQueries: 1 });
+        expect(onDegrade).toHaveBeenCalledOnce();
+        expect(errorLog).toHaveBeenCalledOnce();
+
+        // Latched: the next query skips the broken filter entirely.
+        await queryVectorizeScoped(v as never, [0.2], { topK: 5, filter });
+        expect(calls).toHaveLength(3);
+        expect(calls[2].filter).toBeUndefined();
+      } finally {
+        errorLog.mockRestore();
+      }
+    });
+
+    it("does not count a vector without workspace_id as the caller's own", async () => {
+      const calls: any[] = [];
+      const v = scoped(calls, [{ id: "legacy" }]);
+      const result = await queryVectorizeScoped(v as never, [0.1], { topK: 5, filter });
+      expect(result).toEqual({ matches: [], degraded: false });
+      expect(vectorizeFilterState().supported).toBe(null);
+    });
+
+    it("keeps a genuinely empty scope empty and does not latch either way", async () => {
+      const calls: any[] = [];
+      const v = scoped(calls, [{ id: "foreign", metadata: { workspace_id: "ws-other" } }]);
+      const onDegrade = vi.fn();
+      const result = await queryVectorizeScoped(v as never, [0.1], { topK: 5, filter, onDegrade });
+      expect(result).toEqual({ matches: [], degraded: false });
+      expect(calls).toHaveLength(2);
+      expect(onDegrade).not.toHaveBeenCalled();
+      // A brand-new workspace looks exactly like this, so the latch stays unset...
+      expect(vectorizeFilterState()).toEqual({ supported: null, degradedQueries: 0 });
+      // ...but the same empty scope is not probed again in this isolate.
+      await queryVectorizeScoped(v as never, [0.2], { topK: 5, filter, onDegrade });
+      expect(calls).toHaveLength(3);
+      expect(calls[2].filter).toBeDefined();
+      // A different scope still gets its own probe.
+      await queryVectorizeScoped(v as never, [0.3], { topK: 5, filter: singleWorkspaceFilter("ws-p").filter });
+      expect(calls).toHaveLength(5);
+    });
+
+    it("never probes once the filter has returned matches in this isolate", async () => {
+      let filtered: { id: string }[] = [{ id: "mine" }];
+      const calls: any[] = [];
+      const v = makeVectorizeMock({
+        query: vi.fn().mockImplementation(async (_values: number[], opts: any) => {
+          calls.push(opts);
+          return { matches: opts?.filter ? filtered : [{ id: "mine", metadata: { workspace_id: "ws-p" } }] };
+        }),
+      });
+      await queryVectorizeScoped(v as never, [0.1], { topK: 5, filter });
+      expect(vectorizeFilterState().supported).toBe(true);
+      filtered = [];
+      const result = await queryVectorizeScoped(v as never, [0.2], { topK: 5, filter });
+      expect(result).toEqual({ matches: [], degraded: false });
+      expect(calls).toHaveLength(2);
+    });
+  });
+
   it("stamps the write context's workspace into upserted vector metadata", async () => {
     const d1 = makeSqliteD1();
     const v = makeVectorizeMock();

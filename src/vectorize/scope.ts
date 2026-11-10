@@ -31,6 +31,10 @@ let workspaceFiltersSupported: boolean | null = null;
 // Counts unfiltered queries for the health signal.
 let degradedQueryCount = 0;
 
+// Scopes already probed and found empty in this isolate, so repeated writes into
+// an empty workspace pay for the unfiltered probe once rather than every time.
+const probedEmptyScopes = new Set<string>();
+
 // Maintenance callers may discover degradation without having a request context
 // in which to report it, so notification has its own latch.
 let degradeNotified = false;
@@ -45,6 +49,7 @@ export function resetVectorizeFilterState(): void {
   workspaceFiltersSupported = null;
   degradedQueryCount = 0;
   degradeNotified = false;
+  probedEmptyScopes.clear();
 }
 
 export async function queryVectorizeScoped<M = unknown>(
@@ -74,6 +79,7 @@ export async function queryVectorizeScoped<M = unknown>(
     notifyOnce();
     return unfiltered();
   }
+  let filtered: unknown[];
   try {
     const result = await vectorize.query(values, {
       topK: opts.topK,
@@ -81,8 +87,7 @@ export async function queryVectorizeScoped<M = unknown>(
       returnValues: true,
       filter: opts.filter,
     });
-    workspaceFiltersSupported = true;
-    return { matches: (result.matches ?? []) as M[], degraded: false };
+    filtered = result.matches ?? [];
   } catch (e) {
     if (!/filter/i.test(String(e))) throw e;
     console.error("Vectorize rejected the workspace filter (falling back to unfiltered queries for this isolate):", e);
@@ -93,4 +98,45 @@ export async function queryVectorizeScoped<M = unknown>(
     notifyOnce();
     return unfiltered();
   }
+  if (filtered.length > 0) {
+    workspaceFiltersSupported = true;
+    return { matches: filtered as M[], degraded: false };
+  }
+  // Zero matches is also what a filter on an unindexed workspace_id returns (#394).
+  // Once this isolate has seen the filter match, an empty result is real.
+  if (workspaceFiltersSupported === true) return { matches: [], degraded: false };
+  const scopeKey = [...opts.filter.workspace_id.$in].sort().join("\u0000");
+  if (probedEmptyScopes.has(scopeKey)) return { matches: [], degraded: false };
+  const result = await probeEmptyFilter<M>(vectorize, values, opts, notifyOnce);
+  if (!result.degraded) probedEmptyScopes.add(scopeKey);
+  return result;
+}
+
+/** Tells a filter that matches nothing from a scope that holds nothing. */
+async function probeEmptyFilter<M>(
+  vectorize: Queryable,
+  values: number[],
+  opts: { topK: number; filter: VectorizeWorkspaceFilter["filter"] },
+  notifyOnce: () => void,
+): Promise<{ matches: M[]; degraded: boolean }> {
+  let probe: unknown[];
+  try {
+    probe = (await vectorize.query(values, { topK: opts.topK, returnMetadata: "all", returnValues: true }))?.matches ?? [];
+  } catch (e) {
+    console.error("Vectorize unfiltered probe failed (keeping the empty filtered result):", e);
+    return { matches: [], degraded: false };
+  }
+  const readable = new Set(opts.filter.workspace_id.$in);
+  const ownExists = probe.some((m) => {
+    const ws = (m as { metadata?: { workspace_id?: unknown } })?.metadata?.workspace_id;
+    return typeof ws === "string" && readable.has(ws);
+  });
+  // Nothing of the caller's anywhere: a genuinely empty scope. Leave the latch
+  // unset so a brand-new workspace is checked again once it has vectors.
+  if (!ownExists) return { matches: [], degraded: false };
+  console.error("Vectorize workspace filter matched none of the caller's vectors; the workspace_id metadata index is probably missing (falling back to unfiltered queries for this isolate)");
+  workspaceFiltersSupported = false;
+  degradedQueryCount++;
+  notifyOnce();
+  return { matches: probe as M[], degraded: true };
 }

@@ -131,8 +131,9 @@ export const INSIGHT_PASS_MAX_TOKENS = 1200;
 export const WHEN_PASS_MAX_TOKENS = 1200;
 export const DIGEST_MAX_TOKENS = 400;
 
+// Recall filters on workspace_id, which matches nothing without its metadata index (#394).
 export const VECTORIZE_FIX_HINT =
-  "run `npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine`, or grant the build token Vectorize Edit and redeploy";
+  "run `npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine` and then `npx wrangler vectorize create-metadata-index second-brain-vectors --propertyName=workspace_id --type=string`, or grant the build token Vectorize Edit and redeploy";
 
 // Shared by REST and MCP recall so the two never diverge in what they claim:
 // a failed Vectorize call does not establish WHY it failed, so the assertion
