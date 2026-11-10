@@ -267,7 +267,9 @@ npm run vectors:create
 npm run deploy
 ```
 
-`vectors:create` also creates the `workspace_id` metadata index, which lets search by meaning look only at the workspaces you can read. Without it, Vectorize matches nothing on that filter, so the brain searches the whole index instead and `/health` reports `"workspaceFilter": { "supported": false }`. Results are still limited to your own memories, but on a team brain other people's memories can push yours out of the closest matches. A brain created before this step can add the index with `npm run vectors:metadata-index`, then re-embed so existing vectors enter it: call `POST /migration/reset` once, then `POST /migration/reembed` until it returns `"done": true` (both take your `Authorization: Bearer` token). Do both steps: with the index but no re-embed, older memories drop out of search by meaning.
+`vectors:create` also creates the `workspace_id` metadata index, which lets search by meaning look only at the workspaces you can read. Without it, Vectorize matches nothing on that filter, so the brain searches the whole index instead and `/health` reports `"workspaceFilter": { "supported": false }`. On a solo brain that gives the same results. Results are always limited to your own memories, but on a team brain other people's memories can push yours out of the closest matches.
+
+A brain created before this step doesn't need the index. If a team brain's recall seems weaker, you can add it with `npm run vectors:metadata-index` and then re-embed so existing vectors enter it: call `POST /migration/reset` once, then `POST /migration/reembed` until it returns `"done": true` (both take your `Authorization: Bearer` token). Re-embedding uses Workers AI allowance for every memory. Don't add the index without re-embedding, or older memories drop out of search by meaning.
 
 Follow the [Setup Guide](https://github.com/rahilp/second-brain-cloudflare/wiki/Setup-Guide) for prerequisites, resource creation, deployment verification, and troubleshooting. Then use [Connect to AI Clients](https://github.com/rahilp/second-brain-cloudflare/wiki/Connect-to-AI-Clients) for client-specific instructions.
 
