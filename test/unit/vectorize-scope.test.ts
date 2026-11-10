@@ -177,6 +177,58 @@ describe("vectorize workspace scoping", () => {
       expect(calls).toHaveLength(5);
     });
 
+    it("counts a vector without workspace_id as the caller's when '' is readable", async () => {
+      const calls: any[] = [];
+      const v = scoped(calls, [{ id: "legacy" }]);
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const result = await queryVectorizeScoped(v as never, [0.1], { topK: 5, filter: { workspace_id: { $in: ["", "ws-p"] } } });
+        expect(result.degraded).toBe(true);
+        expect(vectorizeFilterState().supported).toBe(false);
+      } finally {
+        errorLog.mockRestore();
+      }
+    });
+
+    it("does not remember a scope as empty when the probe itself failed", async () => {
+      let probeFails = true;
+      const calls: any[] = [];
+      const v = makeVectorizeMock({
+        query: vi.fn().mockImplementation(async (_values: number[], opts: any) => {
+          calls.push(opts);
+          if (opts?.filter) return { matches: [] };
+          if (probeFails) throw new Error("index unavailable");
+          return { matches: [{ id: "mine", score: 0.9, metadata: { workspace_id: "ws-p" } }] };
+        }),
+      });
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(await queryVectorizeScoped(v as never, [0.1], { topK: 5, filter })).toEqual({ matches: [], degraded: false });
+        probeFails = false;
+        const second = await queryVectorizeScoped(v as never, [0.2], { topK: 5, filter });
+        expect(second.degraded).toBe(true);
+        expect(calls).toHaveLength(4);
+      } finally {
+        errorLog.mockRestore();
+      }
+    });
+
+    it("probes an empty scope again once the memo expires", async () => {
+      vi.useFakeTimers();
+      try {
+        const calls: any[] = [];
+        const v = scoped(calls, []);
+        await queryVectorizeScoped(v as never, [0.1], { topK: 5, filter });
+        await queryVectorizeScoped(v as never, [0.1], { topK: 5, filter });
+        expect(calls).toHaveLength(3);
+        vi.advanceTimersByTime(5 * 60_000);
+        await queryVectorizeScoped(v as never, [0.1], { topK: 5, filter });
+        expect(calls).toHaveLength(5);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("never probes once the filter has returned matches in this isolate", async () => {
       let filtered: { id: string }[] = [{ id: "mine" }];
       const calls: any[] = [];

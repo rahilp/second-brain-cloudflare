@@ -43,6 +43,13 @@ function makeEnv(indexedProperties: string[]) {
 const NOTE = "The quarterly budget review moved to Thursday afternoon in the north meeting room";
 const ctx = { waitUntil: (p: Promise<unknown>) => { void p; } };
 
+async function seedStored(env: Env, d1: ReturnType<typeof makeEnv>["d1"], id: string, content: string, workspaceId: string) {
+  d1.seed({ id, content, createdAt: 1 });
+  // storeEntry commits vector_ids only onto a row in the write context's workspace.
+  d1.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind(workspaceId, id).run();
+  await storeEntry(env, id, content, [], "api", 1, undefined, { workspaceId, actorId: "u1" });
+}
+
 describe("capture against an index with no workspace_id metadata index", () => {
   beforeEach(() => resetVectorizeFilterState());
 
@@ -50,12 +57,10 @@ describe("capture against an index with no workspace_id metadata index", () => {
     it(`finds the caller's own near-duplicate when the index is ${label}`, async () => {
       const { env, kv, d1 } = makeEnv([...indexed]);
       vi.spyOn(console, "error").mockImplementation(() => {});
-      d1.seed({ id: "budget", content: NOTE, createdAt: 1 });
-      // storeEntry commits vector_ids only onto a row in the write context's workspace.
-      d1.db.prepare(`UPDATE entries SET workspace_id = ? WHERE id = ?`).bind("ws-p", "budget").run();
-      await storeEntry(env, "budget", NOTE, [], "api", 1, undefined, { workspaceId: "ws-p", actorId: "u1" });
-      const r = await checkDuplicateAndContradiction(NOTE, env, DEFAULTS, "ws-p", ctx);
+      await seedStored(env, d1, "budget", NOTE, "ws-p");
+      const r = await checkDuplicateAndContradiction(NOTE, env, DEFAULTS, "ws-p", ctx, { skipModelCall: true });
       expect(r.neighbors.map(n => n.id)).toContain("budget");
+      expect(r.duplicate).toMatchObject({ status: "blocked", matchId: "budget" });
       const marker = await kv.get(VECTORIZE_WORKSPACE_FILTER_UNSUPPORTED_KV_KEY);
       if (label === "missing") {
         expect(vectorizeFilterState().supported).toBe(false);
@@ -67,4 +72,17 @@ describe("capture against an index with no workspace_id metadata index", () => {
       vi.mocked(console.error).mockRestore();
     });
   }
+
+  // Unfiltered matches can name another member's memory; only rows the writer can read may decide.
+  it("never blocks or flags a capture against another workspace's memory", async () => {
+    const { env, d1 } = makeEnv([]);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await seedStored(env, d1, "colleague-private", NOTE, "ws-other");
+    await seedStored(env, d1, "mine", "Packing list for the lake trip: tent, stove, two headlamps", "ws-p");
+    const r = await checkDuplicateAndContradiction(NOTE, env, DEFAULTS, "ws-p", ctx, { skipModelCall: true });
+    expect(vectorizeFilterState().supported).toBe(false);
+    expect(r.duplicate).toEqual({ status: "unique" });
+    expect(JSON.stringify(r.duplicate)).not.toContain("colleague-private");
+    vi.mocked(console.error).mockRestore();
+  });
 });

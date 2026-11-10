@@ -66,11 +66,11 @@ const ACCOUNTED_FOR: { file: string; line: number; why: string }[] = [
     why: "classifyEntry(content, ...) takes raw content, never a row query. Its callers: entry.ts returns early at decision.hold, before classify ever runs, for the write's own content; the merge-target path only reaches a row duplicate.ts's own excludeHeld-filtered candidateRows offered. mirror.ts classifies fresh provider content before any row exists. admin.ts's /classify-pending scans UNCLASSIFIED_WHERE (tags NOT LIKE '%\"status:%'), which structurally excludes every held row too -- withHold always adds status:draft atomically alongside quarantine:, and applyTagReplacement preserves both as worker-owned across every edit, so no path removes status: while leaving quarantine: in place.",
   },
   {
-    file: "src/capture/duplicate.ts", line: 201,
+    file: "src/capture/duplicate.ts", line: 212,
     why: "merge/replace decision prompt: existingList is built from candidateRows, which the read above filters through excludeHeld before anything else touches it (Codex review class E, T-0089.4.2).",
   },
   {
-    file: "src/capture/duplicate.ts", line: 246,
+    file: "src/capture/duplicate.ts", line: 257,
     why: "contradiction-only prompt: same candidateRows, same excludeHeld filter as the merge/replace prompt above -- one read, one filter, both branches.",
   },
   {

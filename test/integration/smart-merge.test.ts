@@ -472,6 +472,8 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
   // ── Existing functionality unaffected ─────────────────────────────────────────
 
   it("blocked (≥0.95): still blocked, no LLM call for merge", async () => {
+    // The verdict only counts a match whose row the writer's workspace holds.
+    db.entries.push({ id: "dup", content: "Duplicate", tags: "[]", source: "api", created_at: Date.now(), vector_ids: '["dup"]', recall_count: 0, importance_score: 0 });
     const aiRunMock = vi.fn().mockImplementation(async (model: string) => {
       if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
       throw new Error("LLM should not be called for blocked entries");

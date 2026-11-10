@@ -896,10 +896,6 @@ mod tests {
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
-    /// `delete_vectorize` is the file's first DELETE, so the stub records the
-    /// method as well as the path and only answers success for the exact pair.
-    /// A delete that quietly went out as a POST, or to the collection instead
-    /// of the index, would otherwise still look like a passing test.
     /// The two metadata-index calls go to the paths and body wrangler's own
     /// `create-metadata-index` and `list-metadata-index` use.
     #[tokio::test]
@@ -942,6 +938,10 @@ mod tests {
         assert_eq!(body, serde_json::json!({ "propertyName": "workspace_id", "indexType": "string" }));
     }
 
+    /// `delete_vectorize` is the file's first DELETE, so the stub records the
+    /// method as well as the path and only answers success for the exact pair.
+    /// A delete that quietly went out as a POST, or to the collection instead
+    /// of the index, would otherwise still look like a passing test.
     #[tokio::test]
     async fn delete_vectorize_sends_a_delete_to_the_index_path() {
         use std::sync::{Arc, Mutex};

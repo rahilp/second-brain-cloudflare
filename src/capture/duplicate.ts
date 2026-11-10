@@ -103,7 +103,7 @@ export async function checkDuplicateAndContradiction(
     const pid = (m.metadata as any)?.parentId ?? m.id;
     neighborScores.set(pid, Math.max(neighborScores.get(pid) ?? 0, m.score));
   }
-  const neighbors = [...neighborScores.entries()].map(([id, score]) => ({ id, score }));
+  let neighbors = [...neighborScores.entries()].map(([id, score]) => ({ id, score }));
 
   // Superseded rows are history (T-0089.2.1): never a duplicate to block on, a merge target or a
   // contradiction candidate, or "I moved back to Denver" would collide with the old Denver row
@@ -114,6 +114,8 @@ export async function checkDuplicateAndContradiction(
   const readIds = [...new Set(matches.filter(m => m.score >= readThreshold).map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
   let candidateRows: { id: string; content: string }[] = [];
   const superseded = new Set<string>();
+  // Ids of the matches the writer's workspace actually holds, held rows included.
+  const readable = new Set<string>();
   if (readIds.length) {
     const now = Date.now();
     const placeholders = readIds.map(() => "?").join(", ");
@@ -125,12 +127,21 @@ export async function checkDuplicateAndContradiction(
     // Codex review class E (T-0089.4.2): Vectorize's stale vector for a row held AFTER it was
     // embedded can still surface here as a "match" — this read is what actually keeps a held
     // neighbor's content out of the merge/contradiction prompt below, not the vector query.
+    for (const r of results ?? []) readable.add(r.id);
     for (const r of excludeHeld(results ?? [])) {
       if (r.valid_until !== null && r.valid_until !== undefined && r.valid_until <= now) superseded.add(r.id);
       else candidateRows.push({ id: r.id, content: r.content });
     }
   }
-  if (superseded.size) matches = matches.filter(m => !superseded.has((m.metadata as any)?.parentId ?? m.id));
+  // An unfiltered fallback query can rank another member's memory first, and the
+  // verdict below names its id back to the writer. Every match that could reach a
+  // verdict (score >= readThreshold) must be a row the scoped read returned.
+  matches = matches.filter(m => {
+    const pid = (m.metadata as any)?.parentId ?? m.id;
+    return !superseded.has(pid) && (m.score < readThreshold || readable.has(pid));
+  });
+  // Same rule for edge inference, which would refuse a foreign pair after it had taken a slot.
+  neighbors = neighbors.filter(n => n.score < readThreshold || readable.has(n.id));
 
   let duplicate: DuplicateResult = { status: "unique" };
   if (matches.length) {
