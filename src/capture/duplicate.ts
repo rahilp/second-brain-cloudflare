@@ -86,9 +86,16 @@ export async function checkDuplicateAndContradiction(
               .catch((e: unknown) => console.error("Vectorize filter-degradation marker write failed (non-fatal):", e)),
           )
         : undefined;
-      ({ matches: hits } = await queryVectorizeScoped<VectorizeMatch>(
+      let degraded: boolean;
+      ({ matches: hits, degraded } = await queryVectorizeScoped<VectorizeMatch>(
         env.VECTORIZE, values, { topK: WRITE_PATH_TOPK, filter: singleWorkspaceFilter(workspaceId).filter, onDegrade },
       ));
+      // Unfiltered, other workspaces' vectors would take the nearest slots before the
+      // scoped read below can drop them. An unstamped vector is left for that read to decide.
+      if (degraded) hits = hits.filter(h => {
+        const ws = (h.metadata as any)?.workspace_id;
+        return ws === undefined || ws === null || ws === workspaceId;
+      });
     } else {
       ({ matches: hits } = await env.VECTORIZE.query(values, { topK: WRITE_PATH_TOPK, returnMetadata: "all" }));
     }

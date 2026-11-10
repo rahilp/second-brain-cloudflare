@@ -85,4 +85,28 @@ describe("capture against an index with no workspace_id metadata index", () => {
     expect(JSON.stringify(r.duplicate)).not.toContain("colleague-private");
     vi.mocked(console.error).mockRestore();
   });
+
+  it("keeps the caller's own near-duplicate when other workspaces fill the nearest slots", async () => {
+    const { env, d1 } = makeEnv([]);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) await seedStored(env, d1, `foreign-${i}`, NOTE, "ws-other");
+    await seedStored(env, d1, "mine", `${NOTE} today`, "ws-p");
+    const r = await checkDuplicateAndContradiction(NOTE, env, DEFAULTS, "ws-p", ctx, { skipModelCall: true });
+    expect(vectorizeFilterState().supported).toBe(false);
+    expect(r.duplicate).toMatchObject({ matchId: "mine" });
+    // Edge inference gets only rows the writer can read, so no slot goes to a foreign pair.
+    expect(r.neighbors.map(n => n.id)).toEqual(["mine"]);
+    vi.mocked(console.error).mockRestore();
+  });
+
+  it("offers edge inference no neighbor whose row is gone", async () => {
+    const { env, d1 } = makeEnv(["workspace_id"]);
+    await seedStored(env, d1, "deleted", NOTE, "ws-p");
+    await seedStored(env, d1, "mine", `${NOTE} today`, "ws-p");
+    // A deleted memory's vector can outlive its row.
+    d1.db.prepare(`DELETE FROM entries WHERE id = ?`).bind("deleted").run();
+    const r = await checkDuplicateAndContradiction(NOTE, env, DEFAULTS, "ws-p", ctx, { skipModelCall: true });
+    expect(r.neighbors.map(n => n.id)).toEqual(["mine"]);
+    expect(r.duplicate).toMatchObject({ matchId: "mine" });
+  });
 });
