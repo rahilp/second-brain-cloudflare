@@ -12,6 +12,9 @@
  *     section): 32,232 bytes, moved deliberately below.
  *   - S3 (T-0089.4.3, 5.9): undo's optional `group` param plus its own
  *     description sentence: 32,529 bytes, moved deliberately below.
+ *   - readOnlyHint on the ten read tools (test/unit/mcp-tool-annotations.test.ts),
+ *     so approval-gating MCP clients run them unprompted: 32,889 bytes, moved
+ *     deliberately below.
  *
  * PINNED_MAX_BYTES is an absolute ceiling with headroom for further growth,
  * not a per-task delta budget (Task 7's own delta budget is satisfied and
@@ -43,7 +46,7 @@ async function toolsListBytes(): Promise<number> {
   }
 }
 
-const PINNED_MAX_BYTES = 32600;
+const PINNED_MAX_BYTES = 33000;
 
 describe("tools/list size", () => {
   it("stays within the pinned byte ceiling", async () => {
