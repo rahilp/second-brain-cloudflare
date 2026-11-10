@@ -105,6 +105,14 @@ export function scopeWhere(identity: Identity, only?: "personal" | "company", co
   return { clause: `${column} IN (${workspaces.map(() => "?").join(", ")})`, bindings: workspaces };
 }
 
+/** Refuse a read naming a team the caller is not on. scopeWrite keeps its own
+ * near-copy (out of scope) and could adopt this later. */
+function assertTeamMember(identity: Identity, teamId: string | undefined): void {
+  if (teamId && !identity.companyWorkspaceIds.includes(teamId)) {
+    throw new ScopeReadError(400, FOREIGN_TEAM_MESSAGE);
+  }
+}
+
 /** Read-side scope: optional layer and/or a single validated team workspace id. */
 export function scopeWhereForRead(
   identity: Identity,
@@ -112,6 +120,7 @@ export function scopeWhereForRead(
   column = "workspace_id",
 ): ScopeClause {
   if (opts?.teamId) {
+    assertTeamMember(identity, opts.teamId);
     return { clause: `${column} = ?`, bindings: [opts.teamId] };
   }
   return scopeWhere(identity, opts?.layer, column);
@@ -121,8 +130,34 @@ export function readScopeWorkspaces(
   identity: Identity,
   opts?: { layer?: "personal" | "company"; teamId?: string },
 ): string[] {
-  if (opts?.teamId) return [opts.teamId];
+  if (opts?.teamId) {
+    assertTeamMember(identity, opts.teamId);
+    return [opts.teamId];
+  }
   return scopeWorkspaces(identity, opts?.layer);
+}
+
+/**
+ * A write naming a team the caller is not on. Mirrors TeamAdminError's
+ * (status, message) shape so the edge maps it the same way; status is 400.
+ */
+/** Shared actionable copy for a write naming a team the caller is not on. */
+export const FOREIGN_TEAM_MESSAGE =
+  "team must be one of your teams — call list_teams (MCP) or GET /team/workspaces";
+
+export class ScopeWriteError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = "ScopeWriteError";
+  }
+}
+
+/** A read naming a team the caller is not on. Mirrors ScopeWriteError; status is 400. */
+export class ScopeReadError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = "ScopeReadError";
+  }
 }
 
 /**
@@ -133,8 +168,13 @@ export function readScopeWorkspaces(
  */
 export function scopeWrite(identity: Identity, target?: "personal" | "company", team?: string): string {
   if (target !== "company") return identity.personalWorkspaceId;
-  // Named teams are accepted only when present in the resolved identity.
-  if (team && identity.companyWorkspaceIds.includes(team)) return team;
+  // A named team must not silently fall back to a different workspace.
+  if (team !== undefined) {
+    if (typeof team !== "string" || !team.trim() || !identity.companyWorkspaceIds.includes(team)) {
+      throw new ScopeWriteError(400, FOREIGN_TEAM_MESSAGE);
+    }
+    return team;
+  }
   return primaryCompanyWorkspaceId(identity) || identity.personalWorkspaceId;
 }
 
@@ -176,9 +216,7 @@ export function readTeamParam(
     return { error: 'team is only valid when workspace is "company"' };
   }
   if (!identity.companyWorkspaceIds.includes(teamId)) {
-    return {
-      error: "team must be one of your teams — call list_teams (MCP) or GET /team/workspaces",
-    };
+    return { error: FOREIGN_TEAM_MESSAGE };
   }
   return { teamId };
 }

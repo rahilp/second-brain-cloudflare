@@ -20,6 +20,7 @@ import { resetDatabaseInit, initializeDatabase } from "../../src/db/init";
 import { ensureTenantBootstrap } from "../../src/lib/tenancy";
 import { createMember } from "../../src/lib/team-admin";
 import { resolveIdentityFromToken } from "../../src/lib/identity";
+import { moveEntry } from "../../src/capture/share";
 import {
   readableWorkspaces,
   scopeWorkspaces,
@@ -156,9 +157,8 @@ describe("a member of two teams", () => {
     const identity = (await resolveIdentityFromToken(dana.token, env))!;
     expect(scopeWrite(identity, "company", TEAM_B)).toBe(TEAM_B);
     expect(scopeWrite(identity, "company")).toBe(roots.companyWorkspaceId);
-    // A team the caller does not belong to falls back to their primary rather
-    // than honouring an id the request supplied.
-    expect(scopeWrite(identity, "company", "ws-someone-elses")).toBe(roots.companyWorkspaceId);
+    // A named team outside the caller's memberships must not select a different team.
+    expect(() => scopeWrite(identity, "company", "ws-someone-elses")).toThrow(/team/i);
     expect(scopeWrite(identity, "personal")).toBe(dana.personalWorkspaceId);
   });
 
@@ -235,6 +235,29 @@ describe("a member of one team is unaffected by the existence of another", () =>
     const identity = (await resolveIdentityFromToken(dana.token, env))!;
     expect(identity.companyWorkspaceIds).toEqual([roots.companyWorkspaceId]);
     expect(isCompanyWorkspace(identity, TEAM_B)).toBe(false);
+  });
+
+  it("does not move a memory, its edge, or create an event for an invalid direct team write", async () => {
+    await seed("dana-private", dana.personalWorkspaceId, dana.userId, "Dana private note");
+    await seed("dana-peer", dana.personalWorkspaceId, dana.userId, "Dana linked note");
+    await sqlite.db.prepare(`INSERT INTO edges (id, source_id, target_id, created_at, updated_at, workspace_id)
+      VALUES ('dana-edge', 'dana-private', 'dana-peer', 1, 1, ?)`)
+      .bind(dana.personalWorkspaceId).run();
+    const identity = (await resolveIdentityFromToken(dana.token, env))!;
+
+    // Call the domain function directly: no route-level readTeamParam guard runs here.
+    await expect(moveEntry("dana-private", "company", env, identity,
+      { actorId: dana.userId, channel: "rest" }, TEAM_B)).rejects.toThrow(/team/i);
+
+    const row = await sqlite.db.prepare(`SELECT workspace_id FROM entries WHERE id = ?`)
+      .bind("dana-private").first() as { workspace_id: string };
+    const edge = await sqlite.db.prepare(`SELECT workspace_id FROM edges WHERE id = ?`)
+      .bind("dana-edge").first() as { workspace_id: string };
+    const events = await sqlite.db.prepare(`SELECT id FROM entry_events WHERE entry_id = ?`)
+      .bind("dana-private").all();
+    expect(row.workspace_id).toBe(dana.personalWorkspaceId);
+    expect(edge.workspace_id).toBe(dana.personalWorkspaceId);
+    expect(events.results).toHaveLength(0);
   });
 
   it("an admin still reads the legacy space, and only teams they joined", async () => {

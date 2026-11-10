@@ -26,6 +26,8 @@ import { apiHandler } from "./mcp/handler";
 import { augmentOAuthRegistrationRequest } from "./oauth/register";
 import { defaultHandler } from "./routes";
 import { classifyD1DailyLimitError, dailyLimitMcpResponse, dailyLimitRestResponse } from "./lib/daily-limit";
+import { json } from "./lib/http";
+import { ScopeWriteError, ScopeReadError } from "./lib/scope";
 
 export type { Env } from "./env";
 
@@ -82,8 +84,12 @@ export default {
       // with no wording about the limit. Caught once, here, for every route including /mcp: the
       // MCP surface's own pre-dispatch identity check is itself a D1 read and fails the same way.
       const kind = classifyD1DailyLimitError(e);
-      if (!kind) throw e;
-      return url.pathname === "/mcp" ? dailyLimitMcpResponse(kind) : dailyLimitRestResponse(kind);
+      if (kind) return url.pathname === "/mcp" ? dailyLimitMcpResponse(kind) : dailyLimitRestResponse(kind);
+      // Map a typed scope refusal (write or read) to a 400 for REST only; a plain Error still rethrows.
+      if ((e instanceof ScopeWriteError || e instanceof ScopeReadError) && url.pathname !== "/mcp") {
+        return json({ ok: false, error: e.message }, e.status);
+      }
+      throw e;
     }
   },
   scheduled: async (event: ScheduledEvent, rawEnv: Env, ctx: ExecutionContext) => {

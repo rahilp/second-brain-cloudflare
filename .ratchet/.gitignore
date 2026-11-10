@@ -1,0 +1,5 @@
+*
+!.gitignore
+!config.json
+!standards.md
+!learnings.md

@@ -401,6 +401,7 @@ export function buildMcpServer(
     {
       description: LIST_TEAMS_DESCRIPTION,
       inputSchema: {},
+      annotations: { readOnlyHint: true },
     },
     async () => {
       if (!identity) {
@@ -426,6 +427,7 @@ export function buildMcpServer(
         team: z.string().optional().describe("When workspace is company, restrict to one team — id from list_teams"),
         include_archived: z.boolean().optional().describe("Also list archived projects, marked [archived]. Off by default"),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ workspace, team, include_archived }) => {
       if (!identity) {
@@ -457,6 +459,7 @@ export function buildMcpServer(
         workspace: z.enum(["personal", "company"]).optional().describe("Restrict to one layer"),
         team: z.string().optional().describe("Team id when reading one shared workspace"),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ project, workspace, team }) => {
       if (!identity) return { content: [{ type: "text", text: "Brief requires an authenticated identity." }] };
@@ -527,6 +530,7 @@ export function buildMcpServer(
         workspace: z.enum(["personal", "company"]).optional().describe("Restrict to one layer"),
         team: z.string().optional().describe("Team id when reading one shared workspace"),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ project, tag, workspace, team }) => {
       if (!identity) return { content: [{ type: "text", text: "Digest requires an authenticated identity." }] };
@@ -566,6 +570,7 @@ export function buildMcpServer(
       inputSchema: {
         id: z.string().describe("Exact memory id"),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ id: rawId }) => {
       if (!identity) return { content: [{ type: "text", text: "History requires an authenticated identity." }] };
@@ -1088,6 +1093,7 @@ export function buildMcpServer(
         team: z.string().max(128).optional()
           .describe("Company workspace id from list_teams; required when company membership is ambiguous"),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ kind, project_id, workspace, team }) => {
       if (!identity) {
@@ -1165,6 +1171,7 @@ export function buildMcpServer(
         explain: z.boolean().optional().describe("Add one line per result saying why it came back (meaning rank, matched keywords, boosts, rerank, link). Off by default because it costs output tokens"),
         as_of: z.string().optional().describe("Answer what was actually true on this past date, not what is true now: a date like 2026-06-15, a month, or a year. Never a future date."),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ query, topK, tag, after, before, kind, hops, workspace, team, project, explain, as_of }) => {
       const teamRead = identity ? readTeamParam(team, identity, workspace) : {};
@@ -1211,6 +1218,7 @@ export function buildMcpServer(
         project: projectParam.describe("Only entries in one project: its slug from list_projects. An unknown slug is an error, not an empty list"),
         in_trash: z.boolean().optional().describe("List memories in the trash instead of live ones. Works with n and workspace only."),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ n, tag, after, before, workspace, team, actor, project, in_trash }) => {
       if (in_trash) {
@@ -1361,6 +1369,7 @@ export function buildMcpServer(
         id: z.string().describe("Entry ID from recall or list_recent"),
         version: z.number().int().min(1).optional().describe("Read the text before this change, from history — omit for the current text"),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ id, version }) => {
       if (version !== undefined) {
@@ -1635,6 +1644,7 @@ export function buildMcpServer(
         id: z.string().describe("Entry ID from recall or list_recent"),
         type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).optional().describe("Filter to a single relationship type"),
       },
+      annotations: { readOnlyHint: true },
     },
     async ({ id, type }) => {
       const connections = await getConnections(id, type, env, await resolveConfig(env), identity);
