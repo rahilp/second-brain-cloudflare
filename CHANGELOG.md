@@ -2,6 +2,14 @@
 
 All notable changes to Second Brain are documented here. Version numbers match `SB_VERSION` in `src/env.ts` and the desktop app release.
 
+## [4.0.2] - 2026-11-09
+
+**Fixes**
+
+- Naming a team you don't belong to is now refused with a clear error, for reads and writes alike. Before, a write that named another team could land in a different workspace, and a read that named one could return that team's memories. The dashboard and API answer with a 400 and the reason, and AI tools get the same message. Thanks to @wtfashwin for the write-side fix (#389, #391, #392).
+- AI tools that ask before running every tool can now run the ten read tools without asking: `recall`, `get`, `list_recent`, `connections`, `brief`, `digest`, `history`, `list_projects`, `list_teams` and `get_prompt_capsule`. Tools that change your memories still ask first. Thanks to @vchaindz (#393).
+- `npm run vectors:create` now also creates the `workspace_id` metadata index that recall's workspace filter depends on. Without it, meaning-based recall can come back empty and only keyword matches are found. A brain set up by hand before this release can add the index with `npm run vectors:metadata-index` and then re-embed; the README has the steps. The desktop app and Deploy to Cloudflare setups get the same fix in a later release. Thanks to @vchaindz (#394).
+
 ## [4.0.1] - 2026-10-13
 
 **Fixes**
