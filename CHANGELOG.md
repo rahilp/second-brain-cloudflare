@@ -2,6 +2,16 @@
 
 All notable changes to Second Brain are documented here. Version numbers match `SB_VERSION` in `src/env.ts` and the desktop app release.
 
+## [4.0.3] - 2026-11-10
+
+**Fixes**
+
+- Search by meaning and duplicate detection work again on brains whose Vectorize index has no `workspace_id` metadata index, which includes every brain the desktop app set up. Vectorize matches nothing on a filter it has no index for, so these brains were quietly finding only keyword matches. The brain now notices, searches the whole index instead, and `/health` reports `"workspaceFilter": { "supported": false }`. Results are still limited to memories you can read (#396).
+- The desktop app creates the `workspace_id` metadata index when it sets up a new brain or a new index for an embedding change. An existing brain that already holds memories needs the index plus a re-embed; the README has the steps (#396).
+- On a team brain, saving a memory very close to a colleague's private memory could be refused as a duplicate, and the reply named that memory's id. Duplicate checks now compare only against memories in the workspace you are saving to. A deleted memory can no longer block a new one either (#396).
+- The dashboard's "Vectorize index not found" banner lists both setup commands and no longer covers the top of the page when "How to fix" is open (#396).
+- Thanks to @vchaindz for tracking down the missing index (#394).
+
 ## [4.0.2] - 2026-11-09
 
 **Fixes**
