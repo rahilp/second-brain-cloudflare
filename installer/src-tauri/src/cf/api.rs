@@ -242,6 +242,29 @@ impl CfClient {
         Ok(())
     }
 
+    /// Property names this index can filter on. Errors propagate: "none" must
+    /// mean none, because the caller decides from it whether to create one.
+    pub async fn vectorize_metadata_indexes(&self, name: &str) -> Result<Vec<String>, CfApiError> {
+        let url = self.url(&self.account_path(&format!("/vectorize/v2/indexes/{name}/metadata_index/list")));
+        let list: MetadataIndexList =
+            Self::required(self.send(|h| h.get(&url)).await?, "vectorize metadata index list")?;
+        Ok(list.metadata_indexes.into_iter().map(|m| m.property_name).collect())
+    }
+
+    /// Lets the index filter on `property`. Only vectors written after this
+    /// call are filterable on it, so callers create it on an empty index.
+    pub async fn create_vectorize_metadata_index(
+        &self,
+        name: &str,
+        property: &str,
+        index_type: &str,
+    ) -> Result<(), CfApiError> {
+        let url = self.url(&self.account_path(&format!("/vectorize/v2/indexes/{name}/metadata_index/create")));
+        let body = serde_json::json!({ "propertyName": property, "indexType": index_type });
+        self.send::<serde_json::Value>(|h| h.post(&url).json(&body)).await?;
+        Ok(())
+    }
+
     /// Deletes an index and every vector in it.
     ///
     /// **Unrecoverable — confirm with the user first.** There is no undo and no
@@ -877,6 +900,48 @@ mod tests {
     /// method as well as the path and only answers success for the exact pair.
     /// A delete that quietly went out as a POST, or to the collection instead
     /// of the index, would otherwise still look like a passing test.
+    /// The two metadata-index calls go to the paths and body wrangler's own
+    /// `create-metadata-index` and `list-metadata-index` use.
+    #[tokio::test]
+    async fn metadata_index_calls_match_the_vectorize_api() {
+        use std::sync::{Arc, Mutex};
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_bg = seen.clone();
+        std::thread::spawn(move || loop {
+            let Ok(mut req) = server.recv() else { return };
+            let mut body = String::new();
+            let _ = req.as_reader().read_to_string(&mut body);
+            let line = format!("{} {}", req.method().as_str(), req.url());
+            seen_bg.lock().unwrap().push(format!("{line} {body}").trim_end().to_string());
+            let (status, reply) = match line.as_str() {
+                "GET /accounts/acct/vectorize/v2/indexes/idx/metadata_index/list" => (
+                    200,
+                    r#"{"success":true,"errors":[],"result":{"metadataIndexes":[{"propertyName":"workspace_id","indexType":"String"}]}}"#,
+                ),
+                "POST /accounts/acct/vectorize/v2/indexes/idx/metadata_index/create" => (
+                    200,
+                    r#"{"success":true,"errors":[],"result":{"mutationId":"m-1"}}"#,
+                ),
+                _ => (405, r#"{"success":false,"errors":[{"code":7003,"message":"no route"}]}"#),
+            };
+            let _ = req.respond(tiny_http::Response::from_string(reply).with_status_code(status));
+        });
+
+        let client = CfClient::with_base("tok".into(), "acct".into(), format!("http://127.0.0.1:{port}"));
+        assert_eq!(client.vectorize_metadata_indexes("idx").await.unwrap(), vec!["workspace_id".to_string()]);
+        client.create_vectorize_metadata_index("idx", "workspace_id", "string").await.unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen[0], "GET /accounts/acct/vectorize/v2/indexes/idx/metadata_index/list");
+        let (line, body) = seen[1].split_once(" {").unwrap();
+        assert_eq!(line, "POST /accounts/acct/vectorize/v2/indexes/idx/metadata_index/create");
+        let body: serde_json::Value = serde_json::from_str(&format!("{{{body}")).unwrap();
+        assert_eq!(body, serde_json::json!({ "propertyName": "workspace_id", "indexType": "string" }));
+    }
+
     #[tokio::test]
     async fn delete_vectorize_sends_a_delete_to_the_index_path() {
         use std::sync::{Arc, Mutex};

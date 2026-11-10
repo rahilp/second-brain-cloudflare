@@ -77,6 +77,19 @@ pub struct VectorizeIndex {
     pub config: Option<VectorizeConfig>,
 }
 
+/// `GET .../vectorize/v2/indexes/{name}/metadata_index/list`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MetadataIndexList {
+    #[serde(rename = "metadataIndexes", default)]
+    pub metadata_indexes: Vec<MetadataIndex>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MetadataIndex {
+    #[serde(rename = "propertyName")]
+    pub property_name: String,
+}
+
 /// The immutable half of a Vectorize index. Cloudflare fixes both values at
 /// creation — "the configuration of an index cannot be changed after
 /// creation" — which is the whole reason an embedding-model switch needs a new
