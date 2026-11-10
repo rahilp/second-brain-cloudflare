@@ -170,7 +170,8 @@ describe("ExactVectorize", () => {
       .toEqual({ workspace_id: "w1" });
     expect((await index.query([1, 0], { returnMetadata: "all" })).matches[0].metadata)
       .toEqual({ workspace_id: "w1", note: "private" });
-    await expect(index.query([1, 0], { filter: { note: "private" } })).rejects.toThrow(/filter/i);
+    // Real Vectorize answers a filter on an unindexed field with nothing, not an error (#394).
+    expect(await index.query([1, 0], { filter: { note: "private" } })).toEqual({ count: 0, matches: [] });
   });
 
   it("degrades a scoped query when workspace_id is not indexed", async () => {

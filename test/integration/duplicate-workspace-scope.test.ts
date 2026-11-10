@@ -161,8 +161,10 @@ describe("a degraded vector filter cannot put a colleague's memory in a merge", 
     });
 
     expect(vectorizeFilterState().supported).toBe(false);
-    // Alice's memory was stored as her own row, not merged into Bob's.
-    expect(result.status).toBe("flagged");
+    // Alice's memory was stored as her own row, not merged into Bob's, and not
+    // flagged against it either: a flag would name Bob's id back to her.
+    expect(result.status).toBe("stored");
+    expect(JSON.stringify(result)).not.toContain("b-secret");
     expect(await contentOf("b-secret")).toBe(BOB_SECRET);
     // And nothing anywhere carries the merged text.
     const { results: merged } = await sqlite.db

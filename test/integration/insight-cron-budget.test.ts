@@ -259,7 +259,10 @@ describe("insight crons stay inside one invocation's budget", () => {
     // call, same as it already paid for updated_at and staleness_checked_at.
     // MOVED 41 -> 42 by when_label, a fourth migration ALTER on the same path.
     // MOVED +2 (T-0089.2.1) by the valid_from and valid_until migration ALTERs, one-time per brain.
-    expect(measured).toBe(45);
+    // MOVED +1 (#394 follow-up): this mock's Vectorize matches nothing, so the first scoped query
+    // pays one unfiltered probe for a missing workspace_id metadata index. Once per scope per
+    // isolate; a real brain with an index gets matches from a non-empty workspace and pays nothing.
+    expect(measured).toBe(46);
 
     // Verified after the budget assertion, not before: this SELECT is a test
     // check, not something runWeeklyInsights() itself issues, and including
@@ -342,7 +345,10 @@ describe("insight crons stay inside one invocation's budget", () => {
     // MOVED 42 -> 43 (T-0089.6.1) by idx_entries_when: the one index db/schema.sql cannot carry, since
     // when_at is an ALTER column, so this fresh database pays one more one-time CREATE.
     // MOVED +2 (T-0089.2.1) by the valid_from and valid_until migration ALTERs, one-time per brain.
-    expect(measured).toBe(45);
+    // MOVED +1 (#394 follow-up): this mock's Vectorize matches nothing, so the first scoped query
+    // pays one unfiltered probe for a missing workspace_id metadata index. Once per scope per
+    // isolate; a real brain with an index gets matches from a non-empty workspace and pays nothing.
+    expect(measured).toBe(46);
 
     // What the scheduled() branch spends AROUND the pass: one KV read for the
     // config flag and one D1 read for companyWorkspaceIds. Arithmetic, not
@@ -568,14 +574,17 @@ describe("the worst case, not the cheapest branch", () => {
     // helper pays that cost on every call rather than once.
     // MOVED 50 -> 51 by when_label, a fourth migration ALTER on the same path.
     // MOVED +2 (T-0089.2.1) by the valid_from and valid_until migration ALTERs, one-time per brain.
-    expect(await teamInvocationCost(49)).toBe(54);
+    // MOVED +1 (#394 follow-up): this mock's Vectorize matches nothing, so the first scoped query
+    // pays one unfiltered probe for a missing workspace_id metadata index. Once per scope per
+    // isolate; a real brain with an index gets matches from a non-empty workspace and pays nothing.
+    expect(await teamInvocationCost(49)).toBe(55);
     const fifty = await teamInvocationCost(50);
-    // One more over the self-imposed 50 here, one-time and migration-only —
-    // see the docblock above. Still four orders of magnitude under the
+    // Over the self-imposed 50 here by one-time migration DDL plus this mock's
+    // missing-index probe, both explained above. Still four orders of magnitude under the
     // platform's real 1,000-subrequest ceiling.
-    expect(fifty).toBe(55);
+    expect(fifty).toBe(56);  // +1 probe, as above
     // The whole capacity, and no third statement.
-    expect(await teamInvocationCost(98)).toBe(55);
+    expect(await teamInvocationCost(98)).toBe(56);  // +1 probe, as above
   });
 });
 

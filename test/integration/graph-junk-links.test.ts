@@ -106,6 +106,8 @@ describe("junk-link suppression", () => {
 
     it("draws no edge from a flagged capture to the entry it duplicates", async () => {
       const db = makeTestDb();
+      // The verdict only counts a match whose row the writer's workspace holds.
+      db.entries.push({ id: "near", content: "entry near", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 });
       const env = envFlagging(db);
       const pending: Promise<any>[] = [];
       const ctx = { waitUntil: (p: Promise<any>) => pending.push(p) } as unknown as ExecutionContext;

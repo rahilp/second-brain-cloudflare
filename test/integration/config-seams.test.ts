@@ -126,7 +126,10 @@ describe("seam: graph expansion (traverse.ts)", () => {
 
 describe("seam: duplicate detection (duplicate.ts)", () => {
   function envWithTopScore(score: number) {
-    return makeTestEnv(makeTestDb(), {
+    const db = makeTestDb();
+    // The verdict only counts a match whose row the writer's workspace holds.
+    db.entries.push({ id: "dup", content: "x", tags: "[]", source: "api", created_at: 1, vector_ids: '["dup"]', recall_count: 0, importance_score: 0 });
+    return makeTestEnv(db, {
       AI: { run: vi.fn().mockResolvedValue({ data: [[0.1]] }) } as never,
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({

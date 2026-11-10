@@ -372,7 +372,8 @@ function vectorizeHealthBanner(health) {
   const name = health.vectorize.indexName || 'second-brain-vectors';
   return {
     title: t('upkeep.vectorizeBannerTitle', { name }),
-    command: 'npx wrangler vectorize create ' + name + ' --dimensions=384 --metric=cosine',
+    command: 'npx wrangler vectorize create ' + name + ' --dimensions=384 --metric=cosine\n\n' +
+      'npx wrangler vectorize create-metadata-index ' + name + ' --propertyName=workspace_id --type=string',
     gui: t('upkeep.vectorizeBannerGui'),
   };
 }
@@ -407,7 +408,11 @@ function syncVectorizeBanner(doc, banner) {
     doc.body.appendChild(el);
   }
   el.innerHTML = vectorizeBannerHtml(banner);
-  doc.body.style.paddingTop = (el.offsetHeight || 0) + 'px';
+  const pad = () => { doc.body.style.paddingTop = (el.offsetHeight || 0) + 'px'; };
+  pad();
+  // Opening "How to fix" makes the fixed banner taller; keep it off the page content.
+  const details = el.querySelector && el.querySelector('details');
+  if (details) details.addEventListener('toggle', pad);
   return el;
 }
 

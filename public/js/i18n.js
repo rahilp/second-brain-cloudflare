@@ -653,7 +653,7 @@ const I18N_EN = {
     importStalled: 'The import stopped making progress. Your Second Brain may need an update.',
     vectorizeBannerTitle: 'Search by meaning is off. The Vectorize index "{name}" was not found.',
     vectorizeBannerHowToFix: 'How to fix',
-    vectorizeBannerRunOnce: 'Run this once in your terminal:',
+    vectorizeBannerRunOnce: 'Run these once in your terminal:',
     vectorizeBannerGui:
       'Or grant the Workers Builds API token the account-level Vectorize Edit permission in the Cloudflare dashboard (My Profile, API Tokens), then redeploy so the build creates the index automatically.',
   },
@@ -2041,7 +2041,7 @@ const I18N_IT = {
     vectorizeBannerTitle:
       'La ricerca per significato è disattivata. L’indice Vectorize «{name}» non è stato trovato.',
     vectorizeBannerHowToFix: 'Come risolvere',
-    vectorizeBannerRunOnce: 'Esegui questo una volta nel terminale:',
+    vectorizeBannerRunOnce: 'Esegui questi comandi una volta nel terminale:',
     vectorizeBannerGui:
       'Oppure concedi al token API Workers Builds il permesso Vectorize Edit a livello account nella dashboard Cloudflare (Il mio profilo, Token API), poi ridistribuisci così la build crea l’indice automaticamente.',
   },

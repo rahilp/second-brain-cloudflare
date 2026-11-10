@@ -153,6 +153,8 @@ describe("runWeeklyInsights()", () => {
     // candidate `pending` would re-propose and re-reason over the same pair
     // every week forever, so it must be `used` even though nothing was written.
     seedCandidates(sqlite, 1);
+    // The block needs a real row behind the match: a vector with no readable row decides nothing.
+    sqlite.seed({ id: "existing", content: "An earlier insight about the same pair.", createdAt: 1 });
     const env = makeTestEnv(undefined, {
       DB: sqlite.db as any,
       AI: makeAI(GOOD),
@@ -467,6 +469,8 @@ describe("runWeeklyInsights()", () => {
     // an entry that was never created would be a dangling row every later
     // reader has to defend against.
     seedCandidates(sqlite, 1);
+    // The block needs a real row behind the match: a vector with no readable row decides nothing.
+    sqlite.seed({ id: "existing", content: "An earlier insight about the same pair.", createdAt: 1 });
     const env = makeTestEnv(undefined, {
       DB: sqlite.db as any,
       AI: makeAI(GOOD),

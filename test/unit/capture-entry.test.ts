@@ -93,6 +93,8 @@ describe("captureEntry()", () => {
   // ── Duplicate: blocked ──────────────────────────────────────────────────────
 
   it("returns status=blocked and does not insert when similarity >= 0.95", async () => {
+    // The verdict only counts a match whose row the writer's workspace holds.
+    db.entries.push({ id: "existing", content: "Duplicate content", tags: "[]", source: "api", created_at: Date.now(), vector_ids: '["existing"]', recall_count: 0, importance_score: 0 });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
@@ -106,10 +108,12 @@ describe("captureEntry()", () => {
     if (result.status !== "blocked") return;
     expect(result.matchId).toBe("existing");
     expect(result.score).toBeCloseTo(0.97);
-    expect(db.entries).toHaveLength(0);
+    expect(db.entries.map((e: any) => e.id)).toEqual(["existing"]);
   });
 
   it("does not call ctx.waitUntil when blocked (no scoring needed)", async () => {
+    // The verdict only counts a match whose row the writer's workspace holds.
+    db.entries.push({ id: "existing", content: "Duplicate content", tags: "[]", source: "api", created_at: Date.now(), vector_ids: '["existing"]', recall_count: 0, importance_score: 0 });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
@@ -126,6 +130,8 @@ describe("captureEntry()", () => {
   // ── Duplicate: flagged ──────────────────────────────────────────────────────
 
   it("returns status=flagged, stores entry, and adds duplicate-candidate tag", async () => {
+    // The verdict only counts a match whose row the writer's workspace holds.
+    db.entries.push({ id: "near", content: "Similar note here", tags: "[]", source: "api", created_at: Date.now(), vector_ids: '["near"]', recall_count: 0, importance_score: 0 });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
@@ -138,8 +144,8 @@ describe("captureEntry()", () => {
     expect(result.status).toBe("flagged");
     if (result.status !== "flagged") return;
     expect(result.matchId).toBe("near");
-    expect(db.entries).toHaveLength(1);
-    const tags: string[] = JSON.parse(db.entries[0].tags);
+    expect(db.entries).toHaveLength(2);
+    const tags: string[] = JSON.parse(db.entries[1].tags);
     expect(tags).toContain("duplicate-candidate");
   });
 
@@ -295,9 +301,10 @@ describe("captureEntry()", () => {
     });
     const { ctx } = makeCtx();
     const result = await captureEntry("I switched to Cursor", [], "api", env, ctx);
-    // Falls through → stores as a new entry
-    expect(result.status).toBe("flagged");
+    // A vector with no row behind it is no duplicate: stored as new, nothing flagged.
+    expect(result.status).toBe("stored");
     expect(db.entries).toHaveLength(1);
+    expect(JSON.parse(db.entries[0].tags)).not.toContain("duplicate-candidate");
   });
 
   // ── Smart merge: merge ──────────────────────────────────────────────────────

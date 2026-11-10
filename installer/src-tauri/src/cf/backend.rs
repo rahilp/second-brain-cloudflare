@@ -49,6 +49,20 @@ impl Backend for LiveBackend {
     ) -> Result<(), CfApiError> {
         self.client.create_vectorize(name, dimensions, metric).await
     }
+    async fn vectorize_vector_count(&self, name: &str) -> Result<Option<u64>, CfApiError> {
+        Ok(self.client.vectorize_info(name).await?.vector_count)
+    }
+    async fn vectorize_metadata_indexes(&self, name: &str) -> Result<Vec<String>, CfApiError> {
+        self.client.vectorize_metadata_indexes(name).await
+    }
+    async fn create_vectorize_metadata_index(
+        &self,
+        name: &str,
+        property: &str,
+        index_type: &str,
+    ) -> Result<(), CfApiError> {
+        self.client.create_vectorize_metadata_index(name, property, index_type).await
+    }
     async fn upload_assets(&self, script: &str) -> Result<String, CfApiError> {
         let files = worker_bundle::asset_files();
         self.client.upload_assets(script, &files).await
@@ -216,6 +230,21 @@ impl Backend for DryRunBackend {
         Ok(())
     }
     async fn delete_vectorize(&self, _name: &str) -> Result<(), CfApiError> {
+        self.pause().await;
+        Ok(())
+    }
+    async fn vectorize_vector_count(&self, _name: &str) -> Result<Option<u64>, CfApiError> {
+        Ok(Some(0))
+    }
+    async fn vectorize_metadata_indexes(&self, _name: &str) -> Result<Vec<String>, CfApiError> {
+        Ok(Vec::new())
+    }
+    async fn create_vectorize_metadata_index(
+        &self,
+        _name: &str,
+        _property: &str,
+        _index_type: &str,
+    ) -> Result<(), CfApiError> {
         self.pause().await;
         Ok(())
     }

@@ -195,6 +195,15 @@ pub trait Backend {
         dimensions: u32,
         metric: &str,
     ) -> Result<(), CfApiError>;
+    /// Vectors in the index; `None` when Cloudflare reports no count.
+    async fn vectorize_vector_count(&self, name: &str) -> Result<Option<u64>, CfApiError>;
+    async fn vectorize_metadata_indexes(&self, name: &str) -> Result<Vec<String>, CfApiError>;
+    async fn create_vectorize_metadata_index(
+        &self,
+        name: &str,
+        property: &str,
+        index_type: &str,
+    ) -> Result<(), CfApiError>;
     /// Uploads the embedded dashboard assets; returns the completion JWT.
     async fn upload_assets(&self, script: &str) -> Result<String, CfApiError>;
     /// Uploads the embedded Worker module with the given multipart metadata.
@@ -371,6 +380,32 @@ pub fn build_update_metadata(
         "observability": { "enabled": true }
     })
 }
+
+/// The vector metadata property recall filters on (src/vectorize/scope.ts).
+const WORKSPACE_METADATA_PROPERTY: &str = "workspace_id";
+
+/// Vectorize matches nothing on a filter whose property has no metadata index
+/// (#394), and only vectors written after the index exists are filterable. So
+/// the index is added only while the Vectorize index is empty; a populated one
+/// without it is left for a re-embed, and the Worker queries it unfiltered.
+async fn ensure_workspace_metadata_index<B: Backend>(
+    backend: &B,
+    index: &str,
+    known_empty: bool,
+) -> Result<(), CfApiError> {
+    let existing = backend.vectorize_metadata_indexes(index).await?;
+    if existing.iter().any(|p| p == WORKSPACE_METADATA_PROPERTY) {
+        return Ok(());
+    }
+    if !known_empty && backend.vectorize_vector_count(index).await? != Some(0) {
+        log::warn!("{index} has vectors but no workspace_id metadata index; it needs a re-embed to filter by workspace");
+        return Ok(());
+    }
+    backend
+        .create_vectorize_metadata_index(index, WORKSPACE_METADATA_PROPERTY, "string")
+        .await
+}
+
 
 /// Refuses to provision over any object using one of this installer's fixed
 /// names unless the conventional script's control-plane bindings prove that it
@@ -565,7 +600,8 @@ pub async fn provision_recording<B: Backend>(
 
     // 3. Recall — vector index.
     step!(Step::Recall, async {
-        if !backend.vectorize_exists(&manifest.vectorize_name).await? {
+        let created_now = !backend.vectorize_exists(&manifest.vectorize_name).await?;
+        if created_now {
             backend
                 .create_vectorize(
                     &manifest.vectorize_name,
@@ -575,6 +611,7 @@ pub async fn provision_recording<B: Backend>(
                 .await?;
             created.record_vectorize(&manifest.vectorize_name);
         }
+        ensure_workspace_metadata_index(backend, &manifest.vectorize_name, created_now).await?;
         Ok::<_, ProvisionError>(())
     });
 
@@ -757,10 +794,16 @@ pub async fn update_worker<B: Backend>(
                 }
             }
         }
-        if !backend.vectorize_exists(vectorize.name).await? {
+        let created_now = !backend.vectorize_exists(vectorize.name).await?;
+        if created_now {
             backend
                 .create_vectorize(vectorize.name, vectorize.dimensions, &manifest.vectorize_metric)
                 .await?;
+            // A new index is filled by the re-embed that follows; it must filter from the start.
+            ensure_workspace_metadata_index(backend, vectorize.name, true).await?;
+        } else if let Err(e) = ensure_workspace_metadata_index(backend, vectorize.name, false).await {
+            // A routine update must not start failing over an optional index.
+            log::warn!("update: could not check the workspace_id metadata index on {}: {e}", vectorize.name);
         }
         Ok(vectorize.name.to_string())
     });
@@ -971,6 +1014,11 @@ mod tests {
         degraded_vector_index: bool,
         script_bindings: Vec<serde_json::Value>,
         last_deploy_metadata: Mutex<Option<serde_json::Value>>,
+        /// `index:property` pairs that already have a metadata index.
+        metadata_indexes: Mutex<Vec<String>>,
+        /// Index names that hold vectors.
+        populated_vectorize: Vec<String>,
+        metadata_list_fails: bool,
     }
 
     impl Fake {
@@ -1080,6 +1128,28 @@ mod tests {
                 .push(name.to_string());
             Ok(())
         }
+        async fn vectorize_vector_count(&self, name: &str) -> Result<Option<u64>, CfApiError> {
+            Ok(Some(if self.populated_vectorize.iter().any(|n| n == name) { 12 } else { 0 }))
+        }
+        async fn vectorize_metadata_indexes(&self, name: &str) -> Result<Vec<String>, CfApiError> {
+            if self.metadata_list_fails {
+                return Err(CfApiError::Other("scripted metadata list failure".into()));
+            }
+            let prefix = format!("{name}:");
+            Ok(self.metadata_indexes.lock().unwrap().iter()
+                .filter_map(|e| e.strip_prefix(&prefix).map(str::to_string))
+                .collect())
+        }
+        async fn create_vectorize_metadata_index(
+            &self,
+            name: &str,
+            property: &str,
+            index_type: &str,
+        ) -> Result<(), CfApiError> {
+            self.log(format!("create_metadata_index:{name}:{property}:{index_type}"));
+            self.metadata_indexes.lock().unwrap().push(format!("{name}:{property}"));
+            Ok(())
+        }
         async fn upload_assets(&self, script: &str) -> Result<String, CfApiError> {
             self.log(format!("upload_assets:{script}"));
             Ok("jwt-completion".into())
@@ -1177,6 +1247,11 @@ mod tests {
         assert!(log.contains(&"create_d1:second-brain-db".to_string()));
         assert!(log.contains(&"create_kv:second-brain-oauth".to_string()));
         assert!(log.contains(&"create_vectorize:second-brain-vectors:384:cosine".to_string()));
+        let at = |e: &str| log.iter().position(|l| l == e).unwrap();
+        assert!(
+            at("create_metadata_index:second-brain-vectors:workspace_id:string")
+                > at("create_vectorize:second-brain-vectors:384:cosine")
+        );
         // 5 fixed bindings + 1 var
         assert!(log.contains(&"deploy:second-brain:6".to_string()));
         assert!(log.contains(
@@ -1622,6 +1697,8 @@ mod tests {
                 serde_json::json!({ "type": "secret_text", "name": "AUTH_TOKEN" }),
             ],
             existing_vectorize: true,
+            // A brain in use: its index holds vectors, so not even a metadata index is added.
+            populated_vectorize: vec!["second-brain-vectors".into()],
             ..Default::default()
         };
         update_worker(
@@ -1742,6 +1819,71 @@ mod tests {
         let vectorize = bindings.iter().find(|b| b["type"] == "vectorize").unwrap();
         assert_eq!(vectorize["index_name"], "second-brain-vectors-768");
         assert!(fake.entries().contains(&"create_vectorize:second-brain-vectors-768:768:cosine".to_string()));
+        assert!(fake.entries().contains(&"create_metadata_index:second-brain-vectors-768:workspace_id:string".to_string()));
+    }
+
+    /// The workspace_id metadata index (#394) only filters vectors written after it
+    /// exists, so an update adds it to an empty index and never to a populated one.
+    async fn routine_update(fake: &Fake) {
+        update_worker(
+            &fake,
+            &test_manifest(),
+            "https://second-brain.acme.workers.dev",
+            "stored-token",
+            VectorizeTarget { name: "second-brain-vectors", dimensions: 384, keep_live_index: false },
+            |_| {},
+        )
+        .await
+        .unwrap();
+    }
+    fn created_metadata_index(fake: &Fake) -> bool {
+        fake.entries().iter().any(|l| l.starts_with("create_metadata_index:"))
+    }
+
+    #[tokio::test]
+    async fn an_update_adds_the_metadata_index_to_an_empty_index() {
+        let fake = Fake { existing_vectorize: true, ..Default::default() };
+        routine_update(&fake).await;
+        assert!(fake.entries().contains(&"create_metadata_index:second-brain-vectors:workspace_id:string".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_update_leaves_a_populated_index_without_the_metadata_index_alone() {
+        let fake = Fake {
+            existing_vectorize: true,
+            populated_vectorize: vec!["second-brain-vectors".into()],
+            ..Default::default()
+        };
+        routine_update(&fake).await;
+        assert!(!created_metadata_index(&fake));
+    }
+
+    #[tokio::test]
+    async fn an_update_does_not_recreate_an_existing_metadata_index() {
+        let fake = Fake {
+            existing_vectorize: true,
+            metadata_indexes: Mutex::new(vec!["second-brain-vectors:workspace_id".into()]),
+            ..Default::default()
+        };
+        routine_update(&fake).await;
+        assert!(!created_metadata_index(&fake));
+    }
+
+    #[tokio::test]
+    async fn an_update_still_deploys_when_the_metadata_index_check_fails() {
+        let fake = Fake { existing_vectorize: true, metadata_list_fails: true, ..Default::default() };
+        routine_update(&fake).await;
+        assert!(fake.last_deploy_metadata.lock().unwrap().is_some());
+    }
+
+    /// A first setup that created the index but stopped before its metadata index
+    /// gets it on the retry, because the index is still empty.
+    #[tokio::test]
+    async fn a_retried_setup_adds_the_metadata_index_to_its_empty_index() {
+        let fake = Fake { existing_vectorize: true, ..Default::default() };
+        provision(&&fake, &test_manifest(), "My Account", "pw-123456789012", |_| {}).await.unwrap();
+        assert!(!fake.entries().iter().any(|l| l.starts_with("create_vectorize")));
+        assert!(fake.entries().contains(&"create_metadata_index:second-brain-vectors:workspace_id:string".to_string()));
     }
 
     /// The inversion guard's other half. An update polls with the password the

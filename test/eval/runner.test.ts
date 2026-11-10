@@ -5,10 +5,8 @@ import type { RecallInternalOptions } from "../../src/recall/types";
 import { NeuronBudget, ReplayStore, makeReplayAi } from "./ai-replay";
 import { loadCorpus, type LoadedCorpus } from "./corpus/loader";
 import { ACTORS, EVAL_NOW, IDENTITIES, WORKSPACES, type CorpusEntry } from "./corpus/types";
-import { EMBEDDING_DIMS } from "./ai-replay";
 import { readScopeWorkspaces } from "../../src/lib/scope";
 import { vectorizeFilterState } from "../../src/vectorize/scope";
-import { ExactVectorize } from "./vectorize-emulator";
 import { EVAL_TOP_K, RUNNER_VERSION, findLeaks, freezeClock, readReport, runVariant, writeReport } from "./runner";
 import type { EmbeddingProducer, GoldenQuery, VariantReport } from "./types";
 import { hashVector } from "./vectors";
@@ -285,7 +283,7 @@ describe("degraded recalls", () => {
 
   it("records a rejected workspace filter as degraded", async () => {
     const c = await corpus();
-    (c.env as { VECTORIZE: unknown }).VECTORIZE = new ExactVectorize({ dimensions: EMBEDDING_DIMS[MODEL]!, indexedProperties: [] });
+    (c.env as { VECTORIZE: unknown }).VECTORIZE = c.vectorize.withMetadataIndexes([]);
     const report = await run(c);
     expect(report.results.every(r => r.degraded?.includes("vectorize-filter-unfiltered"))).toBe(true);
   });
@@ -465,7 +463,7 @@ describe("stand-in failures fail closed", () => {
 describe("isolate hygiene", () => {
   const strict = async () => {
     const c = await corpus();
-    (c.env as { VECTORIZE: unknown }).VECTORIZE = new ExactVectorize({ dimensions: EMBEDDING_DIMS[MODEL]!, indexedProperties: [] });
+    (c.env as { VECTORIZE: unknown }).VECTORIZE = c.vectorize.withMetadataIndexes([]);
     return c;
   };
   const probes = (r: Awaited<ReturnType<typeof run>>) => r.results.map(x => x.cost.vectorizeQueries);
@@ -482,8 +480,12 @@ describe("isolate hygiene", () => {
     const c = await strict();
     const warm = await run(c, "no-rerank", "warm");
     const cold = await run(c, "no-rerank", "cold");
-    expect(probes(warm).every(n => n === 1)).toBe(true);
-    expect(probes(cold).every(n => n === 2)).toBe(true);
+    const healthy = await run(await corpus(), "no-rerank", "warm");
+    // Recall issues two dense queries. Once learned, a missing index costs what a healthy one
+    // does; a cold isolate re-learns it with one unfiltered probe per query.
+    expect(probes(healthy)).toEqual([2, 2, 2]);
+    expect(probes(warm)).toEqual([2, 2, 2]);
+    expect(probes(cold)).toEqual([3, 3, 3]);
   });
 
   it("restores Date.now even when the run itself throws", async () => {

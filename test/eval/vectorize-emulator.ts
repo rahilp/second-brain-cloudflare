@@ -25,7 +25,7 @@ function norm(values: Float32Array): number {
   return Math.sqrt(sum);
 }
 
-function validateFilter(filter: Filter | undefined, indexedProperties: ReadonlySet<string> | undefined): void {
+function validateFilter(filter: Filter | undefined): void {
   if (filter === undefined) return;
   // https://developers.cloudflare.com/vectorize/reference/metadata-filtering/
   if (filter === null || Array.isArray(filter) || typeof filter !== "object" || !Object.keys(filter).length) {
@@ -39,9 +39,6 @@ function validateFilter(filter: Filter | undefined, indexedProperties: ReadonlyS
     // Dotted keys denote nesting in Vectorize; this product only filters flat fields.
     if (!field || field.startsWith("$") || field.includes(".") || field.includes('"') || field.length > 512) {
       throw new Error(`invalid Vectorize filter key ${field}`);
-    }
-    if (indexedProperties && !indexedProperties.has(field)) {
-      throw new Error(`Vectorize filter field ${field} has no metadata index`);
     }
     if (condition === null || typeof condition !== "object" || Array.isArray(condition)) continue;
     const operators = Object.entries(condition);
@@ -95,6 +92,13 @@ export class ExactVectorize {
     this.indexedProperties = options.indexedProperties && new Set(options.indexedProperties);
   }
 
+  /** The same vectors under different metadata indexes, e.g. a brain set up without workspace_id. */
+  withMetadataIndexes(indexedProperties: readonly string[]): ExactVectorize {
+    const copy = new ExactVectorize({ dimensions: this.dimensions, maxTopK: this.maxTopK, indexedProperties });
+    for (const [id, entry] of this.entries) copy.entries.set(id, entry);
+    return copy;
+  }
+
   private prepare(vectors: VectorInput[]): Entry[] {
     // https://developers.cloudflare.com/vectorize/platform/limits/
     if (vectors.length > 1000) throw new Error("Vectorize batch exceeds 1000 vectors");
@@ -146,7 +150,11 @@ export class ExactVectorize {
       throw new Error(`topK ${topK} is outside 1..${ceiling}`);
     }
     if (values.length !== this.dimensions) throw new Error(`query dimension ${values.length} != index ${this.dimensions}`);
-    validateFilter(options.filter, this.indexedProperties);
+    validateFilter(options.filter);
+    // Real Vectorize matches nothing on a field with no metadata index rather than erroring (#394).
+    if (options.filter && this.indexedProperties && Object.keys(options.filter).some(f => !this.indexedProperties!.has(f))) {
+      return { count: 0, matches: [] };
+    }
     const probe = Float32Array.from(values);
     const probeNorm = norm(probe);
     const scored: { entry: Entry; score: number }[] = [];

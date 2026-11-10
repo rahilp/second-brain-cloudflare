@@ -311,7 +311,10 @@ describe("vectorizeHealthBanner", () => {
     const b = vectorizeHealthBanner({ ok: false, vectorize: { ok: false, indexName: "second-brain-vectors", error: "index not found" } });
     expect(b).not.toBeNull();
     expect(b.title).toContain("second-brain-vectors");
-    expect(b.command).toBe("npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine");
+    expect(b.command).toBe(
+      "npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine\n\n"
+      + "npx wrangler vectorize create-metadata-index second-brain-vectors --propertyName=workspace_id --type=string",
+    );
     expect(b.gui).toContain("Vectorize Edit");
   });
 
@@ -353,6 +356,18 @@ describe("syncVectorizeBanner", () => {
     expect(doc.getElementById("vectorize-banner")).toBe(el);
     expect(el.innerHTML).toContain("second-brain-vectors");
     expect(doc.body.style.paddingTop).toBe("24px");
+  });
+
+  it("re-offsets the body when the fix steps open and the banner grows", () => {
+    const doc = makeFakeDoc();
+    const listeners: Record<string, () => void> = {};
+    const create = doc.createElement;
+    doc.createElement = () => ({ ...create(), querySelector: () => ({ addEventListener: (ev: string, fn: () => void) => { listeners[ev] = fn; } }) });
+    const el = syncVectorizeBanner(doc, { title: "t", command: "c", gui: "g" });
+    expect(doc.body.style.paddingTop).toBe("24px");
+    el.offsetHeight = 140;
+    listeners.toggle();
+    expect(doc.body.style.paddingTop).toBe("140px");
   });
 
   it("reuses the existing element and updates its content instead of recreating", () => {

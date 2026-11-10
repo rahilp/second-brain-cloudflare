@@ -729,7 +729,7 @@
       "insight": "3",
       "semantic_unavailable": true
     },
-    "mcp": "Note: semantic search was unavailable or incomplete for this query, so these results may be keyword matches only. This is often temporary; if it persists, the Vectorize index may be missing (fix: run `npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine`, or grant the build token Vectorize Edit and redeploy).\n\n1. [Sep 24, 2026 · api] (100% match)\nID: d1\nQuokka migration log 1 with rare vocabulary\n\n2. [Sep 23, 2026 · api] (97% match)\nID: d2\nQuokka migration log 2 with rare vocabulary\n\n3. [Sep 22, 2026 · api] (94% match)\nID: d3\nQuokka migration log 3 with rare vocabulary"
+    "mcp": "Note: semantic search was unavailable or incomplete for this query, so these results may be keyword matches only. This is often temporary; if it persists, the Vectorize index may be missing (fix: run `npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine` and then `npx wrangler vectorize create-metadata-index second-brain-vectors --propertyName=workspace_id --type=string` (if the index already held memories, re-embed afterwards as the README describes), or grant the build token Vectorize Edit and redeploy).\n\n1. [Sep 24, 2026 · api] (100% match)\nID: d1\nQuokka migration log 1 with rare vocabulary\n\n2. [Sep 23, 2026 · api] (97% match)\nID: d2\nQuokka migration log 2 with rare vocabulary\n\n3. [Sep 22, 2026 · api] (94% match)\nID: d3\nQuokka migration log 3 with rare vocabulary"
   },
   "empty": {
     "rest": {
